@@ -7,7 +7,7 @@ import { ok } from '../core/result.js';
 import { commands, roles, schemaIds, statusWords } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { readStatus } from '../workers/status-read.js';
-import type { WorkerStatus } from '../workers/status.js';
+import { shownStateOf, type WorkerStatus } from '../workers/status.js';
 import type { WorkItem, WorkItemPort } from '../workers/work-items.js';
 
 export interface StatusOptions {
@@ -16,9 +16,6 @@ export interface StatusOptions {
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 
-/** What a person reads as the state: a worker with no live pane is stopped, whatever its last line says. */
-const stateText = (entry: WorkerStatus): string => (entry.running ? entry.state : statusWords.stopped);
-
 const workItemText = (workItem: WorkItem): string =>
   workItem.state === 'unknown' ? statusWords.workItem.unknown : (workItem.item ?? statusWords.workItem.none);
 
@@ -26,7 +23,7 @@ const cellsOf = (entry: WorkerStatus): readonly string[] =>
   [
     entry.id,
     entry.project,
-    stateText(entry),
+    shownStateOf(entry),
     workItemText(entry.workItem),
     entry.idle ? statusWords.idle.yes : statusWords.idle.no,
   ].map((cell) => displayLine(cell));
@@ -68,7 +65,7 @@ export const runStatus = async (
         project: entry.project,
         pane: entry.pane,
         dead: entry.dead,
-        state: stateText(entry),
+        state: shownStateOf(entry),
         contextPct: entry.contextPct,
         mark: entry.mark,
         activityAt: entry.activityAt,
