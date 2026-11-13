@@ -1,6 +1,6 @@
 # factory: design
 
-Status: v3, decided (§9) · Author: factory-design · Date: 2026-11-02
+Status: v3, decided (§9) · Date: 2026-11-02
 Roadmap: `docs/roadmap-v2.md` (proposal).
 
 ## Summary for Dean (one page)
@@ -1594,8 +1594,8 @@ These are the decisions of the current design. They are final until Dean changes
 - The program is written in TypeScript on Node 22+. It fits the engineering rules (Zod, Result types), devflow is TypeScript, and npm is the existing channel. Bash has no schemas, and a JSON state model is hard in Bash 3.2. Go removes the Node need, but it is a new stack in the repos.
 - The name is `factory`, and the npm package is `@dean0x/factory`. The npm name `factory` is taken. A company named Factory sells an AI coding agent, so people can confuse the two.
 - The licence is MIT, like mars and devflow.
-- The code is in the private repo `dean0x/factory`. It goes public when a team member installs it from a release (FAC-M10), if Dean agrees.
-- Before FAC-M10, the only tags are private annotated early-access tags (`git tag -a`) `v0.2.0-ea.N`. Each tag is pushed after the owner's go. The hand-over gives the full commit SHA that the tag points to. The install checks that the tag points to this SHA, and then builds from the SHA, not from the tag name. A pushed tag is never moved, deleted or used again (a fix gets the next N). There is no GitHub Release and no npm publish. The release workflow skips these tags (§4.7).
+- The code is in the public repo `dean0x/factory`.
+- Before FAC-M10, the only tags are annotated early-access tags (`git tag -a`) `v0.2.0-ea.N`. Each tag is pushed after the owner's go. The hand-over gives the full commit SHA that the tag points to. The install checks that the tag points to this SHA, and then builds from the SHA, not from the tag name. A pushed tag is never moved, deleted or used again (a fix gets the next N). There is no GitHub Release and no npm publish. The release workflow skips these tags (§4.7).
 - The state folder is `.factory/`, and the config is `factory.yaml`. The state folder is never `.devflow/`, because devflow writes there.
 - factory ports the Python scripts and the viewer into its own code. So a new machine needs fewer tools, and there is one test suite. The board tool removes most of the render scripts.
 - The factory core has only a generic `proxies` entry. The Subswitch preset is in the devflow setup, so the default setup names no devflow tool (§4.6).
