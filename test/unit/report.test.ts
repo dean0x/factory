@@ -414,6 +414,42 @@ describe('report builder: the lists of counts', () => {
     expect(named(report.board.states)).toEqual(['zzz', ...singles.slice(0, cap - 1)]);
   });
 
+  it('counts a flag field of an item as true and false, and leaves out an item that has no value', async () => {
+    const config = sampleConfigWithBoard({
+      ...sampleBoard(),
+      fields: [{ name: 'urgent', target: 'item', kind: 'flag', required: false }],
+    });
+    const items = [
+      itemRecord('B-1', { status: 'open', urgent: true }),
+      itemRecord('B-2', { status: 'doing', urgent: true }),
+      itemRecord('B-3', { status: 'open', urgent: false }),
+      itemRecord('B-4', { status: 'open' }),
+    ];
+    const report = await reportOf(await fixtureOf({ config, items }));
+    expect(report.board.fields).toEqual([
+      {
+        field: 'urgent',
+        values: [
+          { name: 'true', count: 2 },
+          { name: 'false', count: 1 },
+        ],
+        valuesOmitted: 0,
+      },
+    ]);
+  });
+
+  it('leaves out a name that is empty after the clean-up, and still gives the report', async () => {
+    const hidden = '‮';
+    const items = [
+      itemRecord('B-1', { status: hidden, lane: hidden }),
+      itemRecord('B-2', { status: 'open', lane: 'alpha' }),
+    ];
+    const report = await reportOf(await fixtureOf({ items }));
+    expect(report.board.states).toEqual([{ name: 'open', count: 1 }]);
+    expect(report.board.statesOmitted).toBe(0);
+    expect(lane(report)).toEqual({ field: 'lane', values: [{ name: 'alpha', count: 1 }], valuesOmitted: 0 });
+  });
+
   it('orders the rows by count, highest first, and then by name by code unit', async () => {
     const items = [
       itemRecord('B-1', { status: 'open', lane: 'b' }),
