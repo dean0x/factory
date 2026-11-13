@@ -60,7 +60,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `item estimate` | FAC-M5b |
 | `item list --follow` (the board pane of the live board, with the estimate mark) | FAC-M5b |
 | `worker mark`, `worker list --follow` (the columns of the live board) | FAC-M5b |
-| `check`, `pr`, `issues`, `copies` (list, status) | FAC-M5 |
+| `pr` (watch) | FAC-M5 |
+| `check`, `pr` (merge), `issues`, `copies` (list, status) | FAC-M5 |
 | `lock` (run) | Heavy-test lock (from FAC-M5) |
 | `state` (guard) | FAC-M5 |
 | `release` (check, verify, scope), `copies` (sync, clean) | FAC-M5b |
@@ -179,7 +180,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 **Scope.**
 1. **Local board (F-2).** The `local` connector (files in `.factory/`; also the test double of later connectors), on the operations that FAC-M11 makes the one connector contract (design §4.10). The commands `item`, `request`, `decide <D-n> <option>` (for `local`; FAC-M3 adds `github`) and `queue`. The decision log and the decision profile tools. The board commit helper and the delete-guard hooks. Every write of a board file goes through the board commit helper.
-2. **Check (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `pr watch`, `issues audit`. The dismiss idle window (M5-2): `dismiss --idle` reads the board again just before each stop, and not once before all stops. M5-1b reads the board once to list the idle workers and once more after the pick, so a worker can get an item after the second read and before its stop. M5-1b states this as a limit.
+2. **Check (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `issues audit`. `pr watch` is built (design §4.9): it reads the checks of one PR at one head and never merges. `check` and `pr merge` stay in this item, because they wait for a record that proves a PR and its head commit. The dismiss idle window (M5-2): `dismiss --idle` reads the board again just before each stop, and not once before all stops. M5-1b reads the board once to list the idle workers and once more after the pick, so a worker can get an item after the second read and before its stop. M5-1b states this as a limit.
 3. **`factory copies list|status` (D-55).**
 4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. This item builds the report core without the events. The events stay in FAC-M5. This item also gives the rows for the direct children. The rest of the rollup stays in FAC-M8. `lock run` is no part of this item: the section "Heavy-test lock" holds it. The view slot shows `factory item list`.
 5. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
@@ -538,7 +539,8 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - Before FAC-M3 (after the workspace move in FAC-M7): which private repo holds the decision store of this workspace, and which private git remote holds the state repo (`state.remote`) for a second machine.
 - Before FAC-M3: how the `github` connector holds an epic (design §4.10, "Epics").
 - Answered (FAC-M4): the bound of `worker watch`: 2,880 checks of 30 s, which is 24 hours (`watchPoll` in `src/names.ts`), then `NO CHANGE`.
-- Before the milestone that builds each of the other watch commands (FAC-M11 for `factory watch` with `local` and `artifact`, FAC-M3 for `factory watch` with `github`, FAC-M5 for `pr watch`): the bound of each command. The design gives no value for the number of reads per run of `factory watch` for each connector, and none for the maximum wait of `pr watch`. It also gives no result when the bound or the wait ends. Each value is a named number in `src/names.ts`.
+- Answered (FAC-M5): the bound of `pr watch`: 60 reads, 60 s apart, one `gh` call each (`prWatchPoll` in `src/recipes/software/words.ts`), then `NO CHANGE` with exit 3.
+- Before the milestone that builds each of the other watch commands (FAC-M11 for `factory watch` with `local` and `artifact`, FAC-M3 for `factory watch` with `github`): the bound of each command. The design gives no value for the number of reads per run of `factory watch` for each connector. It also gives no result when the bound ends. Each value is a named number in `src/names.ts`.
 - Before FAC-M5b builds the usage view (F-22): the source of the usage of a subscription other than Claude Code, for example Codex. `session.agent` accepts only `claude` in FAC-M4. The owner decides the worker agent setting for another agent, and where its token and limit data come from. Until then, the usage view lists the Claude Code subscriptions only.
 - Before FAC-M5b builds the usage view (F-22): FAC-M4 task 2 records which quota or cost fields the real status line data has. If the data has no such field, the owner names the other source. A read under `~/.claude` is not a source (F-9).
 - Before FAC-M10: the old local paths in the git history. The owner decides; the history is not rewritten (D-7 A).
