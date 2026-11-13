@@ -1,4 +1,4 @@
-import { lockWords, program } from '../../names.js';
+import { commands, commandText, lockWords, program } from '../../names.js';
 import type { GlossaryEntry } from '../entry.js';
 
 /**
@@ -76,6 +76,9 @@ export const softwareSafetyLines: readonly string[] = [
 
 /** The subcommands of the `pr` command. `check` and `merge` are not built. */
 export const prCommands = { watch: 'watch' } as const;
+
+/** The `pr watch` command as a person types it. The remedy lines and the role text name it. */
+export const prWatchCommand = commandText(`${commands.pr} ${prCommands.watch}`);
 
 /** The flag of `pr watch` that only this recipe owns. The other flags of the command are flags of the core. */
 export const prFlags = { head: 'head' } as const;

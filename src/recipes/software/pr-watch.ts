@@ -9,7 +9,16 @@ import { onPath, toolNames } from '../../core/tools.js';
 import { commands, commandText, flags, flagText } from '../../names.js';
 import type { RecipeHost } from '../entry.js';
 import { githubRepoOf, mergeCheck, parsePrNumber, runPrView, type PrReader } from './github-pr.js';
-import { prCommands, prFlags, prWatchLabels, prWatchPoll, prWatchSchemaId, prWatchWords, type PrWatchResult } from './words.js';
+import {
+  prCommands,
+  prFlags,
+  prWatchCommand,
+  prWatchLabels,
+  prWatchPoll,
+  prWatchSchemaId,
+  prWatchWords,
+  type PrWatchResult,
+} from './words.js';
 
 /*
  * `pr watch` reads the checks of one PR at one head, one `gh pr view` call at a time, and says in one fixed word what happened.
@@ -245,7 +254,7 @@ const LEVELS: Readonly<Record<PrWatchResult, LineLevel>> = {
 };
 
 /** The command that the remedy lines name. */
-const WATCH_LINE = `${commandText(commands.pr)} ${prCommands.watch} PR`;
+const WATCH_LINE = `${prWatchCommand} PR`;
 
 const UNREADABLE_REMEDY = `Check that ${toolNames.gh} is installed and signed in to ${mergeCheck.host}, then run "${WATCH_LINE}" again.`;
 
@@ -290,7 +299,7 @@ const outputOf = (outcome: Outcome, number: number): CommandOutput => {
 const SUBCOMMANDS = Object.values(prCommands).join(', ');
 
 /** The words of a refusal for a project that is not on GitHub. */
-const READER: PrReader = { name: `${commandText(commands.pr)} ${prCommands.watch}`, command: commands.pr, usage: `${prCommands.watch} PR` };
+const READER: PrReader = { name: prWatchCommand, command: commands.pr, usage: `${prCommands.watch} PR` };
 
 /** The label of the PR number in the message of a bad number. */
 const NUMBER_LABEL = 'PR number';

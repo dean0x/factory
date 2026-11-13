@@ -186,7 +186,7 @@ describe('init: the files', () => {
       value: {
         schema_version: STATE_SCHEMA_VERSION,
         created_with: FACTORY_VERSION,
-        blocks: { coordinator: 5, safety: 2, worker: 4, setup: 1, 'setup-worker': 1 },
+        blocks: { coordinator: 6, safety: 2, worker: 4, setup: 1, 'setup-worker': 1 },
       },
     });
   });

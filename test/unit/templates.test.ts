@@ -24,6 +24,7 @@ import {
 } from '../../src/names.js';
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { softwareStages } from '../../src/recipes/software/board.js';
+import { prCommands, prFlags } from '../../src/recipes/software/words.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates, roleBlockRenames } from '../../src/templates/index.js';
 import { coordinatorValuesFor, fillTemplate, workerValuesFor } from '../../src/templates/fill.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
@@ -121,7 +122,7 @@ const summary = (blocks: readonly { name: string; version: number; target: strin
 describe('block templates', () => {
   it('gives layer 1 the coordinator, safety and worker blocks with their versions and targets', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
-      ['coordinator', 5, 'claudeFile'],
+      ['coordinator', 6, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['worker', 4, 'workerFile'],
     ]);
@@ -149,7 +150,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 111],
+    ['coordinator', 40, 112],
     ['manager', 20, 50],
     ['safety', 12, 25],
     ['worker', 40, 64],
@@ -635,6 +636,46 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
     expect(coordinatorOf('acme')).toContain(
       `\`../${dirs.state}/${dirs.orders}/\`: the tasks that the owner wrote. Copy a task into the folder of the worker before you give it.`,
     );
+  });
+});
+
+describe('the coordinator text: the head SHA and the watch of a pull request (AC-5)', () => {
+  const coordinator = (): string => layer1Blocks.find((template) => template.name === 'coordinator')?.body ?? '';
+  const lineStarting = (start: string): string => coordinator().split('\n').find((line) => line.startsWith(start)) ?? '';
+  const verifyLine = (): string => lineStarting('- Treat the report of a worker as a claim.');
+  const mergeLine = (): string => lineStarting('- Merge only at');
+  const watchCommand = `${commandText(commands.pr)} ${prCommands.watch} <number> ${flagText(prFlags.head)} <full SHA>`;
+
+  it('TP-17 asks for a check on the primary source at the exact head SHA before the owner is told a result', () => {
+    expect(verifyLine()).toContain(
+      'Before you tell the owner a result, check it on the primary source at the exact head SHA of the change.',
+    );
+  });
+
+  it('TP-17 keeps the word relay and the owner prefix out of the verify line', () => {
+    expect(verifyLine()).not.toBe('');
+    expect(verifyLine()).not.toMatch(/relay/i);
+    expect(verifyLine()).not.toMatch(/prefix/i);
+  });
+
+  it('TP-18 pins each merge to the full head SHA, with CI green at that SHA', () => {
+    expect(mergeLine()).toContain('Merge only at the full head SHA that you checked, with CI green at that SHA.');
+    expect(mergeLine()).toContain(
+      'Before a merge, check on the primary source that the review is posted and the change is releasable at merge.',
+    );
+  });
+
+  it('TP-18 runs pr watch with the full head SHA as a background task after a push, and says that exit 0 is not an approval', () => {
+    const line = lineStarting('- After a push');
+    expect(line).toContain(`After a push, run \`${watchCommand}\` as a background task.`);
+    expect(line).toContain('Exit 0 is not an approval.');
+  });
+
+  it('TP-18 puts the watch line before the merge line, in the part for the approval points', () => {
+    const text = coordinator();
+    expect(text.indexOf('- After a push')).toBeGreaterThan(text.indexOf('## Approval points'));
+    expect(text.indexOf('- After a push')).toBeLessThan(text.indexOf('- Merge only at'));
+    expect(text.indexOf('- Merge only at')).toBeLessThan(text.indexOf('## Workers'));
   });
 });
 

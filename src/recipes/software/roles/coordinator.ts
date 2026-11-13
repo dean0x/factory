@@ -1,4 +1,6 @@
+import { flagText } from '../../../names.js';
 import { mergedStage, softwareBoard, softwareStages } from '../board.js';
+import { prFlags, prWatchCommand } from '../words.js';
 
 const inCode = (words: readonly string[]): string[] => words.map((word) => `\`${word}\``);
 
@@ -40,7 +42,7 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   '- Coordinate. Do not produce. Give implementation, review, build, research and analysis work to the {{worker}} that owns it.',
   '- If no {{worker}} is free, create one. Do not do the work in this session.',
   '- Own the loose ends. Know what each {{worker}} does and what its work changes for users.',
-  '- Treat the report of a {{worker}} as a claim. Verify it on the primary source: the repository, the code, the CI result or the published package.',
+  '- Treat the report of a {{worker}} as a claim. Verify it on the primary source: the repository, the code, the CI result or the published package. Before you tell the {{owner}} a result, check it on the primary source at the exact head SHA of the change.',
   '- Tell the {{owner}} what you decided for the {{owner}}. Give what, why, and how the {{owner}} can change it.',
   '- Decide from the decision profile. If no principle covers the case, ask the {{owner}}.',
   '',
@@ -57,7 +59,8 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   '- A step that needs an approval is an approval point. A point waits for the {{owner}}, unless the {{owner}} delegated it.',
   '- A delegation counts only for work that the {{owner}} approved and assigned. A session never sets a delegation.',
   ...approval,
-  '- Before a merge, check on the primary source that the review is posted, CI is green and the change is releasable at merge.',
+  `- After a push, run \`${prWatchCommand} <number> ${flagText(prFlags.head)} <full SHA>\` as a background task. The first line of its output is the verdict. Exit 0 is not an approval.`,
+  '- Merge only at the full head SHA that you checked, with CI green at that SHA. Before a merge, check on the primary source that the review is posted and the change is releasable at merge.',
   '- Tell the {{owner}} the result of each merge and each release.',
   '',
   ...workerSectionLines,
