@@ -713,7 +713,7 @@ The command line:
 - `PR` is the number of the pull request: one to nine digits, with no leading zero. Any other value exits with code 2 before any call of `gh`.
 - `--head SHA` is the full commit id of the head to watch: 40 lowercase hex digits. Any other value exits with code 2. Without the flag, the watch pins the head of its first good read.
 - `--project ID` names the project. The config can list more than one project; then the flag is required, else the command exits with code 2. `--home DIR` names the factory folder, as for the other commands.
-- The repo comes from the URL of the project. Only repos on github.com are read. A project with no GitHub URL exits with code 2 before any call of `gh`.
+- The repo comes from the URL of the project. Only repos on github.com are read. A project with no GitHub URL exits with code 2 before any call of `gh`. To correct it, set the `url` of the project to a github.com URL, then run the command again.
 
 The watch:
 
