@@ -353,6 +353,23 @@ describe('report builder: faults', () => {
     expect(error.message).toContain(doc.inProgress);
   });
 
+  it('counts more than 50 different values of one token field, as every worker can have its own lane', async () => {
+    const lanes = reportLimits.maxWorkers;
+    const many = Array.from({ length: lanes }, (_, at) => itemRecord(`B-${at + 1}`, { status: 'done', lane: `lane-${String(at).padStart(3, '0')}` }));
+    const report = await reportOf(await fixtureOf({ items: many }));
+    const lane = report.board.fields.find((field) => field.field === 'lane');
+    expect(lane?.values).toHaveLength(lanes);
+    expect(lanes).toBeGreaterThan(50);
+  });
+
+  it('fails with a remedy that names the real step when a list of counts is over its cap', async () => {
+    const many = Array.from({ length: reportLimits.maxCountRows + 1 }, (_, at) => itemRecord(`B-${at + 1}`, { status: 'done', lane: `lane-${at}` }));
+    const error = errorOf(reportDocOf(await factsOf(await fixtureOf({ items: many }))));
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain(doc.board);
+    expect(error.hint).toContain('fewer different values');
+  });
+
   it('refuses a report over the byte cap, and says how many bytes it has', async () => {
     const report = await reportOf(await fixtureOf());
     const long = 'x'.repeat(reportLimits.maxTextChars);

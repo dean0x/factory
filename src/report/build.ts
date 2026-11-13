@@ -187,7 +187,10 @@ export const checkReport = (input: unknown): CliResult<NodeReport> => {
   const again = `run "${commandText(commands.report)}" again`;
   const parsed = parseReport(input);
   if (!parsed.ok) {
-    return failure(`the report is not valid: ${parsed.error}`, `Run "${commandText(commands.doctor)}" to check the ${places.folder}, then ${again}.`);
+    return failure(
+      `the report is not valid: ${parsed.error}`,
+      `If a list of counts is over its cap, give the items fewer different values in one field of the board. Else run "${commandText(commands.doctor)}" to check the ${places.folder}. Then ${again}.`,
+    );
   }
   const bytes = Buffer.byteLength(reportTextOf(parsed.value), 'utf8');
   if (bytes > reportLimits.maxBytes) {

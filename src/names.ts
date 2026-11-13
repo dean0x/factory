@@ -1327,7 +1327,7 @@ export const statusWords = {
  * that finds a higher number reads no more of the file. A report file has at most `maxBytes` bytes. One build of the report reads at
  * most `maxBuildBytes` bytes from the report files of its children in all. The lists of the report have at most `maxWorkers`,
  * `maxChildren`, `maxRequests` and `maxItems` entries, and the lists of counts (the states, the owner fields and the values of one
- * field) at most `maxCountRows`. A text is at most `maxTextChars` characters, a version text at most `maxVersionChars`, and a
+ * field) at most `maxCountRows`, which is not less than `maxWorkers`, so the lanes of all workers fit in the values of the worker field. A text is at most `maxTextChars` characters, a version text at most `maxVersionChars`, and a
  * count or an age (in whole seconds) at most `maxNumber`.
  */
 export const reportLimits = {
@@ -1338,7 +1338,7 @@ export const reportLimits = {
   maxChildren: 200,
   maxRequests: 500,
   maxItems: 500,
-  maxCountRows: 50,
+  maxCountRows: 200,
   maxTextChars: 200,
   maxVersionChars: 64,
   maxNumber: maxBoardNumber,
