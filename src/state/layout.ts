@@ -60,6 +60,8 @@ export interface Layout {
   readonly coordinatorLastSessionFile: string;
   /** The id of this machine. It is inside the run-time folder, so the state repo never holds it. */
   readonly machineIdFile: string;
+  /** The run marker of `worker watch`: the token of the newest watch run. It is inside the run-time folder, so the state repo never holds it. */
+  readonly watchRunFile: string;
   /** The mark of the active machine. The state repo tracks it. */
   readonly activeMachineFile: string;
   readonly locksDir: string;
@@ -95,6 +97,7 @@ export const layoutOf = (home: string): Layout => {
     heartbeatDir: join(stateDir, stateRel.heartbeat),
     coordinatorLastSessionFile: join(runtimeDir, files.coordinatorLastSession),
     machineIdFile: join(runtimeDir, files.machineId),
+    watchRunFile: join(runtimeDir, files.watchRun),
     activeMachineFile: join(stateDir, files.activeMachine),
     locksDir: join(stateDir, stateRel.locks),
   };

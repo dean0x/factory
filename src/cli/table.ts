@@ -354,7 +354,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerReset)} ID ${flagText(flags.clear)}|${flagText(flags.compact)} [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.ready)} ID]... [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.ready)} ID]... [${flagText(flags.since)} TIME] [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -380,6 +380,13 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         description:
           `With ${workerCommands.watch}: also watch this ${roles.worker}, which waits for an answer of the ${roles.owner}, for example at a dialog. ` +
           `The watch reports it when it is ready: at its prompt or busy. Repeat the flag for more ${roles.worker}s.`,
+      },
+      [flags.since]: {
+        type: 'string',
+        placeholder: 'TIME',
+        description:
+          `With ${workerCommands.watch}: also report a finish of a ${roles.worker} that came after TIME, even when it came before the first check. ` +
+          `TIME is an ISO time in UTC that ends with Z, the time at the end of each line that ${workerCommands.watch} printed on its last run.`,
       },
       [flags.for]: {
         type: 'string',
@@ -420,6 +427,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           compact: given.bool(flags.compact),
           assignment: given.string(flags.assignment),
           ready: given.strings(flags.ready),
+          since: given.string(flags.since),
         },
         registry,
       ),

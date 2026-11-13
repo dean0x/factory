@@ -24,7 +24,7 @@ Rules:
 | 11 | Work copy cleanup | `factory copies clean` | FAC-M5b | 1 call, 1k | 1000 | - |
 | 12 | Typed owner-authority input | `factory worker relay` | FAC-M5 | 1 call, <1k | 1000 | - |
 | 13 | CI watch | `factory pr watch` | FAC-M5 | 1 call, <1k | 1000 | - |
-| 14 | Stopped-worker watch and limit recovery | `factory worker watch`, `factory worker recover` | FAC-M4 (watch), FAC-M5 (recover) | <1k plus (no figure) | 1000 | 15 |
+| 14 | Stopped-worker watch and limit recovery | `factory worker watch`, `factory worker recover` | FAC-M4 (watch), FAC-M5 (recover) | <1k plus (no figure) | 1000 | 33 |
 | 15 | Move of an outside session into tmux | `factory worker adopt` | FAC-M7 | 1 call, <1k | 1000 | - |
 | 16 | Resource check | built into `worker new`; `factory machine` | FAC-M4 | 0–1 call (no figure) | 1000 | 51 |
 | 17 | Coordinator self-compact | `factory self reset` | FAC-M4 | 1 call (no figure) | 1000 | 14 |

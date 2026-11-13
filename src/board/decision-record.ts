@@ -73,7 +73,8 @@ const ESCAPED = /[[\]<>\u0085\p{Zl}\p{Zp}]/gu;
 const jsonText = (text: string): string =>
   JSON.stringify(text).replace(ESCAPED, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
-const isUtcTime = (text: string): boolean => z.iso.datetime().safeParse(text).success;
+/** True when the text is an ISO time in UTC with a `Z` end: the form that the program writes in a record or prints in a report. */
+export const isUtcTime = (text: string): boolean => z.iso.datetime().safeParse(text).success;
 
 /** What the path of a record file comes from: the id and the title of the request, and the time of the record. */
 export interface DecisionRecordPathInput {

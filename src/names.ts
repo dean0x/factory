@@ -194,6 +194,7 @@ export const flags = {
   compact: 'compact',
   assignment: 'assignment',
   ready: 'ready',
+  since: 'since',
   madeBy: 'made-by',
   decision: 'decision',
   ref: 'ref',
@@ -245,6 +246,8 @@ export const files = {
   assignment: 'assignment.md',
   /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
   coordinatorLastSession: 'coordinator-last-session',
+  /** The run marker of `worker watch`, in the run-time folder: it holds the token of the newest watch run of the node. */
+  watchRun: 'worker-watch-run',
   /** The id of this machine, in the run-time folder: made once, and never shared. */
   machineId: 'machine-id',
   /** The mark of the active machine, in the state folder: the state repo tracks it, so it travels with the state. */
@@ -1186,12 +1189,32 @@ export const dismissStopCases: readonly StopCase[] = ['idle'];
 export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
 
 /**
- * The checks of `worker watch`: at most `attempts` checks, each after a wait of `intervalMs`. So a watch lasts at most `attempts` times
- * `intervalMs`, which is 20 minutes. A session that works is stalled when the newer of its event time and its percent time is more than
- * `stalledAfterMs` old. A worker that is new has no last-seen line yet, so a missing line is not a change in the first `lineGraceChecks`
- * checks (the baseline counts as the first). From the check with this index on, or once a valid line was seen, a missing line is a change.
+ * The checks of `worker watch`: at most `attempts` checks after the baseline, each after a wait of `intervalMs`. The watch lasts at
+ * most `capMs`, which is 24 hours, so `attempts` is `capMs` divided by `intervalMs`. A test holds the two numbers together. A session
+ * that works is stalled when the newer of its event time and its percent time is more than `stalledAfterMs` old. A worker that is new
+ * has no last-seen line yet, so a missing line is not a change in the first `lineGraceChecks` checks (the baseline counts as the
+ * first). From the check with this index on, or once a valid line was seen, a missing line is a change. A worker finished when its last
+ * event is `finishEvent` and is newer than the baseline of the worker.
  */
-export const watchPoll = { attempts: 40, intervalMs: 30_000, stalledAfterMs: 900_000, lineGraceChecks: 2 } as const;
+export const watchPoll = {
+  capMs: 86_400_000,
+  attempts: 2_880,
+  intervalMs: 30_000,
+  stalledAfterMs: 900_000,
+  lineGraceChecks: 2,
+  finishEvent: 'Stop',
+} as const;
+
+/**
+ * The run marker of `worker watch`: a new run writes a fresh token of `tokenBytes` random bytes, as lower case hex text and one new
+ * line, to the file `files.watchRun` in the run-time folder. Each check reads the file again, at most `maxBytes`. A text with another
+ * valid token means that a newer run took the marker. A file that is missing, too large or not a token is a lost marker.
+ */
+export const watchRun = {
+  tokenBytes: 16,
+  maxBytes: 128,
+  tokenPattern: /^[0-9a-f]{32}\n$/,
+} as const;
 
 /**
  * The wait after the pane of a worker starts (design 4.11): the launch checks at most `attempts` times, and waits `intervalMs`
@@ -1283,13 +1306,21 @@ export const workerListWords = {
  * The words of the output of `worker watch`. The output holds these words and the ids of workers, and no other text of the pane or of
  * a file. `kinds` names what changed for a worker: the pane ended, the pane is gone, the pane is not the launch of the worker any more,
  * the last-seen line is not valid or does not belong to the worker, a dialog waits for an answer, or the session works and was silent
- * too long.
+ * too long, or its session ended a turn (`finished`). Each line of a report ends with the time of the last check: `lastCheck` and a UTC
+ * time of the form that `--since` accepts. A newer watch run replaces this one (`replaced`), the parent process of the watch changed
+ * (`parentGone`), or the run marker is lost (`markerLost`, a failure with no time).
  */
 export const watchWords = {
   changed: 'CHANGED:',
   noChange: 'NO CHANGE:',
   noWorker: 'NO WORKER:',
   noPane: 'no worker has a pane to watch',
+  lastCheck: 'last check',
+  replaced: 'REPLACED:',
+  replacedBy: 'a newer watch runs',
+  parentGone: 'ENDED:',
+  parentGoneWhy: 'the parent process of the watch changed',
+  markerLost: 'watch marker lost',
   kinds: {
     ended: 'pane ended',
     gone: 'pane gone',
@@ -1299,6 +1330,7 @@ export const watchWords = {
     waits: workerListWords.states.waits,
     stalled: 'stalled?',
     readyAfterBlock: 'ready',
+    finished: 'finished',
   },
 } as const;
 

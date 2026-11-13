@@ -1,4 +1,5 @@
 import { join, relative, resolve } from 'node:path';
+import { isUtcTime } from '../board/decision-record.js';
 import { boardWorkItems } from '../board/work-items.js';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
@@ -72,6 +73,8 @@ export interface WorkerOptions {
   readonly assignment?: string | undefined;
   /** The ids of `--ready`: workers that the watch waits for after a block. Only `watch` reads them. Absent: none. */
   readonly ready?: readonly string[];
+  /** The text of `--since`: a time that the watch has to start from. Only `watch` reads it. Absent: no such time. */
+  readonly since?: string | undefined;
 }
 
 const SUBCOMMANDS = Object.values(workerCommands).join(', ');
@@ -664,8 +667,20 @@ const runReset = async (
 };
 
 /**
- * `worker watch [ID]...`: reports the first change of the named workers, or of every recorded worker. The ids are checked by the
- * watch (`requireRecord`). The watch never types, signals or writes.
+ * The time of `--since`: an ISO time in UTC, the form that the watch prints at the end of its lines. Absent: none. Any other text is
+ * exit 2, so the time that the watch starts from is a time that the program wrote or a person typed in full.
+ */
+const parseSince = (text: string | undefined): CliResult<string | null> => {
+  if (text === undefined) return ok(null);
+  return isUtcTime(text)
+    ? ok(text)
+    : needsUsage(`${flagText(flags.since)} needs an ISO time in UTC that ends with Z, the form that ${commandText(commandLines.workerWatch)} prints`);
+};
+
+/**
+ * `worker watch [ID]...`: reports the first change of the named workers, or of every recorded worker. The words of the command line
+ * are checked first (exit 2), then the node, and the ids by the watch (`requireRecord`). The watch never types or signals. It writes
+ * only its own run marker.
  */
 const runWatch = async (
   deps: Deps,
@@ -673,12 +688,20 @@ const runWatch = async (
   args: readonly string[],
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
+  const since = parseSince(options.since);
+  if (!since.ok) return since;
   const located = await locateNode(deps, options, registry);
   if (!located.ok) return located;
   const home = located.value;
   const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return loaded;
-  const watched = await watchWorkers(deps, { home, config: loaded.value, workerIds: args, readyIds: options.ready ?? [] });
+  const watched = await watchWorkers(deps, {
+    home,
+    config: loaded.value,
+    workerIds: args,
+    readyIds: options.ready ?? [],
+    since: since.value,
+  });
   return watched.ok ? ok(watchOutput(watched.value)) : watched;
 };
 
@@ -693,16 +716,19 @@ const requireNoResetFlags = (options: WorkerOptions): CliResult<void> => {
 const requireNoAssignment = (options: WorkerOptions): CliResult<void> =>
   options.assignment === undefined ? ok(undefined) : needsUsage(`${flagText(flags.assignment)} belongs to ${workerCommands.new} only`);
 
-/** The flag `--ready` belongs to `watch`. Another subcommand refuses it (exit 2), so no flag is taken and then ignored. */
-const requireNoReady = (options: WorkerOptions): CliResult<void> =>
-  (options.ready ?? []).length === 0 ? ok(undefined) : needsUsage(`${flagText(flags.ready)} belongs to ${workerCommands.watch} only`);
+/** The flags `--ready` and `--since` belong to `watch`. Another subcommand refuses them (exit 2), so no flag is taken and then ignored. */
+const requireNoWatchFlags = (options: WorkerOptions): CliResult<void> => {
+  const given = [...((options.ready ?? []).length === 0 ? [] : [flags.ready]), ...(options.since === undefined ? [] : [flags.since])];
+  if (given.length === 0) return ok(undefined);
+  return needsUsage(`${given.map(flagText).join(' and ')} ${given.length === 1 ? 'belongs' : 'belong'} to ${workerCommands.watch} only`);
+};
 
 /** The flags that belong to one subcommand only. Every other subcommand refuses them. */
 const requireOwnFlags = (subcommand: string, options: WorkerOptions): CliResult<void> => {
   const stray = subcommand === workerCommands.reset ? ok(undefined) : requireNoResetFlags(options);
   if (!stray.ok) return stray;
-  const ready = subcommand === workerCommands.watch ? ok(undefined) : requireNoReady(options);
-  if (!ready.ok) return ready;
+  const watchFlags = subcommand === workerCommands.watch ? ok(undefined) : requireNoWatchFlags(options);
+  if (!watchFlags.ok) return watchFlags;
   return subcommand === workerCommands.new ? ok(undefined) : requireNoAssignment(options);
 };
 
