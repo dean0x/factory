@@ -296,7 +296,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     name: commands.report,
     summary:
       `Show the report of the ${roles.node}: its ${roles.worker}s, its board counts, its ${requestWords.requests} and its children. ` +
-      `It writes the event file that the parent ${roles.node} reads.`,
+      `It writes the report file that the parent ${roles.node} reads.`,
     usage: `${commandText(commands.report)} [${flagText(flags.home)} DIR] [${flagText(flags.since)} CURSOR]`,
     options: {
       [flags.home]: foundHomeOption,
