@@ -513,6 +513,68 @@ describe('start:the delete guard of the state repo (TP-6, TP-14)', () => {
   });
 });
 
+describe('start:the reviews folder (TP-31)', () => {
+  const REVIEWS = layoutOf(HOME).reviewsDir;
+
+  it('makes the reviews folder with mode 0700 in a real run', async () => {
+    const { deps } = make();
+    await succeeded(deps);
+    expect(deps.dirs.has(REVIEWS)).toBe(true);
+    expect(deps.modes.get(REVIEWS)).toBe(0o700);
+  });
+
+  it('makes no folder in a dry run', async () => {
+    const { deps } = make();
+    await succeeded(deps, { dryRun: true });
+    expect(deps.dirs.has(REVIEWS)).toBe(false);
+  });
+
+  it('makes the folder also when the session runs already', async () => {
+    const { deps } = make({ tty: true, tmux: { sessions: { demo: HOME } } });
+    await succeeded(deps);
+    expect(deps.modes.get(REVIEWS)).toBe(0o700);
+  });
+
+  it('keeps the files of a folder that is there, and sets its mode to 0700', async () => {
+    const { deps } = make();
+    deps.seed(`${REVIEWS}/item-1.md`, 'Looks fine.\n');
+    deps.modes.set(REVIEWS, 0o755);
+    await succeeded(deps);
+    expect(deps.files.get(`${REVIEWS}/item-1.md`)).toBe('Looks fine.\n');
+    expect(deps.modes.get(REVIEWS)).toBe(0o700);
+  });
+
+  it.each([
+    ['a folder that another user owns', (deps: FakeDeps) => deps.owners.set(REVIEWS, (deps.uid ?? 0) + 1)],
+    ['a folder that a group can write', (deps: FakeDeps) => deps.modes.set(REVIEWS, 0o770)],
+  ])('is a security stop, and starts no session, for %s', async (_name, change) => {
+    const { deps, tmux } = make();
+    deps.seedDir(REVIEWS);
+    change(deps);
+    const result = await startFactory(deps);
+    expect(!result.ok && exitCodeOf[result.error.kind]).toBe(4);
+    expect(!result.ok && result.error.message).toContain(REVIEWS);
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
+  });
+
+  it('is a security stop for a link, and starts no session', async () => {
+    const links: Record<string, string> = {};
+    const { deps, tmux } = make({ links });
+    links[REVIEWS] = '/elsewhere';
+    const result = await startFactory(deps);
+    expect(!result.ok && exitCodeOf[result.error.kind]).toBe(4);
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
+  });
+
+  it('is a failure for a file in the place of the folder, and starts no session', async () => {
+    const { deps, tmux } = make();
+    deps.seed(REVIEWS, 'not a folder');
+    const result = await startFactory(deps);
+    expect(!result.ok && exitCodeOf[result.error.kind]).toBe(1);
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
+  });
+});
+
 describe('start:attach', () => {
   it('attaches with the terminal when a person types and reads, outside tmux', async () => {
     const { deps, tmux } = make({ tty: true });
@@ -921,7 +983,7 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
   const otherFiles = (deps: FakeDeps): string =>
     JSON.stringify(
       [...deps.files.entries()].filter(([path]) => path !== SETTINGS_FILE && path !== MACHINE_ID_FILE && path !== MARK_FILE).sort(),
-    ) + [...deps.dirs].filter((path) => path !== layoutOf(HOME).locksDir).sort().join(',');
+    ) + [...deps.dirs].filter((path) => path !== layoutOf(HOME).locksDir && path !== layoutOf(HOME).reviewsDir).sort().join(',');
   const failed = async (deps: FakeDeps, options: Partial<StartOptions> = {}) => {
     const result = await startFactory(deps, options);
     if (result.ok) throw new Error('start should have stopped');

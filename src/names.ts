@@ -196,11 +196,13 @@ export const flags = {
   approval: 'approval',
   yes: 'yes',
   idle: 'idle',
+  closed: 'closed',
   for: 'for',
   clear: 'clear',
   compact: 'compact',
   assignment: 'assignment',
   ready: 'ready',
+  since: 'since',
   madeBy: 'made-by',
   decision: 'decision',
   ref: 'ref',
@@ -214,7 +216,6 @@ export const flags = {
   stage: 'stage',
   all: 'all',
   follow: 'follow',
-  since: 'since',
   roadmap: 'roadmap',
   question: 'question',
   option: 'option',
@@ -253,6 +254,8 @@ export const files = {
   assignment: 'assignment.md',
   /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
   coordinatorLastSession: 'coordinator-last-session',
+  /** The run marker of `worker watch`, in the run-time folder: it holds the token of the newest watch run of the node. */
+  watchRun: 'worker-watch-run',
   /** The id of this machine, in the run-time folder: made once, and never shared. */
   machineId: 'machine-id',
   /** The mark of the active machine, in the state folder: the state repo tracks it, so it travels with the state. */
@@ -294,6 +297,8 @@ export const dirs = {
   workers: 'workers',
   /** The folder of the messages for a worker, inside its folder. The session of the worker gets it with `--add-dir`. */
   inbox: 'inbox',
+  /** The folder of the review results in the state folder, one place for the whole node. Git ignores it, and `start` makes it private. */
+  reviews: 'reviews',
   /** The event file folder in the state folder: it holds the report of this node for the parent node. Git ignores it. */
   outbox: 'outbox',
   /** The folder of the resume notes of the coordinator in the state folder: one file for each node, named by the node id. */
@@ -1198,12 +1203,32 @@ export const dismissStopCases: readonly StopCase[] = ['idle'];
 export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
 
 /**
- * The checks of `worker watch`: at most `attempts` checks, each after a wait of `intervalMs`. So a watch lasts at most `attempts` times
- * `intervalMs`, which is 20 minutes. A session that works is stalled when the newer of its event time and its percent time is more than
- * `stalledAfterMs` old. A worker that is new has no last-seen line yet, so a missing line is not a change in the first `lineGraceChecks`
- * checks (the baseline counts as the first). From the check with this index on, or once a valid line was seen, a missing line is a change.
+ * The checks of `worker watch`: at most `attempts` checks after the baseline, each after a wait of `intervalMs`. The watch lasts at
+ * most `capMs`, which is 24 hours, so `attempts` is `capMs` divided by `intervalMs`. A test holds the two numbers together. A session
+ * that works is stalled when the newer of its event time and its percent time is more than `stalledAfterMs` old. A worker that is new
+ * has no last-seen line yet, so a missing line is not a change in the first `lineGraceChecks` checks (the baseline counts as the
+ * first). From the check with this index on, or once a valid line was seen, a missing line is a change. A worker finished when its last
+ * event is `finishEvent` and is newer than the baseline of the worker.
  */
-export const watchPoll = { attempts: 40, intervalMs: 30_000, stalledAfterMs: 900_000, lineGraceChecks: 2 } as const;
+export const watchPoll = {
+  capMs: 86_400_000,
+  attempts: 2_880,
+  intervalMs: 30_000,
+  stalledAfterMs: 900_000,
+  lineGraceChecks: 2,
+  finishEvent: 'Stop',
+} as const;
+
+/**
+ * The run marker of `worker watch`: a new run writes a fresh token of `tokenBytes` random bytes, as lower case hex text and one new
+ * line, to the file `files.watchRun` in the run-time folder. Each check reads the file again, at most `maxBytes`. A text with another
+ * valid token means that a newer run took the marker. A file that is missing, too large or not a token is a lost marker.
+ */
+export const watchRun = {
+  tokenBytes: 16,
+  maxBytes: 128,
+  tokenPattern: /^[0-9a-f]{32}\n$/,
+} as const;
 
 /**
  * The wait after the pane of a worker starts (design 4.11): the launch checks at most `attempts` times, and waits `intervalMs`
@@ -1295,13 +1320,21 @@ export const workerListWords = {
  * The words of the output of `worker watch`. The output holds these words and the ids of workers, and no other text of the pane or of
  * a file. `kinds` names what changed for a worker: the pane ended, the pane is gone, the pane is not the launch of the worker any more,
  * the last-seen line is not valid or does not belong to the worker, a dialog waits for an answer, or the session works and was silent
- * too long.
+ * too long, or its session ended a turn (`finished`). Each line of a report ends with the time of the last check: `lastCheck` and a UTC
+ * time of the form that `--since` accepts. A newer watch run replaces this one (`replaced`), the parent process of the watch changed
+ * (`parentGone`), or the run marker is lost (`markerLost`, a failure with no time).
  */
 export const watchWords = {
   changed: 'CHANGED:',
   noChange: 'NO CHANGE:',
   noWorker: 'NO WORKER:',
   noPane: 'no worker has a pane to watch',
+  lastCheck: 'last check',
+  replaced: 'REPLACED:',
+  replacedBy: 'a newer watch runs',
+  parentGone: 'ENDED:',
+  parentGoneWhy: 'the parent process of the watch changed',
+  markerLost: 'watch marker lost',
   kinds: {
     ended: 'pane ended',
     gone: 'pane gone',
@@ -1311,6 +1344,7 @@ export const watchWords = {
     waits: workerListWords.states.waits,
     stalled: 'stalled?',
     readyAfterBlock: 'ready',
+    finished: 'finished',
   },
 } as const;
 
@@ -1535,14 +1569,23 @@ export const treeKeys = {
  * The rules and the words of `dismiss` (design 4.11). The work of a worker is pushed when, after a fetch of `remote`, the head of its
  * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run and the free
  * name at most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
- * files. The table of `--idle` has the columns `columns`.
+ * files. The dry run also names at most `maxInboxShown` of the inbox files that the removal deletes. The table of `--idle` has the
+ * columns `columns`. A refusal and the decision row of `--closed` name at most `maxItemsNamed` item ids.
  */
 export const dismissWords = {
   remote: 'origin',
   stuck: 'STUCK:',
   maxIgnoredShown: 20,
   maxFilesNamed: 5,
-  columns: { id: 'ID', project: 'PROJECT', state: 'STATE', pushed: 'PUSHED' },
+  /** The most inbox files that the dry run names. The read takes one name more, to know that the inbox holds more. */
+  maxInboxShown: 20,
+  /** The most item ids that a line of the closed path names. The decision text of a board write is at most 500 characters. */
+  maxItemsNamed: 10,
+  columns: { id: 'ID', project: 'PROJECT', state: 'STATE', pushed: 'PUSHED', ignored: 'IGNORED' },
+  /** What the removal deletes, as the line about a list of files names it. */
+  fileKinds: { ignored: 'ignored', inbox: dirs.inbox },
+  /** The cell of the ignored count for a worker whose files are not read: its work is not pushed, so it is not freed. */
+  noCount: '-',
   pushed: { yes: 'yes', no: 'no' },
 } as const;
 
@@ -1762,7 +1805,7 @@ export const values = {
   /** What an owner field holds: one value of a list, a flag, or one free token. */
   boardKinds: ['values', 'flag', 'token'],
   defaultWatchInterval: '5m',
-  /** A worker with no activity for this time, and no open work, is idle. */
+  /** A worker at its prompt with no event for this time is idle. */
   defaultIdleAfter: '2h',
 } as const;
 
@@ -2098,6 +2141,7 @@ const pathValues: Readonly<Record<string, string>> = {
   workersDir: `${inState(dirs.workers)}/`,
   resumeDir: `${inState(dirs.resume)}/`,
   nodeInboxDir: `${inState(dirs.inbox)}/`,
+  reviewsDir: `${inState(dirs.reviews)}/`,
 };
 
 /** The values for the placeholders of the templates, for example {{worker}} and {{Worker}}. */
@@ -2126,6 +2170,11 @@ export const templateValues: Readonly<Record<string, string>> = {
   resumeFile: files.resume,
   workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
   workerWatchCommand: workerCommandText(workerCommands.watch),
+  dismissCommand: commandText(commands.dismiss),
+  lastCheckWord: watchWords.lastCheck,
+  replacedWord: watchWords.replaced,
+  markerLostWord: watchWords.markerLost,
+  paneGoneWord: watchWords.kinds.gone,
   workerResetCommand: workerCommandText(workerCommands.reset),
   nodeSendCommand: `${commandText(commandLines.nodeSend)} <id> ${flagText(flags.file)} FILE`,
   inboxNotice: messageHeader.notice,
@@ -2153,6 +2202,8 @@ export const templateValues: Readonly<Record<string, string>> = {
   compactFlag: flagText(flags.compact),
   yesFlag: flagText(flags.yes),
   readyFlag: flagText(flags.ready),
+  sinceFlag: flagText(flags.since),
+  closedFlag: flagText(flags.closed),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,

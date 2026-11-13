@@ -1,5 +1,6 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { boardWorkItems } from '../board/work-items.js';
+import { boardDecisionLog } from '../commands/board-open.js';
 import { runDecide } from '../commands/decide.js';
 import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
@@ -313,9 +314,11 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     name: commands.dismiss,
     summary:
       `End a ${roles.worker} and free its work copy, when its work is pushed. It changes nothing until ${flagText(flags.yes)}. ` +
-      `With ${flagText(flags.idle)}, list the idle ${roles.worker}s and pick which to dismiss.`,
+      `With ${flagText(flags.idle)}, list the idle ${roles.worker}s and pick which to dismiss. ` +
+      `With ${flagText(flags.closed)}, the ${roles.coordinator} frees a finished ${roles.worker} in its ${places.session}.`,
     usage: [
       `${commandText(commands.dismiss)} ID [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+      `${commandText(commands.dismiss)} ID ${flagText(flags.closed)} [${flagText(flags.home)} DIR]`,
       `${commandText(commands.dismiss)} ${flagText(flags.idle)} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
@@ -329,12 +332,25 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'boolean',
         description: `Free the ${roles.worker}: end its pane, remove its work copy, and delete its record. Not allowed inside a ${places.session}.`,
       },
+      [flags.closed]: {
+        type: 'boolean',
+        description:
+          `Free the ${roles.worker} in the pane of the ${roles.coordinator}, only when an item of the ${roles.worker} is closed, no other item names it, ` +
+          `its branch is pushed and its work copy is clean. It logs one decision first. Every other case is a step of the ${roles.owner}.`,
+      },
     },
     run: (given, deps) =>
       runDismiss(
         deps,
-        { home: given.string(flags.home), words: given.positionals(), idle: given.bool(flags.idle), yes: given.bool(flags.yes) },
+        {
+          home: given.string(flags.home),
+          words: given.positionals(),
+          idle: given.bool(flags.idle),
+          yes: given.bool(flags.yes),
+          closed: given.bool(flags.closed),
+        },
         registry,
+        boardDecisionLog,
         boardWorkItems(registry),
       ),
   },
@@ -373,7 +389,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerReset)} ID ${flagText(flags.clear)}|${flagText(flags.compact)} [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.ready)} ID]... [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.ready)} ID]... [${flagText(flags.since)} TIME] [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -399,6 +415,13 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         description:
           `With ${workerCommands.watch}: also watch this ${roles.worker}, which waits for an answer of the ${roles.owner}, for example at a dialog. ` +
           `The watch reports it when it is ready: at its prompt or busy. Repeat the flag for more ${roles.worker}s.`,
+      },
+      [flags.since]: {
+        type: 'string',
+        placeholder: 'TIME',
+        description:
+          `With ${workerCommands.watch}: also report a finish of a ${roles.worker} that came after TIME, even when it came before the first check. ` +
+          `TIME is an ISO time in UTC that ends with Z, the time at the end of each line that ${workerCommands.watch} printed on its last run.`,
       },
       [flags.for]: {
         type: 'string',
@@ -439,6 +462,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           compact: given.bool(flags.compact),
           assignment: given.string(flags.assignment),
           ready: given.strings(flags.ready),
+          since: given.string(flags.since),
         },
         registry,
       ),

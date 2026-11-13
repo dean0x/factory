@@ -177,7 +177,7 @@ export const renderSharedConfig = (shared: SharedConfig): string => {
       1,
       keys.limits.idleAfter,
       core.limits.idle_after,
-      `from 1m to 24h: a ${roles.worker} with no activity for this time may be idle`,
+      `from 1m to 24h: a ${roles.worker} at its prompt with no event for this time is idle`,
     ),
     '',
     `${keys.root.tracker}:`,

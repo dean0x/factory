@@ -69,6 +69,8 @@ export interface GitFixture {
   readonly stashes?: Readonly<Record<string, number>>;
   /** The files that git ignores and that exist, by folder. `git status --ignored` lists them as `!!` entries. */
   readonly ignoredFiles?: Readonly<Record<string, readonly string[]>>;
+  /** The text of the error of the read of the ignored files (`git status --ignored`), by folder. The read then fails with exit code 128. */
+  readonly ignoredReadFails?: Readonly<Record<string, string>>;
   /** The text of the error of `git worktree remove`, by the folder that git runs in. The command then fails with exit code 128. */
   readonly worktreeRemoveFails?: Readonly<Record<string, string>>;
   /**
@@ -271,6 +273,8 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       return exited(0, Array.from({ length: count }, (_, index) => `stash@{${index}}\n`).join(''));
     }
     if (rest === 'status --porcelain -z --ignored') {
+      const refused = fixture.ignoredReadFails?.[dir];
+      if (refused !== undefined) return exited(128, '', `${refused}\n`);
       const ignored = (fixture.ignoredFiles?.[dir] ?? []).map((path) => `!! ${path}\0`).join('');
       return exited(0, `${fixture.status?.[dir] ?? ''}${ignored}`);
     }

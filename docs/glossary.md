@@ -51,9 +51,11 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **backup file** (was: block backup): A backup file keeps the old text of a block that factory writes again. Its name shows the block and the time.
 - **terminal window** (was: TTY): A terminal window is a window where you type commands. Some steps need one, because they ask you a question.
 - **last seen** (was: heartbeat): Last seen is a file for each session. It shows the last activity, the session id and the context percent.
+- **idle**: A worker is idle when its session waits at its prompt for longer than `limits.idle_after`. A short wait is not idle.
 - **worker window** (was: bench window): The worker window is the screen window that holds the worker sessions. Its name is `workers`.
 - **event file** (was: outbox): The event file is the digest of a node, in `.factory/outbox/`. A script writes it, and a reader follows it.
-- **inbox**: The inbox is the assignment folder of a worker. It holds the assignment files and the resume notes of that worker.
+- **inbox**: The inbox is the assignment folder of a worker. It holds the assignment files and the resume notes of that worker. A dismiss deletes it.
+- **reviews folder**: The reviews folder is `.factory/reviews/`. The coordinator keeps the review results of the workers there. A dismiss never deletes it.
 - **digest**: A digest is a short summary of a node: its workers, their work items and the requests that wait for the owner.
 - **proxy**: A proxy is a server that passes the model calls on. Factory uses one only when the config names it and it answers.
 
