@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { probeChildren } from '../../src/comms/children.js';
 import type { PingResult, Transport } from '../../src/comms/transport.js';
+import { childReasons } from '../../src/names.js';
 
 const transportOf = (answers: Record<string, PingResult>): { transport: Transport; pinged: string[] } => {
   const pinged: string[] = [];
@@ -13,6 +14,9 @@ const transportOf = (answers: Record<string, PingResult>): { transport: Transpor
       },
       deliver: async () => {
         throw new Error('a probe never delivers');
+      },
+      report: async () => {
+        throw new Error('a probe never reads a report');
       },
     },
   };
@@ -39,11 +43,17 @@ describe('probe the children', () => {
     ]);
   });
 
-  it('marks a child that answers with another id as unknown', async () => {
-    const { transport } = transportOf({ 'file:///c': { kind: 'known', id: 'other', layer: 1, schema: 2 } });
+  it('marks a child that answers with another id as a mismatch, with the fixed reason and no text of the child', async () => {
+    const { transport } = transportOf({ 'file:///c': { kind: 'known', id: 'stranger', layer: 1, schema: 2 } });
     const [row] = await probeChildren(transport, [{ id: 'c', address: 'file:///c' }]);
-    expect(row).toMatchObject({ status: 'unknown', layer: null });
-    expect(row?.reason).toBe('that factory folder holds the id other, not c');
+    expect(row).toEqual({
+      id: 'c',
+      address: 'file:///c',
+      layer: null,
+      status: 'mismatch',
+      reason: childReasons.otherId,
+    });
+    expect(row?.reason).not.toContain('stranger');
   });
 
   it('keeps the order of the config and pings each child once', async () => {

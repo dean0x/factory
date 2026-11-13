@@ -35,7 +35,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { boardWarnPercent, checkIds, files, instructionFiles, maxFileBytes } from '../../src/names.js';
+import { boardWarnPercent, checkIds, childReasons, files, instructionFiles, maxFileBytes } from '../../src/names.js';
 import { workerPathsOf } from '../../src/state/layout.js';
 import { inspectState } from '../../src/state/load.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -1436,6 +1436,24 @@ describe('doctor: the children', () => {
     const result = await probe(deps);
     expect(result.level).toBe('warn');
     expect(result.text).toBe('unknown: web (no factory.yaml found there)');
+  });
+
+  it('fails for a child that holds another id, and names the child and the fixed reason only', async () => {
+    const deps = makeDeps();
+    writeConfig(deps, layer2With([{ id: 'web', address: 'file:///w/web-factory' }]));
+    childAt(deps, '/w/web-factory', 'stranger', 1);
+    const result = await probe(deps);
+    expect(result.level).toBe('fail');
+    expect(result.text).toBe(`mismatch: web (${childReasons.otherId})`);
+  });
+
+  it('fails and lists both problems when one child holds another id and another is unknown', async () => {
+    const deps = makeDeps();
+    writeConfig(deps, layer2With([{ id: 'web', address: 'file:///w/web-factory' }, { id: 'api', address: 'file:///w/api-factory' }]));
+    childAt(deps, '/w/web-factory', 'stranger', 1);
+    const result = await probe(deps);
+    expect(result.level).toBe('fail');
+    expect(result.text).toBe(`mismatch: web (${childReasons.otherId}); unknown: api (no factory.yaml found there)`);
   });
 
   it('fails for a child on the wrong layer, and names the layer that is needed', async () => {

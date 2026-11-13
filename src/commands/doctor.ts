@@ -301,8 +301,8 @@ const plural = (count: number, one: string, many: string): string => (count === 
 
 /**
  * Ping each child once. A child that does not answer is a warning, because a node can be off. A child on a layer other
- * than the one below this node is a failure, because the config is wrong. A child with the id of a worker is a failure too:
- * workers and children share one id space.
+ * than the one below this node is a failure, because the config is wrong. A child that shows another id than the config
+ * lists is a failure too. So is a child with the id of a worker: workers and children share one id space.
  */
 export const checkChildren = async (
   deps: Deps,
@@ -330,8 +330,9 @@ export const checkChildren = async (
   const unchecked = sharedIds.flatMap(({ id, taken }) =>
     taken.ok ? [] : [`cannot compare ${id} with the ${roles.worker} ids: ${taken.error.message}`],
   );
+  const mismatch = rows.flatMap((row) => (row.status === 'mismatch' ? [`mismatch: ${row.id} (${row.reason})`] : []));
   const unknown = rows.flatMap((row) => (row.status === 'unknown' ? [`unknown: ${row.id} (${row.reason})`] : []));
-  const problems = [...wrong, ...overlap, ...unchecked, ...unknown];
+  const problems = [...wrong, ...mismatch, ...overlap, ...unchecked, ...unknown];
   if (problems.length === 0) {
     return check(
       checkIds.children,
@@ -339,7 +340,7 @@ export const checkChildren = async (
       `${rows.length} ${plural(rows.length, 'child answers', 'children answer')}, all on layer ${needed}`,
     );
   }
-  return check(checkIds.children, wrong.length + overlap.length > 0 ? 'fail' : 'warn', problems.join('; '));
+  return check(checkIds.children, wrong.length + mismatch.length + overlap.length > 0 ? 'fail' : 'warn', problems.join('; '));
 };
 
 /** A block that is not as the layer needs it, and the command that fixes it. */

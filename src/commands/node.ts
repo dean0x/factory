@@ -1,8 +1,9 @@
 import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
-import { removedByDisplay, type CommandOutput, type OutLine } from '../cli/output.js';
+import { displayLine, removedByDisplay, type CommandOutput, type OutLine } from '../cli/output.js';
 import { childTarget } from '../comms/address.js';
 import { probeChildren, type ChildRow } from '../comms/children.js';
 import type { DeliverResult } from '../comms/deliver.js';
+import type { ReportCounts } from '../comms/report-schema.js';
 import { fileTransport } from '../comms/transport.js';
 import { addChildText, removeChildText } from '../config/edit.js';
 import { loadConfig, parseConfigTexts, readNodeIdentity, settleLocalMode } from '../config/load.js';
@@ -20,17 +21,23 @@ import {
   files,
   flags,
   flagText,
+  maxDisplayWidth,
   maxFileBytes,
   nodeCommands,
   nodeSendReasons,
   places,
   program,
+  reportWords,
   roles,
   schemaIds,
   sendTools,
   sessionNames,
+  treeKeys,
+  treeLimits,
+  treeWords,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
+import { walkTree, type TreeRow, type TreeWalk } from '../report/tree.js';
 import { textHasToken } from '../safety/secrets.js';
 import { layoutOf } from '../state/layout.js';
 import { readAssignment } from '../workers/assignment.js';
@@ -98,18 +105,27 @@ const openNode = async (
   });
 };
 
+/** Text of a child as one clean cell of text output: cleaned of hidden characters and cut to the display width. */
+const cleanCell = (text: string): string => displayLine(text, maxDisplayWidth);
+
+/** The text rows of the child list. Each cell is cleaned and cut to the display width before the columns are measured. */
 const rowLines = (rows: readonly ChildRow[]): OutLine[] => {
   if (rows.length === 0) return [{ level: 'text', text: 'No children.' }];
-  const idWidth = Math.max(...rows.map((row) => row.id.length));
-  const addressWidth = Math.max(...rows.map((row) => row.address.length));
-  return rows.map((row): OutLine => {
-    const layer = row.layer === null ? '-' : `layer ${row.layer}`;
-    const state = row.status === 'ok' ? 'ok' : `unknown: ${row.reason ?? 'no reason'}`;
-    return {
-      level: row.status === 'ok' ? 'ok' : 'warn',
-      text: `${row.id.padEnd(idWidth)}  ${row.address.padEnd(addressWidth)}  ${layer}  ${state}`,
-    };
-  });
+  const cells = rows.map((row) => ({
+    level: row.status === 'ok' ? ('ok' as const) : ('warn' as const),
+    id: cleanCell(row.id),
+    address: cleanCell(row.address),
+    layer: cleanCell(row.layer === null ? '-' : `layer ${row.layer}`),
+    state: row.status === 'ok' ? 'ok' : `${row.status}: ${cleanCell(row.reason ?? 'no reason')}`,
+  }));
+  const idWidth = Math.max(...cells.map((cell) => cell.id.length));
+  const addressWidth = Math.max(...cells.map((cell) => cell.address.length));
+  return cells.map(
+    (cell): OutLine => ({
+      level: cell.level,
+      text: `${cell.id.padEnd(idWidth)}  ${cell.address.padEnd(addressWidth)}  ${cell.layer}  ${cell.state}`,
+    }),
+  );
 };
 
 const childrenOutput = async (
@@ -128,6 +144,104 @@ const childrenOutput = async (
       layer: node.config.core.node.layer,
       ...(change === undefined ? {} : { change }),
       children: rows,
+    },
+    warnings: node.notes,
+    failed: false,
+  };
+};
+
+/** The indent of a line of the tree, for each depth. */
+const TREE_INDENT = '  ';
+
+const countsText = (counts: ReportCounts): string => {
+  const words = reportWords.summary;
+  return [
+    `${words.workers} ${counts.workers}`,
+    `${words.inProgress} ${counts.inProgress}`,
+    `${words.requests} ${counts.requests}`,
+    `${words.children} ${counts.children}`,
+  ].join(', ');
+};
+
+/**
+ * One line of the tree: the indent of the depth, then the id, the state with its fixed reason, the counts, the age and the mark of
+ * the node whose report gave the entry. Each part is text of a child or of a fixed reason, so each one is cleaned and cut to the
+ * display width.
+ */
+const treeLine = (row: TreeRow): OutLine => {
+  const { report } = row;
+  const parts = [
+    report.id,
+    row.reason === null ? row.state : `${row.state}: ${row.reason}`,
+    ...(report.counts === null ? [] : [countsText(report.counts)]),
+    ...(report.age === null ? [] : [`${report.age}${reportWords.ageUnit}`]),
+    ...(report.reportedBy === null ? [] : [`${treeWords.reportedBy} ${report.reportedBy}`]),
+  ];
+  return {
+    level: row.state === reportWords.childStates.ok ? 'ok' : 'warn',
+    text: `${TREE_INDENT.repeat(row.depth)}${parts.map(cleanCell).join('  ')}`,
+  };
+};
+
+/** The node of the document. The text of the child is in the one field `report`, which names the file that it came from. */
+const treeNode = (row: TreeRow): Record<string, unknown> => {
+  const { node, report } = treeKeys;
+  return {
+    [node.depth]: row.depth,
+    [node.state]: row.state,
+    [node.reason]: row.reason,
+    [node.report]: {
+      [report.source]: row.report.source,
+      [report.id]: row.report.id,
+      [report.address]: row.report.address,
+      [report.layer]: row.report.layer,
+      [report.counts]: row.report.counts,
+      [report.age]: row.report.age,
+      [report.reportedBy]: row.report.reportedBy,
+    },
+  };
+};
+
+/**
+ * The output of `node tree`: the verdict line, one line for each row of the walk, and the line that says the line cap cut the list.
+ * The verdict is `CHECK:` when any row is not `ok`. The document holds the same rows. A node that does not read is a row, so the
+ * command does not fail for it.
+ */
+export const treeOutput = (
+  node: { readonly home: string; readonly config: FactoryConfig; readonly notes: readonly string[] },
+  walk: TreeWalk,
+): CommandOutput => {
+  const { id, layer } = node.config.core.node;
+  const states = reportWords.childStates;
+  const countOf = (state: string): number => walk.rows.filter((row) => row.state === state).length;
+  const warnings = countOf(treeWords.warning);
+  const check = walk.rows.some((row) => row.state !== states.ok);
+  const summary = [
+    `${treeWords.summary.nodes} ${walk.rows.length - warnings}`,
+    `${states.unknown} ${countOf(states.unknown)}`,
+    `${states.mismatch} ${countOf(states.mismatch)}`,
+    `${treeWords.summary.warnings} ${warnings}`,
+  ].join(', ');
+  const verdict = check ? reportWords.verdict.check : reportWords.verdict.ok;
+  const cut: OutLine[] =
+    walk.omitted === 0
+      ? []
+      : [{ level: 'warn', text: `${treeWords.moreThan} ${treeLimits.maxLines} lines: ${walk.omitted} rows are not shown` }];
+  const doc = treeKeys.doc;
+  return {
+    lines: [
+      { level: 'heading', text: `${verdict} ${cleanCell(id)} (${reportWords.summary.layer} ${layer}): ${summary}` },
+      ...walk.rows.map(treeLine),
+      ...cut,
+    ],
+    json: {
+      [doc.schema]: schemaIds.nodeTree,
+      [doc.home]: node.home,
+      [doc.id]: id,
+      [doc.layer]: layer,
+      [doc.verdict]: check ? treeWords.verdicts.check : treeWords.verdicts.ok,
+      [doc.omitted]: walk.omitted,
+      [doc.nodes]: walk.rows.map(treeNode),
     },
     warnings: node.notes,
     failed: false,
@@ -179,6 +293,24 @@ const runChildren = async (
   const node = await openNode(deps, options.home, registry);
   if (!node.ok) return node;
   return ok(await childrenOutput(deps, node.value, registry, []));
+};
+
+/**
+ * `node tree`: show the children of the config and, from the report file of each child, the nodes below it. The walk reads files only
+ * (see `walkTree`). A fault of the own config ends the command with the error of `openNode`, as it does for `children`; a child that
+ * does not read is a row and the exit code stays 0.
+ */
+const runTree = async (deps: Deps, options: NodeOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
+  const node = await openNode(deps, options.home, registry);
+  if (!node.ok) return node;
+  const { home, config } = node.value;
+  const walk = await walkTree(deps, {
+    home,
+    id: config.core.node.id,
+    children: config.core.children,
+    transport: fileTransport(deps, registry),
+  });
+  return ok(treeOutput(node.value, walk));
 };
 
 const runAddChild = async (
@@ -414,6 +546,8 @@ export const runNode = async (
       return needsUsage(`${commandText(commands.node)} needs a subcommand: ${SUBCOMMANDS}`);
     case nodeCommands.children:
       return args.length === 0 ? runChildren(deps, options, registry) : needsUsage(`${subcommand} takes no argument`);
+    case nodeCommands.tree:
+      return args.length === 0 ? runTree(deps, options, registry) : needsUsage(`${subcommand} takes no argument`);
     case nodeCommands.addChild:
       return args.length === 1 && args[0] !== undefined
         ? runAddChild(deps, options, registry, args[0])

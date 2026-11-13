@@ -96,6 +96,9 @@ const flat = (...groups: readonly Record<string, unknown>[]): string[] =>
  */
 const PLAIN_WORD_FLAGS: ReadonlySet<string> = new Set([flags.text, flags.title, flags.stage, flags.file, flags.closed]);
 
+/** Subcommands that are plain words too: `tree` is also the kind of an entry in a git tree. A literal that equals one of them is no breach. */
+const PLAIN_WORD_SUBCOMMANDS: ReadonlySet<string> = new Set([nodeCommands.tree]);
+
 /** Names that a string literal must never equal outside names.ts. */
 const EXACT_NAMES = new Set([
   ...flat(
@@ -117,7 +120,7 @@ const EXACT_NAMES = new Set([
     stateKeys,
     schema1.keys,
     { windowView: tmuxNames.windowView, windowWorkers: tmuxNames.windowWorkers, slotBoard: tmuxNames.slotBoard },
-  ).filter((name) => !PLAIN_WORD_FLAGS.has(name)),
+  ).filter((name) => !PLAIN_WORD_FLAGS.has(name) && !PLAIN_WORD_SUBCOMMANDS.has(name)),
   ...values.approvalModes,
 ]);
 
@@ -227,6 +230,12 @@ describe('names', () => {
       expect(violationsInText(`const a = 'use --${flag} here';`, path)).toEqual([`sample.ts: "use --${flag} here" holds the flag --${flag}`]);
     }
     expect(violationsInText(`const a = '${flags.home}';`, path)).toEqual([`sample.ts: "${flags.home}" is a name`]);
+  });
+
+  it('leaves a subcommand that is a plain word alone as a word', () => {
+    const path = join(SRC, 'sample.ts');
+    for (const word of PLAIN_WORD_SUBCOMMANDS) expect(violationsInText(`const a = '${word}';`, path)).toEqual([]);
+    expect(violationsInText(`const a = '${nodeCommands.send}';`, path)).toEqual([`sample.ts: "${nodeCommands.send}" is a name`]);
   });
 
   it('reports a flag only as a whole flag, so the git flag --staged is not the flag --stage', () => {

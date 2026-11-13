@@ -33,6 +33,40 @@ export interface FileDigest {
  */
 export type TextDecode = 'lenient' | 'fatal';
 
+/**
+ * What a path itself is, with no link followed. A link has the kind `link` and no other fact. Any other path has the facts of
+ * `PathInfo`.
+ */
+export type LinkInfo = PathInfo | { readonly kind: 'link' };
+
+/**
+ * Why `openChecked` refuses a file before it reads a byte: the file is not a regular file, another account owns it, a group or other
+ * users can write it, or it holds more bytes than the cap of the call.
+ */
+export type CheckedFault = 'wrong-kind' | 'otherOwner' | 'writableByOthers' | 'size';
+
+export interface CheckedOpenRequest {
+  /** The user that must own the file. Null on a platform with no user ids: then the call makes no owner check. */
+  readonly uid: number | null;
+  /** The most bytes of the file. A file with more bytes is refused. Null reads no byte: the call gives the facts of the file only. */
+  readonly maxBytes: number | null;
+  /** How the bytes become text. The default is `lenient`. */
+  readonly decode?: TextDecode;
+}
+
+/**
+ * What `openChecked` finds. `info` holds the facts of the open file. `bytes` is the count of bytes that the call read from the open
+ * file, also when the read or the decode failed, so a caller can charge a budget. `refused` is a file that failed a check, and none of
+ * it was read, unless it grew past the cap after the size check. `unreadable` is a read that failed after the first byte, or bytes
+ * that are not UTF-8 for a `fatal` decode. `text` is null when the call had no `maxBytes`.
+ */
+export type CheckedOpen =
+  | { readonly state: 'absent' }
+  | { readonly state: 'link' }
+  | { readonly state: 'refused'; readonly fault: CheckedFault; readonly info: PathInfo; readonly bytes: number }
+  | { readonly state: 'unreadable'; readonly info: PathInfo; readonly bytes: number }
+  | { readonly state: 'opened'; readonly info: PathInfo; readonly text: string | null; readonly bytes: number };
+
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
   /**
@@ -72,6 +106,20 @@ export interface Fs {
   lstat(path: string): Promise<CliResult<LinkKind | null>>;
   /** The kind, the owner and the permission bits of the path, or null when it does not exist. */
   statInfo(path: string): Promise<CliResult<PathInfo | null>>;
+  /**
+   * The facts of the path itself, or null when it does not exist. A link as the last part of the path is `{ kind: 'link' }`, also when
+   * its target is missing, and it is not followed. A link in a folder above the path is followed.
+   */
+  lstatInfo(path: string): Promise<CliResult<LinkInfo | null>>;
+  /**
+   * Open the file once, and check it on the open handle. The open follows no link and waits for no pipe, so a pipe at the path
+   * does not hold the call. The checks run on the facts of the handle, in this order: the kind (a regular file), the owner (the user
+   * of the request), the permission bits (no write bit for a group or for others), then the size (`maxBytes`). A file that passes
+   * is read from the same handle, at most `maxBytes` plus one byte, and the handle is closed on every path. A path that changes
+   * after the open can change none of the checks, and none of the bytes. A link at the path is `link`, and a path that does not
+   * exist is `absent`. A failure to open the file or to look at the handle is a failure; a failure of the read is `unreadable`.
+   */
+  openChecked(path: string, request: CheckedOpenRequest): Promise<CliResult<CheckedOpen>>;
   /** Set the permission bits of a file or a folder that exists. */
   chmod(path: string, mode: number): Promise<CliResult<void>>;
   /** The path with every link resolved. The path must exist. */

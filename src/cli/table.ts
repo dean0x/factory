@@ -356,9 +356,10 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.node,
-    summary: `Show or change the children of the ${roles.node}, or send a task to a child.`,
+    summary: `Show or change the children of the ${roles.node}, show the tree below them, or send a task to a child.`,
     usage: [
       `${commandText(commands.node)} ${nodeCommands.children} [${flagText(flags.home)} DIR]`,
+      `${commandText(commands.node)} ${nodeCommands.tree} [${flagText(flags.home)} DIR]`,
       `${commandText(commands.node)} ${nodeCommands.addChild} PATH [${flagText(flags.home)} DIR]`,
       `${commandText(commands.node)} ${nodeCommands.removeChild} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commands.node)} ${nodeCommands.send} ID ${flagText(flags.file)} FILE [${flagText(flags.home)} DIR]`,

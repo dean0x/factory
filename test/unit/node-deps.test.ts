@@ -1092,6 +1092,176 @@ describe('node deps: owner and mode', () => {
   });
 });
 
+describe('node deps: lstatInfo', () => {
+  it('tells the facts of a file and of a folder, and null for a path that does not exist or lies below a file', async () => {
+    const file = fresh('lstat-info-file.txt');
+    await writeFile(file, 'abc', 'utf8');
+    await chmod(file, 0o640);
+    const uid = process.getuid?.() ?? null;
+    expect(await deps.fs.lstatInfo(file)).toEqual({ ok: true, value: { kind: 'file', uid, mode: 0o640, mtimeMs: (await stat(file)).mtimeMs, size: 3 } });
+    expect(await deps.fs.lstatInfo(dir)).toMatchObject({ ok: true, value: { kind: 'dir', uid } });
+    expect(await deps.fs.lstatInfo(fresh('lstat-info-none'))).toEqual({ ok: true, value: null });
+    expect(await deps.fs.lstatInfo(join(file, 'below'))).toEqual({ ok: true, value: null });
+  });
+
+  it('tells a link to a file, a link to a folder and a link with no target as a link, and follows none of them', async () => {
+    const target = fresh('lstat-info-target.txt');
+    await writeFile(target, 'x', 'utf8');
+    const toFile = fresh('lstat-info-to-file');
+    const toFolder = fresh('lstat-info-to-folder');
+    const dangling = fresh('lstat-info-dangling');
+    await symlink(target, toFile);
+    await symlink(dir, toFolder);
+    await symlink(join(dir, 'lstat-info-no-target'), dangling);
+    for (const link of [toFile, toFolder, dangling]) {
+      expect(await deps.fs.lstatInfo(link)).toEqual({ ok: true, value: { kind: 'link' } });
+    }
+  });
+});
+
+describe('node deps: a checked open', () => {
+  const uid = process.getuid?.() ?? null;
+  const request = (maxBytes: number | null, parts: { uid?: number | null; decode?: 'lenient' | 'fatal' } = {}) => ({
+    uid: parts.uid === undefined ? uid : parts.uid,
+    maxBytes,
+    ...(parts.decode === undefined ? {} : { decode: parts.decode }),
+  });
+  const fileWith = async (name: string, content: string | Buffer, mode = 0o600): Promise<string> => {
+    const file = fresh(name);
+    await writeFile(file, content);
+    await chmod(file, mode);
+    return file;
+  };
+
+  it('gives the facts and the text of a regular file, and the count of the bytes that it read', async () => {
+    const file = await fileWith('open-text.txt', 'abcé');
+    const result = await deps.fs.openChecked(file, request(100));
+    expect(result).toEqual({
+      ok: true,
+      value: { state: 'opened', text: 'abcé', bytes: 5, info: { kind: 'file', uid, mode: 0o600, mtimeMs: (await stat(file)).mtimeMs, size: 5 } },
+    });
+  });
+
+  it('gives the facts of a file and reads no byte when the request has no cap', async () => {
+    const file = await fileWith('open-facts.txt', 'abc');
+    expect(await deps.fs.openChecked(file, request(null))).toMatchObject({ ok: true, value: { state: 'opened', text: null, bytes: 0, info: { size: 3 } } });
+  });
+
+  it('accepts a file that others can read but not write', async () => {
+    const file = await fileWith('open-readable.txt', 'abc', 0o644);
+    expect(await deps.fs.openChecked(file, request(100))).toMatchObject({ ok: true, value: { state: 'opened', text: 'abc' } });
+  });
+
+  it.each([
+    ['a group', 0o664],
+    ['other users', 0o646],
+  ])('refuses a file that %s can write, and reads no byte of it', async (_who, mode) => {
+    const file = await fileWith(`open-writable-${mode}.txt`, 'abc', mode);
+    expect(await deps.fs.openChecked(file, request(100))).toMatchObject({ ok: true, value: { state: 'refused', fault: 'writableByOthers', bytes: 0 } });
+    expect(await deps.fs.openChecked(file, request(null))).toMatchObject({ ok: true, value: { state: 'refused', fault: 'writableByOthers', bytes: 0 } });
+  });
+
+  it.runIf(uid !== null)('refuses a file of another account, and skips the owner check when the request has no user', async () => {
+    const file = await fileWith('open-owner.txt', 'abc');
+    const other = (uid ?? 0) + 1;
+    expect(await deps.fs.openChecked(file, request(100, { uid: other }))).toMatchObject({ ok: true, value: { state: 'refused', fault: 'otherOwner', bytes: 0 } });
+    expect(await deps.fs.openChecked(file, request(100, { uid: null }))).toMatchObject({ ok: true, value: { state: 'opened', text: 'abc' } });
+  });
+
+  it('refuses a file larger than the cap with no byte read, and reads a file that is as large as the cap', async () => {
+    const file = await fileWith('open-size.txt', '0123456789');
+    expect(await deps.fs.openChecked(file, request(9))).toMatchObject({ ok: true, value: { state: 'refused', fault: 'size', bytes: 0 } });
+    expect(await deps.fs.openChecked(file, request(10))).toMatchObject({ ok: true, value: { state: 'opened', text: '0123456789', bytes: 10 } });
+  });
+
+  it.runIf(process.platform === 'linux')('charges the cap plus one byte for a file that holds more than its size said', async () => {
+    // A file of /proc says a size of 0 and then gives its content, as a file that grew after the size check does.
+    const result = await deps.fs.openChecked('/proc/self/status', request(10));
+    expect(result).toMatchObject({ ok: true, value: { state: 'refused', fault: 'size', bytes: 11 } });
+  });
+
+  it('gives a link as a link, also when it has no target, and reads nothing of the target', async () => {
+    const target = await fileWith('open-link-target.txt', 'secret');
+    const toFile = fresh('open-link');
+    const dangling = fresh('open-dangling');
+    await symlink(target, toFile);
+    await symlink(join(dir, 'open-no-target'), dangling);
+    expect(await deps.fs.openChecked(toFile, request(100))).toEqual({ ok: true, value: { state: 'link' } });
+    expect(await deps.fs.openChecked(dangling, request(100))).toEqual({ ok: true, value: { state: 'link' } });
+    expect(await deps.fs.openChecked(toFile, request(null))).toEqual({ ok: true, value: { state: 'link' } });
+  });
+
+  it('gives absent for a path that does not exist, and for a path below a file', async () => {
+    const file = await fileWith('open-below.txt', 'abc');
+    expect(await deps.fs.openChecked(fresh('open-none'), request(100))).toEqual({ ok: true, value: { state: 'absent' } });
+    expect(await deps.fs.openChecked(join(file, 'below'), request(100))).toEqual({ ok: true, value: { state: 'absent' } });
+  });
+
+  it('refuses a folder as the wrong kind', async () => {
+    expect(await deps.fs.openChecked(dir, request(100))).toMatchObject({ ok: true, value: { state: 'refused', fault: 'wrong-kind', bytes: 0 } });
+  });
+
+  it('refuses a named pipe as the wrong kind, and does not wait for a writer', async () => {
+    const fifo = fresh('open-fifo');
+    const made = await deps.run('mkfifo', [fifo]);
+    expect(made.ok && made.value.exitCode).toBe(0);
+    expect(await deps.fs.openChecked(fifo, request(100))).toMatchObject({ ok: true, value: { state: 'refused', fault: 'wrong-kind', bytes: 0 } });
+    expect(await deps.fs.openChecked(fifo, request(null))).toMatchObject({ ok: true, value: { state: 'refused', fault: 'wrong-kind', bytes: 0 } });
+  });
+
+  it('gives the bytes that it read, and no text, for bytes that are not UTF-8 with the fatal decode', async () => {
+    const file = await fileWith('open-binary.bin', Buffer.from([0x61, 0xff, 0xfe, 0x62]));
+    expect(await deps.fs.openChecked(file, request(100, { decode: 'fatal' }))).toMatchObject({ ok: true, value: { state: 'unreadable', bytes: 4 } });
+    expect(await deps.fs.openChecked(file, request(100))).toMatchObject({ ok: true, value: { state: 'opened', text: 'a��b', bytes: 4 } });
+  });
+
+  it('keeps a byte order mark in the text', async () => {
+    const file = await fileWith('open-bom.txt', Buffer.from([0xef, 0xbb, 0xbf, 0x61]));
+    expect(await deps.fs.openChecked(file, request(100, { decode: 'fatal' }))).toMatchObject({ ok: true, value: { state: 'opened', text: '﻿a', bytes: 4 } });
+  });
+
+  it('reads a file of more than one chunk whole', async () => {
+    const text = 'x'.repeat(200_000);
+    const file = await fileWith('open-large.txt', text);
+    expect(await deps.fs.openChecked(file, request(200_000))).toMatchObject({ ok: true, value: { state: 'opened', text, bytes: 200_000 } });
+  });
+
+  it.each([-1, Number.NaN, 1.5, Number.MAX_SAFE_INTEGER + 1])('fails, and opens nothing, for the cap %s', async (cap) => {
+    const file = await fileWith(`open-cap-${String(cap)}.txt`, 'abc');
+    expect((await deps.fs.openChecked(file, request(cap))).ok).toBe(false);
+  });
+
+  it('closes the file on every path: many calls hit no limit of open files', async () => {
+    const good = await fileWith('open-close-good.txt', 'abc');
+    const wide = await fileWith('open-close-wide.txt', 'abc', 0o666);
+    const binary = await fileWith('open-close-binary.bin', Buffer.from([0xff]));
+    for (let at = 0; at < 600; at += 1) {
+      expect((await deps.fs.openChecked(good, request(100))).ok).toBe(true);
+      expect((await deps.fs.openChecked(wide, request(100))).ok).toBe(true);
+      expect((await deps.fs.openChecked(binary, request(100, { decode: 'fatal' }))).ok).toBe(true);
+      expect((await deps.fs.openChecked(dir, request(100))).ok).toBe(true);
+    }
+  });
+
+  it('fails with the code for a path that it cannot open', async () => {
+    const folder = fresh('open-denied');
+    await mkdir(folder);
+    const file = join(folder, 'f.txt');
+    await writeFile(file, 'x', 'utf8');
+    await chmod(folder, 0o000);
+    try {
+      const result = await deps.fs.openChecked(file, request(100));
+      // A user that is root can open the file anyway.
+      if (uid !== 0) {
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.message).toContain('EACCES');
+      }
+    } finally {
+      await chmod(folder, 0o700);
+    }
+  });
+});
+
 describe('node deps: exclusive write', () => {
   it('creates a file with the text and the mode, and says that it did', async () => {
     const file = fresh('exclusive.lock');
