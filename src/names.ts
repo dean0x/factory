@@ -1500,23 +1500,25 @@ export const childReasons = {
 /**
  * The words of the tree of the child nodes: the state of a row that tells of the walk and not of a node (a duplicate id, or requests
  * that were dropped), the mark of a row below a direct child (the id of the node that gave the address follows it), the line that
- * says the line cap cut the list, the words of the verdict line, and the reason of the row of dropped requests (a count follows it).
- * The states `ok`, `unknown` and `mismatch` are those of `reportWords.childStates`.
+ * says the line cap cut the list, the words of the verdict line, the verdict values of the document, and the reason of the row of
+ * dropped requests (a count follows it). The states `ok`, `unknown` and `mismatch` are those of `reportWords.childStates`.
  */
 export const treeWords = {
   warning: 'warning',
   reportedBy: 'reported by',
   moreThan: 'more than',
   summary: { nodes: 'nodes', warnings: 'warnings' },
+  verdicts: { ok: 'ok', check: 'check' },
   requestsDropped: `${requestWords.requests} were dropped: the origin does not name the node that reports them`,
 } as const;
 
 /**
  * The keys of the document `factory.node-tree/v1`. Every string that comes from the file of a child is under the one field
- * `node.report`, with the path of that file in `report.source`. All other fields hold text of this program only.
+ * `node.report`, with the path of that file in `report.source`. All other fields hold text of this program only. The field `omitted`
+ * is the count of the rows that the line cap left out of `nodes`.
  */
 export const treeKeys = {
-  doc: { schema: 'schema', home: 'home', id: 'id', layer: 'layer', verdict: 'verdict', nodes: 'nodes' },
+  doc: { schema: 'schema', home: 'home', id: 'id', layer: 'layer', verdict: 'verdict', omitted: 'omitted', nodes: 'nodes' },
   node: { depth: 'depth', state: 'state', reason: 'reason', report: 'report' },
   report: {
     source: 'source',

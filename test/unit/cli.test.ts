@@ -292,6 +292,7 @@ describe('the node command in the command line', () => {
     const result = await run(['node', '--help']);
     expect(result.code).toBe(0);
     expect(result.out).toContain('Usage: factory node children [--home DIR]');
+    expect(result.out).toContain('       factory node tree [--home DIR]');
     expect(result.out).toContain('       factory node add-child PATH [--home DIR]');
     expect(result.out).toContain('       factory node remove-child ID [--home DIR]');
     expect(result.out).toContain('       factory node send ID --file FILE [--home DIR]');
@@ -314,7 +315,7 @@ describe('the node command in the command line', () => {
   it('lists the command and the start command in the help', async () => {
     const result = await run(['help']);
     expect(result.out).toMatch(/\n {2}start {5}Start the session/);
-    expect(result.out).toMatch(/\n {2}node {6}Show or change the children/);
+    expect(result.out).toMatch(/\n {2}node {6}Show or change the children[^\n]*the tree below them/);
   });
 
   it('exits 2 for the command up, which has no alias for start', async () => {

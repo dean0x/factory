@@ -1,19 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
-import type { NodeOptions } from '../../src/commands/node.js';
+import type { CommandOutput } from '../../src/cli/output.js';
+import { treeOutput, type NodeOptions } from '../../src/commands/node.js';
+import type { NodeReport, ReportChild } from '../../src/comms/report-schema.js';
 import { fileTransport, parseConfigTexts, runNode } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
-import { childReasons, env, nodeInbox, nodeSendReasons } from '../../src/names.js';
+import { childReasons, env, nodeInbox, nodeSendReasons, reportLimits, schemaIds, treeLimits } from '../../src/names.js';
+import { reportTextOf } from '../../src/report/build.js';
+import type { TreeRow, TreeWalk } from '../../src/report/tree.js';
 import { STATE_GITIGNORE } from '../../src/state/files.js';
+import { FACTORY_VERSION } from '../../src/version.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
-import { workerPathsOf } from '../../src/state/layout.js';
+import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
-
 const HOME = '/w/mgr';
 const CONFIG_PATH = `${HOME}/factory.yaml`;
 /** The children of a node are in the local file: the commands of `node` change only this file. */
@@ -458,6 +462,218 @@ describe('node remove-child', () => {
   });
 });
 
+describe('node tree', () => {
+  const WEB = '/w/web-factory';
+  const DEEP = '/w/deep-factory';
+  const webEntry = { id: 'web', address: `file://${WEB}` };
+
+  const reportOf = (id: string, layer: number, parts: Partial<NodeReport> = {}): NodeReport => ({
+    schema: schemaIds.report,
+    schemaVersion: reportLimits.schemaVersion,
+    id,
+    layer,
+    factoryVersion: FACTORY_VERSION,
+    cursor: null,
+    workers: [],
+    board: { states: [], statesOmitted: 0, fields: [] },
+    inProgress: [],
+    requests: [],
+    events: [],
+    children: [],
+    ...parts,
+  });
+
+  const entryOf = (id: string, home: string): ReportChild => ({
+    id,
+    address: `file://${home}`,
+    state: 'ok',
+    reason: null,
+    counts: null,
+    age: null,
+  });
+
+  const seedReport = (deps: FakeDeps, home: string, report: NodeReport): void => {
+    deps.seed(layoutOf(home).reportFile, reportTextOf(report));
+  };
+
+  /** A node on layer 3 with the child `web` on layer 2, and `deep` on layer 1 below it. Both report files are there. */
+  const twoLayers = (): FakeDeps => {
+    const deps = make({ layer: 3, children: [webEntry] });
+    const request = { id: 'D-1', title: null, origin: 'web#D-1' };
+    seedReport(deps, WEB, reportOf('web', 2, { children: [entryOf('deep', DEEP)], requests: [request] }));
+    seedReport(deps, DEEP, reportOf('deep', 1));
+    return deps;
+  };
+
+  const textOf = (output: CommandOutput): string[] => output.lines.map((line) => line.text);
+
+  it('prints the verdict line alone for a node with no child', async () => {
+    const output = await succeeded(make(), 'tree');
+    expect(output.lines).toEqual([{ level: 'heading', text: 'OK: mgr (layer 2): nodes 0, unknown 0, mismatch 0, warnings 0' }]);
+    expect(output.failed).toBe(false);
+  });
+
+  it('prints one line for each child and for the subtree that the child reports, indented by depth, with the mark below a child', async () => {
+    const deps = twoLayers();
+    seedReport(deps, '/w/other-factory', reportOf('other', 2));
+    const output = await succeeded(deps, 'tree');
+    expect(output.lines).toEqual([
+      { level: 'heading', text: 'OK: mgr (layer 3): nodes 2, unknown 0, mismatch 0, warnings 0' },
+      { level: 'ok', text: '  web  ok  workers 0, in progress 0, requests 1, children 1  0s' },
+      { level: 'ok', text: '    deep  ok  workers 0, in progress 0, requests 0, children 0  0s  reported by web' },
+    ]);
+    expect(plainText(output)).not.toContain('other');
+    expect(output.failed).toBe(false);
+  });
+
+  it('shows a child with no report file as unknown with the fixed reason, says CHECK, and exits 0', async () => {
+    const output = await succeeded(make({ children: [webEntry] }), 'tree');
+    expect(output.lines).toEqual([
+      { level: 'heading', text: 'CHECK: mgr (layer 2): nodes 1, unknown 1, mismatch 0, warnings 0' },
+      { level: 'warn', text: `  web  unknown: ${childReasons.noReport}` },
+    ]);
+    expect(output.failed).toBe(false);
+  });
+
+  it('shows a report file that is not JSON as unknown, with the fixed reason and the age of the file', async () => {
+    const deps = make({ children: [webEntry] });
+    deps.seed(layoutOf(WEB).reportFile, '{ not json');
+    const output = await succeeded(deps, 'tree');
+    expect(textOf(output)).toEqual([
+      'CHECK: mgr (layer 2): nodes 1, unknown 1, mismatch 0, warnings 0',
+      `  web  unknown: ${childReasons.reportNotJson}  0s`,
+    ]);
+    expect(plainText(output)).not.toMatch(/\bdead\b/);
+  });
+
+  it('shows a report with another id as a mismatch, without the id that the file shows, and goes no deeper', async () => {
+    const deps = make({ children: [webEntry] });
+    seedReport(deps, WEB, reportOf('stranger', 2, { children: [entryOf('deep', DEEP)] }));
+    seedReport(deps, DEEP, reportOf('deep', 1));
+    const output = await succeeded(deps, 'tree');
+    expect(output.lines).toEqual([
+      { level: 'heading', text: 'CHECK: mgr (layer 2): nodes 1, unknown 0, mismatch 1, warnings 0' },
+      { level: 'warn', text: `  web  mismatch: ${childReasons.otherId}  0s` },
+    ]);
+    expect(plainText(output)).not.toContain('stranger');
+  });
+
+  it('counts a warning row for a folder that the walk saw before, and says CHECK', async () => {
+    const deps = make({ layer: 3, children: [webEntry] });
+    seedReport(deps, WEB, reportOf('web', 2, { children: [entryOf('loop', HOME)] }));
+    const output = await succeeded(deps, 'tree');
+    expect(textOf(output)).toEqual([
+      'CHECK: mgr (layer 3): nodes 1, unknown 0, mismatch 0, warnings 1',
+      '  web  ok  workers 0, in progress 0, requests 0, children 1  0s',
+      `    loop  warning: ${childReasons.cycle}  reported by web`,
+    ]);
+    expect(output.lines.map((line) => line.level)).toEqual(['heading', 'ok', 'warn']);
+  });
+
+  it('prints the document with the verdict, the own node and a list of nodes, with the text of each child under the field report', async () => {
+    const output = await succeeded(twoLayers(), 'tree');
+    expect(output.json).toEqual({
+      schema: 'factory.node-tree/v1',
+      home: HOME,
+      id: 'mgr',
+      layer: 3,
+      verdict: 'ok',
+      omitted: 0,
+      nodes: [
+        {
+          depth: 1,
+          state: 'ok',
+          reason: null,
+          report: {
+            source: layoutOf(WEB).reportFile,
+            id: 'web',
+            address: `file://${WEB}`,
+            layer: 2,
+            counts: { workers: 0, inProgress: 0, requests: 1, children: 1 },
+            age: 0,
+            reportedBy: null,
+          },
+        },
+        {
+          depth: 2,
+          state: 'ok',
+          reason: null,
+          report: {
+            source: layoutOf(DEEP).reportFile,
+            id: 'deep',
+            address: `file://${DEEP}`,
+            layer: 1,
+            counts: { workers: 0, inProgress: 0, requests: 0, children: 0 },
+            age: 0,
+            reportedBy: 'web',
+          },
+        },
+      ],
+    });
+  });
+
+  it('gives the verdict check and a fixed reason in the document for a child that does not read', async () => {
+    const output = await succeeded(make({ children: [webEntry] }), 'tree');
+    expect(output.json).toMatchObject({
+      verdict: 'check',
+      nodes: [{ depth: 1, state: 'unknown', reason: childReasons.noReport, report: { id: 'web', source: layoutOf(WEB).reportFile, age: null } }],
+    });
+  });
+
+  describe('with text of a child that the screen would show in another form', () => {
+    const rowOf = (parts: Partial<TreeRow> = {}): TreeRow => ({
+      depth: 1,
+      state: 'ok',
+      reason: null,
+      report: {
+        source: '/c/web/report.json',
+        id: 'we\u202Eb\nevil',
+        address: 'file:///c/web',
+        layer: 1,
+        counts: { workers: 1, inProgress: 2, requests: 3, children: 4 },
+        age: 5,
+        reportedBy: 'x'.repeat(300),
+      },
+      ...parts,
+    });
+    const nodeOf = { home: HOME, config: configOf('mgr', 2), notes: [] };
+
+    it('cleans each part of a line and cuts it to the display width', () => {
+      const output = treeOutput(nodeOf, { rows: [rowOf(), rowOf({ state: 'unknown', reason: 'a\nb\u202E' })], omitted: 0 });
+      const [, first, second] = textOf(output);
+      expect(first).toBe(`  web evil  ok  workers 1, in progress 2, requests 3, children 4  5s  reported by ${'x'.repeat(108)}`);
+      expect(second).toContain('  unknown: a b  ');
+      for (const line of textOf(output)) expect(line).not.toMatch(/[\n\r\u202E]/);
+    });
+
+    it('keeps the text of the child in the field report of the document, and nowhere else', () => {
+      const output = treeOutput(nodeOf, { rows: [rowOf()], omitted: 0 });
+      const [node] = output.json['nodes'] as { report: unknown }[];
+      expect(node).toBeDefined();
+      const { report, ...rest } = node as { report: unknown };
+      expect(JSON.stringify(rest)).not.toContain('evil');
+      expect(JSON.stringify(report)).toContain('evil');
+    });
+  });
+
+  it('ends the list with a more-than line when the line cap cut it', () => {
+    const row: TreeRow = {
+      depth: 1,
+      state: 'unknown',
+      reason: childReasons.noReport,
+      report: { source: null, id: 'web', address: `file://${WEB}`, layer: null, counts: null, age: null, reportedBy: null },
+    };
+    const walk: TreeWalk = { rows: [row], omitted: 7 };
+    const output = treeOutput({ home: HOME, config: configOf('mgr', 2), notes: [] }, walk);
+    expect(output.lines.at(-1)).toEqual({ level: 'warn', text: `more than ${treeLimits.maxLines} lines: 7 rows are not shown` });
+    expect(output.json['omitted']).toBe(7);
+  });
+
+  it('takes no argument', async () => {
+    expect(await node(make(), 'tree', 'extra')).toMatchObject({ ok: false, error: { kind: 'usage' } });
+  });
+});
+
 describe('node: the subcommand and the home', () => {
   it('needs a subcommand and refuses an unknown one, as usage errors', async () => {
     expect(await node(make())).toMatchObject({ ok: false, error: { kind: 'usage' } });
@@ -470,7 +686,9 @@ describe('node: the subcommand and the home', () => {
     const missing = createFakeDeps({ cwd: '/w' });
     missing.seedDir(HOME);
     expect(await node(missing, 'children')).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(await node(missing, 'tree')).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(await node(make({ sharedText: 'schema: 2\n' }), 'children')).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(await node(make({ sharedText: 'schema: 2\n' }), 'tree')).toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 
   it('exits 2, and names init, when the local file is missing', async () => {
@@ -479,6 +697,7 @@ describe('node: the subcommand and the home', () => {
     const result = await node(deps, 'children');
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: 'factory.local.yaml not found' } });
     if (!result.ok) expect(result.error.hint).toContain('factory init');
+    expect(await node(deps, 'tree')).toMatchObject({ ok: false, error: { kind: 'usage', message: 'factory.local.yaml not found' } });
     expect(await node(deps, 'add-child', '/w/web-factory')).toMatchObject({ ok: false, error: { kind: 'usage' } });
     expect(deps.atomicWrites).toEqual([]);
   });
@@ -489,7 +708,7 @@ describe('node: the local file', () => {
     ['a group write bit', (deps: FakeDeps) => deps.modes.set(LOCAL_PATH, 0o660)],
     ['an other write bit', (deps: FakeDeps) => deps.modes.set(LOCAL_PATH, 0o602)],
     ['another owner', (deps: FakeDeps) => deps.owners.set(LOCAL_PATH, 0)],
-  ])('refuses all three subcommands for a local file with %s, and changes nothing', async (_name, change) => {
+  ])('refuses each subcommand for a local file with %s, and changes nothing', async (_name, change) => {
     const deps = make({
       children: [{ id: 'web', address: 'file:///w/web-factory' }],
       homes: { ...webHome, '/w/api-factory': configOf('api', 1) },
@@ -497,7 +716,7 @@ describe('node: the local file', () => {
     change(deps);
     const before = deps.files.get(LOCAL_PATH);
     const mode = deps.modes.get(LOCAL_PATH);
-    for (const words of [['children'], ['add-child', '/w/api-factory'], ['remove-child', 'web']]) {
+    for (const words of [['children'], ['tree'], ['add-child', '/w/api-factory'], ['remove-child', 'web']]) {
       const result = await node(deps, ...words);
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
       if (!result.ok) expect(result.error.hint).toContain('chmod 600 factory.local.yaml');
@@ -507,7 +726,7 @@ describe('node: the local file', () => {
     expect(deps.atomicWrites).toEqual([]);
   });
 
-  it('refuses all three subcommands for a local file that is a link with one remedy line, before the owner check, and changes nothing (TP-147)', async () => {
+  it('refuses each subcommand for a local file that is a link with one remedy line, before the owner check, and changes nothing (TP-147)', async () => {
     const deps = make({
       children: [{ id: 'web', address: 'file:///w/web-factory' }],
       homes: { ...webHome, '/w/api-factory': configOf('api', 1) },
@@ -516,7 +735,7 @@ describe('node: the local file', () => {
     deps.modes.set(LOCAL_PATH, 0o644);
     deps.owners.set(LOCAL_PATH, 0);
     const files = new Map(deps.files);
-    for (const words of [['children'], ['add-child', '/w/api-factory'], ['remove-child', 'web']]) {
+    for (const words of [['children'], ['tree'], ['add-child', '/w/api-factory'], ['remove-child', 'web']]) {
       const result = await node(deps, ...words);
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
       if (!result.ok) {
@@ -546,7 +765,7 @@ describe('node: the local file', () => {
   });
 
   it('reads the two config files with the byte cap only, also when it changes them', async () => {
-    for (const words of [['children'], ['add-child', '/w/web-factory'], ['remove-child', 'web']]) {
+    for (const words of [['children'], ['tree'], ['add-child', '/w/web-factory'], ['remove-child', 'web']]) {
       const deps = make({ homes: webHome, children: [{ id: 'web', address: 'file:///w/web-factory' }] });
       const unbounded: string[] = [];
       const watched: FakeDeps = {
@@ -575,14 +794,14 @@ describe('node: the local file', () => {
 });
 
 describe('node: the registration check', () => {
-  const words = [['children'], ['add-child', '/w/web-factory'], ['remove-child', 'web']];
+  const words = [['children'], ['tree'], ['add-child', '/w/web-factory'], ['remove-child', 'web']];
   const withChild = { children: [{ id: 'web', address: 'file:///w/web-factory' }], homes: webHome };
 
   it.each([
     ['no entry in the factory list', (deps: FakeDeps) => deps.files.delete('/state/factory/homes.json')],
     ['an entry with another node id', (deps: FakeDeps) => registerRoot(deps, HOME, 'other')],
     ['no factory marker', (deps: FakeDeps) => deps.files.delete(`${HOME}/.factory/node.json`)],
-  ])('exits 4 for all three subcommands with %s, names the file and writes nothing', async (_name, change) => {
+  ])('exits 4 for each subcommand with %s, names the file and writes nothing', async (_name, change) => {
     const deps = make(withChild);
     change(deps);
     const before = deps.files.get(LOCAL_PATH);
@@ -869,7 +1088,7 @@ describe('node send', () => {
 
   it('refuses --file for the other subcommands with exit 2', async () => {
     const deps = sendable();
-    for (const words of [['children'], ['add-child', CHILD], ['remove-child', 'web']]) {
+    for (const words of [['children'], ['tree'], ['add-child', CHILD], ['remove-child', 'web']]) {
       expect(await sendOf(deps, words)).toMatchObject({ ok: false, error: { kind: 'usage' } });
     }
     expect(deps.atomicWrites).toEqual([]);
