@@ -1084,7 +1084,21 @@ describe('the command seam of a recipe', () => {
   };
 
   it('has no row of a recipe when the recipe has no commands hook', () => {
-    expect([...coreNames].sort()).toEqual(Object.values(commands).filter((name) => name !== commands.help).sort());
+    expect(coreNames).not.toContain(commands.pr);
+    expect(namesOf(commandTableFor(publishRegistry))).toEqual(coreNames);
+  });
+
+  it('has a name for each row of the core and each row of a recipe of the package, and the pr row comes from the software recipe only', () => {
+    const recipeRows = recipes.flatMap((entry) => entry.commands?.(recipeHostFor(recipes)) ?? []);
+    expect(namesOf(recipeRows)).toEqual([commands.pr]);
+    expect(recipes.filter((entry) => entry.commands !== undefined).map((entry) => entry.id)).toEqual(['software']);
+    expect([...coreNames, ...namesOf(recipeRows)].sort()).toEqual(Object.values(commands).filter((name) => name !== commands.help).sort());
+  });
+
+  it('lists the pr row in the help of the package, and not in the help of a registry whose recipes add no command', async () => {
+    expect((await runWith(recipes, ['--help'])).out).toMatch(/^ {2}pr {8}Watch the checks of one pull request/m);
+    expect((await runWith(publishRegistry, ['--help'])).out).not.toMatch(/^ {2}pr /m);
+    expect((await runWith(publishRegistry, ['pr', 'watch', '12'])).code).toBe(2);
   });
 
   it('joins the core rows and the rows of the recipes, each name once', () => {

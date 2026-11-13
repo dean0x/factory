@@ -1,0 +1,27 @@
+{
+  "headRefOid": "0123456789abcdef0123456789abcdef01234567",
+  "reviewDecision": "",
+  "state": "MERGED",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2030-01-01T00:01:00Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://example.test/runs/1",
+      "name": "check-1",
+      "startedAt": "2030-01-01T00:00:00Z",
+      "status": "COMPLETED",
+      "workflowName": "workflow-1"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2030-01-01T00:01:00Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://example.test/runs/2",
+      "name": "check-2",
+      "startedAt": "2030-01-01T00:00:00Z",
+      "status": "COMPLETED",
+      "workflowName": "workflow-2"
+    }
+  ]
+}

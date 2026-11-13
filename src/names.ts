@@ -57,6 +57,7 @@ export const commands = {
   decide: 'decide',
   queue: 'queue',
   lock: 'lock',
+  pr: 'pr',
   self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',

@@ -208,6 +208,19 @@ describe('no run-time import of the loader or the command table from a recipe', 
     expect(found).toEqual([]);
   });
 
+  it('lets pr-watch.ts import at run time only the names, the CLI errors, home option and output modules, core, and the files of its recipe', () => {
+    const file = join(RECIPES, 'software', 'pr-watch.ts');
+    const targets = runtimeImportPathsOf(readFileSync(file, 'utf8'))
+      .filter((path) => path.startsWith('.'))
+      .map((path) => relative(SRC, resolve(dirname(file), path)).replace(/\.(?:js|ts)$/, ''));
+    const allowed = (target: string): boolean =>
+      ['names', join('cli', 'errors'), join('cli', 'home-option'), join('cli', 'output')].includes(target) ||
+      target.startsWith(`core${sep}`) ||
+      target.startsWith(`${join('recipes', 'software')}${sep}`);
+    expect(targets.length).toBeGreaterThan(3);
+    expect(targets.filter((target) => !allowed(target))).toEqual([]);
+  });
+
   it('reads each form of import, and leaves out a type-only import', () => {
     const file = join(RECIPES, 'software', 'sample.ts');
     const source = [
