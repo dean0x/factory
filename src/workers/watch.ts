@@ -31,20 +31,23 @@ import { paneProcessStart, requireLineAfterStart } from './session-checks.js';
  * the panes and the last-seen lines. It never types and never sends a signal. It writes only its own run marker, and its output holds
  * fixed words, worker ids and times only. In order:
  *  1. the tmux session of the node runs and belongs to this factory folder (exit 3, exit 4). Inside a factory session, the caller is the
- *     pane of the coordinator (exit 2); a shell outside the factory sessions, as the owner runs it, may also watch;
+ *     pane of the coordinator (exit 2); a shell outside the factory sessions, as the owner runs it, may also watch, and its run takes no
+ *     run marker (step 4);
  *  2. the workers: each id of the command line has a valid record that the program wrote (exit 2, exit 4), or, with no id, every
  *     recorded worker. The ids of `--ready` are watched too, and each has such a record;
  *  3. one list of the panes. A worker with no pane is not checked, and it is not a change. With no worker to check, the watch ends
  *     at once with `no-worker`;
- *  4. the run marker: a fresh token goes to the marker file of the node, so a run that started earlier ends at its next check. A write
- *     fault is exit 1, before any check;
+ *  4. the run marker: in a factory session, a fresh token goes to the marker file of the node, so a run that started earlier ends at its
+ *     next check. A write fault is exit 1, before any check. A run in a shell outside the factory sessions writes no token and reads
+ *     no marker, so it never ends the run of the coordinator;
  *  5. a check of every checked worker at the baseline, and then at most `watchPoll.attempts` checks, each after a wait of
  *     `watchPoll.intervalMs`. So the watch lasts at most `watchPoll.capMs`. A check ends the watch at the first check that finds a
  *     change, and the report names every worker that changed at that check. The baseline is a check too, so a change at the baseline
- *     ends the watch with no wait. Every check reads the run marker first, and the watch ends with `replaced` when the marker holds the
- *     token of a newer run. A marker that is missing, that can not be read or that holds no token is exit 1, never `replaced`. The watch
- *     ends with `parent-gone` at the first wait after which the parent process is not the one at the start. A terminal is no condition:
- *     a background watch has none. Each end but `no-worker` gives the time of the last check, in the form that `--since` takes;
+ *     ends the watch with no wait. Every check of a run that took a token reads the run marker first, and the watch ends with `replaced`
+ *     when the marker holds the token of a newer run. A marker that is missing, that can not be read or that holds no token is exit 1,
+ *     never `replaced`. The watch ends with `parent-gone` at the first wait after which the parent process is not the one at the start.
+ *     A terminal is no condition: a background watch has none. Each end but `no-worker` gives the time of the last check, in the form
+ *     that `--since` takes;
  *  6. a fault of a read (tmux, a file) is exit 1.
  * The panes that a worker has at the baseline are the panes that the later checks read, each by its id. A change of a worker is the
  * first of: a pane that ended, is gone or runs another program than the launch of the worker; a last-seen line that is not valid or
@@ -343,7 +346,8 @@ const targetsOf = (workerIds: readonly string[], readyIds: readonly string[], ro
 
 /**
  * Inside a factory session only the pane of the coordinator may run the watch (exit 2 for any other pane). A shell outside the factory
- * sessions, as the owner runs it, has no session marker and passes. It guards against a mistake, as `requireCoordinatorCaller` does.
+ * sessions, as the owner runs it, has no session marker and passes, and its run takes no run marker (`runToken`). It guards against a
+ * mistake, as `requireCoordinatorCaller` does.
  */
 const requireWatchCaller = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<void>> => {
   if (!inFactorySession(deps)) return ok(undefined);
@@ -370,6 +374,13 @@ const takeMarker = async (deps: Deps, home: string): Promise<CliResult<string>> 
   const written = await writeInFolder(deps, markerTarget(home), `${token.value}\n`);
   return written.ok ? ok(token.value) : written;
 };
+
+/**
+ * The token of this run. Only a run in a factory session (the pane of the coordinator, after `requireWatchCaller`) takes the run
+ * marker. A run in a shell outside the factory sessions takes none, so it never ends the run of the coordinator. Its value is null.
+ */
+const runToken = async (deps: Deps, home: string): Promise<CliResult<string | null>> =>
+  inFactorySession(deps) ? takeMarker(deps, home) : ok(null);
 
 /** What the run marker says to a run: it holds the token of this run, the token of a newer run, or it is lost. */
 type MarkerState = 'own' | 'replaced' | 'lost';
@@ -403,7 +414,7 @@ export const watchWorkers = async (deps: Deps, request: WatchRequest): Promise<C
   if (!rows.ok) return rows;
   const targets = targetsOf(ids.value, readyIds, rows.value);
   if (targets.length === 0) return ok({ kind: 'no-worker' });
-  const token = await takeMarker(deps, home);
+  const token = await runToken(deps, home);
   if (!token.ok) return token;
 
   const parent = deps.parentPid();
@@ -414,7 +425,7 @@ export const watchWorkers = async (deps: Deps, request: WatchRequest): Promise<C
       await deps.sleep(watchPoll.intervalMs);
       if (deps.parentPid() !== parent) return ok({ kind: 'parent-gone', checkedAt });
     }
-    const marker = await markerState(deps, home, token.value);
+    const marker = token.value === null ? 'own' : await markerState(deps, home, token.value);
     if (marker === 'lost') return failure(watchWords.markerLost, `Run "${AGAIN}" again.`);
     if (marker === 'replaced') return ok({ kind: 'replaced', checkedAt });
     checkedAt = deps.now().toISOString();

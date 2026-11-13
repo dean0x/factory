@@ -816,6 +816,12 @@ describe('the worker section: the watch over a long run (TP-30)', () => {
       );
     });
 
+    it('runs the watch again when the newer watch fails with exit code 1, so that a watch always runs, and tells the owner about a second fault', () => {
+      expect(body).toContain(
+        'If the newer watch fails with exit code 1, run the watch again. If that run fails again, tell the owner.',
+      );
+    });
+
     it('runs the watch once again after a lost run marker, and tells the owner about a second fault', () => {
       expect(body).toContain(
         `If the watch fails with \`${watchWords.markerLost}\`, run it once again. If it fails again, tell the owner.`,
