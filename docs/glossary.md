@@ -2,7 +2,7 @@
 
 This file gives one plain sentence for each word that factory uses. The first part has the words of every factory. The second part has the words of the software recipe only.
 
-The words below are the new words of the design (decision D-59). `factory help words` prints the words of the program with the same text as this file.
+The words below are the new words of the design. `factory help words` prints the words of the program with the same text as this file.
 
 The list `terms` in `src/names.ts` names the words of the program. Each line below has the form `- **word**: sentence`. After the bold word, the mark `(was: old word)` shows the old word that the new word replaces, for example `- **worker** (was: cell): sentence`. An old word appears nowhere else in an entry. An entry that says "Not built yet" names something that this version does not have. A test checks that each entry has at most 25 words, that each word of the program has one entry here, and that the program holds the same text as that entry.
 
@@ -73,7 +73,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 
 ## Plain words
 
-Text that a user reads uses the plain word of this table (decision D-11). Code identifiers, config keys, flags and command names stay. A row marked `scanned` has a word that a scan finds with no false hits, and a test checks it. A row marked `by hand` has a word with a common plain meaning, so a person checks it. A row marked `-` has no word to scan. A note that starts with "glossary entry" gives the meaning of the entry of that word in the lists above.
+Text that a user reads uses the plain word of this table. Code identifiers, config keys, flags and command names stay. A row marked `scanned` has a word that a scan finds with no false hits, and a test checks it. A row marked `by hand` has a word with a common plain meaning, so a person checks it. A row marked `-` has no word to scan. A note that starts with "glossary entry" gives the meaning of the entry of that word in the lists above.
 
 | Term | Plain word in user text | Scan | Note |
 |---|---|---|---|
@@ -87,15 +87,15 @@ Text that a user reads uses the plain word of this table (decision D-11). Code i
 | home index | factory list | scanned | the per-user list of registered factories |
 | home, root (of a factory) | factory folder | by hand | `--home` and `FACTORY_HOME` stay |
 | registered root | registered factory | scanned |  |
-| state marker | factory marker | scanned | `.factory/node.json`; "state file" is not used, because the state folder holds many files, and "node file" is not used, because it does not say which file (D-11) |
+| state marker | factory marker | scanned | `.factory/node.json`; "state file" is not used, because the state folder holds many files, and "node file" is not used, because it does not say which file |
 | root rule | registration check | scanned |  |
 | allow list | share list | scanned | the factory part of the root `.gitignore` |
 | owner record | approval record | scanned |  |
 | owner channel | owner input | scanned | typed input that starts with the owner prefix |
 | core block | fixed rules | scanned | the safety block |
-| trust step | setup acceptance | scanned | the verb is "accept", not "approve"; the acceptance of the setup hash (D-13) is its first part, and FAC-M6 extends it to every setup file; "approval" means only approval points and approval records (D-11) |
+| trust step | setup acceptance | scanned | the verb is "accept", not "approve"; the acceptance of the setup hash is its first part, and FAC-M6 extends it to every setup file; "approval" means only approval points and approval records |
 | tracker | board | by hand | the key `tracker` stays |
-| checkouts | work copies | by hand | the folder name is `work-copies` (D-11 replaces D-6 `checkouts`); code identifiers can keep a short internal name, but user text, docs and the folder say `work-copies`; "checkout" is also a common git word, so the row is by hand |
+| checkouts | work copies | by hand | the folder name is `work-copies`; code identifiers can keep a short internal name, but user text, docs and the folder say `work-copies`; "checkout" is also a common git word, so the row is by hand |
 | release scope | (software recipe word) | scanned | glossary entry in the recipe part of the glossary; the scan of `src` finds it outside `src/recipes`, and the docs scan leaves it, because the design text of the software recipe uses it |
 | received factory | stays | - | glossary entry: a factory folder that you cloned from a config repo of another machine or person |
 | moved factory | stays | - | glossary entry: a factory folder that is now at another path on this machine |
@@ -123,10 +123,10 @@ Text that a user reads uses the plain word of this table (decision D-11). Code i
 | approval point | stays | - | glossary entry: a step of the work that needs an approval |
 | proxy | stays | - | glossary entry: a server that passes the model calls on |
 | recipe | stays | - | glossary entry: the kind of work that a factory does |
-| setup, layer | stay | - | Dean's own words (F-4, F-16) |
-| message | stays | - | only for the record from another owner and for a file that `node send` writes into a child inbox (D-6) |
+| setup, layer | stay | - | Dean's own words |
+| message | stays | - | only for the record from another owner and for a file that `node send` writes into a child inbox |
 | doctor, `STUCK:` | stay | - | command name and output marker; the help line and the `STUCK:` line say in plain words what they mean |
-| node, owner, project | stay | - | Dean's words (F-1) |
+| node, owner, project | stay | - | Dean's words |
 
 ## Why the word node stays
 

@@ -1,6 +1,6 @@
 # Session stop
 
-This file holds the rule for the word "safe" and the table of the ways to stop a session (design section 4.11, F-7). The rule comes first. The table follows it. `scripts/check-session-stop.sh` checks this file.
+This file holds the rule for the word "safe" and the table of the ways to stop a session (design section 4.11). The rule comes first. The table follows it. `scripts/check-session-stop.sh` checks this file.
 
 ## The rule for safe
 
@@ -111,11 +111,11 @@ The cost is the field `total_cost_usd` of the result line of the run. The print 
 
 ## Run limits and decisions
 
-- **Decision D-76.** The founder allowed at most 4 short interactive haiku sessions for this PR, outside the 3 print probes. They ran on a scratch tmux socket, with the normal login, no copied credentials and no reads of the user Claude folder.
-- **Decision D-77.** A short resume of a test conversation (one prompt, then `/exit`) does not count as a run. The limits are at most 4 new conversations and at most 4 resume launches, all haiku, with the same rules as D-76.
-- **Source of the interactive rows.** The idle rows, `/exit`, `/restart` and the agent view delete come from runs inside these limits (I0a, I0b, I1, I2, V1 to V4). I0a, I0b, I1 and I2 are the 4 interactive sessions of D-76. I0a and I0b took no prompt and made no model call (see the count of launches under "The runs").
+- **Interactive sessions.** The founder allowed at most 4 short interactive haiku sessions for this PR, outside the 3 print probes. They ran on a scratch tmux socket, with the normal login, no copied credentials and no reads of the user Claude folder.
+- **Resumes.** A short resume of a test conversation (one prompt, then `/exit`) does not count as a run. The limits are at most 4 new conversations and at most 4 resume launches, all haiku, with the same rules as the interactive sessions.
+- **Source of the interactive rows.** The idle rows, `/exit`, `/restart` and the agent view delete come from runs inside these limits (I0a, I0b, I1, I2, V1 to V4). I0a, I0b, I1 and I2 are the 4 allowed interactive sessions. I0a and I0b took no prompt and made no model call (see the count of launches under "The runs").
 - **P1-3 was not run.** Print run 1 failed at the command line, and it was one of the 3 print runs. P1-1 and P1-2 were the other two. No fourth print run was allowed, so P1-3 was not run. So the busy `kill -INT` row stays "not safe, partly tested".
-- **The `/quit` rows stay "not safe, not tested".** `/quit` is an alias of `/exit`. The run budget of D-76 and D-77 did not cover a separate `/quit` run.
+- **The `/quit` rows stay "not safe, not tested".** `/quit` is an alias of `/exit`. These run limits did not cover a separate `/quit` run.
 - **The idle `kill -INT` row stays "partly tested"** for the same budget reason. Only fact 1 was seen, in I0b. I0b shows only the end of the process (fact 1): it is not a valid session for facts 2 to 4 (see the table of the runs).
 - **After this PR,** no more interactive or print runs are allowed for PR 2a.
 

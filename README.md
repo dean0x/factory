@@ -372,7 +372,7 @@ factory queue show
 - **The queue.** `queue set NAME` finds a row by its exact name, and makes a new row at the end when no row has that name. `--item` replaces the whole list of items of the row. The queue has at most 30 rows, and a row has at most 30 items.
 - **Limits.** A text over 1 MiB for one of the three files is refused with exit code 1, and nothing is written. `doctor` warns when a file reaches 80 percent of that cap. A file that is corrupt, is not valid UTF-8 or holds a repeated id stops the command with exit code 1 and names the file. A command that prints a stored text removes control, bidi and invisible characters, turns a line break or a tab into one space, and cuts the line to 120 characters.
 
-No command needs python3, jq or glow. The format of the three files is a promise, so a view outside the core can read them. In M5-1b such a view only reads.
+No command needs python3, jq or glow. The format of the three files is a promise, so a view outside the core can read them. In this version, such a view only reads.
 
 ### Answer a decision
 
@@ -974,7 +974,7 @@ The install check pushes the commit of this checkout into a throw-away bare repo
 
 factory is in early access. The commands and the config files can change before 1.0.
 
-The folder `docs/` holds the design, the roadmap, the plans and the review summaries of the project. They describe the setup of the author as the first user. Their ids, for example `F-12`, `D-49` or `TB-5`, point to the notes of the author. You do not need these ids to use factory.
+The folder `docs/` holds the design, the roadmap, the plans and the review summaries of the project. They describe the setup of the author as the first user. You do not need them to use factory.
 
 To report a problem, open an issue on GitHub. The guide [docs/quick-start.md](docs/quick-start.md), part 13, tells what to put in it.
 
