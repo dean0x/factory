@@ -31,7 +31,8 @@ You need:
 | `factory shutdown` | End this factory and nothing else: stop each worker, clear the mark of the active machine, and end the tmux session. It exits with code 0 when no session runs. See "Shut down, restart and reboot". |
 | `factory restart ID` | Stop one worker and start it again with its session id. The other workers keep their panes. See "Shut down, restart and reboot". |
 | `factory reboot` | Stop every worker and start each recorded worker again with its session id. Outside the session it also ends the session and starts it again. See "Shut down, restart and reboot". |
-| `factory status` | List each worker with its state, its work item and its idle state. It changes nothing. See "Show the status". |
+| `factory status` | List each worker with its state, its work item and its idle state. It writes only the report file. See "Show the status". |
+| `factory report [--since CURSOR]` | Show the report of this node: a verdict line, then one row for each child node. `--json` prints the whole report. It writes only the report file. `--since` is not available yet. See "Show the report". |
 | `factory dismiss ID` | End a worker and free its work copy, when its work is pushed. It is a dry run until `--yes`. `factory dismiss --idle` lists the idle workers, and you pick which to dismiss. See "Dismiss a worker". |
 | `factory worker new ID --project PROJECT [--assignment FILE]` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. `--assignment` copies a task file to the assignment folder of the worker. See "Make a worker" and "Give work to a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy`, `waits` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
@@ -278,7 +279,7 @@ factory status
 factory status --json
 ```
 
-`status` shows one line for each worker, in the order of the ids. It changes nothing. It reads what `worker list` reads, with one `list-panes` call, and it asks the work item port for the work items.
+`status` shows one line for each worker, in the order of the ids. It writes only the report file (see "Show the report"). It reads what `worker list` reads, with one `list-panes` call, and it asks the work item port for the work items. It also reads the board and asks each child node once, because it builds the report with the same code as `report`.
 
 | Column | Meaning |
 | --- | --- |
@@ -288,6 +289,48 @@ factory status --json
 | `IDLE` | `yes` when the last activity of the worker is older than `limits.idle_after` and the worker has no open work. Else `no`. |
 
 The work item comes from the local board (see "Use the local board"). A worker gets the first open item in progress whose worker field holds the worker id. If there is none, it gets the first other open item. A work item that is not known never makes a worker idle. So `status` shows `unknown` and no idle worker when there is no `board` block, when the block names no worker field (`board.worker_field`), or when the board file is missing or corrupt. In the last case, one warning names the file. Run `status` in a git work tree of a listed project to use the factory of that project (see "Find the factory folder").
+
+The text, the `--json` object and the exit code of `status` do not depend on the report file, with one case: a link at the report file, at its folder or at `.factory/` gives exit code 4. Any other fault of the write gives one warning, `the report file was not written: REASON`, and the exit code stays as it is. A board that cannot be read gives that warning too. A node with no `.factory/` folder gets no file.
+
+### Show the report
+
+```sh
+factory report
+factory report --json
+```
+
+`report` shows the report of this node. The first line is the verdict line. One row for each child node follows, and only when the node has child nodes. The command reads the workers, the board and the child nodes with the same code as `status`. Its one change is the report file.
+
+```
+OK: acme (layer 2): workers 0, in progress 0, requests 0, children 1
+ID   STATE  WORKERS  ITEMS  REQUESTS  CHILDREN  AGE  REASON
+web  ok     -        -      -         -         -    -
+```
+
+The verdict is `OK:` or `CHECK:`. It is `CHECK:` when a worker record is not valid, when the facts of the workers gave a warning, or when a child is not `ok`. The exit code is 0 for both. A child is `ok` when it answers with the id that the config lists. Else it is `unknown`, and `REASON` says why. A missing value shows `-`. For now, the columns `WORKERS`, `ITEMS`, `REQUESTS`, `CHILDREN` and `AGE` of a child row always show `-`, because a parent does not read the report file of a child yet.
+
+| Flag | Meaning |
+| --- | --- |
+| `--home DIR` | The factory folder (see "Find the factory folder"). |
+| `--json` | Print the report as one JSON object, `factory.report/v1`. It is the text of the report file. |
+| `--since CURSOR` | Not available yet. The report has no events, so the command exits with code 2 and writes no file. |
+
+`--json` prints these keys: `schema`, `schemaVersion`, `id`, `layer`, `factoryVersion`, `cursor`, `workers`, `board`, `inProgress`, `requests`, `events` and `children`. The `cursor` is null and `events` is an empty list for now. A request has an `origin`, `<node id>#<request id>`. The report is built from a fixed list of fields. It holds no owner prefix, no proxy, no session id, no pane and no approval value.
+
+**The report file.** `report` and `status` write the report to `.factory/outbox/report.json` on each run. The file holds the same text that `report --json` prints. The write replaces the file whole, so a reader sees the old file or the new file and never a part. The file has mode 600, and its folder has mode 700. The state repo ignores `outbox/`, and `factory upgrade` adds that line to an older state repo. A node with no `.factory/` folder gets no file, and the command never makes that folder.
+
+The report file is fresh only after `report` or `status` runs. No hook writes it. So the file can be older than the node, and you must not take it as the state of the node now.
+
+A report over a cap is never cut. The caps are 200 workers, 200 children, 500 requests, 500 items and 256 KiB for the file. Over a cap, the command exits with code 1 and names the cap.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| 0 | The report is built and the file is written. The verdict can be `CHECK:`. | Read the rows and the warnings. |
+| 1 | The board cannot be read (the command builds no report and writes no file), the report is over a cap, or the file cannot be written. | Fix the problem that the message names. Close the items that are done, or remove the children that you do not use. Run `factory report` again. |
+| 2 | `--since` is set, or the command line is wrong. | Run `factory report` with no `--since`. |
+| 4 | A security stop: a link at the report file, at its folder or at `.factory/`. | Replace the link with a real folder or file. Run `factory doctor`, then run `factory report` again. |
+
+The stops of the config and of the facts of the workers give the same exit codes as `status`.
 
 ### Use the local board
 
@@ -675,7 +718,7 @@ factory upgrade
 
 `upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports.
 
-`upgrade` also adds the lines `workers/` and `inbox/` to the `.gitignore` of the state repo when the file lacks a line. The dry run lists each added line. Every other line of the file stays. A child node needs the line `inbox/` before `node send` can write to it. A link at the path stops `upgrade` with exit code 4.
+`upgrade` also adds the lines `workers/`, `inbox/` and `outbox/` to the `.gitignore` of the state repo when the file lacks a line. The dry run lists each added line. Every other line of the file stays. A child node needs the line `inbox/` before `node send` can write to it. A link at the path stops `upgrade` with exit code 4.
 
 `upgrade` also adds the hook events that are missing (`Notification` and `PreToolUse`) to the hook settings of each recorded work copy whose settings file holds a hook entry of factory, and to the settings of the coordinator. It prints the change and asks first, with the same consent rule as `start`: a yes in a terminal window, or `--yes` outside a factory session. A dry run lists the change and writes nothing. A settings file with no hook entry of factory is skipped. A write that fails exits with code 1 and names the files that changed. `--json` lists the files in the field `hookSettings`. After this step, run `factory reboot`, so that each session gets its name and the new events.
 
@@ -738,6 +781,7 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
       roles/worker.md       the worker role (layer 1 and above)
       orders/               assignments
       inbox/                task files from the parent node. The state repo ignores it.
+      outbox/report.json    the report file of this node. The state repo ignores it.
       board.json  waiting.json  decision-log.json
       decision-profile/  roadmaps/
 ```
