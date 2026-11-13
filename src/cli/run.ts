@@ -101,14 +101,14 @@ export const runCli = async (
 
   if (first === undefined || HELP_WORDS.includes(first)) {
     const topic = first === commands.help ? findCommand(rest[0] ?? '') : undefined;
-    await sink.stdout(topic === undefined ? renderHelp() : renderCommandHelp(topic));
+    await sink.stdout(topic === undefined ? renderHelp(table) : renderCommandHelp(topic));
     return EXIT_OK;
   }
 
   const command = findCommand(first === flagText(flags.version) ? commands.version : first);
   if (command === undefined) {
     const unknown = renderError({ kind: 'usage', message: `unknown command "${first}"` });
-    await sink.stderr(`${unknown}\n${renderHelp()}`);
+    await sink.stderr(`${unknown}\n${renderHelp(table)}`);
     return EXIT_USAGE;
   }
 

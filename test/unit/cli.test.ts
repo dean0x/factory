@@ -9,7 +9,9 @@ import {
   renderWarnings,
 } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
-import { commandTable, globalOptions, parseFlags } from '../../src/cli/table.js';
+import { recipeHostFor } from '../../src/cli/recipe-host.js';
+import { commandTable, commandTableFor, globalOptions, parseFlags, type Command } from '../../src/cli/table.js';
+import { ok } from '../../src/core/result.js';
 import {
   commands,
   flags,
@@ -21,11 +23,13 @@ import {
   trackCommands,
   workerCommands,
 } from '../../src/names.js';
+import { recipes, type RecipeEntry, type RecipeHost, type RecipeRegistry } from '../../src/recipes/index.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { procStatPath, procStatText } from '../helpers/ps-fake.js';
+import { publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
 import { HOME as BOARD_HOME } from '../helpers/guard-fixture.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -1055,5 +1059,94 @@ describe('the item and track commands in the command line', () => {
       action: 'add',
       item: { id: 'B-1', title: 'New', status: 'open', stage: 'ticket', track: null },
     });
+  });
+});
+
+describe('the command seam of a recipe', () => {
+  const rowNamed = (name: string, text: string): Command => ({
+    name,
+    summary: `Print ${text}.`,
+    usage: `factory ${name}`,
+    options: {},
+    run: async () => ok({ lines: [{ level: 'text', text }], json: { schema: 'sample/v1', text }, warnings: [], failed: false }),
+  });
+
+  /** A registry of one recipe that adds the rows that `rows` gives. */
+  const registryWith = (rows: (host: RecipeHost) => readonly Command[]): RecipeRegistry => [{ ...publishRecipe, commands: rows }];
+
+  const namesOf = (table: readonly Command[]): string[] => table.map((command) => command.name);
+  const coreNames = namesOf(commandTableFor(publishRegistry));
+
+  const runWith = async (registry: RecipeRegistry, argv: readonly string[]) => {
+    const sink = captureSink();
+    const code = await runCli([...argv], createFakeDeps(), sink, registry);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  it('has no row of a recipe when the recipe has no commands hook', () => {
+    expect([...coreNames].sort()).toEqual(Object.values(commands).filter((name) => name !== commands.help).sort());
+  });
+
+  it('joins the core rows and the rows of the recipes, each name once', () => {
+    const registry = registryWith(() => [rowNamed('ping', 'pong'), rowNamed('echo', 'echo')]);
+    expect(namesOf(commandTableFor(registry))).toEqual([...coreNames, 'ping', 'echo']);
+  });
+
+  it('gives the hook of each recipe one host object that holds the registry', () => {
+    const seen: RecipeHost[] = [];
+    const registry = registryWith((host) => {
+      seen.push(host);
+      return [];
+    });
+    commandTableFor(registry);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.registry).toBe(registry);
+    expect(typeof seen[0]?.locateNode).toBe('function');
+    expect(typeof seen[0]?.loadProject).toBe('function');
+  });
+
+  it('runs the row of a recipe from the command line', async () => {
+    const result = await runWith(registryWith(() => [rowNamed('ping', 'pong')]), ['ping']);
+    expect(result).toEqual({ code: 0, out: 'pong\n', err: '' });
+  });
+
+  it('lists the row of a recipe in the help of the registry and in the help of the row', async () => {
+    const registry = registryWith(() => [rowNamed('ping', 'pong')]);
+    expect((await runWith(registry, ['--help'])).out).toMatch(/^ {2}ping {6}Print pong\.$/m);
+    expect((await runWith(registry, ['ping', '--help'])).out).toContain('Usage: factory ping');
+    expect((await runWith(registry, ['help', 'ping'])).out).toContain('Usage: factory ping');
+    expect((await runWith(registry, ['frobnicate'])).err).toMatch(/^ {2}ping {6}Print pong\.$/m);
+  });
+
+  it('does not list the row of a recipe in the help of another registry', async () => {
+    expect((await runWith(publishRegistry, ['--help'])).out).not.toContain('ping');
+  });
+
+  it('keeps the core row, and drops the row of a recipe that has the name of a core row', async () => {
+    const registry = registryWith(() => [rowNamed(commands.version, 'taken over')]);
+    const table = commandTableFor(registry);
+    expect(namesOf(table)).toEqual(coreNames);
+    expect(await runWith(registry, [commands.version])).toEqual({ code: 0, out: `${FACTORY_VERSION}\n`, err: '' });
+  });
+
+  it('keeps the first row when a recipe names a command twice', async () => {
+    const registry = registryWith(() => [rowNamed('ping', 'first'), rowNamed('ping', 'second')]);
+    expect(namesOf(commandTableFor(registry))).toEqual([...coreNames, 'ping']);
+    expect((await runWith(registry, ['ping'])).out).toBe('first\n');
+  });
+
+  it('keeps the row of the first recipe when two recipes name the same command', async () => {
+    const second: RecipeEntry = { ...publishRecipe, id: 'second', commands: () => [rowNamed('ping', 'second')] };
+    const registry: RecipeRegistry = [{ ...publishRecipe, commands: () => [rowNamed('ping', 'first')] }, second];
+    expect(namesOf(commandTableFor(registry))).toEqual([...coreNames, 'ping']);
+    expect((await runWith(registry, ['ping'])).out).toBe('first\n');
+  });
+
+  it('has no row in a recipe of the package with the name of a core row or of another row of a recipe', () => {
+    const rows = recipes.flatMap((entry) => entry.commands?.(recipeHostFor(recipes)) ?? []);
+    const names = namesOf(rows);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.filter((name) => coreNames.includes(name))).toEqual([]);
+    expect(namesOf(commandTable)).toEqual([...coreNames, ...names]);
   });
 });
