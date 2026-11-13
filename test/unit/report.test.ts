@@ -697,7 +697,7 @@ describe('report: the command (TP-12, TP-13, TP-14)', () => {
 describe('report: one builder for status and report (TP-12)', () => {
   const sourceOf = (name: string): string => stripComments(readFileSync(join(SRC, 'commands', name), 'utf8'));
 
-  it.each(['report.ts'])('%s reads the facts with the one builder, and never calls readStatus itself', (name) => {
+  it.each(['status.ts', 'report.ts'])('%s reads the facts with the one builder, and never calls readStatus itself', (name) => {
     const source = sourceOf(name);
     expect(importPathsOf(source).some((path) => /report\/build/.test(path))).toBe(true);
     expect(source).toMatch(/\breadNodeFacts\(/);

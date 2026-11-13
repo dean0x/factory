@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rm, stat, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hasTmux, LIFECYCLE_CASE_MS, useLab } from './lifecycle-lab.js';
@@ -75,5 +75,37 @@ describe('factory status: the folder of a git work tree (built binary, AC-22, TP
     expect(result.stderr).toContain('no factory.yaml found');
     expect(result.stderr).toContain('factory init');
     expect(result.stdout).toBe('');
+  });
+});
+
+describe('factory report: the report file (built binary, AC-12, TP-13)', () => {
+  const stateOf = (): string => join(lab.box.node, '.factory');
+  const outboxOf = (): string => join(stateOf(), 'outbox');
+
+  it('writes the report file with mode 600 in a folder of mode 700, with the text of --json, and leaves the state repo clean', async () => {
+    await lab.init();
+    const result = await lab.box.run(['report', '--json'], { cwd: lab.box.node });
+    expect(result.code, result.stderr).toBe(0);
+    const file = join(outboxOf(), 'report.json');
+    expect(await readFile(file, 'utf8')).toBe(result.stdout);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(outboxOf())).mode & 0o777).toBe(0o700);
+    expect((await lab.box.git(stateOf(), ['status', '--porcelain'])).stdout).toBe('');
+  });
+
+  it('is written by status too, and a link at the folder is exit 4 for both commands', async () => {
+    await lab.init();
+    expect((await lab.box.run(['status'], { cwd: lab.box.node })).code).toBe(0);
+    expect((await stat(join(outboxOf(), 'report.json'))).mode & 0o777).toBe(0o600);
+
+    const elsewhere = join(lab.box.root, 'elsewhere');
+    await mkdir(elsewhere);
+    await rm(outboxOf(), { recursive: true });
+    await symlink(elsewhere, outboxOf());
+    for (const command of ['report', 'status']) {
+      const result = await lab.box.run([command], { cwd: lab.box.node });
+      expect(result.code, `${command}: ${result.stderr}`).toBe(4);
+    }
+    expect(await readdir(elsewhere)).toEqual([]);
   });
 });
