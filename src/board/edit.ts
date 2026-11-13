@@ -517,15 +517,15 @@ export const recordCheckedIn = (
 
 /**
  * The former workers of an item, else a failure (exit 1) when the stored value is not a list of text. The remedy of the failure
- * names the command that the caller ran, so the person can run it again.
+ * names the command that the caller ran (a name from `commandLines`) and the words that follow it, so the person can run it again.
  */
-export const formerWorkersOf = (record: Stored, id: string, command: string): CliResult<readonly string[]> => {
+export const formerWorkersOf = (record: Stored, id: string, command: string, rest: string): CliResult<readonly string[]> => {
   const stored = record[boardKeys.unassignedFrom];
   if (stored === undefined) return ok([]);
   if (Array.isArray(stored) && stored.every((entry): entry is string => typeof entry === 'string')) return ok(stored);
   return failure(
     `${files.board}: the "${boardKeys.unassignedFrom}" of ${id} is not a list of text`,
-    `Check the item in ${files.board}, then run "${command}" again.`,
+    `Check the item in ${files.board}, then run "${commandText(command)}${rest}" again.`,
   );
 };
 
@@ -545,7 +545,7 @@ export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliR
   if (typeof worker !== 'string') {
     return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}, then run "${again}" again.`);
   }
-  const former = formerWorkersOf(record, id, again);
+  const former = formerWorkersOf(record, id, commandLines.itemUnassign, ` ${id}`);
   if (!former.ok) return former;
   const named = former.value.includes(worker);
   if (!named && former.value.length >= markLimits.maxFormerWorkers) {

@@ -236,8 +236,9 @@ const workerOf = (item: BoardItem, field: string | undefined): CliResult<string 
  */
 const branchesOf = (item: BoardItem, worker: string | null): CliResult<readonly string[] | undefined> => {
   if (worker !== null) return ok([branchOf(worker)]);
-  const again = `${commandText(commandLines.itemRecord)} ${item.id} ${flagText(flags.ref)} REF`;
-  const former = formerWorkersOf(item.record, item.id, again);
+  const rest = ` ${item.id} ${flagText(flags.ref)} REF`;
+  const again = `${commandText(commandLines.itemRecord)}${rest}`;
+  const former = formerWorkersOf(item.record, item.id, commandLines.itemRecord, rest);
   if (!former.ok) return former;
   if (former.value.length === 0) return ok(undefined);
   const branches = former.value.filter(isSlug).map(branchOf);
