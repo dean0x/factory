@@ -52,6 +52,7 @@ You need:
 | `factory doctor` | Run 29 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
+| `factory pr watch PR [--head SHA] [--project ID]` | Watch the checks of one pull request at one head, with up to 60 reads, 60 seconds apart. It exits with code 0 only when every check passed. It never merges, and a pass is no approval. See "Watch a pull request". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `PreToolUse` and `Notification`. It records `Notification` only for the types `permission_prompt` and `elicitation_dialog`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
 | `factory hook statusline` | For Claude Code, not for people. It is the status line of the coordinator. It records the context percent of the session in the last-seen record, then prints the output of the command in `session.statusline` of `factory.local.yaml` as it is (the command gets the same input, and has 2 seconds; at the limit, every process that it started stops, and a SIGTERM, SIGHUP or SIGINT of the wrapper stops them too; a SIGKILL of the wrapper leaves them running). With no command, or with a command that fails or takes too long, it prints `context N%`. When the input gives no percent, or is not whole after 2 seconds, it prints `context ?%`. It exits with code 0 on every path and prints at most one line on stderr. The field names of the input come from the devflow HUD, which reads the live payload; checked against the Claude Code status line docs. |
@@ -696,6 +697,60 @@ Each fact has one format: a value, a limit and a verdict, `ok`, `fail` or `unkno
 
 Each program has 5 seconds. A program that does not run, that takes too long or that exits with an error gives `unknown`. So does an output that does not parse. The command exits with code 0 for every verdict. It exits with another code only for a usage error, or when it finds no valid factory folder.
 
+### Watch a pull request
+
+`factory pr watch` is a command of the software recipe. It watches the checks of one pull request at one head commit, and it ends when the checks end. It is made to run as a background task after a push. It only reads. It never merges, never approves and never writes a file or a comment. A pass is a fact about the checks at the head. It is no approval to merge.
+
+```sh
+factory pr watch 123
+factory pr watch 123 --head 0123456789abcdef0123456789abcdef01234567
+factory pr watch 123 --project web
+```
+
+The command line:
+
+- `PR` is the number of the pull request: one to nine digits, with no leading zero. Any other value exits with code 2 before any call of `gh`.
+- `--head SHA` is the full commit id of the head to watch: 40 lowercase hex digits. Any other value exits with code 2. Without the flag, the watch pins the head of its first good read.
+- `--project ID` names the project. The config can list more than one project; then the flag is required, else the command exits with code 2. `--home DIR` names the factory folder, as for the other commands.
+- The repo comes from the URL of the project. Only repos on github.com are read. A project with no GitHub URL exits with code 1 before any call of `gh`.
+
+The watch:
+
+- Each read is one call of `gh pr view`. The head, the state, the review decision and the checks come from that one answer.
+- The watch makes 60 reads at most, 60 seconds apart. After the last read it ends with `NO CHANGE`.
+- A read fails when `gh` exits with an error, does not answer in time, gives an answer of more than 262,144 characters or text that is not JSON, or gives a value that factory does not know. A failed read is never a pass. A good read resets the count of failures in a row.
+- The first good read pins the head, unless `--head` gives it, and the review decision. A later read ends the watch when the head, the state or the review decision differs.
+- A check run counts when it is completed. `SUCCESS`, `NEUTRAL` and `SKIPPED` count as passed. `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE` and `STALE` count as failed. Any other value is pending. A status counts as passed with `SUCCESS`, as failed with `FAILURE` or `ERROR`, and as pending in any other state.
+- INT or TERM ends the watch, and so does a change of the parent process. HUP does not, so a lost terminal does not end the watch.
+
+The output has the word on line 1, with the number of the pull request and the pinned head. Line 2 counts the checks of the last good read. Line 3 counts the reads. A line with the remedy follows `UNREADABLE`. That is 4 lines at most. The output holds fixed words, counts, the number and the head only. It prints no text of `gh`, so a name, a link or a login of a check never reaches it. `--json` prints one document with the keys `schema` (`factory.pr-watch/v1`), `result`, `pr`, `head`, `counts` and `reads`.
+
+Exit codes of `pr watch`:
+
+| Code | Word on line 1 | Meaning |
+| --- | --- | --- |
+| 0 | `PASSED` | At least one check exists, and every check passed at the pinned head. |
+| 1 | `UNREADABLE` | 3 reads failed in a row, or `gh` is not on the path. |
+| 2 | none | The command line is wrong. The message is on stderr. |
+| 3 | `FAILED` | A check failed. The watch does not wait for the checks that still run. |
+| 3 | `HEAD MOVED` | The head of the pull request is not the pinned head. |
+| 3 | `CLOSED` | The pull request is closed. |
+| 3 | `MERGED` | The pull request is merged. |
+| 3 | `REVIEW CHANGED` | The review decision is not the one of the first good read. |
+| 3 | `NO CHECKS` | The first 2 reads are good and show no check. No check on read 1 alone does not end the watch. |
+| 3 | `NO CHANGE` | 60 reads ended with none of the words above. |
+| 3 | `STOPPED` | INT, TERM, or a change of the parent process. |
+
+A stop exits with code 3 here. `factory lock run` exits with 128 plus the signal number for a stop. A project with no GitHub URL exits with code 1. It prints the error on stderr, with no word on line 1.
+
+Limits:
+
+- `gh` gives at most 100 check contexts a page, so a pass covers the contexts that `gh` gives.
+- `SKIPPED` and `NEUTRAL` count as passed, as GitHub counts them for a required check.
+- A printed word can be up to 60 seconds old.
+- A KILL ends the watch with no word, because no program can catch it.
+- The commands `factory check` and `factory pr merge` are not built yet.
+
 ### Run a heavy command
 
 `factory lock run` runs one heavy command, such as a full test run, while you hold the heavy-test lock. Only one heavy run of a user goes at a time. All nodes of that user on one machine share the lock. A worker runs each heavy command this way.
@@ -886,7 +941,7 @@ Only a check at a security boundary stops a command. A stop exits with code 4. I
 | 3 | Not ready. The tmux session of the factory does not run (the message names `factory start`), or a worker has no pane that runs, or the state of a session is not known. |
 | 4 | A safety rule refused the action. |
 
-`factory lock run` passes on the exit code of its command, and it uses the codes above in its own way. See "Run a heavy command".
+`factory lock run` passes on the exit code of its command, and it uses the codes above in its own way. See "Run a heavy command". `factory pr watch` exits with code 3 for every end of the watch except a pass and an unreadable pull request. See "Watch a pull request".
 
 ## Development
 
