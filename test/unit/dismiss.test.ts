@@ -1781,7 +1781,16 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
       const given = await world({ git: { heads } }, CLOSED, () => {
         heads[alpha] = OLDER;
       });
-      await expectStopped(given, 'has commits that origin/worker/alpha does not hold');
+      await expectStopped(given, `the head of the work copy moved from ${HEAD} to ${OLDER} after the first check`);
+    });
+
+    it('stops when the head moves after the first check to a commit that the copy of the remote branch also holds', async () => {
+      const heads: Record<string, string> = { [alpha]: HEAD };
+      const given = await world({ git: { heads, ancestors: { [HEAD]: [OLDER] } } }, CLOSED, () => {
+        heads[alpha] = OLDER;
+      });
+      await expectStopped(given, `the head of the work copy moved from ${HEAD} to ${OLDER} after the first check`);
+      expect(given.rows[0]?.input.decision).toContain(`Pushed head: ${HEAD}.`);
     });
 
     it('stops when the work copy gets a changed file after the first check', async () => {

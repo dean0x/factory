@@ -335,14 +335,19 @@ const freeDecisionOf = (plan: DismissPlan, closed: readonly string[], head: stri
 });
 
 /**
- * The check of the closed path right before the removal: the evidence of the board and the pushed test, read again. A change since the
- * first check stops the free with a failure (exit 1) that says the worker was not freed.
+ * The check of the closed path right before the removal: the evidence of the board and the pushed test, read again, and the head of the
+ * work copy, which must be the head that the decision row names. The recheck does not fetch, so a head that moved can pass the pushed
+ * test on a copy of the remote branch that a push from the work copy moved too: only the head of the row is a head that the first
+ * check saw. A change since the first check stops the free with a failure (exit 1) that says the worker was not freed.
  */
-const recheckClosed = async (deps: Deps, workItems: WorkItemPort, home: string, plan: DismissPlan): Promise<CliResult<void>> => {
+const recheckClosed = async (deps: Deps, workItems: WorkItemPort, home: string, plan: DismissPlan, head: string): Promise<CliResult<void>> => {
   const stopped = (reason: string): CliResult<never> =>
     failure(`${reason}, so the ${roles.worker} ${plan.id} was not freed`, `Check the cause. Then run "${commandText(closedLine(plan.id))}" again.`);
   const work = await closedWorkOf(deps, workItems, home, plan.id);
   if (!work.ok) return stopped(work.error);
+  const now = await headOf(deps, plan.workCopy, plan.gitDir);
+  if (!now.ok) return stopped(now.error.message);
+  if (now.value !== head) return stopped(`the head of the work copy moved from ${head} to ${now.value ?? 'no commit'} after the first check`);
   const reasons = await unpushedReasons(deps, plan, work.value.mergedPrHeads);
   if (!reasons.ok) return stopped(reasons.error.message);
   return reasons.value.length === 0 ? ok(undefined) : stopped(reasons.value.join('; '));
@@ -353,8 +358,9 @@ const recheckClosed = async (deps: Deps, workItems: WorkItemPort, home: string, 
  * caller rule (a mistake guard, no proof), a work item that the board knows with a closed item that names the worker and no item that
  * is not closed that names it or carries its unassign mark, and the pushed and clean test (a head equal to the recorded head of a
  * closed item of the worker counts as pushed). Every other case is an owner step: the command refuses with exit 4 and names the owner
- * command. One decision row names the free before it, and the board and the work copy are checked again right before the removal.
- * A fault of the second check keeps the work copy and the record and says that the row stays. It never uses the yes flag.
+ * command. One decision row names the free and the pushed head before it. Right before the removal the board and the work copy are
+ * checked again, and the head must still be the head of the row. A fault of the second check keeps the work copy and the record and
+ * says that the row stays. It never uses the yes flag.
  */
 const dismissClosed = async (
   deps: Deps,
@@ -399,14 +405,15 @@ const dismissClosed = async (
   }
   const head = await headOf(deps, plan.workCopy, plan.gitDir);
   if (!head.ok) return head;
-  if (head.value === null) return failure(`the work copy of the ${roles.worker} ${id} has no commit`, `Run "${commandText(again)}" again.`);
+  const pushedHead = head.value;
+  if (pushedHead === null) return failure(`the work copy of the ${roles.worker} ${id} has no commit`, `Run "${commandText(again)}" again.`);
   const ignored = await ignoredIn(deps, plan);
   if (!ignored.ok) return ignored;
   const inbox = await inboxFilesIn(deps, home, id);
   if (!inbox.ok) return inbox;
   const lineSession = await lineSessionOf(deps, home, id);
   if (!lineSession.ok) return lineSession;
-  const logged = await decisions.log(deps, home, config, freeDecisionOf(plan, work.value.closed, head.value, ignored.value, inbox.value));
+  const logged = await decisions.log(deps, home, config, freeDecisionOf(plan, work.value.closed, pushedHead, ignored.value, inbox.value));
   if (!logged.ok) return logged;
   const row = logged.value;
   const freed = await freeWorker(deps, {
@@ -415,7 +422,7 @@ const dismissClosed = async (
     plan,
     panes: facts.value.panes,
     lineSession: lineSession.value,
-    beforeRemoval: () => recheckClosed(deps, workItems, home, plan),
+    beforeRemoval: () => recheckClosed(deps, workItems, home, plan, pushedHead),
   });
   if (!freed.ok) return err({ ...freed.error, message: `${freed.error.message}. The decision ${row} stays in the log` });
   return ok({
