@@ -102,6 +102,45 @@ describe('node children', () => {
     expect(output.failed).toBe(false);
   });
 
+  it('shows a child that holds another id as a mismatch with the fixed reason, as a warning', async () => {
+    const deps = make({
+      children: [{ id: 'web', address: 'file:///w/web-factory' }],
+      homes: { '/w/web-factory': configOf('stranger', 1) },
+    });
+    const output = await succeeded(deps, 'children');
+    expect(output.lines).toEqual([
+      { level: 'warn', text: `web  file:///w/web-factory  -  mismatch: ${childReasons.otherId}` },
+    ]);
+    expect(output.json['children']).toEqual([
+      { id: 'web', address: 'file:///w/web-factory', layer: null, status: 'mismatch', reason: childReasons.otherId },
+    ]);
+    expect(plainText(output)).not.toContain('stranger');
+    expect(output.failed).toBe(false);
+  });
+
+  it('cleans each cell of a row before it measures the columns', async () => {
+    const deps = make({
+      children: [
+        { id: 'web', address: 'file:///w/we‮b-factory' },
+        { id: 'api', address: 'file:///w/api-factory' },
+      ],
+    });
+    const output = await succeeded(deps, 'children');
+    expect(output.lines.map((line) => line.text)).toEqual([
+      'web  file:///w/web-factory  -  unknown: no factory.yaml found there',
+      'api  file:///w/api-factory  -  unknown: no factory.yaml found there',
+    ]);
+  });
+
+  it('cuts a cell of a row to the display width', async () => {
+    const address = `file:///w/${'a'.repeat(300)}`;
+    const deps = make({ children: [{ id: 'web', address }] });
+    const output = await succeeded(deps, 'children');
+    expect(output.lines).toEqual([
+      { level: 'warn', text: `web  ${address.slice(0, 120)}  -  unknown: no factory.yaml found there` },
+    ]);
+  });
+
   it('prints a short output, with and without a child', async () => {
     expectShortOutput(plainText(await succeeded(make(), 'children')));
     const deps = make({

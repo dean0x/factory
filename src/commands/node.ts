@@ -1,5 +1,5 @@
 import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
-import { removedByDisplay, type CommandOutput, type OutLine } from '../cli/output.js';
+import { displayLine, removedByDisplay, type CommandOutput, type OutLine } from '../cli/output.js';
 import { childTarget } from '../comms/address.js';
 import { probeChildren, type ChildRow } from '../comms/children.js';
 import type { DeliverResult } from '../comms/deliver.js';
@@ -20,6 +20,7 @@ import {
   files,
   flags,
   flagText,
+  maxDisplayWidth,
   maxFileBytes,
   nodeCommands,
   nodeSendReasons,
@@ -98,18 +99,25 @@ const openNode = async (
   });
 };
 
+/** The text rows of the child list. Each cell is cleaned and cut to the display width before the columns are measured. */
 const rowLines = (rows: readonly ChildRow[]): OutLine[] => {
   if (rows.length === 0) return [{ level: 'text', text: 'No children.' }];
-  const idWidth = Math.max(...rows.map((row) => row.id.length));
-  const addressWidth = Math.max(...rows.map((row) => row.address.length));
-  return rows.map((row): OutLine => {
-    const layer = row.layer === null ? '-' : `layer ${row.layer}`;
-    const state = row.status === 'ok' ? 'ok' : `unknown: ${row.reason ?? 'no reason'}`;
-    return {
-      level: row.status === 'ok' ? 'ok' : 'warn',
-      text: `${row.id.padEnd(idWidth)}  ${row.address.padEnd(addressWidth)}  ${layer}  ${state}`,
-    };
-  });
+  const cleanCell = (text: string): string => displayLine(text, maxDisplayWidth);
+  const cells = rows.map((row) => ({
+    level: row.status === 'ok' ? ('ok' as const) : ('warn' as const),
+    id: cleanCell(row.id),
+    address: cleanCell(row.address),
+    layer: cleanCell(row.layer === null ? '-' : `layer ${row.layer}`),
+    state: row.status === 'ok' ? 'ok' : `${row.status}: ${cleanCell(row.reason ?? 'no reason')}`,
+  }));
+  const idWidth = Math.max(...cells.map((cell) => cell.id.length));
+  const addressWidth = Math.max(...cells.map((cell) => cell.address.length));
+  return cells.map(
+    (cell): OutLine => ({
+      level: cell.level,
+      text: `${cell.id.padEnd(idWidth)}  ${cell.address.padEnd(addressWidth)}  ${cell.layer}  ${cell.state}`,
+    }),
+  );
 };
 
 const childrenOutput = async (
