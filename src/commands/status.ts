@@ -34,9 +34,9 @@ const cellsOf = (entry: WorkerStatus): readonly string[] =>
 /**
  * `status`: each worker with its state, its work item and its idle state. It reads what `worker list` reads (the registry, one list of
  * the panes and the last-seen line of each worker) and asks the work item port for the work items. It changes nothing. With no tmux
- * session of this factory, every worker is stopped. A worker is idle only when its activity is older than `limits.idle_after` and
- * the port says that it has no open work. A work item that the port does not give is unknown, and an unknown work item is never
- * idle. The port is a required parameter, so no caller can leave the work items out. Each cell of the table is one clean line.
+ * session of this factory, every worker is stopped. A worker is idle only when its pane lives, its session waits at the prompt and its
+ * last event is older than `limits.idle_after`. The work item is shown but it does not set the idle state. The port is a required
+ * parameter, so no caller can leave the work items out. Each cell of the table is one clean line.
  */
 export const runStatus = async (
   deps: Deps,

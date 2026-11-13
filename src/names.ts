@@ -1925,6 +1925,7 @@ const pathValues: Readonly<Record<string, string>> = {
   workersDir: `${inState(dirs.workers)}/`,
   resumeDir: `${inState(dirs.resume)}/`,
   nodeInboxDir: `${inState(dirs.inbox)}/`,
+  reviewsDir: `${inState(dirs.reviews)}/`,
 };
 
 /** The values for the placeholders of the templates, for example {{worker}} and {{Worker}}. */
@@ -1953,6 +1954,11 @@ export const templateValues: Readonly<Record<string, string>> = {
   resumeFile: files.resume,
   workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
   workerWatchCommand: workerCommandText(workerCommands.watch),
+  dismissCommand: commandText(commands.dismiss),
+  lastCheckWord: watchWords.lastCheck,
+  replacedWord: watchWords.replaced,
+  markerLostWord: watchWords.markerLost,
+  paneGoneWord: watchWords.kinds.gone,
   workerResetCommand: workerCommandText(workerCommands.reset),
   nodeSendCommand: `${commandText(commandLines.nodeSend)} <id> ${flagText(flags.file)} FILE`,
   inboxNotice: messageHeader.notice,
@@ -1980,6 +1986,8 @@ export const templateValues: Readonly<Record<string, string>> = {
   compactFlag: flagText(flags.compact),
   yesFlag: flagText(flags.yes),
   readyFlag: flagText(flags.ready),
+  sinceFlag: flagText(flags.since),
+  closedFlag: flagText(flags.closed),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,
