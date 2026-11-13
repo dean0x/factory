@@ -104,7 +104,7 @@ export interface CheckedRecord {
  * record of the worker that the item names, or from the project flag, and the branch is the branch of that worker.
  */
 export interface RecordCheckInput {
-  /** The reference as the person typed it. */
+  /** The reference as `parseRef` of the same check gave it. */
   readonly ref: string;
   readonly project: RecipeProject;
   /** The folder of the clone of the project. */

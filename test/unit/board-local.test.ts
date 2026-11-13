@@ -2125,13 +2125,15 @@ describe('the local connector: take a worker off an item', () => {
   });
 
   it.each([
-    ['an item with no worker', item('B-1')],
-    ['a worker field that is not text', workItem({ lane: 7 })],
-    ['a worker field that is null', workItem({ lane: null })],
-  ])('exits 2 and writes nothing for %s', async (_name, stored) => {
+    ['an item with no worker', item('B-1'), 'the item B-1 has no worker to take off'],
+    ['a worker field that is not text', workItem({ lane: 7 }), 'the worker field of B-1 does not hold text'],
+    ['a worker field that is null', workItem({ lane: null }), 'the worker field of B-1 does not hold text'],
+  ])('exits 2, says why, and writes nothing for %s', async (_name, stored, message) => {
     const board = boardWith([stored]);
     const repo = await repoWith(board);
-    expect(exitOf(await connectorOf(repo).unassignItem('B-1'))).toBe(2);
+    const error = errorOf(await connectorOf(repo).unassignItem('B-1'));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe(message);
     expectUntouched(repo, board);
   });
 

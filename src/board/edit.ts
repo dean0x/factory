@@ -503,8 +503,11 @@ export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliR
   const found = itemAt(doc, id);
   if (!found.ok) return found;
   const { record } = found.value;
-  const worker = Object.hasOwn(record, workerField) ? record[workerField] : undefined;
-  if (typeof worker !== 'string') return usageError(`the item ${id} has no ${roles.worker} to take off`);
+  if (!Object.hasOwn(record, workerField)) return usageError(`the item ${id} has no ${roles.worker} to take off`);
+  const worker = record[workerField];
+  if (typeof worker !== 'string') {
+    return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}.`);
+  }
   const former = formerWorkersOf(record, id);
   if (!former.ok) return former;
   const named = former.value.includes(worker);
