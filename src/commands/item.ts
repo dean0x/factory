@@ -1,16 +1,23 @@
+import { resolve } from 'node:path';
+import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, ItemRecorded } from '../board/contract.js';
+import { checkItemId, checkRecordSetup, formerWorkersOf } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
-import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery } from '../board/contract.js';
 import { followBoard } from '../board/follow.js';
 import { boardView, trackView } from '../board/list-view.js';
+import { requireLocalKind } from '../board/local.js';
 import { stageShown } from '../board/stages.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
+import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, schemaIds } from '../names.js';
+import { boardKeys, commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, roles, schemaIds } from '../names.js';
+import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
+import { requireCoordinatorCaller } from '../workers/panes.js';
+import { branchOf, readWorkerRecord, type WorkerRecord } from '../workers/registry.js';
 import { openBoard, type OpenBoard } from './board-open.js';
 import { parseFieldWords, shown, usageFor } from './board-words.js';
 
@@ -28,17 +35,31 @@ export interface ItemOptions {
   readonly all: boolean;
   /** Draw the list again at each change of the board, until the reader goes. Only `list` takes it. */
   readonly follow: boolean;
+  /** The reference for the record check of the recipe, as typed. Only `record` takes it. */
+  readonly ref: string | undefined;
+  /** The id of the project of the record. Only `record` takes it. */
+  readonly project: string | undefined;
   readonly json: boolean;
 }
 
 type Subcommand = (typeof itemCommands)[keyof typeof itemCommands];
+
+/** The record of a passed check: the item, the reference as typed, and the project when the person names it. */
+interface RecordAction {
+  readonly kind: typeof itemCommands.record;
+  readonly id: string;
+  readonly ref: string;
+  readonly project: string | undefined;
+}
 
 type Action =
   | { readonly kind: typeof itemCommands.add; readonly input: ItemAddInput }
   | { readonly kind: typeof itemCommands.update; readonly id: string; readonly patch: ItemPatch }
   | { readonly kind: typeof itemCommands.move; readonly id: string; readonly move: ItemMove }
   | { readonly kind: typeof itemCommands.close; readonly id: string }
-  | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean };
+  | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean }
+  | RecordAction
+  | { readonly kind: typeof itemCommands.unassign; readonly id: string };
 
 const SUBCOMMANDS = Object.values(itemCommands).join(', ');
 
@@ -49,6 +70,8 @@ const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
   [itemCommands.move]: [flags.state, flags.stage],
   [itemCommands.close]: [],
   [itemCommands.list]: [flags.all, flags.track, flags.follow],
+  [itemCommands.record]: [flags.ref, flags.project],
+  [itemCommands.unassign]: [],
 };
 
 const needsUsage = usageFor(commands.item);
@@ -65,6 +88,8 @@ const refuseStrayFlags = (subcommand: Subcommand, options: ItemOptions): CliResu
     [flags.stage, options.stage !== undefined],
     [flags.all, options.all],
     [flags.follow, options.follow],
+    [flags.ref, options.ref !== undefined],
+    [flags.project, options.project !== undefined],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.item} ${subcommand}`)}`);
@@ -129,6 +154,16 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
       }
       return ok({ kind: subcommand, query: { all: options.all, ...withTrack(options) }, follow: options.follow });
     }
+    case itemCommands.record: {
+      const id = idArgument(subcommand, args);
+      if (!id.ok) return id;
+      if (options.ref === undefined) return needsUsage(`${subcommand} needs ${flagText(flags.ref)} REF`);
+      return ok({ kind: subcommand, id: id.value, ref: options.ref, project: options.project });
+    }
+    case itemCommands.unassign: {
+      const id = idArgument(subcommand, args);
+      return id.ok ? ok({ kind: subcommand, id: id.value }) : id;
+    }
     default: {
       const unreachable: never = subcommand;
       return unreachable;
@@ -180,6 +215,157 @@ const listAnswer = async (connector: BoardConnector, config: FactoryConfig, quer
 /** The output of a follow that has ended: the frames went to stdout as they were drawn, so nothing is left to print. */
 const followed = (): CommandOutput => ({ lines: [], json: { schema: schemaIds.itemList }, warnings: [], failed: false });
 
+/**
+ * The worker that an item names in the worker field of the setup, or null for none. A value that is not text names no branch and no
+ * record, so it is a failure (exit 1) and nothing is read from the network.
+ */
+const workerOf = (item: BoardItem, field: string | undefined): CliResult<string | null> => {
+  if (field === undefined || !Object.hasOwn(item.record, field)) return ok(null);
+  const stored = item.record[field];
+  return typeof stored === 'string'
+    ? ok(stored)
+    : failure(`the ${roles.worker} field of ${displayLine(item.id)} does not hold text`, `Check the item in ${files.board}.`);
+};
+
+/**
+ * The branches that the work of an item may come from, for the record check. An item with a worker has the branch of that worker.
+ * An item with no worker and a list of former workers (`unassigned_from`) has the branch of each former worker that is a worker id.
+ * That list fails closed: a list that is not a list of text, and a list that gives no branch, are a failure (exit 1) and nothing is
+ * read from the network, because the work could not be tied to a worker. An item that never had a worker (no list, or an empty
+ * one) has no branches, so the check tests none.
+ */
+const branchesOf = (item: BoardItem, worker: string | null): CliResult<readonly string[] | undefined> => {
+  if (worker !== null) return ok([branchOf(worker)]);
+  const rest = ` ${item.id} ${flagText(flags.ref)} REF`;
+  const again = `${commandText(commandLines.itemRecord)}${rest}`;
+  const former = formerWorkersOf(item.record, item.id, commandLines.itemRecord, rest);
+  if (!former.ok) return former;
+  if (former.value.length === 0) return ok(undefined);
+  const branches = former.value.filter(isSlug).map(branchOf);
+  if (branches.length > 0) return ok(branches);
+  return failure(
+    `the item ${item.id} names former ${roles.worker}s, but none has a branch to test`,
+    `Check the "${boardKeys.unassignedFrom}" of the item in ${files.board}, then run "${again}" again.`,
+  );
+};
+
+/** The record of a worker, or null when it has none. A record that is not valid is a failure (exit 1). */
+const recordOf = async (deps: Deps, home: string, worker: string): Promise<CliResult<WorkerRecord | null>> => {
+  const read = await readWorkerRecord(deps, home, worker);
+  if (!read.ok) return read;
+  if (read.value.state === 'absent') return ok(null);
+  if (read.value.state === 'valid') return ok(read.value.record);
+  return failure(
+    `the record of the ${roles.worker} ${shown(worker)} is not valid: ${read.value.reason}`,
+    `Run "${commandText(commandLines.workerList)}" to see the records that are not valid.`,
+  );
+};
+
+/**
+ * What the record check of the recipe gets, from the config. The project comes from the record of the worker that the item names, and
+ * a project that the person names must be that one. An item with no worker record needs the project flag. The branches come from the
+ * worker and the former workers of the item (`branchesOf`). The recipe reads the rest of the project itself.
+ */
+const checkInputOf = async (
+  deps: Deps,
+  board: OpenBoard,
+  action: RecordAction,
+  ref: string,
+  worker: string | null,
+  branches: readonly string[] | undefined,
+): Promise<CliResult<RecordCheckInput>> => {
+  const { home, config } = board;
+  const record = worker === null ? ok(null) : await recordOf(deps, home, worker);
+  if (!record.ok) return record;
+  if (record.value !== null && action.project !== undefined && action.project !== record.value.project) {
+    return usageError(`${flagText(flags.project)} ${shown(action.project)} is not the project of the ${roles.worker} ${record.value.id}`);
+  }
+  const projectId = record.value?.project ?? action.project;
+  if (projectId === undefined) {
+    return usageError(`the item ${action.id} names no ${roles.worker} with a record, so ${action.kind} needs ${flagText(flags.project)} PROJECT`);
+  }
+  const project = config.recipe.projects.find((candidate) => candidate.id === projectId);
+  if (project === undefined) {
+    return usageError(`the project ${shown(projectId)} is not in the config of this ${roles.node}`, `Check the projects in ${files.config}.`);
+  }
+  return ok({ ref, project, cloneDir: resolve(home, project.path), branches });
+};
+
+const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded): CommandOutput => {
+  const id = displayLine(recorded.item.id);
+  const summary = displayLine(checked.summary);
+  return answer(recorded.changed ? `Recorded ${id}: ${summary}` : `${id}: ${summary} already recorded`, {
+    schema: schemaIds.item,
+    action: itemCommands.record,
+    id: recorded.item.id,
+    stage: checked.stage,
+    ref: checked.ref,
+    head: checked.head,
+    summary: checked.summary,
+    changed: recorded.changed,
+  });
+};
+
+/**
+ * `item record`: the record check of the recipe of the node runs, and only a result that passed is written. A recipe with no record
+ * check makes this a usage error (exit 2) with no write. The reference is checked first, so a bad one is a usage error before the item
+ * is read and before the check reaches the network. The local checks come next (the item id, the tracker kind, the stage of the check
+ * in the recipe, the closed state, the item), so the check makes no call for a request that the board refuses. The worker that the
+ * item names at the time of the check goes to the write, which tests it again under the lock.
+ */
+const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction): Promise<CliResult<CommandOutput>> => {
+  const { connector, config } = board;
+  const hook: RecordCheck | undefined = config.entry.recordCheck;
+  if (hook === undefined) {
+    return usageError(
+      `the ${roles.recipe} ${config.entry.id} of this ${roles.node} has no check for ${commandText(commandLines.itemRecord)}`,
+      `Run "${commandText(commands.item)} ${flagText(flags.help)}" to see the commands that you can use.`,
+    );
+  }
+  const ref = hook.parseRef(action.ref);
+  if (!ref.ok) return ref;
+  const valid = checkItemId(action.id);
+  if (!valid.ok) return valid;
+  const local = requireLocalKind(config.core.tracker.kind, commands.item);
+  if (!local.ok) return local;
+  const ready = checkRecordSetup({ recipe: config.entry.board, config: config.core.board }, hook.stage);
+  if (!ready.ok) return ready;
+  const items = await connector.listItems({ all: true });
+  if (!items.ok) return items;
+  const item = items.value.find((candidate) => candidate.id === action.id);
+  if (item === undefined) return usageError(`${files.board} has no item ${shown(action.id)}`);
+  const worker = workerOf(item, config.core.board?.worker_field);
+  if (!worker.ok) return worker;
+  const branches = branchesOf(item, worker.value);
+  if (!branches.ok) return branches;
+  const input = await checkInputOf(deps, board, action, ref.value, worker.value, branches.value);
+  if (!input.ok) return input;
+  const checked = await hook.check(deps, input.value);
+  if (!checked.ok) return checked;
+  const recorded = await connector.recordChecked(action.id, checked.value, worker.value);
+  return recorded.ok ? ok(recordedAnswer(checked.value, recorded.value)) : recorded;
+};
+
+/**
+ * `item unassign`: only the coordinator pane runs it, and the caller rule runs before the board is read. The id is checked first, so
+ * the line that the rule prints never repeats text that is not an item id.
+ */
+const unassign = async (deps: Deps, board: OpenBoard, id: string): Promise<CliResult<CommandOutput>> => {
+  const valid = checkItemId(id);
+  if (!valid.ok) return valid;
+  const caller = await requireCoordinatorCaller(deps, board.home, board.config, `${commandLines.itemUnassign} ${id}`);
+  if (!caller.ok) return caller;
+  const freed = await board.connector.unassignItem(id);
+  if (!freed.ok) return freed;
+  const { item, worker } = freed.value;
+  return ok(
+    answer(`Took ${displayLine(worker)} off ${displayLine(item.id)}: ${titleText(item)}`, {
+      ...itemJson(itemCommands.unassign, item),
+      worker,
+    }),
+  );
+};
+
 const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<CliResult<CommandOutput>> => {
   const { connector, config } = board;
   switch (action.kind) {
@@ -204,6 +390,10 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       const ended = await followBoard(deps, { layout: layoutOf(board.home), draw: () => listAnswer(connector, config, action.query) });
       return ended.ok ? ok(followed()) : ended;
     }
+    case itemCommands.record:
+      return recordChecked(deps, board, action);
+    case itemCommands.unassign:
+      return unassign(deps, board, action.id);
     default: {
       const unreachable: never = action;
       return unreachable;
@@ -212,10 +402,11 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
 };
 
 /**
- * `item`: add, update, move, close and list the items of the board. The words and the flags are checked first (exit 2), then the node
- * is found and the connector runs the action. A write is one state commit through the connector, and the connector refuses it for a
- * hosted tracker kind. `list` reads the local files with no lock and has no JSON output. With the follow flag, `list` draws the list
- * again at each change of the board, until its reader goes (`followBoard`).
+ * `item`: add, update, move, close and list the items of the board, record a passed check of the recipe, and take the worker off an
+ * item. The words and the flags are checked first (exit 2), then the node is found and the connector runs the action. A write is one
+ * state commit through the connector, and the connector refuses it for a hosted tracker kind. `list` reads the local files with no
+ * lock and has no JSON output. With the follow flag, `list` draws the list again at each change of the board, until its reader goes
+ * (`followBoard`).
  */
 export const runItem = async (deps: Deps, options: ItemOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);

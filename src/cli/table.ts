@@ -44,6 +44,7 @@ import {
   program,
   queueCommands,
   queueLimits,
+  relayedMarker,
   requestCommands,
   requestDeciders,
   requestWords,
@@ -133,6 +134,23 @@ export const hookCommandFor = (registry: RecipeRegistry): Command => ({
     return done.ok ? ok({ lines: [], json: { schema: schemaIds.hook }, warnings: [], failed: false }) : done;
   },
 });
+
+/**
+ * What the record checks of the registry add to the help of `item`: a part of the summary for each check, and the help of the
+ * reference flag. The words come from the recipes. A registry with no record check says so.
+ */
+const recordHelpOf = (registry: RecipeRegistry): { readonly summary: string; readonly ref: string } => {
+  const checks = registry.flatMap((entry) => (entry.recordCheck === undefined ? [] : [{ id: entry.id, check: entry.recordCheck }]));
+  const unassign = `take the ${roles.worker} off an item`;
+  const records = checks.map(({ check }) => check.summary);
+  const own = checks.map(({ id, check }) => `In the ${id} ${roles.recipe}: ${check.refHelp}`);
+  return {
+    summary: `Add, change, move, close and list the items of the board, ${records.length === 0 ? '' : `${records.join(', ')}, `}and ${unassign}.`,
+    ref:
+      `With ${itemCommands.record}: the reference that the check of the ${roles.recipe} reads. ` +
+      (own.length === 0 ? `No ${roles.recipe} of this package has a check.` : own.join(' ')),
+  };
+};
 
 /** The commands. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */
 export const commandTableFor = (registry: RecipeRegistry): readonly Command[] => [
@@ -474,13 +492,15 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.item,
-    summary: 'Add, change, move, close and list the items of the board.',
+    summary: recordHelpOf(registry).summary,
     usage: [
       `${commandText(commandLines.itemAdd)} ${flagText(flags.title)} TEXT [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemUpdate)} ID [${flagText(flags.title)} TEXT] [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemMove)} ID ${flagText(flags.state)} STATE|${flagText(flags.stage)} STAGE [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemClose)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemList)} [${flagText(flags.all)}] [${flagText(flags.track)} ID] [${flagText(flags.follow)}] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemRecord)} ID ${flagText(flags.ref)} REF [${flagText(flags.project)} PROJECT] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemUnassign)} ID [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -508,7 +528,19 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         placeholder: 'NAME=VALUE',
         description:
           `With ${itemCommands.add} and ${itemCommands.update}: set a field of the ${roles.owner} on the item. The setup declares the fields and their values. ` +
-          'Repeat the flag for more fields.',
+          `Repeat the flag for more fields. The ${roles.worker} field of an item that names a ${roles.worker} changes only through ${itemCommands.unassign}.`,
+      },
+      [flags.ref]: {
+        type: 'string',
+        placeholder: 'REF',
+        description: recordHelpOf(registry).ref,
+      },
+      [flags.project]: {
+        type: 'string',
+        placeholder: 'PROJECT',
+        description:
+          `With ${itemCommands.record}: the id of the project of the work. The item must name a ${roles.worker} with a record, which gives the project, ` +
+          'or this flag names it. With both, they must be the same project.',
       },
       [flags.state]: {
         type: 'string',
@@ -545,6 +577,8 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           stage: given.string(flags.stage),
           all: given.bool(flags.all),
           follow: given.bool(flags.follow),
+          ref: given.string(flags.ref),
+          project: given.string(flags.project),
           json: given.bool(flags.json),
         },
         registry,
@@ -579,11 +613,15 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.request,
-    summary: `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, or close a ${requestWords.request} with no answer or with a decision that the ${requestDeciders.coordinator} or a ${requestDeciders.delegate} made.`,
+    summary:
+      `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, close a ${requestWords.request} with no answer or with a decision that the ${requestDeciders.coordinator} or a ${requestDeciders.delegate} made, ` +
+      `close a ${requestWords.request} to pass on an answer of the ${roles.owner}, or log a decision that no ${requestWords.request} asked for.`,
     usage: [
       `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestList)} [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestClose)} ID [${flagText(flags.madeBy)} WHO ${flagText(flags.decision)} TEXT] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestClose)} ID ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestLog)} ${flagText(flags.title)} TEXT ${flagText(flags.madeBy)} WHO ${flagText(flags.decision)} TEXT [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -591,7 +629,9 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       [flags.title]: {
         type: 'string',
         placeholder: 'TEXT',
-        description: `With ${requestCommands.add}: the title of the ${requestWords.request}. One line of at most ${boardTextLimits.maxTitleChars} characters.`,
+        description:
+          `With ${requestCommands.add}: the title of the ${requestWords.request}. With ${requestCommands.log}: the title of the decision. ` +
+          `One line of at most ${boardTextLimits.maxTitleChars} characters.`,
       },
       [flags.question]: {
         type: 'string',
@@ -615,15 +655,26 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'string',
         placeholder: 'WHO',
         description:
-          `With ${requestCommands.close}: who made the decision, ${Object.values(requestDeciders).join(' or ')}. ` +
+          `With ${requestCommands.close} and ${requestCommands.log}: who made the decision, ${Object.values(requestDeciders).join(' or ')}. ` +
           `Use it only for a ${requestWords.request} that is not an approval point. ` +
           `A ${requestDeciders.delegate} is another session, for example an orchestrating agent, that makes the decision for the ${roles.owner}. ` +
-          `The row of the log names who made it, and it has no ${roles.owner} authority. It is never an answer of the ${roles.owner}.`,
+          `The row of the log names who made it, and it has no ${roles.owner} authority. It is never an answer of the ${roles.owner}. ` +
+          `${flagText(flags.relayed)} takes no ${flagText(flags.madeBy)}.`,
       },
       [flags.decision]: {
         type: 'string',
         placeholder: 'TEXT',
-        description: `With ${requestCommands.close} and ${flagText(flags.madeBy)}: the decision. One line of at most ${boardTextLimits.maxTextChars} characters.`,
+        description:
+          `With ${requestCommands.close} and ${flagText(flags.madeBy)}, with ${requestCommands.close} and ${flagText(flags.relayed)}, and with ${requestCommands.log}: ` +
+          `the decision. One line of at most ${boardTextLimits.maxTextChars} characters. Type the decision as it is, with no prefix.`,
+      },
+      [flags.relayed]: {
+        type: 'boolean',
+        description:
+          `With ${requestCommands.close}: pass on an answer that the ${roles.owner} gave to you, the ${requestDeciders.coordinator}. ` +
+          `Run it only in the pane of the ${requestDeciders.coordinator}. It needs ${flagText(flags.decision)}. ` +
+          `The row of the log names the ${requestDeciders.coordinator} and says: ${relayedMarker}. ` +
+          `It is never an answer of the ${roles.owner}, and the ${requestWords.request} can not get one afterwards.`,
       },
     },
     run: (given, deps) =>
@@ -638,6 +689,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           recommend: given.string(flags.recommend),
           decider: given.string(flags.madeBy),
           decision: given.string(flags.decision),
+          relayed: given.bool(flags.relayed),
         },
         registry,
       ),

@@ -12,7 +12,7 @@ import type {
   RequestSettlement,
 } from '../../src/board/contract.js';
 import { strictRequestOf, type DecideRequest } from '../../src/board/decide.js';
-import { checkSettlement, closeRequestIn } from '../../src/board/edit.js';
+import { changeItemIn, checkPatch, checkSettlement, closeRequestIn } from '../../src/board/edit.js';
 import { resolveFields, declaredFields } from '../../src/board/fields.js';
 import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readDecisionLog, readWaiting } from '../../src/board/files.js';
 import { boardJsonText } from '../../src/board/json.js';
@@ -32,12 +32,16 @@ import {
   env,
   files as fileNames,
   maxBoardNumber,
+  markLimits,
   maxFileBytes,
+  relayedMarker,
   requestDeciders,
   stateLock,
   values,
+  workerFieldGuard,
   type CommandName,
 } from '../../src/names.js';
+import type { CheckedRecord } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { layoutOf, stateRel } from '../../src/state/layout.js';
 import { describeBoardContract } from '../contract/board-contract.js';
@@ -1945,5 +1949,519 @@ describe('the checked settlement of a close', () => {
     // @ts-expect-error The settlement of closeRequestIn is the one that checkSettlement made.
     const edited = closeRequestIn(valueOf(waiting), valueOf(log), 'D-1', DATE, raw);
     expect(edited.ok).toBe(true);
+  });
+});
+
+// The board records: the merge record, the worker mark, the worker field guard, the decision log and the relayed close.
+
+const PR_HEAD = 'a'.repeat(40);
+const MERGE_COMMIT = 'b'.repeat(40);
+
+/** A result of the record check of a recipe. The brand has no value at run time, so a test cast makes one. */
+const checkedRecord = (overrides: Partial<{ stage: string; ref: string; head: string; summary: string }> = {}): CheckedRecord =>
+  ({ stage: 'merged', ref: '12', head: PR_HEAD, summary: `PR 12, merge commit ${MERGE_COMMIT}`, ...overrides }) as CheckedRecord;
+
+const workItem = (extra: Record<string, unknown> = {}): Record<string, unknown> =>
+  item('B-1', { status: 'doing', stage: 'review', lane: 'w1', ...extra });
+
+const boardAfter = (repo: BoardRepo): ReturnType<typeof parseBoard> => parseBoard(repo.textOf(fileNames.board) ?? '', QUEUE);
+
+const itemAfter = (repo: BoardRepo, id: string): Readonly<Record<string, unknown>> => {
+  const found = valueOf(boardAfter(repo)).items.find((candidate) => candidate.id === id);
+  if (found === undefined) throw new Error(`no item ${id}`);
+  return found.record;
+};
+
+describe('the local connector: record a passed check', () => {
+  const ROWS = [
+    { name: 'First', items: ['B-1', 'B-2'], release: true },
+    { name: 'Alone', items: ['B-1'], note: 'only this one' },
+    { name: 'Other', items: ['B-2'] },
+    { name: 'Empty', items: [] },
+  ];
+
+  it('sets the merged stage, the closed state and the PR head, and keeps the merge commit out of the item', async () => {
+    const repo = await repoWith(boardWith([workItem({ zeta: 1 }), item('B-2')]));
+    const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(done.changed).toBe(true);
+    expect(done.item.status).toBe('done');
+    expect(done.item.stage).toBe('merged');
+    expect(itemAfter(repo, 'B-1')).toEqual({ ...workItem({ zeta: 1 }), status: 'done', stage: 'merged', merged_pr_head: PR_HEAD });
+    expect(repo.textOf(fileNames.board)).not.toContain(MERGE_COMMIT);
+  });
+
+  it('takes the item out of each queue row that lists it, drops a row that becomes empty, and keeps the other rows', async () => {
+    const repo = await repoWith(boardWith([workItem(), item('B-2')], { [QUEUE]: ROWS }));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(valueOf(boardAfter(repo)).queue).toEqual([
+      { name: 'First', items: ['B-2'], release: true },
+      { name: 'Other', items: ['B-2'] },
+      { name: 'Empty', items: [] },
+    ]);
+  });
+
+  it('makes one commit of the board file, and its message names the stage and the summary of the check', async () => {
+    const repo = await repoWith(boardWith([workItem()]));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(repo.commits).toHaveLength(1);
+    expect(repo.commits[0]?.staged).toEqual([fileNames.board]);
+    expect(repo.commits[0]?.message).toContain('merged');
+    expect(repo.commits[0]?.message).toContain('12');
+    expect(repo.commits[0]?.message).toContain(MERGE_COMMIT);
+  });
+
+  it('sets the stage that the check names, and exits 2 with no write for a stage that the recipe does not list', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    const connector = connectorOf(repo);
+    expect(exitOf(await connector.recordChecked('B-1', checkedRecord({ stage: 'unlisted' }), 'w1'))).toBe(2);
+    expectUntouched(repo, board);
+    valueOf(await connector.recordChecked('B-1', checkedRecord({ stage: 'released' }), 'w1'));
+    expect(itemAfter(repo, 'B-1')).toMatchObject({ stage: 'released', status: 'done' });
+  });
+
+  it('is a success with no commit when the same record is made again', async () => {
+    const repo = await repoWith(boardWith([workItem()], { [QUEUE]: ROWS }));
+    const connector = connectorOf(repo);
+    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
+    const written = repo.textOf(fileNames.board);
+    const again = valueOf(await connector.recordChecked('B-1', checkedRecord({ summary: `PR 12, merge commit ${'c'.repeat(40)}` }), 'w1'));
+    expect(again.changed).toBe(false);
+    expect(repo.commits).toHaveLength(1);
+    expect(repo.textOf(fileNames.board)).toBe(written);
+  });
+
+  it('records the item and takes it out of the queue when the item holds the stage, the state and the head and a queue row lists it', async () => {
+    const recorded = workItem({ status: 'done', stage: 'merged', merged_pr_head: PR_HEAD });
+    const repo = await repoWith(boardWith([recorded, item('B-2')], { [QUEUE]: ROWS }));
+    const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(done.changed).toBe(true);
+    expect(repo.commits).toHaveLength(1);
+    expect(valueOf(boardAfter(repo)).queue).toEqual([
+      { name: 'First', items: ['B-2'], release: true },
+      { name: 'Other', items: ['B-2'] },
+      { name: 'Empty', items: [] },
+    ]);
+    expect(itemAfter(repo, 'B-1')).toEqual(recorded);
+  });
+
+  it('exits 1 and writes nothing when the item records another PR head', async () => {
+    const board = boardWith([workItem({ merged_pr_head: 'd'.repeat(40), status: 'done', stage: 'merged' })]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(1);
+    expectUntouched(repo, board);
+  });
+
+  it('exits 1 and writes nothing when another item records the PR head already, and names that item and the command in the remedy', async () => {
+    const board = boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: PR_HEAD })], { [QUEUE]: ROWS });
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('B-2');
+    expect(error.message).not.toContain(PR_HEAD);
+    expect(error.hint).toContain(commandText(commandLines.itemRecord));
+    expectUntouched(repo, board);
+  });
+
+  it('records the item when the other items record other PR heads', async () => {
+    const repo = await repoWith(boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: 'd'.repeat(40) })]));
+    expect(valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1')).changed).toBe(true);
+  });
+
+  it('keeps a rerun of the same item a success with no commit, whatever the other items record', async () => {
+    const repo = await repoWith(boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: 'd'.repeat(40) })]));
+    const connector = connectorOf(repo);
+    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1')).changed).toBe(false);
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it.each([
+    ['another worker', workItem({ lane: 'w2' }), 'w1'],
+    ['no worker any more', item('B-1', { status: 'doing', stage: 'review' }), 'w1'],
+    ['a new worker', workItem(), null],
+    ['a worker that is not text', workItem({ lane: 7 }), null],
+  ])('exits 1 and writes nothing when the worker field holds %s since the check', async (_name, stored, worker) => {
+    const board = boardWith([stored], { [QUEUE]: ROWS });
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), worker));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('B-1');
+    expectUntouched(repo, board);
+  });
+
+  it('records the merge of an item that has no worker when the check bound none', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'review' })]));
+    expect(valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), null)).changed).toBe(true);
+  });
+
+  it.each([
+    ['an item that is not on the board', 'B-9'],
+    ['an id that is not of the form B-n', 'x-1'],
+  ])('exits 2 and writes nothing for %s', async (_name, id) => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo).recordChecked(id, checkedRecord(), 'w1'))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it('exits 2 and writes nothing when the recipe has no stage list', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    const bare = connectorOf(repo, { recipe: { queueKey: QUEUE } });
+    expect(exitOf(await bare.recordChecked('B-1', checkedRecord(), 'w1'))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it('exits 2 and writes nothing when the setup names no closed state', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    const { closed: _closed, ...open } = sampleBoard();
+    expect(exitOf(await connectorOf(repo, { config: open }).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it('stops with exit 4 for a hosted tracker kind, before it reads the board', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo, { tracker: 'github' }).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(4);
+    expectUntouched(repo, board);
+  });
+});
+
+describe('the local connector: take a worker off an item', () => {
+  it('deletes the worker key, keeps the state and the stage, and marks the former worker', async () => {
+    const repo = await repoWith(boardWith([workItem({ zeta: 1 })]));
+    const done = valueOf(await connectorOf(repo).unassignItem('B-1'));
+    expect(done.worker).toBe('w1');
+    expect(done.item.status).toBe('doing');
+    expect(done.item.stage).toBe('review');
+    const { lane: _lane, ...rest } = workItem({ zeta: 1 });
+    expect(itemAfter(repo, 'B-1')).toEqual({ ...rest, unassigned_from: ['w1'] });
+    expect(repo.commits).toHaveLength(1);
+    expect(repo.commits[0]?.staged).toEqual([fileNames.board]);
+  });
+
+  it('adds the worker to the former workers that the item has, and keeps the order of the list', async () => {
+    const repo = await repoWith(boardWith([workItem({ unassigned_from: ['w0'] })]));
+    valueOf(await connectorOf(repo).unassignItem('B-1'));
+    expect(itemAfter(repo, 'B-1')['unassigned_from']).toEqual(['w0', 'w1']);
+  });
+
+  it('names a former worker once', async () => {
+    const repo = await repoWith(boardWith([workItem({ unassigned_from: ['w1', 'w0'] })]));
+    valueOf(await connectorOf(repo).unassignItem('B-1'));
+    expect(itemAfter(repo, 'B-1')['unassigned_from']).toEqual(['w1', 'w0']);
+    expect(itemAfter(repo, 'B-1')).not.toHaveProperty('lane');
+  });
+
+  it('keeps the queue as it is', async () => {
+    const rows = [{ name: 'First', items: ['B-1'] }];
+    const repo = await repoWith(boardWith([workItem()], { [QUEUE]: rows }));
+    valueOf(await connectorOf(repo).unassignItem('B-1'));
+    expect(valueOf(boardAfter(repo)).queue).toEqual(rows);
+  });
+
+  it.each([
+    ['an item with no worker', item('B-1'), 'the item B-1 has no worker to take off'],
+    ['a worker field that is not text', workItem({ lane: 7 }), 'the worker field of B-1 does not hold text'],
+    ['a worker field that is null', workItem({ lane: null }), 'the worker field of B-1 does not hold text'],
+  ])('exits 2, says why, and writes nothing for %s', async (_name, stored, message) => {
+    const board = boardWith([stored]);
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).unassignItem('B-1'));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe(message);
+    expectUntouched(repo, board);
+  });
+
+  it('exits 1 and writes nothing when the former workers are not a list of text', async () => {
+    const board = boardWith([workItem({ unassigned_from: ['w0', 3] })]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo).unassignItem('B-1'))).toBe(1);
+    expectUntouched(repo, board);
+  });
+
+  it('exits 2 and writes nothing past the cap of former workers, and still unassigns a worker that is named already', async () => {
+    const full = Array.from({ length: markLimits.maxFormerWorkers }, (_, at) => `w-${at}`);
+    const board = boardWith([workItem({ unassigned_from: full })]);
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).unassignItem('B-1'));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.hint).toContain(`"${commandText(commandLines.itemUnassign)} B-1"`);
+    expect(error.hint).toContain('unassigned_from');
+    expectUntouched(repo, board);
+    const named = await repoWith(boardWith([workItem({ lane: 'w-3', unassigned_from: full })]));
+    valueOf(await connectorOf(named).unassignItem('B-1'));
+    expect(itemAfter(named, 'B-1')['unassigned_from']).toEqual(full);
+  });
+
+  it('exits 2 and writes nothing when the setup names no worker field', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    const { worker_field: _field, ...bare } = sampleBoard();
+    expect(exitOf(await connectorOf(repo, { config: bare }).unassignItem('B-1'))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it.each([
+    ['an item that is not on the board', 'B-9'],
+    ['an id that is not of the form B-n', 'nope'],
+  ])('exits 2 and writes nothing for %s', async (_name, id) => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo).unassignItem(id))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it('stops with exit 4 for a hosted tracker kind', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo, { tracker: 'github' }).unassignItem('B-1'))).toBe(4);
+    expectUntouched(repo, board);
+  });
+});
+
+describe('the local connector: the worker field of an item that has a worker', () => {
+  it('refuses an update that replaces the worker with exit 2, names the item and the command that frees the worker, and writes nothing', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).updateItem('B-1', { fields: { lane: 'w2' } }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe(workerFieldGuard.message('B-1'));
+    expect(error.hint).toBe(workerFieldGuard.remedy('B-1'));
+    expect(error.hint).toContain(commandLines.itemUnassign);
+    expectUntouched(repo, board);
+  });
+
+  it('refuses an update that clears the worker with exit 2 and the remedy that frees the worker, and writes nothing', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).updateItem('B-1', { fields: { lane: '' } }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe(workerFieldGuard.message('B-1'));
+    expect(error.hint).toBe(workerFieldGuard.remedy('B-1'));
+    expectUntouched(repo, board);
+  });
+
+  it('keeps the refusal of an empty worker value for an item that has no worker, and writes nothing', async () => {
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).updateItem('B-1', { fields: { lane: '' } }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('the field lane takes a token');
+    expectUntouched(repo, board);
+  });
+
+  it('refuses a patch that changes the worker together with the title, and changes nothing of the title', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo).updateItem('B-1', { title: 'Changed', fields: { lane: 'w2' } }))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it('treats a patch with the same worker as no change: no commit, the text as it is', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    expect(valueOf(await connectorOf(repo).updateItem('B-1', { fields: { lane: 'w1' } })).id).toBe('B-1');
+    expectUntouched(repo, board);
+  });
+
+  it('changes the other fields and the title of an item that has a worker', async () => {
+    const repo = await repoWith(boardWith([workItem()]));
+    valueOf(await connectorOf(repo).updateItem('B-1', { title: 'Changed', fields: PRIORITY }));
+    expect(itemAfter(repo, 'B-1')).toMatchObject({ title: 'Changed', priority: 'P1', lane: 'w1' });
+  });
+
+  it('assigns a worker to an item that has none', async () => {
+    const repo = await repoWith(boardWith([item('B-1')]));
+    valueOf(await connectorOf(repo).updateItem('B-1', { fields: { lane: 'w2' } }));
+    expect(itemAfter(repo, 'B-1')['lane']).toBe('w2');
+  });
+
+  it('adds an item with a worker', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const added = valueOf(await connectorOf(repo).addItem({ title: 'New', fields: { ...PRIORITY, lane: 'w2' } }));
+    expect(added.record['lane']).toBe('w2');
+  });
+
+  it('frees the worker with an unassign, and then accepts a new worker', async () => {
+    const repo = await repoWith(boardWith([workItem()]));
+    const connector = connectorOf(repo);
+    valueOf(await connector.unassignItem('B-1'));
+    valueOf(await connector.updateItem('B-1', { fields: { lane: 'w2' } }));
+    expect(itemAfter(repo, 'B-1')).toMatchObject({ lane: 'w2', unassigned_from: ['w1'] });
+  });
+
+  it('stays refused when the list of former workers is at its cap, so no update frees the field', async () => {
+    const full = Array.from({ length: markLimits.maxFormerWorkers }, (_, at) => `w-${at}`);
+    const board = boardWith([workItem({ unassigned_from: full })]);
+    const repo = await repoWith(board);
+    const connector = connectorOf(repo);
+    expect(exitOf(await connector.updateItem('B-1', { fields: { lane: 'w2' } }))).toBe(2);
+    expect(exitOf(await connector.unassignItem('B-1'))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it('refuses to change a stored value that is not text, whatever the patch holds', async () => {
+    const board = boardWith([workItem({ lane: null })]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo).updateItem('B-1', { fields: { lane: 'w2' } }))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it('checks the record that the lock read, so a worker that arrived after the first look still stops the patch', () => {
+    const doc = valueOf(parseBoard(boardWith([workItem()]), QUEUE));
+    const changes = valueOf(checkPatch({ recipe: softwareBoard, config: sampleBoard() }, { fields: { lane: 'w2' } }));
+    expect(exitOf(changeItemIn(doc, 'B-1', changes, 'lane'))).toBe(2);
+    expect(valueOf(changeItemIn(doc, 'B-1', changes, undefined)).top).not.toBeNull();
+  });
+});
+
+describe('the local connector: log a decision', () => {
+  const UNREADABLE: readonly (readonly [string, string])[] = [
+    ['text that is not JSON', 'not json'],
+    ['a file with another schema number', jsonOf({ schema: 2, records: [] })],
+  ];
+  const LOGGED = { title: 'Pick a plan', decider: requestDeciders.coordinator, decision: 'Use plan A' } as const;
+
+  it('writes one row to the decision log with the next id, and no waiting entry', async () => {
+    const repo = await decideRepo({ waiting: waitingOf(ENTRY), decisionLog: logOf(closedRow({ item: 'D-4: Old' })) });
+    expect(valueOf(await localOf(repo.deps).logDecision(LOGGED))).toBe('D-5');
+    expect(valueOf(parseDecisionLog(repo.textOf(fileNames.decisionLog) ?? '')).rows.map((row) => row.record)).toEqual([
+      closedRow({ item: 'D-4: Old' }),
+      { item: 'D-5: Pick a plan', decision: 'Use plan A', date: expect.stringMatching(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) as unknown, decider: 'coordinator' },
+    ]);
+    expect(repo.textOf(fileNames.waiting)).toBe(waitingOf(ENTRY));
+  });
+
+  it('makes one commit that holds only the decision log', async () => {
+    const repo = await decideRepo();
+    valueOf(await localOf(repo.deps).logDecision(LOGGED));
+    expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.decisionLog]]);
+  });
+
+  it('gives the id after the highest of the waiting file, the log and the owner store', async () => {
+    const repo = await decideRepo({ store: storeOf(storedRecord({ id: 'D-7' })) });
+    expect(valueOf(await localOf(repo.deps).logDecision(LOGGED))).toBe('D-8');
+  });
+
+  it('writes no owner record and no profile file, and has no owner key in the row', async () => {
+    const repo = await decideRepo({ store: storeOf(storedRecord({ id: 'D-7' })) });
+    const before = new Map(repo.deps.files);
+    valueOf(await localOf(repo.deps).logDecision({ ...LOGGED, decider: requestDeciders.delegate }));
+    const changed = [...repo.deps.files.keys()].filter((path) => repo.deps.files.get(path) !== before.get(path));
+    expect(changed).toEqual([LOG_PATH]);
+    expect(repo.textOf(fileNames.decisionLog)).not.toContain('"by"');
+  });
+
+  it.each([
+    ['the owner as the decider', { ...LOGGED, decider: 'owner' as RequestDecider }],
+    ['a decision with a line break', { ...LOGGED, decision: 'one\ntwo' }],
+    ['an empty decision', { ...LOGGED, decision: '  ' }],
+    ['a title with a line break', { ...LOGGED, title: 'one\ntwo' }],
+    ['an empty title', { ...LOGGED, title: '' }],
+  ])('refuses %s with exit 2 and writes nothing', async (_name, input) => {
+    const repo = await decideRepo();
+    const before = new Map(repo.deps.files);
+    expect(exitOf(await localOf(repo.deps).logDecision(input))).toBe(2);
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it.each(UNREADABLE)('exits 1, names the decision file and writes nothing for an owner store with %s', async (_name, store) => {
+    const repo = await decideRepo({ store });
+    const before = new Map(repo.deps.files);
+    const error = errorOf(await localOf(repo.deps).logDecision(LOGGED));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(DECISIONS_PATH);
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('exits 1 and writes nothing when the new text of the decision log is over the cap', async () => {
+    const repo = await decideRepo({ decisionLog: logOf(closedRow({ item: 'D-9: Big', pad: 'x'.repeat(maxFileBytes - 200) })) });
+    const before = new Map(repo.deps.files);
+    const error = errorOf(await localOf(repo.deps).logDecision(LOGGED));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(fileNames.decisionLog);
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('stops with exit 4 for a hosted tracker kind', async () => {
+    const repo = await decideRepo();
+    const hosted = createLocalBoard(repo.deps, LAYOUT, {
+      queueKey: QUEUE,
+      recipe: softwareBoard,
+      config: sampleBoard(),
+      command: PASSED_COMMAND,
+      tracker: 'github',
+      node: NODE,
+    });
+    expect(exitOf(await hosted.logDecision(LOGGED))).toBe(4);
+    expect(repo.commits).toEqual([]);
+  });
+});
+
+describe('the local connector: close a request with a relayed answer', () => {
+  const RELAYED: RequestSettlement = { decider: requestDeciders.coordinator, decision: 'Use plan A', relayed: true };
+
+  it('writes the coordinator as the decider, the fixed relayed marker, the text as typed and no owner key', async () => {
+    const repo = await decideRepo();
+    expect(valueOf(await localOf(repo.deps).closeRequest('D-1', RELAYED))).toEqual({ id: 'D-1', title: 'Pick a plan', decider: requestDeciders.coordinator });
+    const rows = valueOf(parseDecisionLog(repo.textOf(fileNames.decisionLog) ?? '')).rows;
+    expect(rows.map((row) => row.record)).toEqual([
+      {
+        item: 'D-1: Pick a plan',
+        decision: 'Use plan A',
+        date: expect.stringMatching(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) as unknown,
+        decider: 'coordinator',
+        relayed: relayedMarker,
+      },
+    ]);
+    expect(rows[0]?.record).not.toHaveProperty('by');
+    expect(repo.textOf(fileNames.waiting)).toBe(waitingOf());
+  });
+
+  it('writes no owner record and no profile record, and makes one commit of the two request files', async () => {
+    const repo = await decideRepo({ store: storeOf(storedRecord({ id: 'D-7' })) });
+    const before = new Map(repo.deps.files);
+    valueOf(await localOf(repo.deps).closeRequest('D-1', RELAYED));
+    const changed = [...repo.deps.files.keys()].filter((path) => repo.deps.files.get(path) !== before.get(path));
+    expect(changed.sort()).toEqual([LOG_PATH, WAITING_PATH].sort());
+    expect(repo.commits.map((commit) => [...commit.staged].sort())).toEqual([[fileNames.decisionLog, fileNames.waiting].sort()]);
+  });
+
+  it('refuses a relayed close of a request that has an owner record, as a plain close does', async () => {
+    const repo = await decideRepo({ store: storeOf(storedRecord()) });
+    const before = new Map(repo.deps.files);
+    const error = errorOf(await localOf(repo.deps).closeRequest('D-1', RELAYED));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('answered');
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('refuses a relayed settlement of any decider but the coordinator with exit 2, and writes nothing', async () => {
+    const repo = await decideRepo();
+    const before = new Map(repo.deps.files);
+    const settlement = { decider: requestDeciders.delegate, decision: 'Yes', relayed: true } as unknown as RequestSettlement;
+    expect(exitOf(await localOf(repo.deps).closeRequest('D-1', settlement))).toBe(2);
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('refuses a relayed decision with a line break with exit 2, and writes nothing', async () => {
+    const repo = await decideRepo();
+    const before = new Map(repo.deps.files);
+    expect(exitOf(await localOf(repo.deps).closeRequest('D-1', { ...RELAYED, decision: 'one\ntwo' }))).toBe(2);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('keeps the row of a close with no relay free of the relayed marker', async () => {
+    const repo = await decideRepo();
+    valueOf(await localOf(repo.deps).closeRequest('D-1', { decider: requestDeciders.coordinator, decision: 'Yes' }));
+    expect(repo.textOf(fileNames.decisionLog)).not.toContain('relayed');
   });
 });

@@ -188,7 +188,7 @@ const boardTokens = (max: number) =>
     .refine((list) => new Set(list).size === list.length, { error: 'has a repeated entry' });
 
 const boardFieldName = boardToken.refine((name) => !reservedFieldNames.includes(name), {
-  error: `is reserved: an item, a queue row, a track or a decision already holds the keys ${reservedFieldNames.join(', ')}`,
+  error: `is reserved: an item, a queue row, a track or a decision already holds the keys ${reservedFieldNames.join(', ')}. Rename the field`,
 });
 
 const [itemTarget] = values.boardTargets;

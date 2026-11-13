@@ -16,6 +16,7 @@ import {
   maxDisplayWidth,
   maxFileBytes,
   optionKeys,
+  relayedMarker,
   requestWords,
   roles,
   waitingKeys,
@@ -50,12 +51,14 @@ export interface DecideRequest extends DecisionRecordRequest {
  * Where a `D-n` stands in the waiting file and in the decision log. An `answered` row is a candidate only: a row names who
  * answered, but only a record in the owner store proves it, so the state is final after the store read. A row that holds
  * no `by` key is a close with no answer. A close with a decision of the coordinator or a delegate carries its `decider`, a value of
- * `requestDeciders`; any other stored value is dropped. The state holds no option: the option comes only from the store record.
+ * `requestDeciders`; any other stored value is dropped. A row with the `relayed` key (any value) is a close that the coordinator made
+ * to pass on an answer of the owner: it is `relayed`, and it is no owner proof. The state holds no option: the option comes only from
+ * the store record.
  */
 export type RequestState =
   | { readonly kind: 'open' }
   | { readonly kind: 'answered'; readonly date: string | null; readonly request: string | null }
-  | { readonly kind: 'closed'; readonly date: string | null; readonly decider?: RequestDecider }
+  | { readonly kind: 'closed'; readonly date: string | null; readonly decider?: RequestDecider; readonly relayed?: true }
   | { readonly kind: 'unknown' };
 
 const REQUEST_KEYS: readonly string[] = [waitingKeys.id, decisionKeys.title, decisionKeys.question, decisionKeys.options];
@@ -154,7 +157,8 @@ const textOrNull = (value: unknown): string | null => (typeof value === 'string'
 
 /**
  * Where the `D-n` stands (AC-35). A number in both files is exit 1 that names both files. A row with a `by` key is a candidate
- * answer, whatever its value, and any other row is a close. The row gives its date and its request text and nothing else.
+ * answer, whatever its value, and any other row is a close. A close whose row has the `relayed` key is marked relayed, whatever the
+ * value. The row gives its date and its request text and nothing else.
  */
 export const requestStateOf = (waiting: WaitingDoc, log: DecisionLogDoc, id: string): CliResult<RequestState> => {
   const waits = waiting.items.some((item) => item.id === id);
@@ -168,15 +172,27 @@ export const requestStateOf = (waiting: WaitingDoc, log: DecisionLogDoc, id: str
   return ok(
     Object.hasOwn(row.record, decisionLogKeys.by)
       ? { kind: 'answered', date, request: textOrNull(row.record[decisionLogKeys.request]) }
-      : { kind: 'closed', date, ...(isDecider(decider) ? { decider } : {}) },
+      : {
+          kind: 'closed',
+          date,
+          ...(isDecider(decider) ? { decider } : {}),
+          ...(Object.hasOwn(row.record, decisionLogKeys.relayed) ? { relayed: true as const } : {}),
+        },
   );
 };
 
 export const addNewRemedy = `Add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}".`;
 
+/** Who closed a request, as the end of a refusal: the relay words, the decider and its lack of authority, or nothing for a close with no answer. */
+const closedBy = (state: Extract<RequestState, { readonly kind: 'closed' }>): string => {
+  if (state.relayed === true) return `, ${relayedMarker}`;
+  return state.decider === undefined ? '' : `, decided by the ${shown(state.decider)}, no ${roles.owner} authority`;
+};
+
 /**
  * The state that lets decide go on. An unknown number is exit 2 and a closed number is exit 1; a closed number with a decider names
- * the decider and says that the decider has no owner authority. An answered row is never a pass: the
+ * the decider and says that the decider has no owner authority, and a relayed close says that it is an owner answer that the
+ * coordinator relayed, with no owner proof. An answered row is never a pass: the
  * caller reads the owner store first and handles that state itself, so a call with it fails closed.
  */
 export const requireOpen = (state: RequestState, id: string): CliResult<void> => {
@@ -191,8 +207,7 @@ export const requireOpen = (state: RequestState, id: string): CliResult<void> =>
       );
     case 'closed': {
       const date = state.date === null ? '' : ` (${shown(state.date)})`;
-      const decider = state.decider === undefined ? '' : `, decided by the ${shown(state.decider)}, no ${roles.owner} authority`;
-      return failure(`${name} is closed${date}${decider}`, addNewRemedy);
+      return failure(`${name} is closed${date}${closedBy(state)}`, addNewRemedy);
     }
     case 'answered':
       return failure(`${name} has an answer row in ${files.decisionLog}`, addNewRemedy);

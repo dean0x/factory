@@ -273,14 +273,27 @@ describe('docs/glossary.md', () => {
       'worker window',
       'event file',
       'proxy',
+      'relayed answer',
     ];
     expect(words.filter((word) => !core.includes(word))).toEqual([]);
   });
 
   it('teaches the words of the software recipe in the second part', () => {
     const recipe = partEntries(RECIPE_HEADING).map((entry) => entry.term);
-    const words = ['release check', 'release scope', 'merge check', 'pull request'];
+    const words = ['release check', 'release scope', 'merge check', 'merge record', 'pull request'];
     expect(words.filter((word) => !recipe.includes(word))).toEqual([]);
+  });
+
+  it('says that a relayed answer is an answer of the owner that the coordinator passes on, and never a proof', () => {
+    const text = partEntries(CORE_HEADING).find((entry) => entry.term === 'relayed answer')?.text ?? '';
+    expect(text).toContain('A relayed answer is an answer of the owner that the coordinator passes on.');
+    expect(text).toContain('It is never proof of an answer of the owner.');
+  });
+
+  it('says that a merge record shows a merged pull request and that the item record command writes it', () => {
+    const text = recipeGlossary(softwareRecipe).find((word) => word.term === 'merge record')?.text ?? '';
+    expect(text).toContain('A merge record shows that the pull request of a work item is merged.');
+    expect(text).toContain('`factory item record` writes it after a check on GitHub.');
   });
 
   it('does not call the software recipe unbuilt, and names the config key of the setup', () => {

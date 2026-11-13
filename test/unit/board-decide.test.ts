@@ -15,7 +15,7 @@ import {
 import { parseDecisionLog, parseWaiting, type DecisionLogDoc, type WaitingDoc } from '../../src/board/files.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
-import { commandLines, commandText, files, maxDisplayWidth, maxFileBytes, requestDeciders, roles } from '../../src/names.js';
+import { commandLines, commandText, files, maxDisplayWidth, maxFileBytes, relayedMarker, requestDeciders, roles } from '../../src/names.js';
 
 /** Characters that tools and editors turn into other characters, so they are built from their code points. */
 const at = (code: number): string => String.fromCodePoint(code);
@@ -222,6 +222,26 @@ describe('the state of a request (TP-145, TP-167, TP-189)', () => {
     expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'))).toEqual({ kind: 'answered', date: '2030-01-02', request: null });
   });
 
+  it('is closed and relayed for a row that holds the relayed key, with the decider of the row', () => {
+    const row = { ...ROW, decider: requestDeciders.coordinator, relayed: relayedMarker };
+    expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'))).toEqual({
+      kind: 'closed',
+      date: '2030-01-02',
+      decider: requestDeciders.coordinator,
+      relayed: true,
+    });
+  });
+
+  it.each(['', 7, null, 'any other text'])('is closed and relayed for a row whose relayed key holds %j, because the key is the mark', (relayed) => {
+    const state = unwrap(requestStateOf(waitingOf(), logOf({ ...ROW, relayed }), 'D-3'));
+    expect(state).toEqual({ kind: 'closed', date: '2030-01-02', relayed: true });
+  });
+
+  it('stays a candidate answer for a row that holds the by key and the relayed key, because only the owner store proves an answer', () => {
+    const row = { ...ROW, by: 'owner', relayed: relayedMarker };
+    expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3')).kind).toBe('answered');
+  });
+
   it('M5-1b TP-167 exits 1 and names both files for a number that is in the waiting file and in the log', () => {
     const error = errorOf(requestStateOf(waitingOf(entry()), logOf(ROW), 'D-3'));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -264,6 +284,15 @@ describe('the states that stop decide (TP-145, TP-148)', () => {
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(`decided by the "${decider}"`);
     expect(error.message).toContain(`no ${roles.owner} authority`);
+  });
+
+  it('says that the closed number holds an owner answer that the coordinator relayed, with no owner proof, and keeps the remedy to add a new request', () => {
+    const state = { kind: 'closed', date: '2030-01-02', decider: requestDeciders.coordinator, relayed: true } as const;
+    const error = errorOf(requireOpen(state, 'D-3'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(relayedMarker);
+    expect(error.message).toContain('2030-01-02');
+    expect(error.hint).toContain(commandText(commandLines.requestAdd));
   });
 
   it('names no decider for a closed number that holds none', () => {

@@ -7,6 +7,7 @@ import {
   branchExists,
   commitAll,
   commitPaths,
+  defaultBranchOf,
   fetchBranches,
   gitClone,
   gitVersionProblem,
@@ -24,6 +25,7 @@ import {
   MAX_SCAN_ENTRIES,
   parseGitVersion,
   remoteBranchHeadOf,
+  remoteDefaultBranchOf,
   removeWorkTree,
   requireStateConfigListable,
   requireStateConfigSafe,
@@ -346,6 +348,35 @@ describe('git: the work copy of a worker', () => {
       expect(await branchExists(deps, CLONE, '--all')).toMatchObject({ ok: false });
       expect(deps.calls).toEqual([]);
     });
+  });
+});
+
+describe('git: the default branch of a clone', () => {
+  const CLONE = '/w/web';
+
+  /** A clone whose remote head is `originHead` (null: it has none) and whose current branch is `current`. */
+  const cloneWith = (originHead: string | null, current: string): FakeDeps =>
+    createFakeDeps({
+      cwd: WS,
+      run: (call) => {
+        if (call.args.includes('--show-current')) return exited(0, `${current}\n`);
+        return originHead === null ? exited(128, '', 'fatal: ref refs/remotes/origin/HEAD is not a symbolic ref') : exited(0, `${originHead}\n`);
+      },
+    });
+
+  it('gives the branch that the remote head names, with no origin prefix, for both helpers', async () => {
+    const deps = cloneWith('origin/main', 'feature');
+    expect(await remoteDefaultBranchOf(deps, CLONE)).toBe('main');
+    expect(await defaultBranchOf(deps, CLONE)).toBe('main');
+  });
+
+  it('gives no branch from the strict helper when the clone has no remote head, even with a current branch', async () => {
+    expect(await remoteDefaultBranchOf(cloneWith(null, 'feature'), CLONE)).toBeNull();
+  });
+
+  it('falls back to the current branch in the other helper when the clone has no remote head, and to null with no branch', async () => {
+    expect(await defaultBranchOf(cloneWith(null, 'feature'), CLONE)).toBe('feature');
+    expect(await defaultBranchOf(cloneWith(null, ''), CLONE)).toBeNull();
   });
 });
 

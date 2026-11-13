@@ -4,21 +4,26 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   address,
+  boardKeys,
   checkIds,
   claudeSettings,
   commandLines,
   commands,
   coordinatorTemplateValues,
+  decisionLogKeys,
   dirs,
   env,
   files,
   flags,
+  ghTimeoutMs,
   heavyLock,
   instructionFiles,
+  itemCommands,
   keys,
   lockLine,
   lockWords,
   marker,
+  markLimits,
   maxFileBytes,
   maxTrackLines,
   messageFile,
@@ -29,7 +34,10 @@ import {
   nodeSendReasons,
   permissionSkipList,
   program,
+  relayedMarker,
+  requestCommands,
   requestHash,
+  reservedFieldNames,
   reservedRootNames,
   roles,
   schema1,
@@ -1556,5 +1564,48 @@ describe('the names of node send', () => {
   it('gives the note of the header to the template texts, so that no text outside names.ts holds the word of the note', () => {
     expect(templateValues['inboxNotice']).toBe(messageHeader.notice);
     expect(coordinatorTemplateValues['inboxNotice']).toBe(messageHeader.notice);
+  });
+});
+
+describe('the names of the board records', () => {
+  it('gives the record, unassign and log commands a name for the remedy lines', () => {
+    expect(commandLines.itemRecord).toBe(`${commands.item} ${itemCommands.record}`);
+    expect(commandLines.itemUnassign).toBe(`${commands.item} ${itemCommands.unassign}`);
+    expect(commandLines.requestLog).toBe(`${commands.request} ${requestCommands.log}`);
+  });
+
+  it('adds the log subcommand of request after the three older ones', () => {
+    expect(Object.values(requestCommands)).toEqual(['add', 'list', 'close', 'log']);
+  });
+
+  it('adds the record and unassign subcommands of item after the five older ones', () => {
+    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign']);
+  });
+
+  it('names the flags of the record and of the relayed close', () => {
+    expect(flags.ref).toBe('ref');
+    expect(flags.relayed).toBe('relayed');
+  });
+
+  it('reserves the two item keys, so that no owner field can take their name', () => {
+    expect(boardKeys.mergedPrHead).toBe('merged_pr_head');
+    expect(boardKeys.unassignedFrom).toBe('unassigned_from');
+    expect(reservedFieldNames).toContain(boardKeys.mergedPrHead);
+    expect(reservedFieldNames).toContain(boardKeys.unassignedFrom);
+    expect(duplicatesOf(reservedFieldNames)).toEqual([]);
+  });
+
+  it('keeps the key and the fixed marker of a relayed close apart from the owner proof keys', () => {
+    expect(decisionLogKeys.relayed).toBe('relayed');
+    expect(decisionLogKeys.relayed).not.toBe(decisionLogKeys.by);
+    expect(relayedMarker).toBe('owner answer, relayed by the coordinator, no owner proof');
+  });
+
+  it('caps the list of former workers of an item at 30', () => {
+    expect(markLimits.maxFormerWorkers).toBe(30);
+  });
+
+  it('gives the gh time limit that init and the record check of the software recipe share', () => {
+    expect(ghTimeoutMs).toBe(10_000);
   });
 });

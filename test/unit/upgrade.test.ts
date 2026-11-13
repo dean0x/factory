@@ -1302,6 +1302,47 @@ describe('upgrade: managed blocks', () => {
     expect(snapshot(deps)).toEqual(before);
   });
 
+  describe('the line about the earlier conversation of the coordinator', () => {
+    const RESUME_LINE =
+      'The next factory start resumes the earlier coordinator conversation. That conversation must follow the new rules of the coordinator block.';
+    const POINTER = layoutOf(HOME).coordinatorLastSessionFile;
+
+    it('says that the next start resumes the conversation, in the dry run and in the real run, when the coordinator block changes', async () => {
+      for (const dryRun of [true, false]) {
+        const { deps } = await makeNode();
+        const output = success(await upgrade(deps, newer, { dryRun }));
+        expect(lineTexts(output).filter((line) => line === RESUME_LINE)).toHaveLength(1);
+      }
+    });
+
+    it('keeps the line next to the block lines, before the dry run note', async () => {
+      const { deps } = await makeNode();
+      const lines = lineTexts(success(await upgrade(deps, newer, { dryRun: true })));
+      const lastBlockLine = lines.map((line) => line.startsWith('block ')).lastIndexOf(true);
+      expect(lines.indexOf(RESUME_LINE)).toBe(lastBlockLine + 1);
+      expect(lines.indexOf('Dry run: no file was changed.')).toBeGreaterThan(lastBlockLine + 1);
+    });
+
+    it('says nothing about the conversation when only another block changes', async () => {
+      const { deps } = await makeNode();
+      const output = success(await upgrade(deps, blocksSpec(withBlock('worker', 'New worker text.')), { dryRun: true }));
+      expect(lineTexts(output)).not.toContain(RESUME_LINE);
+    });
+
+    it('says nothing about the conversation when no block changes', async () => {
+      const { deps } = await makeNode();
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(lineTexts(output)).not.toContain(RESUME_LINE);
+    });
+
+    it('does not write the pointer of the coordinator to its session', async () => {
+      const { deps } = await makeNode();
+      deps.seed(POINTER, 'earlier-session\n');
+      success(await upgrade(deps, newer));
+      expect(text(deps, POINTER)).toBe('earlier-session\n');
+    });
+  });
+
   it('replaces an intact older block, keeps the text of the owner, and records the version', async () => {
     const { deps, gitSince } = await makeNode();
     const original = text(deps, CLAUDE);
@@ -4286,7 +4327,7 @@ describe('upgrade: render a changed block again (TP-76)', () => {
   });
 });
 
-describe('upgrade: the role texts of worker version 3 and coordinator version 3 (TP-38, TP-40)', () => {
+describe('upgrade: the role texts of worker version 3 and coordinator version 4 (TP-38, TP-40)', () => {
   /** Put an earlier version of the block `name` into the file, with a text of its own, and record that version. */
   const makeOlder = (deps: FakeDeps, path: string, name: string, version: number): void => {
     const parsed = parseBlocks(text(deps, path));
@@ -4300,20 +4341,20 @@ describe('upgrade: the role texts of worker version 3 and coordinator version 3 
   };
 
   it('writes the new blocks over the earlier versions, and then shows them as current', async () => {
-    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([3, 3]);
+    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([3, 4]);
     const { deps } = await makeNode();
     makeOlder(deps, WORKER, 'worker', 2);
-    makeOlder(deps, CLAUDE, 'coordinator', 2);
+    makeOlder(deps, CLAUDE, 'coordinator', 3);
 
     const output = success(await upgrade(deps));
 
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 2 to 3', 'block coordinator: version 2 to 3']));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 2 to 3', 'block coordinator: version 3 to 4']));
     expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v3 sha256=');
-    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v3 sha256=');
+    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v4 sha256=');
     expect(text(deps, CLAUDE)).not.toContain('The coordinator text of an earlier version.');
     expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
     const state = parseJsonText(text(deps, NODE_JSON));
-    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 3, worker: 3 } });
+    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 4, worker: 3 } });
     await deps.fs.remove(`${HOME}/.factory/backups`);
     expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
   });
@@ -4321,10 +4362,10 @@ describe('upgrade: the role texts of worker version 3 and coordinator version 3 
   it('shows the earlier versions as older in a dry run, and changes no file', async () => {
     const { deps } = await makeNode();
     makeOlder(deps, WORKER, 'worker', 2);
-    makeOlder(deps, CLAUDE, 'coordinator', 2);
+    makeOlder(deps, CLAUDE, 'coordinator', 3);
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 2 to 3', 'block coordinator: version 2 to 3']));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 2 to 3', 'block coordinator: version 3 to 4']));
     expect(snapshot(deps)).toEqual(before);
   });
 });
