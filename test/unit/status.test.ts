@@ -16,6 +16,7 @@ import { writeWorkerRecord, type WorkerRecord } from '../../src/workers/registry
 import { buildStatus, type LineRead, type StatusInput } from '../../src/workers/status.js';
 import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
+import { EMPTY_WAITING } from '../helpers/board-repo.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
@@ -296,7 +297,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   } else {
     // `init` writes both board files, so a node has them, empty at the start.
     deps.seed(BOARD_PATH, boardText([]));
-    deps.seed(WAITING_PATH, `${JSON.stringify({ intro: '', groups: [], items: [] }, null, 2)}\n`);
+    deps.seed(WAITING_PATH, EMPTY_WAITING);
   }
   deps.seedDir(cwd);
   for (const project of setup.projects ?? []) deps.seedDir(`${project}/.git`);
@@ -663,6 +664,8 @@ describe('status: it changes only the report file (TP-13, TP-27)', () => {
     const made = await make({ noState: true });
     const before = snapshot(made.deps);
     const sink = captureSink();
+    // The step that finds the factory folder stops the command first, so the report writer does not run here.
+    // The tests of the writer call it direct for its `skipped` result.
     expect(await runCli(['status', '--home', HOME], made.deps, sink)).toBe(4);
     expect(sink.errors.join('')).toContain('marker');
     expect(sink.out.join('')).toBe('');
