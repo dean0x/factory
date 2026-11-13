@@ -25,14 +25,12 @@ import { captureSink } from '../helpers/sink.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { unknownPort } from '../helpers/unknown-port.js';
+import { busyWith, NONE, UNKNOWN } from '../helpers/work-item.js';
 
 const HOME = '/w/node';
 const NODE = sampleConfig().core.node.id;
 const MINUTE = 60_000;
 
-const NONE: WorkItem = { state: 'known', item: null };
-const UNKNOWN: WorkItem = { state: 'unknown' };
-const busyWith = (item: string): WorkItem => ({ state: 'known', item });
 
 describe('status: the builder', () => {
   const NOW = new Date('2030-01-02T12:00:00.000Z');
@@ -440,7 +438,7 @@ describe('status: the table (TP-48)', () => {
           contextPct: 41,
           mark: 'MAX',
           activityAt: made.deps.now().toISOString(),
-          workItem: { state: 'known', item: 'W-3' },
+          workItem: busyWith('W-3'),
           idle: false,
         },
       ],

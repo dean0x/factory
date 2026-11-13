@@ -431,6 +431,9 @@ export const HEAD_REV = 'HEAD';
 
 const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 
+/** True when the text is a full commit id as git prints it: 40 to 64 lowercase hex digits. */
+export const isObjectId = (text: string): boolean => OBJECT_ID.test(text);
+
 const entriesWith = async (
   deps: Deps,
   lead: readonly string[],

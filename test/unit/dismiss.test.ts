@@ -22,13 +22,11 @@ import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type PaneFixture, type PaneView, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { unknownPort } from '../helpers/unknown-port.js';
+import { busyWith, NONE } from '../helpers/work-item.js';
 
 const HOUR_MS = 3_600_000;
 const HEAD = 'a'.repeat(40);
 const OLDER = 'b'.repeat(40);
-
-const NONE: WorkItem = { state: 'known', item: null };
-const busyWith = (item: string): WorkItem => ({ state: 'known', item });
 
 const cloneOf = (project: string): string => `${HOME}/${project}`;
 const copyOf = (id: string, project = 'web'): string => `${HOME}/work-copies/${project}/${id}`;
