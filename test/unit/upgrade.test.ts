@@ -167,6 +167,9 @@ const edit = (deps: FakeDeps, path: string, from: string, to: string): void => {
 
 const versionOf = (name: string): number => layer1Blocks.find((template) => template.name === name)?.version ?? 0;
 
+/** The version of the manager block, on layer 2. */
+const managerVersion = layer2Blocks.find((template) => template.name === 'manager')?.version ?? 0;
+
 /** The templates of layer 1, with one block at its next version and a new text. */
 const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
   layer1Blocks.map((template) => (template.name === name ? { ...template, version: template.version + 1, body } : template));
@@ -1891,12 +1894,12 @@ describe('upgrade: the blocks of a layer', () => {
 
     const claude = text(deps, CLAUDE);
     expect(claude.startsWith('My own rules.\n')).toBe(true);
-    expect(claude).toContain('<!-- factory:begin manager v2 sha256=');
+    expect(claude).toContain(`<!-- factory:begin manager v${managerVersion} sha256=`);
     expect(claude).not.toContain('factory:begin coordinator');
     expect(claude).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
-    expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 2');
+    expect(lineTexts(output)).toContain(`block coordinator: becomes block manager, version ${managerVersion}`);
     expect(blocksOfState(deps)).toEqual({
-      manager: 2,
+      manager: managerVersion,
       safety: versionOf('safety'),
       worker: versionOf('worker'),
       setup: versionOf('setup'),
@@ -1950,7 +1953,7 @@ describe('upgrade: the blocks of a layer', () => {
     setLayer(deps, 2);
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
-    expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 2');
+    expect(lineTexts(output)).toContain(`block coordinator: becomes block manager, version ${managerVersion}`);
     expect(snapshot(deps)).toEqual(before);
   });
 
@@ -1968,9 +1971,9 @@ describe('upgrade: the blocks of a layer', () => {
     expect(snapshot(deps)).toEqual(before);
 
     success(await upgrade(deps, currentSpec, { overwrite: ['manager'] }));
-    expect(text(deps, CLAUDE)).toContain('factory:begin manager v2');
+    expect(text(deps, CLAUDE)).toContain(`factory:begin manager v${managerVersion}`);
     expect(text(deps, CLAUDE)).not.toContain('Do as you like.');
-    expect(blocksOfState(deps)).toMatchObject({ manager: 2 });
+    expect(blocksOfState(deps)).toMatchObject({ manager: managerVersion });
     expect(blocksOfState(deps)).not.toHaveProperty('coordinator');
   });
 

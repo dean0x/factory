@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { boardKeys, hookNames, setupAcceptance, stateLock } from '../../src/names.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
@@ -442,6 +443,40 @@ describe('factory upgrade (built binary)', () => {
     expect(result.stderr).toContain('factory.local.yaml');
     expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
+
+  it.each([
+    [1, 'coordinator', 5, 6],
+    [2, 'manager', 2, 3],
+  ])(
+    'TP-22 on layer %i it writes the block %s of version %i again as version %i, and leaves the worker and safety labels as they are',
+    async (layer, name, older, current) => {
+      const init = await box.run(['init', '--yes', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner', '--layer', String(layer)]);
+      expect(init.code).toBe(0);
+      const claudePath = join(box.node, ...COORDINATOR_FILE);
+      const claude = await box.read(claudePath);
+      const parsed = parseBlocks(claude);
+      const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === name) : undefined;
+      const rendered = renderBlock({ name, version: older, body: `The ${name} text of an earlier version.` });
+      expect(block).toBeDefined();
+      expect(rendered.ok).toBe(true);
+      if (block === undefined || !rendered.ok) return;
+      await writeFile(claudePath, replaceBlock(claude, block, rendered.value));
+      const stateDir = join(box.node, '.factory');
+      const nodePath = join(stateDir, 'node.json');
+      await writeFile(nodePath, (await box.read(nodePath)).replace(`"${name}": ${current}`, `"${name}": ${older}`));
+      expect((await box.git(stateDir, ['add', 'node.json'])).code).toBe(0);
+      expect((await box.git(stateDir, ['commit', '-q', '-m', 'record the earlier block version'])).code).toBe(0);
+
+      const upgraded = await box.run(['upgrade', '--home', box.node]);
+
+      expect(upgraded.code, upgraded.stderr).toBe(0);
+      expect(upgraded.stdout).toContain(`block ${name}: version ${older} to ${current}`);
+      expect(await box.read(claudePath)).toContain(`<!-- factory:begin ${name} v${current} sha256=`);
+      const state = JSON.parse(await box.read(nodePath)) as { blocks: Record<string, number> };
+      expect(state.blocks).toMatchObject({ [name]: current, safety: 2, worker: 4 });
+      expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+    },
+  );
 
   it('prints one JSON document with its schema id', async () => {
     await initNode();
