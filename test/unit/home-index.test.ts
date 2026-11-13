@@ -660,7 +660,7 @@ describe('home index: two writers at once', () => {
   describe('the lock that stays after the change', () => {
     const refusesToRemoveLock = (deps: FakeDeps): Deps => ({
       ...deps,
-      fs: { ...deps.fs, remove: async (path) => (path === LOCK ? failure(`cannot remove ${path}: EACCES`) : deps.fs.remove(path)) },
+      fs: { ...deps.fs, removeFile: async (path) => (path === LOCK ? failure(`cannot remove ${path}: EACCES`) : deps.fs.removeFile(path)) },
     });
 
     it('counts the change as saved, with a warning that names the lock file and the reason', async () => {

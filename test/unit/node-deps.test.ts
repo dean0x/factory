@@ -27,6 +27,7 @@ import { isatty } from 'node:tty';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps, programArgvOf } from '../../src/core/node-deps.js';
 import { hookNames } from '../../src/names.js';
+import { isOwnChildPid, killKeptGroups, pidOfReadyText, readyPid, textWhenThere } from '../helpers/own-group.js';
 
 // The real `isatty` stays the default. A test sets one answer, so that the check of a live terminal can be seen.
 vi.mock('node:tty', async (importOriginal) => {
@@ -214,23 +215,18 @@ describe('node deps: run', () => {
 
       beforeEach(() => {
         leaders = [];
-        // The stop signal to a group has no effect, as for a process in an uninterruptible wait.
+        // The stop signal to a group has no effect, as for a process in an uninterruptible wait. Only the signal 0, which sends
+        // nothing, goes on to the real call.
         vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: string | number) => {
-          if (pid >= 0) return realKill(pid, signal);
-          leaders.push(-pid);
-          return true;
+          if (pid < 0) leaders.push(-pid);
+          return signal === 0 && pid > 0 ? realKill(pid, signal) : true;
         }) as typeof process.kill);
       });
 
+      // The leaders are the groups that the code under test tried to stop. Each one is the child of a test run, started as a group leader.
       afterEach(() => {
         vi.restoreAllMocks();
-        for (const leader of leaders) {
-          try {
-            realKill(-leader, 'SIGKILL');
-          } catch {
-            // The group has ended already.
-          }
-        }
+        killKeptGroups(leaders);
       });
 
       it('ends shortly after the time limit with the failure of the stop', async () => {
@@ -280,27 +276,220 @@ describe('node deps: run', () => {
   });
 });
 
-describe('node deps: run with the terminal', () => {
+// Every child of these tests ends by itself within 8 s, and each test stops at 15 s: a run that goes wrong never holds the worker.
+const ATTACHED_TEST_TIMEOUT_MS = 15_000;
+
+describe('node deps: run with the terminal', { timeout: ATTACHED_TEST_TIMEOUT_MS }, () => {
   it('gives the exit code of the program as a value', async () => {
-    expect(await deps.runAttached('node', ['-e', 'process.exit(0)'])).toEqual({ ok: true, value: 0 });
-    expect(await deps.runAttached('node', ['-e', 'process.exit(3)'])).toEqual({ ok: true, value: 3 });
+    expect(await deps.runAttached('node', ['-e', 'process.exit(0)'])).toEqual({ kind: 'code', code: 0 });
+    expect(await deps.runAttached('node', ['-e', 'process.exit(3)'])).toEqual({ kind: 'code', code: 3 });
   });
 
   it('passes arguments without a shell', async () => {
     const result = await deps.runAttached('node', ['-e', 'process.exit(process.argv[1] === "a; exit 9" ? 0 : 1)', 'a; exit 9']);
-    expect(result).toEqual({ ok: true, value: 0 });
+    expect(result).toEqual({ kind: 'code', code: 0 });
   });
 
-  it('returns an error when the program does not exist', async () => {
-    const result = await deps.runAttached('factory-no-such-program', []);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.message).toContain('cannot run factory-no-such-program');
+  it('gives the code of the error when the program does not exist', async () => {
+    expect(await deps.runAttached('factory-no-such-program', [])).toEqual({ kind: 'spawn', code: 'ENOENT' });
   });
 
-  it('returns an error when a signal ends the program', async () => {
+  it.each([
+    ['plain', undefined],
+    ['held', { held: true, maxMs: 5_000 }],
+  ] as const)('gives a spawn value, not a throw, for an empty program name (%s run)', async (_name, options) => {
+    const before = ['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) => process.listenerCount(signal));
+    const end = await deps.runAttached('', [], options);
+    expect(end).toMatchObject({ kind: 'spawn' });
+    expect(['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) => process.listenerCount(signal))).toEqual(before);
+  });
+
+  it('gives the signal and its number when a signal ends the program', async () => {
     const result = await deps.runAttached('node', ['-e', 'process.kill(process.pid, "SIGTERM")']);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.message).toContain('SIGTERM');
+    expect(result).toEqual({ kind: 'signal', signal: 'SIGTERM', number: 15 });
+  });
+});
+
+describe('node deps: run with the terminal, held', { timeout: ATTACHED_TEST_TIMEOUT_MS }, () => {
+  const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+  const listenerCounts = (): number[] => SIGNALS.map((signal) => process.listenerCount(signal));
+  const children: number[] = [];
+  const quick = ['-e', 'process.exit(0)'];
+
+  const isGone = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  /** The program of the child: it writes the file, and the child of the test ends it with its own bounded timer. */
+  const script = (body: string): string[] => [
+    '-e',
+    `const fs = require("node:fs"); const file = process.argv[1]; setTimeout(() => process.exit(9), 8000); ${body}`,
+  ];
+
+  // `readyPid` keeps only the pid that a child of the test wrote, and `killKeptGroups` signals only a pid that passes the same check.
+  afterEach(() => killKeptGroups(children));
+
+  it('runs the program as the leader of a new process group, and a plain run keeps the group of the caller', async () => {
+    const probe = 'fs.writeFileSync(file, (() => { try { process.kill(-process.pid, 0); return "leader"; } catch { return "member"; } })()); process.exit(0)';
+    const held = fresh('held');
+    const plain = fresh('plain');
+    await deps.runAttached('node', [...script(probe), held], { held: true });
+    await deps.runAttached('node', [...script(probe), plain]);
+    expect([await readFile(held, 'utf8'), await readFile(plain, 'utf8')]).toEqual(['leader', 'member']);
+  });
+
+  it('gives the program no standard input', async () => {
+    const result = await deps.runAttached('node', script('process.stdin.on("end", () => process.exit(0)); process.stdin.resume()'), { held: true });
+    expect(result).toEqual({ kind: 'code', code: 0 });
+  });
+
+  it('adds the extra environment to the child only, and keeps the rest and the locale as they are', async () => {
+    const saved = { LC_ALL: process.env['LC_ALL'], KEPT: process.env['FACTORY_TEST_KEPT'] };
+    process.env['LC_ALL'] = 'en_US.UTF-8';
+    process.env['FACTORY_TEST_KEPT'] = 'yes';
+    try {
+      const check = 'process.exit(process.env.FACTORY_TEST_TOKEN === "t-1" && process.env.FACTORY_TEST_KEPT === "yes" && process.env.LC_ALL === "en_US.UTF-8" ? 0 : 1)';
+      const result = await deps.runAttached('node', ['-e', check], { extraEnv: { FACTORY_TEST_TOKEN: 't-1' } });
+      expect(result).toEqual({ kind: 'code', code: 0 });
+      expect(process.env['FACTORY_TEST_TOKEN']).toBeUndefined();
+    } finally {
+      if (saved.LC_ALL === undefined) delete process.env['LC_ALL'];
+      else process.env['LC_ALL'] = saved.LC_ALL;
+      if (saved.KEPT === undefined) delete process.env['FACTORY_TEST_KEPT'];
+      else process.env['FACTORY_TEST_KEPT'] = saved.KEPT;
+    }
+  });
+
+  it('forwards INT, TERM and HUP to the child, and holds one handler of each only while the child runs', async () => {
+    const log = fresh('forward');
+    const tracer = `const seen = []; for (const name of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(name, () => { seen.push(name); if (seen.length === 3) { fs.writeFileSync(file, seen.join(",")); process.exit(0); } }); fs.writeFileSync(file + ".ready", String(process.pid)); setTimeout(() => undefined, 8000)`;
+    const before = listenerCounts();
+    const known = SIGNALS.map((signal) => process.listeners(signal));
+    const running = deps.runAttached('node', [...script(tracer), log], { held: true });
+    expect(listenerCounts()).toEqual(before.map((count) => count + 1));
+    await readyPid(children, `${log}.ready`);
+    SIGNALS.forEach((signal, index) => {
+      const ours = process.listeners(signal).filter((handler) => !(known[index] ?? []).includes(handler));
+      expect(ours).toHaveLength(1);
+      ours[0]?.(signal);
+    });
+    expect(await running).toEqual({ kind: 'code', code: 0 });
+    // The order of three signals that arrive together is not fixed, so compare the sorted set: each signal once.
+    expect((await readFile(log, 'utf8')).split(',').sort()).toEqual([...SIGNALS].sort());
+    expect(listenerCounts()).toEqual(before);
+  });
+
+  it('sends a forwarded signal to every process of the group of the child', async () => {
+    const log = fresh('group');
+    // The child ignores TERM and ends when its own child, in the same group, ends by TERM.
+    const tree = `process.on("SIGTERM", () => undefined); const grand = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => undefined, 8000)"], { stdio: "ignore" }); fs.writeFileSync(file + ".ready", String(process.pid)); grand.on("exit", (code, signal) => process.exit(signal === "SIGTERM" ? 0 : 1))`;
+    const known = process.listeners('SIGTERM');
+    const running = deps.runAttached('node', [...script(tree), log], { held: true });
+    await readyPid(children, `${log}.ready`);
+    process.listeners('SIGTERM').filter((handler) => !known.includes(handler))[0]?.('SIGTERM');
+    expect(await running).toEqual({ kind: 'code', code: 0 });
+  });
+
+  it('holds no handler of INT, TERM or HUP after a code, a signal, a limit or a spawn end', async () => {
+    const before = listenerCounts();
+    const ends = [
+      await deps.runAttached('node', quick, { held: true, maxMs: 5000 }),
+      await deps.runAttached('node', ['-e', 'process.kill(process.pid, "SIGTERM")'], { held: true }),
+      await deps.runAttached('node', ['-e', 'setTimeout(() => undefined, 8000)'], { held: true, maxMs: 100, killGraceMs: 100 }),
+      await deps.runAttached('factory-no-such-program', [], { held: true }),
+    ];
+    expect(ends.map((end) => end.kind)).toEqual(['code', 'signal', 'limit', 'spawn']);
+    expect(listenerCounts()).toEqual(before);
+  });
+
+  it('adds no handler for a run that is not held', async () => {
+    const before = listenerCounts();
+    const running = deps.runAttached('node', quick);
+    expect(listenerCounts()).toEqual(before);
+    await running;
+  });
+
+  it('sends TERM to the group at the time limit, then KILL after the grace, and gives the limit end', async () => {
+    const log = fresh('limit');
+    // The child ignores TERM, so only the KILL ends it.
+    const stubborn = `process.on("SIGTERM", () => fs.writeFileSync(file + ".term", "1")); fs.writeFileSync(file + ".ready", String(process.pid)); setTimeout(() => undefined, 8000)`;
+    // The limit is long enough for a slow start: the child adds its TERM handler before it writes the ready file.
+    const running = deps.runAttached('node', [...script(stubborn), log], { held: true, maxMs: 1_500, killGraceMs: 300 });
+    const pid = await readyPid(children, `${log}.ready`);
+    expect(await running).toEqual({ kind: 'limit' });
+    expect(await readFile(`${log}.term`, 'utf8')).toBe('1');
+    for (let tries = 0; tries < 50 && !isGone(pid); tries += 1) await wait(20);
+    expect(isGone(pid)).toBe(true);
+  });
+
+  it('gives the limit end also when the child ends at the TERM of the limit', async () => {
+    const result = await deps.runAttached('node', ['-e', 'process.on("SIGTERM", () => process.exit(0)); setTimeout(() => undefined, 8000)'], {
+      held: true,
+      maxMs: 300,
+      killGraceMs: 100,
+    });
+    expect(result).toEqual({ kind: 'limit' });
+  });
+
+  describe('when the first process ends after the time limit', () => {
+    const KILL_GRACE_MS = 2_000;
+    // The child ends at the TERM of the limit. The process of its group ignores TERM and does not end by itself within the test.
+    const leaderWithStraggler = `process.on("SIGTERM", () => process.exit(0)); const straggler = require("node:child_process").spawn(process.execPath, ["-e", "process.on('SIGTERM', () => undefined); setTimeout(() => undefined, 8000)"], { stdio: "ignore" }); fs.writeFileSync(file + ".straggler", String(straggler.pid)); fs.writeFileSync(file + ".ready", String(process.pid)); setInterval(() => undefined, 1000)`;
+    // The child ignores TERM, so only the KILL after the grace ends it.
+    const leaderIgnoringTerm = `process.on("SIGTERM", () => undefined); fs.writeFileSync(file + ".ready", String(process.pid)); setInterval(() => undefined, 1000)`;
+
+    /**
+     * Run the held program to its limit, then wait past the grace. The value has the end of the run, and each signal that was sent to
+     * the group of the program, with the time since the start. The stub of `process.kill` passes a signal on only to that group.
+     */
+    const signalsToGroup = async (name: string, body: string) => {
+      const log = fresh(name);
+      const sent: Array<{ pid: number; signal: string | number | undefined; at: number }> = [];
+      const realKill = process.kill.bind(process);
+      const started = Date.now();
+      const running = deps.runAttached('node', [...script(body), log], { held: true, maxMs: 1_500, killGraceMs: KILL_GRACE_MS });
+      const leader = await readyPid(children, `${log}.ready`);
+      const spy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: string | number) => {
+        sent.push({ pid, signal, at: Date.now() - started });
+        return signal === 0 || pid === -leader ? realKill(pid, signal) : true;
+      }) as typeof process.kill);
+      try {
+        const end = await running;
+        await wait(KILL_GRACE_MS + 500);
+        return { end, toGroup: sent.filter((call) => call.pid === -leader && call.signal !== 0) };
+      } finally {
+        spy.mockRestore();
+      }
+    };
+
+    it('stops the rest of the group with KILL at once and gives the limit end, with no wait for the grace', async () => {
+      const log = fresh('straggler');
+      const started = Date.now();
+      const running = deps.runAttached('node', [...script(leaderWithStraggler), log], { held: true, maxMs: 1_500, killGraceMs: KILL_GRACE_MS });
+      await readyPid(children, `${log}.ready`);
+      const straggler = pidOfReadyText(await textWhenThere(`${log}.straggler`));
+      expect(await running).toEqual({ kind: 'limit' });
+      expect(Date.now() - started).toBeLessThan(KILL_GRACE_MS + 1_000);
+      for (let tries = 0; tries < 100 && !isGone(straggler); tries += 1) await wait(20);
+      expect(isGone(straggler)).toBe(true);
+    });
+
+    it('sends the group one KILL, when the first process ends, and no signal after the run has ended', async () => {
+      const { end, toGroup } = await signalsToGroup('one-kill', leaderWithStraggler);
+      expect(end).toEqual({ kind: 'limit' });
+      expect(toGroup.map((call) => call.signal)).toEqual(['SIGTERM', 'SIGKILL']);
+      expect(toGroup[1]?.at).toBeLessThan(KILL_GRACE_MS);
+    });
+
+    it('sends the group no second KILL when the KILL after the grace has ended the first process', async () => {
+      const { end, toGroup } = await signalsToGroup('timer-kill', leaderIgnoringTerm);
+      expect(end).toEqual({ kind: 'limit' });
+      expect(toGroup.map((call) => call.signal)).toEqual(['SIGTERM', 'SIGKILL']);
+    });
   });
 });
 
@@ -1167,6 +1356,8 @@ describe.skipIf(process.platform === 'win32')('node deps: a process that ended b
 
   it('counts a zombie as ended, although the signal 0 still reaches it', async () => {
     const { zombie } = await withZombie();
+    // The pid came from the shell of this test. The signal 0 sends nothing, and a bad pid fails here before the call.
+    expect(isOwnChildPid(zombie)).toBe(true);
     expect(() => process.kill(zombie, 0)).not.toThrow();
     expect(deps.isRunning(zombie)).toEqual({ ok: true, value: false });
   });

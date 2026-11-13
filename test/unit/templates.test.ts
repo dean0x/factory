@@ -11,6 +11,7 @@ import {
   files,
   flags,
   flagText,
+  keys,
   messageHeader,
   program,
   requestDeciders,
@@ -120,7 +121,7 @@ describe('block templates', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
       ['coordinator', 3, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
-      ['worker', 2, 'workerFile'],
+      ['worker', 3, 'workerFile'],
     ]);
   });
 
@@ -128,14 +129,14 @@ describe('block templates', () => {
     expect(summary(blockTemplatesFor(blockInput(2)))).toEqual([
       ['manager', 1, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
-      ['worker', 2, 'workerFile'],
+      ['worker', 3, 'workerFile'],
     ]);
   });
 
   it.each([3, 4, 16])('gives layer %i, which has no role template, the safety block and the worker block', (layer) => {
     expect(summary(blockTemplatesFor(blockInput(layer)))).toEqual([
       ['safety', 2, 'claudeFile'],
-      ['worker', 2, 'workerFile'],
+      ['worker', 3, 'workerFile'],
     ]);
   });
 
@@ -790,6 +791,63 @@ describe('the worker text: questions, assignments and resume notes (TP-37)', () 
 
   it('writes the resume notes to the resume file in the inbox folder', () => {
     expect(workerOf('acme')).toContain(`Write your resume notes to \`${files.resume}\` in the folder that ${inbox} names.`);
+  });
+});
+
+describe('the worker text: heavy tests (TP-37, TP-38, TP-39)', () => {
+  const bodyOfConfig = (config = sampleConfig()): string =>
+    blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: null }, softwareOwnerModes)).find(
+      (template) => template.name === 'worker',
+    )?.body ?? '';
+  const heavyOf = (body: string): string => {
+    const start = body.indexOf('## Heavy tests');
+    const end = body.indexOf('\n## ', start + 1);
+    return body.slice(start, end);
+  };
+  const lockRun = commandText(commandLines.lockRun);
+
+  it('runs each heavy command as the lock run command with the double dash, in a background task (TP-37)', () => {
+    const body = bodyOfConfig();
+    expect(heavyOf(body)).toContain(`Run each heavy command as \`${lockRun} -- <command>\` in a background task.`);
+    expect(body.split(`${lockRun} --`)).toHaveLength(2);
+  });
+
+  it('holds no lock of the node and no hand-made wait loop (TP-37)', () => {
+    const heavy = heavyOf(bodyOfConfig());
+    expect(heavy).not.toContain('heavy-test lock');
+    expect(heavy).not.toMatch(/loop|Release it/);
+  });
+
+  it('never allows a heavy command without the lock run command, and keeps the priority flag for a word of the coordinator (TP-37)', () => {
+    const heavy = heavyOf(bodyOfConfig());
+    expect(heavy).toContain('Never run a heavy command without the lock run command.');
+    expect(heavy).toContain(`Use \`${flagText(flags.priority)}\` only when the coordinator says so.`);
+  });
+
+  it('tells the coordinator about any output line that starts with the error prefix, not only the last line (TP-39)', () => {
+    const heavy = heavyOf(bodyOfConfig());
+    expect(heavy).toContain(`If the output holds a line that starts with \`error: ${program} lock run:\`, tell the coordinator.`);
+    expect(heavy).not.toContain('last line');
+  });
+
+  it('names no command from the project config and no config file (TP-38)', () => {
+    const heavy = heavyOf(bodyOfConfig());
+    expect(heavy).not.toContain(keys.project.heavyTest);
+    expect(heavy).not.toContain(files.config);
+    expect(templateValues).not.toHaveProperty('heavyTestKey');
+  });
+
+  it('renders the same worker text for a config with the heavy test key and a config without it (TP-38)', () => {
+    const config = sampleConfig();
+    const [project] = config.recipe.projects;
+    const withKey = { ...config, recipe: { ...config.recipe, projects: [{ ...project!, heavy_test: 'npm test' }] } };
+    expect(bodyOfConfig(withKey)).toBe(bodyOfConfig(config));
+  });
+
+  it('keeps the lines for a single test file and for stray processes', () => {
+    const heavy = heavyOf(bodyOfConfig());
+    expect(heavy).toContain('- A single test file, a typecheck and a lint run without the lock.');
+    expect(heavy).toContain('- Kill stray test processes of your own work copy before a run.');
   });
 });
 

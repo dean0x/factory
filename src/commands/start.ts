@@ -4,7 +4,7 @@ import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
-import type { Deps } from '../core/deps.js';
+import type { AttachedEnd, Deps } from '../core/deps.js';
 import { gitVersionProblem, requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
@@ -288,6 +288,24 @@ const reachArgs = (how: Reach, id: string): TmuxArgs | null => {
   }
 };
 
+/** The text of the failure when the attach did not end with exit code 0. */
+const attachFailureText = (end: AttachedEnd): string => {
+  switch (end.kind) {
+    case 'code':
+      return `${toolNames.tmux} attach ended with exit code ${end.code}`;
+    case 'signal':
+      return `${toolNames.tmux} was stopped by ${end.signal}`;
+    case 'limit':
+      return `${toolNames.tmux} was stopped at the time limit`;
+    case 'spawn':
+      return `cannot run ${toolNames.tmux}: ${end.code}`;
+    default: {
+      const unreachable: never = end;
+      return unreachable;
+    }
+  }
+};
+
 /** Bring the person to the session. The result is true when the person is in the session now. */
 const reach = async (deps: Deps, how: Reach, id: string): Promise<CliResult<boolean>> => {
   const args = reachArgs(how, id);
@@ -297,8 +315,7 @@ const reach = async (deps: Deps, how: Reach, id: string): Promise<CliResult<bool
     return switched.ok ? ok(true) : switched;
   }
   const attached = await deps.runAttached(toolNames.tmux, args);
-  if (!attached.ok) return attached;
-  return attached.value === 0 ? ok(true) : failure(`${toolNames.tmux} attach ended with exit code ${attached.value}`);
+  return attached.kind === 'code' && attached.code === 0 ? ok(true) : failure(attachFailureText(attached));
 };
 
 /** Remove the session after a failed step, and say what happened. A session that is gone needs no removal. */

@@ -186,7 +186,7 @@ describe('init: the files', () => {
       value: {
         schema_version: STATE_SCHEMA_VERSION,
         created_with: FACTORY_VERSION,
-        blocks: { coordinator: 3, safety: 2, worker: 2, setup: 1, 'setup-worker': 1 },
+        blocks: { coordinator: 3, safety: 2, worker: 3, setup: 1, 'setup-worker': 1 },
       },
     });
   });
@@ -679,7 +679,7 @@ describe('init: the layer and the recipe', () => {
     expect(files(deps)).toContain('.factory/roles/worker.md');
     expect(files(deps)).toContain('.factory/node.json');
     const state = await loadState(deps, HOME);
-    expect(state.ok && state.value.blocks).toEqual({ manager: 1, safety: 2, worker: 2, setup: 1, 'setup-worker': 1 });
+    expect(state.ok && state.value.blocks).toEqual({ manager: 1, safety: 2, worker: 3, setup: 1, 'setup-worker': 1 });
     const statuses = await inspectBlocks(deps, HOME, layer2Blocks);
     expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact', 'intact', 'intact']);
   });
@@ -694,7 +694,7 @@ describe('init: the layer and the recipe', () => {
     expect(claudeBlocks(deps)).toEqual(['safety', 'setup']);
     expect(files(deps)).toContain('.factory/roles/worker.md');
     const state = await loadState(deps, HOME);
-    expect(state.ok && state.value.blocks).toEqual({ safety: 2, worker: 2, setup: 1, 'setup-worker': 1 });
+    expect(state.ok && state.value.blocks).toEqual({ safety: 2, worker: 3, setup: 1, 'setup-worker': 1 });
     expect(result.value.warnings).toContain('Layer 3 has no role template: CLAUDE.md holds the safety block only.');
     expect(result.value.json['warnings']).toEqual(result.value.warnings);
   });

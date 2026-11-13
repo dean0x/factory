@@ -540,12 +540,22 @@ describe('start:attach', () => {
     expect(output.json).toMatchObject({ attached: false });
   });
 
-  it('fails when the attach ends with a non-zero exit code', async () => {
+  it('attaches with no options', async () => {
     const { deps } = make({ tty: true });
-    const broken = { ...deps, runAttached: async () => ok(1) };
+    await succeeded(deps);
+    expect(deps.attached).toEqual([{ command: 'tmux', args: ['attach', '-t', '=demo'] }]);
+  });
+
+  it.each([
+    ['ends with a non-zero exit code', { kind: 'code', code: 1 }, 'attach ended with exit code 1'],
+    ['is ended by a signal', { kind: 'signal', signal: 'SIGTERM', number: 15 }, 'tmux was stopped by SIGTERM'],
+    ['does not start', { kind: 'spawn', code: 'ENOENT' }, 'cannot run tmux: ENOENT'],
+  ] as const)('fails when the attach %s', async (_name, end, text) => {
+    const { deps } = make({ tty: true });
+    const broken = { ...deps, runAttached: async () => end };
     const result = await runStart(broken, { home: HOME, dryRun: false, yes: false });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
-    if (!result.ok) expect(result.error.message).toContain('attach ended with exit code 1');
+    if (!result.ok) expect(result.error.message).toContain(text);
   });
 });
 

@@ -750,7 +750,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(names).toContain('orders');
     expect(await readdir(join(state, 'roles'))).toEqual(['worker.md']);
     const node = JSON.parse(await box.read(join(state, 'node.json'))) as Record<string, unknown>;
-    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 3, safety: 2, worker: 2 } });
+    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 3, safety: 2, worker: 3 } });
 
     const changes = await box.git(state, ['diff', '--name-status', '-M', 'HEAD~1', 'HEAD']);
     expect(changes.stdout).toContain('protocol.md');
@@ -838,7 +838,9 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     // A node from before the setup folder has no setup text, so only the worker block is the same.
     const workerBlockOf = (text: string): string => text.slice(0, text.indexOf('<!-- factory:end worker -->'));
     const upgradedWorker = workerBlockOf(await box.read(join(state, 'roles', 'worker.md')));
-    expect(upgradedWorker).toContain('<!-- factory:begin worker v2 sha256=');
+    expect(upgradedWorker).toContain('<!-- factory:begin worker v3 sha256=');
+    expect(upgradedWorker).toContain('`factory lock run -- <command>`');
+    expect(upgradedWorker).not.toContain('wait in a loop');
     expect(upgradedWorker).toBe(workerBlockOf(await box.read(join(fresh, 'roles', 'worker.md'))));
     expect(await box.read(join(state, 'roadmaps', 'README.md'))).toBe(
       await box.read(join(fresh, 'roadmaps', 'README.md')),

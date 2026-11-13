@@ -255,6 +255,40 @@ describe('an allow rule that covers a whole tool (TP-154)', () => {
   });
 });
 
+describe('an allow rule for the lock run command', () => {
+  const listed = (rule: string): ReturnType<typeof analyzeSettings> => analyzeSettings(JSON.stringify({ permissions: { allow: [rule] } }));
+
+  it.each([
+    'Bash(factory lock run:*)',
+    'Bash(factory lock run *)',
+    'Bash(factory lock run*)',
+    'Bash(factory lock run --priority:*)',
+    'Bash(factory lock run --:*)',
+    'Bash(factory lock run -- :*)',
+    'Bash(factory lock:*)',
+    'Bash(factory:*)',
+    'Bash(factory *)',
+  ])('lists %s with the whole-tool rules, because the command after the double dash can be any command', (rule) => {
+    const facts = listed(rule);
+    expect(facts.wholeToolRules).toEqual([rule]);
+    expect(facts.narrowRules).toEqual([]);
+  });
+
+  it.each([
+    'Bash(factory lock run)',
+    'Bash(factory lock run -- npm test)',
+    'Bash(factory lock run -- npm:*)',
+    'Bash(factory lock run --priority -- npm test)',
+    'Bash(factory doctor:*)',
+    'Bash(npm run:*)',
+    'Read(factory lock run:*)',
+  ])('keeps %s with the narrower rules', (rule) => {
+    const facts = listed(rule);
+    expect(facts.wholeToolRules).toEqual([]);
+    expect(facts.narrowRules).toEqual([rule]);
+  });
+});
+
 describe('the permission mode acceptEdits', () => {
   it('is found as the default mode', () => {
     expect(analyzeSettings(JSON.stringify({ permissions: { defaultMode: acceptEditsMode } })).acceptEdits).toBe(true);

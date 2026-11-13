@@ -13,8 +13,11 @@ import {
   env,
   files,
   flags,
+  heavyLock,
   instructionFiles,
   keys,
+  lockLine,
+  lockWords,
   marker,
   maxFileBytes,
   maxTrackLines,
@@ -1130,7 +1133,7 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
 
   it('has one copy of the take-over of a stale lock: the file lock module, which the other locks call', () => {
     expect(rel(withText(/\bdropStaleLock\b|\bremoveSeenLock\b|\bdropStaleClaim\b/))).toEqual(['core/file-lock.ts']);
-    expect(rel(withText(/\btakeLock\b/))).toEqual(['core/file-lock.ts', 'core/private-file.ts', 'core/safe-write.ts']);
+    expect(rel(withText(/\btakeLock\b/))).toEqual(['commands/lock.ts', 'core/file-lock.ts', 'core/private-file.ts', 'core/safe-write.ts']);
   });
 
   it('has no module that writes the approval record apart from the owner record writer', () => {
@@ -1461,6 +1464,28 @@ describe('the names of the sessions (TP-10)', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).not.toMatch(/secret/i);
     }
+  });
+});
+
+describe('the heavy lock policy and the lock words', () => {
+  it('waits 5 s between 1,080 tries, so a priority file counts for 90 minutes at most', () => {
+    expect(heavyLock).toMatchObject({ waitMs: 5_000, attempts: 1_080, priorityMaxAgeMs: 5_400_000, mode: 0o600, maxPriorityBytes: 256 });
+    expect(heavyLock.priorityMaxAgeMs).toBe(heavyLock.waitMs * heavyLock.attempts);
+  });
+
+  it('holds the child for 3 hours at most, and gives TERM 10 s before KILL, longer than the group stop of other runs', () => {
+    expect(heavyLock).toMatchObject({ maxHoldMs: 10_800_000, killGraceMs: 10_000, startToleranceMs: 3_000, claimStaleMs: 60_000 });
+  });
+
+  it('starts every line with the command and the fixed word, and has no word twice', () => {
+    const words = Object.values(lockWords);
+    expect(new Set(words).size).toBe(words.length);
+    for (const word of words) expect(lockLine(word, 'x')).toBe(`factory lock run: ${word}. x`);
+  });
+
+  it('gives the worker text the lock command and the priority flag', () => {
+    expect(templateValues['lockRunCommand']).toBe('factory lock run');
+    expect(templateValues['lockPriorityFlag']).toBe('--priority');
   });
 });
 

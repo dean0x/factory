@@ -8,7 +8,14 @@ export type CliErrorKind = 'usage' | 'failure' | 'not-ready' | 'safety';
  */
 export type CliError =
   | { readonly kind: 'safety'; readonly message: string; readonly hint: string }
-  | { readonly kind: Exclude<CliErrorKind, 'safety'>; readonly message: string; readonly hint?: string; readonly code?: FailureCode };
+  | {
+      readonly kind: Exclude<CliErrorKind, 'safety'>;
+      readonly message: string;
+      readonly hint?: string;
+      readonly code?: FailureCode;
+      /** The exit code of the command when it is not the code of the kind. */
+      readonly exitCode?: number;
+    };
 
 /** The failure code of a git config list that can not be read. */
 export const gitConfigUnreadable = 'git-config-unreadable';
@@ -25,11 +32,19 @@ export const exitCodeOf: Readonly<Record<CliErrorKind, number>> = {
   safety: 4,
 };
 
+/** The exit code of an error: the code that the error names, else the code of its kind. */
+export const exitCodeFor = (error: CliError): number =>
+  error.kind !== 'safety' && error.exitCode !== undefined ? error.exitCode : exitCodeOf[error.kind];
+
 const make = (kind: Exclude<CliErrorKind, 'safety'>, message: string, hint: string | undefined): CliError =>
   hint === undefined ? { kind, message } : { kind, message, hint };
 
 export const failure = (message: string, remedy?: string): Err<CliError> =>
   err(make('failure', message, remedy));
+
+/** A failure that ends the command with an exit code of its own, for example 128 plus the number of the signal that stopped it. */
+export const failureWithExit = (exitCode: number, message: string, remedy?: string): Err<CliError> =>
+  err({ kind: 'failure', message, ...(remedy === undefined ? {} : { hint: remedy }), exitCode });
 
 /** A failure (exit 1) that carries a code, so a caller can act on this failure alone. */
 export const codedFailure = (code: FailureCode, message: string, remedy?: string): Err<CliError> =>
