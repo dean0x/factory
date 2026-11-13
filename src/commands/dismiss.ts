@@ -6,7 +6,7 @@ import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
-import { headOf, type IgnoredList } from '../core/git.js';
+import type { IgnoredList } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { shellWord } from '../core/shell-word.js';
 import type { PaneRow } from '../launch/tmux.js';
@@ -25,6 +25,7 @@ import {
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import {
+  checkPushed,
   dismissLine,
   fetchClone,
   freeWorker,
@@ -32,7 +33,6 @@ import {
   inboxFilesIn,
   planDismiss,
   requireEndable,
-  unpushedReasons,
   type DismissPlan,
   type DismissTarget,
   type FreedWorker,
@@ -88,9 +88,11 @@ const requireOutsideSession = (deps: Deps, again: string): CliResult<void> =>
       )
     : ok(undefined);
 
-/** The worker that the checks passed: its plan and the reasons that its work is not pushed. */
+/** The worker that the checks passed: its plan, the head that the pushed test judged, and the reasons that its work is not pushed. */
 interface Inspected {
   readonly plan: DismissPlan;
+  /** The one read of HEAD that the pushed test judged, or null when the work copy has no commit. */
+  readonly head: string | null;
   readonly reasons: readonly string[];
 }
 
@@ -112,8 +114,8 @@ const inspectorOf = (
     const fetch = known ?? (await fetchClone(deps, plan.value));
     fetched.set(plan.value.clone, fetch);
     if (!fetch.ok) return fetch;
-    const reasons = await unpushedReasons(deps, plan.value, acceptedHeads);
-    return reasons.ok ? ok({ plan: plan.value, reasons: reasons.value }) : reasons;
+    const checked = await checkPushed(deps, plan.value, acceptedHeads);
+    return checked.ok ? ok({ plan: plan.value, head: checked.value.head, reasons: checked.value.reasons }) : checked;
   };
 };
 
@@ -318,12 +320,20 @@ const closedWorkOf = async (deps: Deps, workItems: WorkItemPort, home: string, i
   return ok(work);
 };
 
+/** The step of the owner that frees a worker: the yes flag, in a terminal window outside a factory session. */
+const ownerFreeStep = (id: string): string =>
+  `The ${roles.owner} runs "${commandText(`${dismissLine(id)} ${flagText(flags.yes)}`)}" in a terminal window outside a ${places.session}.`;
+
+/**
+ * The remedy of the closed path for a removal that git refuses. The unlock of a work copy and the removal with force are steps of the
+ * owner, and the run of the owner names them, so this remedy names the run and no such step.
+ */
+const closedRemovalRemedy = (id: string): string =>
+  `${ownerFreeStep(id)} If git refuses the removal in that run too, that run names the steps for a locked work copy and for submodules.`;
+
 /** The refusal of the closed path: nothing is freed, and the owner frees the worker with the yes flag in a terminal window. */
 const refuseClosed = (reason: string, id: string): CliResult<never> =>
-  safetyRefusal(
-    `${commands.dismiss} ${flagText(flags.closed)} frees nothing: ${reason}`,
-    `The ${roles.owner} runs "${commandText(`${dismissLine(id)} ${flagText(flags.yes)}`)}" in a terminal window outside a ${places.session}.`,
-  );
+  safetyRefusal(`${commands.dismiss} ${flagText(flags.closed)} frees nothing: ${reason}`, ownerFreeStep(id));
 
 /** The decision row of a free: the worker, the closed items, the pushed head and the counts of the files that the removal deletes. */
 const freeDecisionOf = (plan: DismissPlan, closed: readonly string[], head: string, ignored: IgnoredList, inbox: InboxList): DecisionLogInput => ({
@@ -335,22 +345,21 @@ const freeDecisionOf = (plan: DismissPlan, closed: readonly string[], head: stri
 });
 
 /**
- * The check of the closed path right before the removal: the evidence of the board and the pushed test, read again, and the head of the
- * work copy, which must be the head that the decision row names. The recheck does not fetch, so a head that moved can pass the pushed
- * test on a copy of the remote branch that a push from the work copy moved too: only the head of the row is a head that the first
- * check saw. A change since the first check stops the free with a failure (exit 1) that says the worker was not freed.
+ * The check of the closed path right before the removal: the evidence of the board and the pushed test, read again, and the head that
+ * the pushed test judges now, which must be `head`, the head that the first pushed test judged and that the decision row names. The
+ * recheck does not fetch, so a head that moved can pass the pushed test on a copy of the remote branch that a push from the work copy
+ * moved too: only `head` is a head that the first check saw. A change since the first check stops the free with a failure (exit 1)
+ * that says the worker was not freed.
  */
 const recheckClosed = async (deps: Deps, workItems: WorkItemPort, home: string, plan: DismissPlan, head: string): Promise<CliResult<void>> => {
   const stopped = (reason: string): CliResult<never> =>
     failure(`${reason}, so the ${roles.worker} ${plan.id} was not freed`, `Check the cause. Then run "${commandText(closedLine(plan.id))}" again.`);
   const work = await closedWorkOf(deps, workItems, home, plan.id);
   if (!work.ok) return stopped(work.error);
-  const now = await headOf(deps, plan.workCopy, plan.gitDir);
+  const now = await checkPushed(deps, plan, work.value.mergedPrHeads);
   if (!now.ok) return stopped(now.error.message);
-  if (now.value !== head) return stopped(`the head of the work copy moved from ${head} to ${now.value ?? 'no commit'} after the first check`);
-  const reasons = await unpushedReasons(deps, plan, work.value.mergedPrHeads);
-  if (!reasons.ok) return stopped(reasons.error.message);
-  return reasons.value.length === 0 ? ok(undefined) : stopped(reasons.value.join('; '));
+  if (now.value.head !== head) return stopped(`the head of the work copy moved from ${head} to ${now.value.head ?? 'no commit'} after the first check`);
+  return now.value.reasons.length === 0 ? ok(undefined) : stopped(now.value.reasons.join('; '));
 };
 
 /**
@@ -358,9 +367,12 @@ const recheckClosed = async (deps: Deps, workItems: WorkItemPort, home: string, 
  * caller rule (a mistake guard, no proof), a work item that the board knows with a closed item that names the worker and no item that
  * is not closed that names it or carries its unassign mark, and the pushed and clean test (a head equal to the recorded head of a
  * closed item of the worker counts as pushed). Every other case is an owner step: the command refuses with exit 4 and names the owner
- * command. One decision row names the free and the pushed head before it. Right before the removal the board and the work copy are
- * checked again, and the head must still be the head of the row. A fault of the second check keeps the work copy and the record and
- * says that the row stays. It never uses the yes flag.
+ * command. One decision row names the free and the pushed head before it: the head that the pushed test judged, never a second read.
+ * Right before the removal the board and the work copy are checked again, and the head must still be the head of the row. A fault of
+ * the second check keeps the work copy and the record and says that the row stays. The second check and every step to the delete of
+ * the record run under the state lock, so a board write waits and no item can name the worker between the check and the delete. The
+ * row is written before the lock is taken: its write takes the same lock, which is not re-entrant. A git refusal of the removal gets
+ * `closedRemovalRemedy`: the run of the owner, with no unlock and no force. It never uses the yes flag.
  */
 const dismissClosed = async (
   deps: Deps,
@@ -391,7 +403,7 @@ const dismissClosed = async (
   if (!work.ok) return refuseClosed(work.error, id);
   const inspected = await inspectorOf(deps, home, config, work.value.mergedPrHeads)({ id, project: record.value.project });
   if (!inspected.ok) return inspected;
-  const { plan, reasons } = inspected.value;
+  const { plan, reasons, head: pushedHead } = inspected.value;
   const warnings = facts.value.warnings;
   const base = { schema: schemaIds.dismiss, home, idle: false, yes: false, closed: true };
   if (reasons.length > 0) {
@@ -403,9 +415,6 @@ const dismissClosed = async (
       exitCode: 1,
     });
   }
-  const head = await headOf(deps, plan.workCopy, plan.gitDir);
-  if (!head.ok) return head;
-  const pushedHead = head.value;
   if (pushedHead === null) return failure(`the work copy of the ${roles.worker} ${id} has no commit`, `Run "${commandText(again)}" again.`);
   const ignored = await ignoredIn(deps, plan);
   if (!ignored.ok) return ignored;
@@ -423,6 +432,8 @@ const dismissClosed = async (
     panes: facts.value.panes,
     lineSession: lineSession.value,
     beforeRemoval: () => recheckClosed(deps, workItems, home, plan, pushedHead),
+    holdStateLock: true,
+    removalRemedy: closedRemovalRemedy(id),
   });
   if (!freed.ok) return err({ ...freed.error, message: `${freed.error.message}. The decision ${row} stays in the log` });
   return ok({

@@ -9,9 +9,10 @@ import type { DecisionLogPort } from '../../src/commands/board-open.js';
 import { runDismiss, type DismissOptions } from '../../src/commands/dismiss.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
-import { boardKeys, dismissWords, files, requestDeciders, schemaIds, type HookEvent } from '../../src/names.js';
+import { boardKeys, dismissWords, files, requestDeciders, schemaIds, stateLock, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
+import { withStateLock } from '../../src/state/state-lock.js';
 import { fetchClone, freeWorker, inboxFilesIn, planDismiss, unpushedReasons, type DismissPlan, type FreeRequest } from '../../src/workers/dismiss.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { readPanes } from '../../src/workers/panes.js';
@@ -1800,6 +1801,138 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
       });
       await expectStopped(given, 'late.ts');
     });
+  });
+
+  describe('the head that the pushed test judged', () => {
+    /** The deps in which the head of the work copy moves right after the first read of it: the read of the pushed test. */
+    const movingHead = (made: Made, move: () => void): FakeDeps => {
+      let reads = 0;
+      return {
+        ...made.deps,
+        run: async (command, args, options) => {
+          const result = await made.deps.run(command, args, options);
+          if (command === 'git' && args.includes(alpha) && args.includes('rev-parse') && args.includes('HEAD')) {
+            reads += 1;
+            if (reads === 1) move();
+          }
+          return result;
+        },
+      };
+    };
+
+    it('names that head in the row, and stops the free when the head moved after the test, though the new head is pushed too', async () => {
+      const heads: Record<string, string> = { [alpha]: HEAD };
+      const given = await world({ git: { heads, ancestors: { [HEAD]: [OLDER] } } });
+      const moving = movingHead(given.made, () => {
+        heads[alpha] = OLDER;
+      });
+      const result = await runDismiss(moving, optionsOf({ words: ['alpha'], closed: true }), recipes, given.log, BOARD_PORT);
+      expect(given.rows.map((row) => row.input.decision)).toEqual([expect.stringContaining(`Pushed head: ${HEAD}.`)]);
+      expect(!result.ok && result.error.message).toContain(`the head of the work copy moved from ${HEAD} to ${OLDER} after the first check`);
+      expect(removals(given.made)).toEqual([]);
+      expect(await recordState(given.made, 'alpha')).toBe('valid');
+    });
+  });
+
+  describe('the state lock of the free', () => {
+    const LOCK_FILE = join(layoutOf(HOME).locksDir, `${stateLock.name}${stateLock.lock.suffix}`);
+    const lineFile = (made: Made): string => `${layoutOf(HOME).heartbeatDir}/${made.sessions.get('alpha') ?? ''}`;
+    const recordDir = workerPathsOf(HOME, 'alpha').dir;
+    const lockWord = (made: Made): string => (made.deps.files.has(LOCK_FILE) ? 'held' : 'free');
+    /** A board writer: it takes the state lock as `commitBoardChange` does. */
+    const writer = (made: Made) => (): Promise<boolean> => withStateLock(made.deps, layoutOf(HOME), async () => ok(undefined)).then((result) => result.ok);
+
+    /** The deps that note the state of the lock at the read of the board, and before each step that removes something. */
+    const lockTrail = (made: Made, trail: string[]): FakeDeps => {
+      const note = (step: string): void => {
+        trail.push(`${step}:${lockWord(made)}`);
+      };
+      return {
+        ...made.deps,
+        run: (command, args, options) => {
+          if (command === 'git' && args.includes('worktree') && args.includes('remove')) note('remove the work copy');
+          return made.deps.run(command, args, options);
+        },
+        fs: {
+          ...made.deps.fs,
+          readTextLimited: (path, maxBytes, decode) => {
+            if (path === BOARD_FILE) note('read the board');
+            return made.deps.fs.readTextLimited(path, maxBytes, decode);
+          },
+          remove: (path) => {
+            if (path === lineFile(made)) note('delete the line');
+            if (path === recordDir) note('delete the record');
+            return made.deps.fs.remove(path);
+          },
+        },
+      };
+    };
+
+    it('holds the lock from the second read of the board to the delete of the record, and not while the row is written', async () => {
+      const given = await world();
+      const trail: string[] = [];
+      const log: DecisionLogPort = {
+        log: async () => {
+          trail.push(`write the row:${lockWord(given.made)}`);
+          return ok('D-7');
+        },
+      };
+      const result = await runDismiss(lockTrail(given.made, trail), optionsOf({ words: ['alpha'], closed: true }), recipes, log, BOARD_PORT);
+      expect(result.ok).toBe(true);
+      const at = trail.indexOf('write the row:free');
+      expect(at).toBeGreaterThan(0);
+      expect(trail.slice(0, at).every((step) => step.endsWith(':free'))).toBe(true);
+      expect(trail.slice(at + 1)).toEqual([
+        'read the board:held',
+        'remove the work copy:held',
+        'delete the line:held',
+        'delete the record:held',
+      ]);
+      expect(lockWord(given.made)).toBe('free');
+    });
+
+    it('makes a board writer wait while the work copy is removed, so no item can name the worker before its record is gone', async () => {
+      const given = await world();
+      const blocked: boolean[] = [];
+      const competing = writer(given.made);
+      const moving: FakeDeps = {
+        ...given.made.deps,
+        run: async (command, args, options) => {
+          if (command === 'git' && args.includes('worktree') && args.includes('remove')) blocked.push(!(await competing()));
+          return given.made.deps.run(command, args, options);
+        },
+      };
+      const result = await runDismiss(moving, optionsOf({ words: ['alpha'], closed: true }), recipes, given.log, BOARD_PORT);
+      expect(result.ok).toBe(true);
+      expect(blocked).toEqual([true]);
+      expect(await competing()).toBe(true);
+    });
+
+    it('frees nothing more when another process holds the lock: the work copy and the record stay, and the fault names the pane that ended', async () => {
+      const given = await world();
+      given.made.deps.seed(LOCK_FILE, 'another-holder\n');
+      const error = await closedError(given);
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('another process holds the lock');
+      expect(error.message).toContain('Done before this fault: ended the pane');
+      expect(error.message).toContain('The decision D-7 stays in the log');
+      expect(removals(given.made)).toEqual([]);
+      expect(await recordState(given.made, 'alpha')).toBe('valid');
+      expect(lineExists(given.made, 'alpha')).toBe(true);
+    });
+  });
+
+  it('names the owner for a removal that git refuses, and gives the coordinator no unlock, no force and no delete by hand', async () => {
+    const given = await world({ git: { worktreeRemoveFails: { [cloneOf('web')]: 'fatal: cannot remove a locked working tree' } } });
+    const error = await closedError(given);
+    const hint = error.hint ?? '';
+    expect(error.kind).toBe('failure');
+    expect(hint).toContain('The owner runs "factory dismiss alpha --yes" in a terminal window outside a factory session');
+    expect(hint).not.toContain('--force');
+    expect(hint).not.toContain('unlock');
+    expect(hint).not.toContain('by hand');
+    expect(removals(given.made)).toEqual([`worktree remove -- ${alpha}`]);
+    expect(await recordState(given.made, 'alpha')).toBe('valid');
   });
 
   it('writes no row and frees nothing when the decision log fails', async () => {

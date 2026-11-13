@@ -28,6 +28,7 @@ import { shellWord } from '../core/shell-word.js';
 import type { PaneRow } from '../launch/tmux.js';
 import { commands, commandText, dirs, dismissStopCases, dismissWords, roles, workCopyGit, workerListWords } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
+import { withStateLock } from '../state/state-lock.js';
 import { removeLastSeen } from './last-seen.js';
 import { branchOf, removeWorkerRecord, workCopyOf } from './registry.js';
 import type { WorkerStatus } from './status.js';
@@ -283,21 +284,25 @@ const missingCommits = async (deps: Deps, plan: DismissPlan, head: string): Prom
   return ok(`the branch ${branch} has commits that ${remote}/${branch} does not hold${also}`);
 };
 
+/** What the pushed test saw: the head that it tested, and the reasons that the work is not pushed. */
+export interface PushedCheck {
+  /** The one read of HEAD that the test judged, or null when the work copy has no commit. */
+  readonly head: string | null;
+  readonly reasons: readonly string[];
+}
+
 /**
- * The reasons that the work of a worker is not pushed, or an empty list when it is. The caller fetched the clone first
- * (`fetchClone`). The work is pushed when the head of the branch is on the remote branch of the worker or on the default branch of
- * the clone (the head is that commit or below it), and the work copy has no changed file, no untracked file and no stash entry. A git
- * command that fails is a failure, never a reason.
+ * The pushed test, with the head that it tested. The caller fetched the clone first (`fetchClone`). The work is pushed when the head
+ * of the branch is on the remote branch of the worker or on the default branch of the clone (the head is that commit or below it),
+ * and the work copy has no changed file, no untracked file and no stash entry. The reasons are an empty list when it is. A git
+ * command that fails is a failure, never a reason. HEAD is read once, and the test judges that read: a caller that names the head
+ * of a decision names the head of this value, never a second read that could see another commit.
  *
  * A head that equals one of `acceptedHeads` passes the test of the remote too: the caller names the commits that it has proof for,
  * for example the head that the board recorded for a closed item. The owner path names none. An accepted head never clears the
  * test of the work copy and of the stash.
  */
-export const unpushedReasons = async (
-  deps: Deps,
-  plan: DismissPlan,
-  acceptedHeads: readonly string[] = [],
-): Promise<CliResult<readonly string[]>> => {
+export const checkPushed = async (deps: Deps, plan: DismissPlan, acceptedHeads: readonly string[] = []): Promise<CliResult<PushedCheck>> => {
   const { workCopy, gitDir } = plan;
   const reasons: string[] = [];
   const head = await headOf(deps, workCopy, gitDir);
@@ -320,7 +325,17 @@ export const unpushedReasons = async (
   if (stash.value > 0) {
     reasons.push(`the stash of the repo holds ${stash.value} ${stash.value === 1 ? 'entry' : 'entries'}, and every work copy of the project shares it`);
   }
-  return ok(reasons);
+  return ok({ head: head.value, reasons });
+};
+
+/** The reasons that the work of a worker is not pushed, or an empty list when it is: the reasons of `checkPushed`. */
+export const unpushedReasons = async (
+  deps: Deps,
+  plan: DismissPlan,
+  acceptedHeads: readonly string[] = [],
+): Promise<CliResult<readonly string[]>> => {
+  const checked = await checkPushed(deps, plan, acceptedHeads);
+  return checked.ok ? ok(checked.value.reasons) : checked;
 };
 
 /** The files that git ignores in the work copy: the files that the removal deletes and that no commit holds. */
@@ -374,6 +389,15 @@ export interface FreeRequest {
    * record kept, and the error says what ended before it. The owner path gives none.
    */
   readonly beforeRemoval?: () => Promise<CliResult<void>>;
+  /**
+   * True to hold the state lock from the check (`beforeRemoval`) to the delete of the record, so that no board write comes between
+   * the check and the delete. The caller then holds the state lock nowhere and takes it in no step that it runs here: the lock is not
+   * re-entrant. A lock that another process holds stops the free before the check, with the work copy and the record kept. The
+   * owner path gives false.
+   */
+  readonly holdStateLock?: boolean;
+  /** The remedy for a removal that git refuses, when the default remedy (the steps of the owner) is not for this caller. */
+  readonly removalRemedy?: string;
 }
 
 export interface FreedWorker {
@@ -395,7 +419,8 @@ const afterSteps = (error: CliError, id: string, done: readonly string[], leftBy
 };
 
 /**
- * The remedy for a removal that git refuses. Git also refuses a work copy that is locked, and one that holds submodules, and
+ * The remedy of the owner path for a removal that git refuses: the steps are for the owner, who runs `dismiss ID --yes` in a terminal
+ * window. A free that a coordinator runs gives its own remedy (`FreeRequest.removalRemedy`). Git also refuses a work copy that is locked, and one that holds submodules, and
  * `dismiss` run again gets the same answer for both. A locked work copy is unlocked first. For submodules, the checks of `dismiss`
  * passed, so the work is pushed, and git removes the work copy only with force. After that removal, `dismiss` can not run for the
  * worker again, so the remedy names the paths to delete by hand.
@@ -431,10 +456,11 @@ const stoppedStep = (stopped: StopOutcome): readonly string[] => {
  * (`beforeRemoval`); the work copy is removed with the plain git command, which refuses a changed or untracked file and has no
  * force; the last-seen line and the record folder are deleted together. The branch stays. A fault names what was done before it. Up
  * to the removal of the work copy, `dismiss` run again does the steps that are left. A fault after it names the paths to delete by
- * hand (`afterSteps`).
+ * hand (`afterSteps`). With `holdStateLock`, the check and every step after it run under the state lock, and the pane ends before the
+ * lock is taken.
  */
 export const freeWorker = async (deps: Deps, request: FreeRequest): Promise<CliResult<FreedWorker>> => {
-  const { home, session, plan, panes, lineSession, beforeRemoval } = request;
+  const { home, session, plan, panes, lineSession, beforeRemoval, holdStateLock = false, removalRemedy } = request;
   const done: string[] = [];
   const stopped: CliResult<StopOutcome> =
     panes === null
@@ -442,22 +468,27 @@ export const freeWorker = async (deps: Deps, request: FreeRequest): Promise<CliR
       : await stopWorker(deps, { home, session, workerId: plan.id, panes, allowed: dismissStopCases, again: dismissLine(plan.id) });
   if (!stopped.ok) return err(afterSteps(stopped.error, plan.id, done));
   done.push(...stoppedStep(stopped.value));
-  if (beforeRemoval !== undefined) {
-    const checked = await beforeRemoval();
-    if (!checked.ok) return err(afterSteps(checked.error, plan.id, done));
-  }
-  const removed = await removeWorkTree(deps, plan.clone, plan.workCopy);
-  if (!removed.ok) {
-    return err(afterSteps({ ...removed.error, hint: removed.error.hint ?? removalHint(home, plan, lineSession) }, plan.id, done));
-  }
-  done.push(`removed the work copy ${plan.workCopy}`);
-  const recordDir = workerPathsOf(home, plan.id).dir;
-  if (lineSession !== null) {
-    const line = await removeLastSeen(deps, home, lineSession);
-    if (!line.ok) return err(afterSteps(line.error, plan.id, done, [join(layoutOf(home).heartbeatDir, lineSession), recordDir]));
-    done.push('deleted the last-seen line');
-  }
-  const record = await removeWorkerRecord(deps, home, plan.id);
-  if (!record.ok) return err(afterSteps(record.error, plan.id, done, [recordDir]));
-  return ok({ stopped: stopped.value });
+  const removeSteps = async (): Promise<CliResult<void>> => {
+    if (beforeRemoval !== undefined) {
+      const checked = await beforeRemoval();
+      if (!checked.ok) return err(afterSteps(checked.error, plan.id, done));
+    }
+    const removed = await removeWorkTree(deps, plan.clone, plan.workCopy);
+    if (!removed.ok) {
+      return err(afterSteps({ ...removed.error, hint: removed.error.hint ?? removalRemedy ?? removalHint(home, plan, lineSession) }, plan.id, done));
+    }
+    done.push(`removed the work copy ${plan.workCopy}`);
+    const recordDir = workerPathsOf(home, plan.id).dir;
+    if (lineSession !== null) {
+      const line = await removeLastSeen(deps, home, lineSession);
+      if (!line.ok) return err(afterSteps(line.error, plan.id, done, [join(layoutOf(home).heartbeatDir, lineSession), recordDir]));
+      done.push('deleted the last-seen line');
+    }
+    const record = await removeWorkerRecord(deps, home, plan.id);
+    return record.ok ? ok(undefined) : err(afterSteps(record.error, plan.id, done, [recordDir]));
+  };
+  // The value of the lock call holds the result of the steps, so a fault of the lock and a fault of the steps stay apart.
+  const steps = holdStateLock ? await withStateLock(deps, layoutOf(home), async () => ok(await removeSteps())) : ok(await removeSteps());
+  if (!steps.ok) return err(afterSteps(steps.error, plan.id, done));
+  return steps.value.ok ? ok({ stopped: stopped.value }) : steps.value;
 };
