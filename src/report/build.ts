@@ -152,11 +152,12 @@ const readChildFacts = async (transport: Transport, rows: readonly ChildRow[]): 
 
 /**
  * Read the facts of the node: the workers (one call of `readStatus`, which makes the one list of the panes), the board and the
- * children. One run reads `board.json` two times: once for the work item port, which `readStatus` calls (`readBoard`), and once for
- * the list of the items (`listItems`, in `readBoardFacts`). Each child is pinged once, and each child that answers the ping is asked
- * for its report file once (`readChildFacts`). The call fails only when the facts of the workers fail, with the error of
- * `readStatus`. A fault of the board is a value of `NodeFacts.board`, and a child that does not answer is a row with the state
- * `unknown`.
+ * children. One run reads `board.json` at most two times: once for the list of the items (`listItems`, in `readBoardFacts`), and once
+ * more for the work item port, which `readStatus` calls (`readBoard`). The port reads it only when the node has workers and a `board`
+ * block: `readStatus` skips the port for a node with no worker, and the port skips the read when there is no `board` block. Each child
+ * is pinged once, and each child that answers the ping is asked for its report file once (`readChildFacts`). The call fails only when
+ * the facts of the workers fail, with the error of `readStatus`. A fault of the board is a value of `NodeFacts.board`, and a child
+ * that does not answer is a row with the state `unknown`.
  */
 export const readNodeFacts = async (deps: Deps, request: FactsRequest): Promise<CliResult<NodeFacts>> => {
   const { home, config, board, workItems, transport } = request;
