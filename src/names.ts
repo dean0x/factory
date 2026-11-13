@@ -1323,24 +1323,32 @@ export const statusWords = {
 } as const;
 
 /**
+ * The most workers of a node. The worker list reads at most this many entries of the workers folder (`workerRecord.maxEntries`), and a
+ * report holds at most this many worker rows (`reportLimits.maxWorkers`), so every worker that the list reads can be in the report.
+ * The widest row of a worker that the builder makes takes less than 1,000 bytes in the indented file text, so this many rows take
+ * less than 256,000 bytes, and the report byte cap of 262,144 bytes holds them.
+ */
+const maxWorkers = 256;
+
+/**
  * The limits of the report of a node (design 5.4). `schemaVersion` is the number that a report holds in its version key: a reader
  * that finds a higher number reads no more of the file. A report file has at most `maxBytes` bytes. One build of the report reads at
  * most `maxBuildBytes` bytes from the report files of its children in all. The lists of the report have at most `maxWorkers`,
  * `maxChildren`, `maxRequests` and `maxItems` entries, and a list of counts (the states, or the values of one owner field) at most
- * `maxCountRows` rows, which is not less than `maxWorkers`, so the lanes of all workers fit in the values of the worker field. A list
- * of counts is never a cause of failure: when it has more different names, it keeps the rows with the highest counts and gives the
- * number of the other names beside it. A text is at most `maxTextChars` characters, a version text at most `maxVersionChars`, and a
- * count or an age (in whole seconds) at most `maxNumber`.
+ * `maxCountRows` rows. `maxCountRows` is the same number as `maxWorkers`, so the lanes of all workers fit in the values of the worker
+ * field. A list of counts is never a cause of failure: when it has more different names, it keeps the rows with the highest counts and
+ * gives the number of the other names beside it. A text is at most `maxTextChars` characters, a version text at most `maxVersionChars`,
+ * and a count or an age (in whole seconds) at most `maxNumber`.
  */
 export const reportLimits = {
   schemaVersion: 1,
   maxBytes: 256 * 1_024,
   maxBuildBytes: 4 * 1_048_576,
-  maxWorkers: 200,
+  maxWorkers,
   maxChildren: 200,
   maxRequests: 500,
   maxItems: 500,
-  maxCountRows: 200,
+  maxCountRows: maxWorkers,
   maxTextChars: 200,
   maxVersionChars: 64,
   maxNumber: maxBoardNumber,
@@ -1536,7 +1544,7 @@ export const workerRecord = {
   /** A reader refuses a file of more bytes than this. */
   maxBytes: 4_096,
   /** A list reads at most this many entries of the workers folder. More is a failure, and the list is not cut short. */
-  maxEntries: 256,
+  maxEntries: maxWorkers,
   /** The permission bits of a worker folder and of its record. The record is private to the user. */
   folderMode: privateFile.folderMode,
   fileMode: privateFile.fileMode,

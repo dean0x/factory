@@ -15,7 +15,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
-import { commands, files, reportKeys, reportLimits, schemaIds, values } from '../../src/names.js';
+import { commands, files, reportKeys, reportLimits, schemaIds, values, workerRecord } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { checkReport, readNodeFacts, reportDocOf, reportTextOf, type NodeFacts } from '../../src/report/build.js';
@@ -225,6 +225,13 @@ describe('report builder: the document (TP-10)', () => {
       { id: 'beta', project: 'web', state: 'stopped', contextPct: null, activityAt: null, workItem: null, idle: false },
       { id: 'gamma', project: 'web', state: 'stopped', contextPct: null, activityAt: null, workItem: null, idle: false },
     ]);
+  });
+
+  it('gives a row for each worker that the worker list can read, up to the most that it reads', async () => {
+    const most = workerRecord.maxEntries;
+    const workers = Array.from({ length: most }, (_, at) => ({ id: `w${String(at).padStart(3, '0')}` }));
+    const report = await reportOf(await fixtureOf({ workers }));
+    expect(report.workers).toHaveLength(most);
   });
 
   it('counts the board by state over all items and by each owner field over the open items, and lists the items in progress', async () => {

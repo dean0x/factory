@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { renderJson } from '../../src/cli/output.js';
 import { parseReport, reportSchema, type NodeReport } from '../../src/comms/report-schema.js';
-import { reportLimits, schemaIds } from '../../src/names.js';
+import { reportLimits, schemaIds, workerRecord } from '../../src/names.js';
 
 /**
  * The report document is a contract between two nodes: a parent reads the file of a child. The tests write the keys as text, so
@@ -205,10 +206,26 @@ describe('the report caps (AC-12 limits)', () => {
     expect(parsed((doc) => (doc['board'] = { states: [], statesOmitted: 0, fields: [{ field: 'lane', values: [] }] })).ok).toBe(false);
   });
 
-  it('keeps a full report of small rows under the byte cap of a report file', () => {
-    const workers = Array.from({ length: reportLimits.maxWorkers }, (_, at) => ({ ...worker, id: `w${at}` }));
-    const text = JSON.stringify({ ...document(), workers });
-    expect(text.length).toBeLessThan(reportLimits.maxBytes);
+  it('allows as many worker rows as the worker list can read, so a worker that the list reads never stops the report', () => {
+    expect(reportLimits.maxWorkers).toBe(workerRecord.maxEntries);
+  });
+
+  it('keeps a report of the most workers, each row at its largest size, under the byte cap of the report file', () => {
+    // A worker id and a project are slugs of at most 40 characters. The text of a work item is cut at the text cap, and
+    // a character of 3 bytes in UTF-8 is the widest one that the file keeps.
+    const widest = (at: number): unknown => ({
+      ...worker,
+      id: `${'w'.repeat(36)}${String(at).padStart(4, '0')}`,
+      project: 'p'.repeat(40),
+      state: 'at prompt',
+      contextPct: null,
+      activityAt: '2026-11-13T10:00:00.000Z',
+      workItem: '世'.repeat(reportLimits.maxTextChars),
+    });
+    const result = parseReport({ ...document(), workers: Array.from({ length: reportLimits.maxWorkers }, (_, at) => widest(at)) });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.value.workers).toHaveLength(reportLimits.maxWorkers);
+    expect(Buffer.byteLength(renderJson(result.value), 'utf8')).toBeLessThan(reportLimits.maxBytes);
   });
 });
 

@@ -321,9 +321,9 @@ The verdict is `OK:` or `CHECK:`. It is `CHECK:` when a worker record is not val
 
 The report file is fresh only after `report` or `status` runs. No hook writes it. So the file can be older than the node, and you must not take it as the state of the node now.
 
-The `board` key counts all items by state, and counts the open items by each owner field. A list of counts has at most 200 rows, with the highest count first and equal counts in the order of the names. When a list has more different names, the report keeps the first 200 rows. `statesOmitted` (beside `states`) and `valuesOmitted` (in the entry of the field) give the number of the other names, and they are 0 for a list that is whole. A long list of counts never stops the report.
+The `board` key counts all items by state, and counts the open items by each owner field. A list of counts has at most 256 rows, with the highest count first and equal counts in the order of the names. When a list has more different names, the report keeps the first 256 rows. `statesOmitted` (beside `states`) and `valuesOmitted` (in the entry of the field) give the number of the other names, and they are 0 for a list that is whole. A long list of counts never stops the report.
 
-A report over another cap is never cut. The caps are 200 workers, 200 children, 500 requests, 500 items and 256 KiB for the file. Over one of these caps, the command exits with code 1 and names the cap.
+A report over another cap is never cut. The caps are 256 workers, 200 children, 500 requests, 500 items and 256 KiB for the file. Over one of these caps, the command exits with code 1 and names the cap.
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
