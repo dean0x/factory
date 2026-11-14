@@ -4,8 +4,10 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   address,
+  blockNames,
   boardKeys,
   checkIds,
+  claudeSettingKeys,
   claudeSettings,
   commandLines,
   commands,
@@ -17,6 +19,7 @@ import {
   flags,
   ghTimeoutMs,
   heavyLock,
+  hookNames,
   instructionFiles,
   itemCommands,
   keys,
@@ -26,6 +29,7 @@ import {
   marker,
   markLimits,
   maxFileBytes,
+  maxSetupTextBytes,
   maxTrackLines,
   messageFile,
   messageHeader,
@@ -40,6 +44,7 @@ import {
   requestHash,
   reservedFieldNames,
   reservedRootNames,
+  roleText,
   roles,
   schema1,
   schema2,
@@ -1657,5 +1662,56 @@ describe('the typed lines of a reset (AC-7)', () => {
     for (const template of allBlocks) {
       for (const line of Object.values(typing.lines)) expect(template.body, `${template.name} ${line}`).not.toContain(line);
     }
+  });
+});
+
+describe('the names of the role text delivery', () => {
+  it('names the three keys of the one output object that the hook prints', () => {
+    expect(hookNames.output).toEqual({
+      hookSpecificOutput: 'hookSpecificOutput',
+      hookEventName: 'hookEventName',
+      additionalContext: 'additionalContext',
+    });
+  });
+
+  it('names the setting that turns off every hook, the check id and the block name', () => {
+    expect(claudeSettingKeys.disableAllHooks).toBe('disableAllHooks');
+    expect(checkIds.roleDelivery).toBe('role-delivery');
+    expect(blockNames.workRules).toBe('work-rules');
+    expect(new Set(Object.values(blockNames)).size).toBe(Object.values(blockNames).length);
+  });
+
+  it('caps the delivered text at 9,000 characters and keeps the setup bound at 65,536 bytes', () => {
+    expect(roleText.maxChars).toBe(9_000);
+    expect(maxSetupTextBytes).toBe(65_536);
+  });
+
+  it('has one fixed refusal text', () => {
+    expect(roleText.refusal).toBe('The factory role text did not arrive. Do no work. Tell the coordinator.');
+  });
+
+  it('has a source line of one line that names the package rules and the accepted setup file', () => {
+    expect(roleText.sourceLine).not.toMatch(/[\r\n]/);
+    expect(roleText.sourceLine).toContain('rules of the factory package');
+    expect(roleText.sourceLine).toContain('setup/roles/worker.md');
+  });
+
+  it('has one fixed reason of one line for each of the nine faults, and no two are the same', () => {
+    const reasons = Object.values(roleText.reasons);
+    expect(Object.keys(roleText.reasons).sort()).toEqual(
+      ['blockMarker', 'configNotUsable', 'link', 'notAccepted', 'notPlainText', 'notUtf8', 'ownerOrMode', 'readFailed', 'tooLarge'].sort(),
+    );
+    expect(new Set(reasons).size).toBe(reasons.length);
+    for (const reason of reasons) expect(reason).toMatch(/^[^\r\n]+$/);
+  });
+
+  it('keeps the old words and the jargon words out of its texts', () => {
+    const texts = [roleText.sourceLine, roleText.refusal, ...Object.values(roleText.reasons)];
+    expect(texts.flatMap(plainWordsIn)).toEqual([]);
+  });
+
+  it('names the size and the cap of a text that is too large, in the unit of the size', () => {
+    expect(roleText.tooLargeText(12_345, 'bytes')).toBe('the role text has 12345 bytes, and the cap is 9000 characters');
+    expect(roleText.tooLargeText(9_001, 'characters')).toBe('the role text has 9001 characters, and the cap is 9000 characters');
   });
 });

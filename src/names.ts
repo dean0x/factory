@@ -366,6 +366,8 @@ export const claudeSettingKeys = {
   env: 'env',
   hooks: 'hooks',
   statusLine: 'statusLine',
+  /** The setting that turns off every hook of a session, so that the role text never reaches it. */
+  disableAllHooks: 'disableAllHooks',
   approveAllMcp: 'enableAllProjectMcpServers',
   approveMcpList: 'enabledMcpjsonServers',
   /** The setting that tells a session what to do with the input of other sessions: accept it, hold it for approval, or refuse it. */
@@ -1114,6 +1116,11 @@ export const hookNames = {
   events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact', 'Notification', 'PreToolUse'],
   /** The only keys that the hook reads from the input of Claude Code. Every other key of the input is dropped unread. */
   inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name', notificationType: 'notification_type' },
+  /**
+   * The keys of the one JSON object that the hook prints for the start of a worker session: `hookSpecificOutput` holds
+   * `hookEventName` and `additionalContext`. The hooks page of Claude Code (https://code.claude.com/docs/en/hooks) names them.
+   */
+  output: { hookSpecificOutput: 'hookSpecificOutput', hookEventName: 'hookEventName', additionalContext: 'additionalContext' },
   notificationTypes,
   /** The events whose own group in the settings has a matcher, with that matcher. The `Notification` matcher lists `notificationTypes`, parted by `|`. */
   matchers: { Notification: notificationTypes.join('|') },
@@ -1934,6 +1941,8 @@ export const checkIds = {
   permissionMode: 'permission-mode',
   /** What the root repo tracks and what git ignores. */
   rootRepo: 'root-repo',
+  /** The path from the setup text of the workers to their sessions: the hook, the role text, and the work copies. */
+  roleDelivery: 'role-delivery',
   /** The tracked text files of the root: tokens, `file` URLs and user folder paths. */
   rootFiles: 'root-files',
   /** The folder of each project: it resolves inside the root and not into a folder that the root keeps. */
@@ -1966,6 +1975,8 @@ export const blockNames = {
   setup: 'setup',
   /** The text of `setup/roles/worker.md`, in the worker file. */
   setupWorker: 'setup-worker',
+  /** The working rules of the coordinator, as a block of its own in the coordinator `CLAUDE.md`. */
+  workRules: 'work-rules',
 } as const;
 
 /** The blocks whose text a person writes in the setup folder. A missing one is added by `upgrade`. */
@@ -1979,6 +1990,54 @@ export const setupFileOf = (block: string): string =>
 
 /** The most bytes of a setup text that `init` and `upgrade` render into a session instruction file. A larger file is refused. */
 export const maxSetupTextBytes = 65_536;
+
+/** The unit of the size that a refusal of a role text that is too large names. */
+export type RoleSizeUnit = 'bytes' | 'characters';
+
+const ROLE_TEXT_MAX_CHARS = 9_000;
+
+/**
+ * The role text that a session of a worker gets at its start (`hook SessionStart`): the cap, the fixed lines and the
+ * fixed reasons. The text is the package worker rules and the text that the owner accepted in the setup folder, and it is
+ * never cut: a text above `maxChars`, the source line included, is refused. The hook prints `refusal` when a check fails
+ * and one text of `reasons` on its error output, and never text of a file, a path or the text of an error. The messages
+ * of the launch, reset and doctor checks use the same reasons, with a remedy line that names the fix.
+ */
+export const roleText = {
+  maxChars: ROLE_TEXT_MAX_CHARS,
+  /** The text between two parts of the role text. */
+  joiner: '\n\n',
+  /** The first line of the role text. */
+  sourceLine: `Source: the ${roles.worker} rules of the ${program} package, and the setup text in ${setupFileOf(blockNames.setupWorker)} that the ${roles.owner} accepted.`,
+  /** The text that a session gets when a check fails. */
+  refusal: `The ${program} role text did not arrive. Do no work. Tell the ${roles.coordinator}.`,
+  /** One reason for each fault, as the hook prints it on its error output. */
+  reasons: {
+    link: 'role text refused: a link is in the path of the setup file',
+    ownerOrMode: 'role text refused: the setup file or its folder has the wrong owner or mode',
+    tooLarge: 'role text refused: the text is larger than the cap',
+    notUtf8: 'role text refused: the setup file is not UTF-8 text',
+    notPlainText: 'role text refused: the setup file is not plain text',
+    blockMarker: 'role text refused: the setup file holds a block marker',
+    notAccepted: 'role text refused: the setup file is not accepted',
+    readFailed: 'role text refused: the setup file cannot be read',
+    configNotUsable: 'role text refused: the config is not usable',
+  },
+  /** The size of a text that is too large and the cap, for the message of a launch, a reset or a check. */
+  tooLargeText: (size: number, unit: RoleSizeUnit): string =>
+    `the role text has ${size} ${unit}, and the cap is ${ROLE_TEXT_MAX_CHARS} characters`,
+  /** The remedy lines. `retry` is the command that the refusal stopped, as a person types it. */
+  remedies: {
+    path: (retry: string): string =>
+      `Fix the link, the owner or the mode of ${setupFileOf(blockNames.setupWorker)} and of its folders, then run "${retry}" again.`,
+    accept: (retry: string): string =>
+      `Accept ${setupFileOf(blockNames.setupWorker)} in a terminal window outside a ${places.session}: run "${commandText(commands.init)}" for a first acceptance, or "${commandText(commands.upgrade)}" after a change. Then run "${retry}" again.`,
+    shorten: (free: number, retry: string): string =>
+      `Shorten ${setupFileOf(blockNames.setupWorker)} to ${free} characters or fewer, then run "${retry}" again.`,
+    correct: (retry: string): string => `Correct the text of ${setupFileOf(blockNames.setupWorker)}, then run "${retry}" again.`,
+    config: (retry: string): string => `Run "${commandText(commands.doctor)}" and fix what it reports, then run "${retry}" again.`,
+  },
+} as const;
 
 /**
  * The names of a FAC-M1 node (schema 1) that schema 2 does not use. Only the migrations from schema 1 read them.
