@@ -9,7 +9,7 @@ import { runWorkerList } from '../../src/commands/worker-list.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import type { PaneRow } from '../../src/launch/tmux.js';
-import { files, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
+import { files, maxDisplayWidth, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession, type LastSeen } from '../../src/workers/last-seen.js';
@@ -252,7 +252,7 @@ describe('status: the builder', () => {
       ['older than the limit', LIMIT + 1, true],
       ['exactly as old as the limit', LIMIT, false],
       ['newer than the limit', LIMIT - 1, false],
-      ['after the current time', -1000, false],
+      ['after the current time by more than the limit', -(LIMIT + 1), false],
     ] as const)('says that a busy session on a live pane with an activity time %s is stalled: %s', (_name, age, stalled) => {
       const input = inputOf({ lines: busyAt(age) });
       expect(firstOf(input).entry.stalled).toBe(stalled);
@@ -380,6 +380,11 @@ describe('status: the builder', () => {
       const bidi = String.fromCodePoint(0x202e);
       const row = rowOf(knownItem('B-1', { display: { ...DISPLAY, title: `Ship${bidi} the\nfirst\tpart` } }));
       expect(row.itemTitle).toBe('Ship the first part');
+    });
+
+    it('cuts the title to the display width', () => {
+      const row = rowOf(knownItem('B-1', { display: { ...DISPLAY, title: 'x'.repeat(maxDisplayWidth + 5) } }));
+      expect(row.itemTitle).toBe('x'.repeat(maxDisplayWidth));
     });
   });
 
