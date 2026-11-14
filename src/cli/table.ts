@@ -62,7 +62,7 @@ import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import { foundHomeOption } from './home-option.js';
-import type { CommandOutput, OutLine } from './output.js';
+import type { CommandOutput } from './output.js';
 import { recipeHostFor } from './recipe-host.js';
 
 export interface FlagOption {
@@ -116,8 +116,7 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
  * The hook that Claude Code runs. `runCli` routes it before the flags are read, and prints its output itself: the
  * `SessionStart` of a worker gives the role text as one JSON object, or the refusal text when a check of the text fails or the input cannot be used. Every
  * other event, and every session of the coordinator, prints nothing, and the word `statusline` prints the status line (see
- * `runStatusline`). The table holds it for the help. The run of this entry maps the outcome of the hook to the lines and the
- * warnings of a command, for a caller that does not use the route.
+ * `runStatusline`). The table holds it for the help.
  */
 export const hookCommandFor = (registry: RecipeRegistry): Command => ({
   name: commands.hook,
@@ -127,10 +126,7 @@ export const hookCommandFor = (registry: RecipeRegistry): Command => ({
   positionals: true,
   run: async (given, deps) => {
     const done = await runHook(deps, given.positionals(), registry);
-    if (!done.ok) return done;
-    const { context, problems } = done.value;
-    const lines: readonly OutLine[] = context === null ? [] : [{ level: 'text', text: context }];
-    return ok({ lines, json: { schema: schemaIds.hook }, warnings: problems, failed: false });
+    return done.ok ? ok({ lines: [], json: { schema: schemaIds.hook }, warnings: [], failed: false }) : done;
   },
 });
 
