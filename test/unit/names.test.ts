@@ -19,6 +19,11 @@ import {
   files,
   flags,
   ghTimeoutMs,
+  guardIds,
+  guardKinds,
+  guardListWords,
+  guardValues,
+  harmMark,
   heavyLock,
   hookNames,
   instructionFiles,
@@ -67,6 +72,7 @@ import {
   workItemDisplayKeys,
   workerRowKeys,
 } from '../../src/names.js';
+import { isSlug } from '../../src/config/primitives.js';
 import { projectPathIssue } from '../../src/core/project-path.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
 import { glossary } from '../../src/glossary.js';
@@ -90,8 +96,8 @@ const GLOSSARY_FILE = join(SRC, 'glossary.ts');
 const EXIT_CHECK = join(__dirname, '..', '..', 'scripts', 'exit-check.sh');
 const INSTALL_CHECK = join(__dirname, '..', '..', 'scripts', 'install-check.sh');
 
-/** An import path is no text for a user. */
-const IMPORT_PATH = /^(node:|\.{1,2}\/)/;
+/** An import path, and the repo path of a source file that a row of the guard registry cites, are no text for a user. */
+const PATH_LITERAL = /^(?:node:|\.{1,2}\/|src\/[\w./-]+\.ts$)/;
 
 const sourceFiles = (dir: string): string[] =>
   readdirSync(dir).flatMap((entry) => {
@@ -133,6 +139,7 @@ const EXACT_NAMES = new Set([
     keys.recipe,
     keys.link,
     stateKeys,
+    guardIds,
     schema1.keys,
     { windowView: tmuxNames.windowView, windowWorkers: tmuxNames.windowWorkers, slotBoard: tmuxNames.slotBoard },
   ).filter((name) => !PLAIN_WORD_FLAGS.has(name) && !PLAIN_WORD_SUBCOMMANDS.has(name)),
@@ -192,7 +199,7 @@ const GIT_VOCABULARY_FILES = new Set([join(SRC, 'core', 'git.ts')]);
 const violationsInText = (source: string, path: string): string[] => {
   const found: string[] = [];
   for (const literal of literalsOf(source)) {
-    if (IMPORT_PATH.test(literal)) continue;
+    if (PATH_LITERAL.test(literal)) continue;
     if (POINT_IDS.has(literal) && !RECIPE_APPROVAL_FILE.test(path)) found.push(`"${literal}" is an approval point id`);
     if (RECIPE_NAMES.has(literal) && !RECIPE_APPROVAL_FILE.test(path)) found.push(`"${literal}" is a name of a recipe`);
     if (!GIT_VOCABULARY_FILES.has(path)) {
@@ -257,6 +264,15 @@ describe('names', () => {
     const path = join(SRC, 'sample.ts');
     expect(violationsInText("const a = 'git restore --staged';", path)).toEqual([]);
     expect(violationsInText(`const a = 'git restore --${flags.home}=x';`, path)).toHaveLength(1);
+  });
+
+  it('keeps a core guard id out of the other source files, and leaves the repo path of a source file alone', () => {
+    const path = join(SRC, 'sample.ts');
+    expect(violationsInText(`const a = '${guardIds.fileLinkSafety}';`, path)).toEqual([
+      `sample.ts: "${guardIds.fileLinkSafety}" is a name`,
+    ]);
+    expect(violationsInText("const a = 'src/workers/launch.ts';", path)).toEqual([]);
+    expect(violationsInText("const a = 'the workers launch';", path)).toHaveLength(1);
   });
 
   it('reads the string literals of a text, and leaves out comments, template expressions and placeholders', () => {
@@ -788,7 +804,7 @@ describe('the old words and the jargon words in the text of the source', () => {
    */
   const plainWordHits = (source: string, path: string): string[] =>
     literalsOf(source)
-      .filter((literal) => !IMPORT_PATH.test(literal))
+      .filter((literal) => !PATH_LITERAL.test(literal))
       .filter((literal) => path !== NAMES_FILE || !(OLD_LAYOUT_NAMES.has(literal) || DISK_NAMES.has(literal)))
       .flatMap((literal) => plainWordsIn(literal).map((word) => `${relative(SRC, path)}: "${literal}" holds ${word}`));
 
@@ -816,7 +832,7 @@ describe('the old words and the jargon words in the text of the source', () => {
    */
   const wordRuleHits = (source: string, path: string): string[] =>
     literalsOf(source)
-      .filter((literal) => !IMPORT_PATH.test(literal))
+      .filter((literal) => !PATH_LITERAL.test(literal))
       .filter(
         (literal) =>
           literal !== 'display-message' &&
@@ -881,7 +897,7 @@ describe('the words home and root for a factory folder in the text of the source
 
   const folderWordHits = (source: string, path: string): string[] =>
     literalsOf(source)
-      .filter((literal) => !IMPORT_PATH.test(literal) && !KEPT.has(literal) && FOLDER_WORD.test(literal))
+      .filter((literal) => !PATH_LITERAL.test(literal) && !KEPT.has(literal) && FOLDER_WORD.test(literal))
       .map((literal) => `${relative(SRC, path)}: "${literal}"`);
 
   it('finds no home and no root in the string literals of src', () => {
@@ -1781,5 +1797,30 @@ describe('the names of the role text delivery', () => {
   it('names the size and the cap of a text that is too large, in the unit of the size', () => {
     expect(roleText.tooLargeText(12_345, 'bytes')).toBe('the role text has 12345 bytes, and the cap is 9000 characters');
     expect(roleText.tooLargeText(9_001, 'characters')).toBe('the role text has 9001 characters, and the cap is 9000 characters');
+  });
+});
+
+describe('the names of the guards', () => {
+  it('holds the 28 core guard ids as slugs, once each, and no id of an approval point', () => {
+    const ids = Object.values(guardIds);
+    expect(ids).toHaveLength(28);
+    expect(new Set(ids).size).toBe(28);
+    expect(ids.every(isSlug)).toBe(true);
+    const taken = new Set<string>(recipes.flatMap((entry) => entry.approvalPoints.map((point) => point.id)));
+    expect(ids.filter((id) => taken.has(id))).toEqual([]);
+  });
+
+  it('names the kinds, the values, the harm mark, the schema id of the list and the term', () => {
+    expect(guardKinds).toEqual({ code: 'code', text: 'text' });
+    expect(guardValues).toEqual({ on: 'on', off: 'off' });
+    expect(harmMark).toBe('H');
+    expect(schemaIds.guardList).toBe(`${program}.guard-list/v1`);
+    expect(terms).toContain('guard');
+  });
+
+  it('words the more line and the count line of the list', () => {
+    expect(guardListWords.moreLine(14)).toBe('and 14 more: run with --all or --json');
+    expect(guardListWords.countLine(3, 31, 2)).toBe('3 of 31 guards are off. 2 of them have the mark H.');
+    expect(guardListWords.unknown).toBe('unknown');
   });
 });
