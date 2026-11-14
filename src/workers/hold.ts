@@ -51,7 +51,8 @@ export const readHold = async (deps: Deps, home: string, id: string): Promise<Ho
 
 /**
  * Remove the hold file of a worker. A workers folder or a folder of the worker that is a link is a security stop (exit 4), and
- * nothing is removed. A folder or a file that is not there has no hold file already. A folder at the path of the file is a failure.
+ * nothing is removed. A hold file that is a link is a security stop too, so the change of the file stays visible. A folder or a file
+ * that is not there has no hold file already. A folder at the path of the file is a failure.
  */
 const clearHold = async (deps: Deps, home: string, id: string): Promise<CliResult<void>> => {
   const paths = workerPathsOf(home, id);
@@ -64,13 +65,15 @@ const clearHold = async (deps: Deps, home: string, id: string): Promise<CliResul
   }
   const file = await deps.fs.lstat(paths.holdFile);
   if (!file.ok) return file;
+  if (file.value === 'link') return safetyRefusal(`cannot remove ${paths.holdFile}: it is a link`, LINK_REMEDY);
   if (file.value === 'dir') return failure(`cannot remove ${paths.holdFile}: it is a folder`);
   return file.value === null ? ok(undefined) : deps.fs.removeFile(paths.holdFile);
 };
 
 /**
  * Set the hold of a worker. A hold word replaces the file with one write (`writeInFolder`): a reader sees the old word or the new
- * word, never a part. `none` removes the file. The caller checks that the worker has a record. An id that is not a slug is a
+ * word, never a part. The write makes no folder: a folder of the worker that a dismiss removed is a failure, so no folder with no
+ * record is left. `none` removes the file. The caller checks that the worker has a record. An id that is not a slug is a
  * failure, and no path is touched.
  */
 export const writeHold = async (deps: Deps, home: string, id: string, hold: Hold): Promise<CliResult<void>> => {
@@ -83,7 +86,7 @@ export const writeHold = async (deps: Deps, home: string, id: string, hold: Hold
       folder: workerPathsOf(home, id).dir,
       name: files.workerHold,
       mode: workerRecord.fileMode,
-      folderMode: workerRecord.folderMode,
+      existingFolder: true,
     },
     `${hold}\n`,
   );

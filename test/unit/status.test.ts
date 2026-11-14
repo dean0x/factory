@@ -220,8 +220,9 @@ describe('status: the builder', () => {
       }
     });
 
-    it('gives the hold of the read, none with no read, and null with a warning for a hold file that cannot be read', () => {
-      expect(firstOf(inputOf()).entry.hold).toBe('none');
+    it('gives the hold of the read, null with no read, and null with a warning for a hold file that cannot be read', () => {
+      expect(firstOf(inputOf()).entry.hold).toBeNull();
+      expect(firstOf(inputOf()).warnings).toEqual([]);
       expect(firstOf(inputOf({ holds: new Map([['alpha', { kind: 'hold', hold: 'on-hold' }]]) })).entry.hold).toBe('on-hold');
       const faulted = firstOf(inputOf({ holds: new Map([['alpha', { kind: 'fault', reason: 'cannot stat: EIO' }]]) }));
       expect(faulted.entry.hold).toBeNull();

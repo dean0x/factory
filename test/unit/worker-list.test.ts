@@ -8,6 +8,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { boardKeys, files, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { readOwnLastSeen, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
+import { writeHold } from '../../src/workers/hold.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
@@ -838,4 +839,56 @@ describe('worker mark: the hold word of a worker', () => {
     expect(jsonOf(output).workers[0]?.hold).toBeNull();
     expect(output.warnings).toEqual(['cannot read the hold word of the worker alpha: the hold file is a link']);
   });
+  it('gives null and a warning for a hold file that is larger than the bound', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    made.deps.seed(holdFile('alpha'), `parked\n${' '.repeat(64)}`);
+    const output = await listed(made);
+    expect(jsonOf(output).workers[0]?.hold).toBeNull();
+    expect(output.warnings).toEqual(['cannot read the hold word of the worker alpha: larger than 64 bytes']);
+  });
+
+  it('stops with a security refusal for a hold file that is a link, for a set and for a clear, and keeps the link', async () => {
+    for (const word of ['parked', 'none']) {
+      const made = await make({ workers: [{ id: 'alpha' }], links: { [holdFile('alpha')]: '/elsewhere/hold' } });
+      const result = await runWorker(made.deps, options({ words: ['mark', 'alpha', word] }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.kind).toBe('safety');
+      expect(made.deps.files.has('/elsewhere/hold')).toBe(false);
+    }
+  });
+
+  it('refuses a folder of the worker that is a link with exit 2, and writes nothing', async () => {
+    const dir = workerPathsOf(HOME, 'alpha').dir;
+    for (const word of ['parked', 'none']) {
+      const made = await make({ links: { [dir]: '/elsewhere' } });
+      const before = [...made.deps.files.keys()].sort();
+      const result = await runWorker(made.deps, options({ words: ['mark', 'alpha', word] }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.kind).toBe('usage');
+      expect([...made.deps.files.keys()].sort()).toEqual(before);
+    }
+  });
+
+  it('makes no folder again when the folder of the worker went away before the write', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const dir = workerPathsOf(HOME, 'alpha').dir;
+    const removed = await made.deps.fs.remove(dir);
+    expect(removed.ok).toBe(true);
+    const written = await writeHold(made.deps, HOME, 'alpha', 'parked');
+    expect(written.ok).toBe(false);
+    expect(made.deps.dirs.has(dir)).toBe(false);
+    expect(made.deps.files.has(holdFile('alpha'))).toBe(false);
+  });
+
+  it('echoes a word that is not a mark as one clean and short text', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const bidi = String.fromCodePoint(0x202e);
+    const result = await runWorker(made.deps, options({ words: ['mark', 'alpha', `pa${bidi}rked\n${'x'.repeat(80)}`] }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).not.toContain(bidi);
+      expect(result.error.message).not.toContain('x'.repeat(41));
+    }
+  });
+
 });

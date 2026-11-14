@@ -1,6 +1,6 @@
 import { displayLine } from '../cli/output.js';
 import type { PaneRow } from '../launch/tmux.js';
-import { keys, lastSeen, roles, statusWords, watchPoll, workerHold, workerListWords, workerRowKeys, type HookState } from '../names.js';
+import { keys, lastSeen, roles, statusWords, watchPoll, workerListWords, workerRowKeys, type HookState } from '../names.js';
 import type { Hold, HoldRead } from './hold.js';
 import { promptStateOf, type LastSeen } from './last-seen.js';
 import type { MachineLimits } from './machine.js';
@@ -42,7 +42,7 @@ export interface WorkerStatus {
   readonly state: WorkerState;
   readonly contextPct: number | null;
   readonly mark: Mark | null;
-  /** The hold of the worker: a hold word or `none`. It is null when the hold file can not be read. */
+  /** The hold of the worker: a hold word or `none`. It is null when the hold file can not be read, or was not read. */
   readonly hold: Hold | null;
   /** The newer of the event time and the percent time of the line, as the line holds it, or null when the worker has no line. */
   readonly activityAt: string | null;
@@ -63,7 +63,7 @@ export interface StatusInput {
   readonly lines: ReadonlyMap<string, LineRead>;
   /** The work item of each worker, by id. A worker with no entry has an unknown work item. */
   readonly workItems: ReadonlyMap<string, WorkItem>;
-  /** The read of the hold file of each worker, by id. A worker with no entry has no hold word. */
+  /** The read of the hold file of each worker, by id. A worker with no entry has an unknown hold: null, as for a fault. */
   readonly holds: ReadonlyMap<string, HoldRead>;
   readonly now: Date;
   /** The minutes of `limits.idle_after`. */
@@ -128,9 +128,6 @@ const isStalledAt = (activityAt: string | null, now: Date): boolean => {
 };
 
 /** True when the board knows the work of the worker and the worker has no open item. An unknown work item is never free of work. */
-/** The read of a worker with no entry in `holds`: no hold word. */
-const noHold: HoldRead = { kind: 'hold', hold: workerHold.none };
-
 const hasNoOpenWork = (workItem: WorkItem): boolean => workItem.state === 'known' && workItem.item === null;
 
 const entryOf = (
@@ -146,9 +143,9 @@ const entryOf = (
   const workItem = input.workItems.get(record.id) ?? unknownItem;
   const fault =
     read?.kind === 'fault' ? `cannot read the last-seen line of the ${roles.worker} ${record.id}: ${read.reason}` : null;
-  const holdRead = input.holds.get(record.id) ?? noHold;
+  const holdRead = input.holds.get(record.id);
   const holdFault =
-    holdRead.kind === 'fault' ? `cannot read the hold word of the ${roles.worker} ${record.id}: ${holdRead.reason}` : null;
+    holdRead?.kind === 'fault' ? `cannot read the hold word of the ${roles.worker} ${record.id}: ${holdRead.reason}` : null;
   const running = pane.row !== null && !pane.row.dead;
   const state = promptState === null ? workerListWords.states.unknown : stateWords[promptState];
   const eventAt = line === null ? null : line[lastSeen.keys.eventAt];
@@ -161,7 +158,7 @@ const entryOf = (
     state,
     contextPct,
     mark: markOf(contextPct, input.limits),
-    hold: holdRead.kind === 'hold' ? holdRead.hold : null,
+    hold: holdRead?.kind === 'hold' ? holdRead.hold : null,
     activityAt,
     workItem,
     idle: isIdle(running, state, eventAt, input.now, input.idleAfterMinutes),

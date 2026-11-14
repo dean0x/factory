@@ -15,7 +15,7 @@ import { ok } from './result.js';
 export interface FolderTarget {
   /** The folder that the caller expects above `folder`. The real path of `folder` must be inside the real path of it. */
   readonly parent: string;
-  /** The folder of the file. A write creates it when it does not exist. */
+  /** The folder of the file. A write creates it when it does not exist, unless `existingFolder` is set. */
   readonly folder: string;
   /** The name of the file: one plain name, with no separator. */
   readonly name: string;
@@ -23,6 +23,11 @@ export interface FolderTarget {
   readonly mode: number;
   /** The permission bits of the folder, when this call creates it. */
   readonly folderMode?: number;
+  /**
+   * True: the folder must exist already. `writeInFolder` then makes no folder, and a missing folder is a failure (exit 1). So a
+   * write never makes again a folder that another command removed.
+   */
+  readonly existingFolder?: true;
 }
 
 /** The temporary file has the name of the file, this text, the pid and a number. */
@@ -47,8 +52,11 @@ const requireNoLink = async (deps: Deps, path: string, what: string): Promise<Cl
   return kind.value === 'link' ? safetyRefusal(`cannot write ${path}: ${what} is a link`, LINK_REMEDY) : ok(undefined);
 };
 
-/** `withParents` makes the folders above the target too. `folderOnly` makes the folder of the target and no other. */
-type Making = 'withParents' | 'folderOnly';
+/**
+ * `withParents` makes the folders above the target too. `folderOnly` makes the folder of the target and no other. `none` makes no
+ * folder: a missing folder is a failure.
+ */
+type Making = 'withParents' | 'folderOnly' | 'none';
 
 /** The real folder of the target, made when it does not exist. The real path is inside the real path of the parent. */
 const realFolderOf = async (deps: Deps, target: FolderTarget, making: Making): Promise<CliResult<string>> => {
@@ -58,6 +66,7 @@ const realFolderOf = async (deps: Deps, target: FolderTarget, making: Making): P
   if (!kind.ok) return kind;
   if (kind.value === 'link') return safetyRefusal(`cannot write ${target.folder}: it is a link`, LINK_REMEDY);
   if (kind.value !== null && kind.value !== 'dir') return failure(`cannot write in ${target.folder}: it is not a folder`);
+  if (kind.value === null && making === 'none') return failure(`cannot write in ${target.folder}: the folder does not exist`);
   if (kind.value === null) {
     const made =
       making === 'withParents'
@@ -87,7 +96,7 @@ const realFolderOf = async (deps: Deps, target: FolderTarget, making: Making): P
  */
 export const writeInFolder = async (deps: Deps, target: FolderTarget, text: string): Promise<CliResult<void>> => {
   if (!isPlainName(target.name)) return notPlainName(target);
-  const folder = await realFolderOf(deps, target, 'withParents');
+  const folder = await realFolderOf(deps, target, target.existingFolder === true ? 'none' : 'withParents');
   if (!folder.ok) return folder;
   const file = join(folder.value, target.name);
   const found = await deps.fs.lstat(file);

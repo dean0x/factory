@@ -2,7 +2,7 @@ import { join, relative, resolve } from 'node:path';
 import { isUtcTime } from '../board/decision-record.js';
 import { boardWorkItems } from '../board/work-items.js';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
-import type { CommandOutput, OutLine } from '../cli/output.js';
+import { displayLine, type CommandOutput, type OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import { durationMinutes, isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
@@ -29,6 +29,7 @@ import {
   flagText,
   hookSessions,
   lastSeen,
+  maxEchoChars,
   places,
   program,
   roles,
@@ -731,7 +732,7 @@ const runMark = async (
     return needsUsage(`${workerCommands.mark} takes two arguments: the id of the ${roles.worker}, then one of ${choices}`);
   }
   const hold = holdOf(word);
-  if (hold === null) return needsUsage(`the mark ${JSON.stringify(word)} is not one of ${choices}`);
+  if (hold === null) return needsUsage(`the mark ${JSON.stringify(displayLine(word, maxEchoChars))} is not one of ${choices}`);
   const located = await locateNode(deps, options, registry);
   if (!located.ok) return located;
   const home = located.value;
