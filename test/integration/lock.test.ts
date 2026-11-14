@@ -5,13 +5,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { env, files, lockWords } from '../../src/names.js';
 import { killKeptGroups, readyPid } from '../helpers/own-group.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
+import { scaled } from './load.js';
 
 /**
  * `lock run` with the built program (`dist/factory.js`) and real child processes. The state folder is in the HOME of the sandbox.
  * Every child ends by itself within 8 s, and each test stops at 15 s, so a run that goes wrong never holds the worker. The wait
  * between two tries is the real 5 s of the policy, so a test that waits for a lock takes a little more than 5 s.
  */
-const TEST_TIMEOUT_MS = 15_000;
+const TEST_TIMEOUT_MS = scaled(15_000);
 
 let box: Sandbox;
 const processes: ChildProcess[] = [];
@@ -19,7 +20,7 @@ const childGroups: number[] = [];
 
 beforeAll(async () => {
   box = await makeSandbox();
-}, 30_000);
+}, scaled(30_000));
 
 afterAll(removeOpenSandboxes);
 

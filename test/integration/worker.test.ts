@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
+import { loadNote, scaled } from './load.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -13,8 +14,8 @@ const hasTmux = major >= 3;
 if (!hasTmux) console.warn('worker.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
 const POLL_STEP_MS = 100;
-const POLL_STEPS = 100;
-const STOP_STEPS = 30;
+const POLL_STEPS = scaled(100);
+const STOP_STEPS = scaled(30);
 const EXCLUDE_ENTRY = '/.claude/settings.local.json';
 /** The matcher text of the group of the Notification event: the two types of notice that mean a dialog waits. It never lists idle_prompt. */
 const NOTIFICATION_MATCHER = 'permission_prompt|elicitation_dialog';
@@ -82,7 +83,7 @@ const waitForLaunches = async (count: number): Promise<void> => {
     if (text.trim().split('\n').filter((line) => line !== '').length >= count) return;
     await sleep(POLL_STEP_MS);
   }
-  throw new Error(`the fake claude did not launch ${count} times`);
+  throw new Error(`the fake claude did not launch ${count} times ${loadNote()}`);
 };
 
 const outOf = async (name: string): Promise<string> => (await readFile(join(outDir, name), 'utf8')).trim();
@@ -289,7 +290,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     }
     const marks = (await workerPanes()).map((line) => line.split(' ')[1]);
     expect(marks.sort()).toEqual(['', ...ids]);
-  }, 120_000);
+  }, scaled(120_000));
 
   it('exits 2 for a taken id and starts no second pane', async () => {
     await startedNode();
@@ -383,7 +384,7 @@ const startedWorker = async (): Promise<void> => {
 };
 
 // Each case launches several processes: 5 to 10 s alone, 14 to 24 s under load, so the 30 s global limit is too tight.
-describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binary, separate tmux server)', { timeout: 60_000 }, () => {
+describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binary, separate tmux server)', { timeout: scaled(60_000) }, () => {
   it('shows the worker in the slot, and layout puts the board back', async () => {
     await startedWorker();
     expect(await marksOf('view')).toContain('|board|');
@@ -515,7 +516,7 @@ const isAlive = (pid: number): boolean => {
  * process for up to 30 seconds (`stopPoll`). `worker resume` waits for the new session for up to 10 seconds (`launchConfirm`). So the
  * limit of the suite (30 seconds) can not cover the bounded waits of one case.
  */
-const STOP_CASE_MS = 120_000;
+const STOP_CASE_MS = scaled(120_000);
 
 /** The programs that a worker pane can hold, with their parent and state: the facts that tell a live process from a zombie. */
 const processFacts = (): string =>
@@ -548,7 +549,7 @@ describe.skipIf(!hasTmux)('factory worker stop and factory worker resume (built 
     expect(stopped.stdout).toContain(`The process ${pid} of the pane ${pane} ended after kill -TERM. The session was idle.`);
     expect((await workerPanes()).filter((line) => line.endsWith(' alpha'))).toEqual([]);
     for (let step = 0; step < STOP_STEPS && isAlive(pid); step += 1) await sleep(POLL_STEP_MS);
-    expect(isAlive(pid)).toBe(false);
+    expect(isAlive(pid), loadNote()).toBe(false);
   }, STOP_CASE_MS);
 
   it('resumes a stopped worker with the session of its pointer, and says Resumed after the hook of the new session wrote its line', async () => {

@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { expectLaunchRule, hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded } from './lifecycle-lab.js';
+import { loadNote } from './load.js';
 
 if (!hasTmux) console.warn('restart.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
@@ -25,7 +26,7 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server)'
     expect(result.stdout).toContain('Stopped the worker alpha.');
     expect(result.stdout).toContain('Resumed the worker alpha');
 
-    expect(await waitUntilEnded(alpha?.pid ?? 0)).toBe(true);
+    expect(await waitUntilEnded(alpha?.pid ?? 0), loadNote()).toBe(true);
     const after = await lab.livePaneOf('alpha');
     expect(after).toBeDefined();
     expect(after?.pane).not.toBe(alpha?.pane);

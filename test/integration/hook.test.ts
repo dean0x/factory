@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames, roleText, type HookEvent } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { loadNote, scaled } from './load.js';
 
 let box: Sandbox;
 let home: string;
@@ -19,7 +20,7 @@ const FIXTURE = JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'claud
 };
 
 /** The time that the start of a test may take: the sandbox and the run of `init` with the built binary. It is the time limit of a test. */
-const SETUP_TIMEOUT_MS = 30_000;
+const SETUP_TIMEOUT_MS = scaled(30_000);
 
 beforeEach(async () => {
   box = await makeSandbox();
@@ -48,11 +49,11 @@ const exists = (path: string): Promise<boolean> =>
 
 const WAIT_STEP_MS = 25;
 /** The wait for the start of the owner command in a signal test. A loaded runner can stall the built binary and its shell for more than 15 s. */
-const SIGNAL_START_WAIT_MS = 60_000;
+const SIGNAL_START_WAIT_MS = scaled(60_000);
 /** The wait for the end of the command group after the signal. The binary is up then, so the stop needs little time. */
-const SIGNAL_WAIT_MS = 15_000;
+const SIGNAL_WAIT_MS = scaled(15_000);
 /** The time limit of a signal test: the two waits of the test, plus 15 s for the end of the run. */
-const SIGNAL_TEST_TIMEOUT_MS = SIGNAL_START_WAIT_MS + SIGNAL_WAIT_MS + 15_000;
+const SIGNAL_TEST_TIMEOUT_MS = SIGNAL_START_WAIT_MS + SIGNAL_WAIT_MS + scaled(15_000);
 /** The wait after the end of a run for the write of a process that the stop did not reach: twice the 1 s that it needs. */
 const LATE_WRITE_WAIT_MS = 2_000;
 
@@ -64,7 +65,7 @@ const waitFor = async <T>(probe: () => Promise<T | undefined>, maxMs: number): P
     if (found !== undefined) return found;
     await new Promise((resolve) => setTimeout(resolve, WAIT_STEP_MS));
   }
-  throw new Error(`no value after ${maxMs} ms`);
+  throw new Error(`no value after ${maxMs} ms ${loadNote()}`);
 };
 
 /** True while any process is left in the process group. A group with no process gives ESRCH. */
