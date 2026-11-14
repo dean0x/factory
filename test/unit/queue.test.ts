@@ -4,7 +4,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import { runQueue, type QueueOptions } from '../../src/commands/queue.js';
 import type { BoardConfig } from '../../src/config/schema.js';
-import { commands, commandText, files as fileNames, queueCommands, queueLimits } from '../../src/names.js';
+import { boardKeys, boardTextLimits, commands, commandText, files as fileNames, maxTrackLines, queueCommands, queueLimits } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
@@ -13,7 +13,7 @@ import { HOME } from '../helpers/guard-fixture.js';
 import { sampleBoard, sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
 
-const BASE: QueueOptions = { home: HOME, words: [], items: [], note: undefined, fields: [], position: undefined };
+const BASE: QueueOptions = { home: HOME, words: [], items: [], note: undefined, releaseGroup: undefined, fields: [], position: undefined };
 
 const valueOf = <T>(result: CliResult<T>): T => {
   if (!result.ok) throw new Error(`expected a value, got: ${result.error.message}`);
@@ -71,6 +71,22 @@ describe('queue set', () => {
     expect(rowsOf(repo)[1]).toEqual(ROWS[1]);
   });
 
+  it('stores the release group of a row, keeps every other key of the row, and makes one commit that holds only the board file', async () => {
+    const repo = await nodeWith(ROWS);
+    expect(linesOf(await run(repo, { words: ['set', 'Board connector'], releaseGroup: 'Release 2' }))).toEqual(['Saved row 1 of the queue: Board connector']);
+    expect(rowsOf(repo)[0]).toEqual({ ...ROWS[0], [boardKeys.releaseGroup]: 'Release 2' });
+    expect(rowsOf(repo)[1]).toEqual(ROWS[1]);
+    expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
+  });
+
+  it('adds a new row with a release group, and makes no commit for a set of the group that the row holds already', async () => {
+    const repo = await nodeWith([]);
+    expect(linesOf(await run(repo, { words: ['set', 'First'], releaseGroup: 'Release 1' }))).toEqual(['Added row 1 to the queue: First']);
+    expect(rowsOf(repo)).toEqual([{ name: 'First', items: [], [boardKeys.releaseGroup]: 'Release 1' }]);
+    expect(linesOf(await run(repo, { words: ['set', 'First'], releaseGroup: 'Release 1' }))).toEqual(['Row 1 of the queue: First (no change)']);
+    expect(repo.commits).toHaveLength(1);
+  });
+
   it('keeps the release flag of a row through an item update', async () => {
     const repo = await nodeWith(ROWS);
     const options: ItemOptions = {
@@ -119,8 +135,16 @@ describe('queue set', () => {
     expect(valueOf(await run(repo, { words: ['set', 'Docs'], items: ['B-3'] })).json).toEqual({
       schema: 'factory.queue/v1',
       action: 'set',
-      row: { name: 'Docs', position: 2, items: ['B-3'], created: false, changed: true },
+      row: { name: 'Docs', position: 2, items: ['B-3'], releaseGroup: null, created: false, changed: true },
     });
+  });
+
+  it('gives the release group of the row in the JSON document of a set, as text or as null', async () => {
+    const repo = await nodeWith(ROWS);
+    const grouped = valueOf(await run(repo, { words: ['set', 'Docs'], releaseGroup: 'Release 2' })).json;
+    expect(grouped['row']).toEqual({ name: 'Docs', position: 2, items: [], releaseGroup: 'Release 2', created: false, changed: true });
+    const kept = valueOf(await run(repo, { words: ['set', 'Docs'], note: 'Later' })).json;
+    expect((kept['row'] as Record<string, unknown>)['releaseGroup']).toBe('Release 2');
   });
 
   it('keeps the old form of the file: 2-space indent, non-ASCII escaped, and a line break at the end', async () => {
@@ -173,6 +197,10 @@ describe('queue set: the rules of the input', () => {
     ['more items than a row holds', { items: Array.from({ length: queueLimits.maxRowItems + 1 }, (_, at) => `B-${at + 1}`) }, String(queueLimits.maxRowItems)],
     ['a note with a line break', { note: 'Two\nlines' }, 'note'],
     ['a note of more than the most characters', { note: 'x'.repeat(501) }, 'note'],
+    ['an empty release group', { releaseGroup: ' ' }, boardKeys.releaseGroup],
+    ['a release group with a line break', { releaseGroup: 'Two\nlines' }, boardKeys.releaseGroup],
+    ['a release group with a hidden character', { releaseGroup: `Re${String.fromCodePoint(0x200b)}lease` }, boardKeys.releaseGroup],
+    ['a release group of more than the most characters', { releaseGroup: 'g'.repeat(boardTextLimits.maxReleaseGroupChars + 1) }, boardKeys.releaseGroup],
     ['a field that the setup does not declare for a row', { fields: ['priority=P1'] }, 'priority'],
     ['a field that the setup does not name', { fields: ['nope=1'] }, 'nope'],
     ['a value that the flag field does not take', { fields: ['release=maybe'] }, 'release'],
@@ -252,6 +280,7 @@ describe('the words and the flags of queue', () => {
     ['show with an argument', { words: ['show', 'Docs'] }, 'takes no argument'],
     ['show with the item flag', { words: ['show'], items: ['B-1'] }, '--item is not for'],
     ['show with the note flag', { words: ['show'], note: 'x' }, '--note is not for'],
+    ['show with the release group flag', { words: ['show'], releaseGroup: 'Release 2' }, '--release-group is not for'],
     ['show with the field flag', { words: ['show'], fields: ['release=true'] }, '--field is not for'],
     ['show with the position flag', { words: ['show'], position: '1' }, '--position is not for'],
   ];
@@ -319,9 +348,115 @@ describe('queue show', () => {
     const json = valueOf(await run(repo, { words: ['show'] })).json;
     expect(json['schema']).toBe('factory.queue-show/v1');
     expect(json['rows']).toEqual([
-      { position: 1, name: 'Board connector', items: ['B-1'], note: 'Merge after the review', fields: { release: true } },
-      { position: 2, name: 'Docs', items: [], note: 'Café notes', fields: {} },
+      { position: 1, name: 'Board connector', items: ['B-1'], note: 'Merge after the review', releaseGroup: null, fields: { release: true } },
+      { position: 2, name: 'Docs', items: [], note: 'Café notes', releaseGroup: null, fields: {} },
     ]);
+  });
+});
+
+/** A row that belongs to a release group. */
+const grouped = (name: string, group: unknown, extra: Record<string, unknown> = {}): Record<string, unknown> =>
+  row(name, { [boardKeys.releaseGroup]: group, ...extra });
+
+/** The rows `Row from` to `Row to`, all in one group. */
+const groupRows = (group: string, from: number, to: number): Record<string, unknown>[] =>
+  Array.from({ length: to - from + 1 }, (_, at) => grouped(`Row ${from + at}`, group));
+
+const HEADING = /^(group: |no group$)/;
+
+const headingsOf = (lines: readonly string[]): string[] => lines.filter((line) => HEADING.test(line));
+
+const MORE_LINE = /^\d+ more rows?\.$/;
+
+/** The cells of the rows of the table: the summary, the heading of the table, the heading lines of the groups and the more line are left out. */
+const rowCellsOf = (lines: readonly string[]): string[][] =>
+  lines
+    .slice(2)
+    .filter((line) => !HEADING.test(line) && !MORE_LINE.test(line))
+    .map((line) => line.split(/ {2,}/));
+
+describe('queue show: the rows under the heading of their release group', () => {
+  it('shows one heading for each group in the order that the groups first appear, the rows with no group last under their own heading, and the stored place of each row', async () => {
+    const repo = await nodeWith([
+      grouped('One', 'Beta'),
+      grouped('Two', 'Alpha'),
+      row('Three'),
+      grouped('Four', 'Beta'),
+      grouped('Five', 'Gamma'),
+      grouped('Six', 'Alpha'),
+    ]);
+    const lines = linesOf(await run(repo, { words: ['show'] }));
+    expect(lines[0]).toBe('6 rows in the queue.');
+    expect(lines[1]?.split(/ {2,}/)).toEqual(['NO', 'NAME', 'ITEMS', 'RELEASE', 'NOTE']);
+    expect(lines.slice(2).map((line) => (HEADING.test(line) ? line : (line.split(/ {2,}/).slice(0, 2).join('|'))))).toEqual([
+      'group: Beta',
+      '1|One',
+      '4|Four',
+      'group: Alpha',
+      '2|Two',
+      '6|Six',
+      'group: Gamma',
+      '5|Five',
+      'no group',
+      '3|Three',
+    ]);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('shows no heading for the rows with no group when every row has a group', async () => {
+    const repo = await nodeWith([grouped('One', 'Beta'), grouped('Two', 'Alpha')]);
+    expect(headingsOf(linesOf(await run(repo, { words: ['show'] })))).toEqual(['group: Beta', 'group: Alpha']);
+  });
+
+  it('prints the same lines as before for rows with no group, and reads a group that is not text as no group', async () => {
+    const plain = await nodeWith([row('One'), row('Two')]);
+    const odd = await nodeWith([grouped('One', 7), grouped('Two', null)]);
+    const before = linesOf(await run(plain, { words: ['show'] }));
+    expect(before).toEqual(['2 rows in the queue.', 'NO  NAME  ITEMS  RELEASE  NOTE', '1   One   -      -        -', '2   Two   -      -        -']);
+    expect(linesOf(await run(odd, { words: ['show'] }))).toEqual(before);
+  });
+
+  it('prints a group as one clean line', async () => {
+    const bidi = String.fromCodePoint(0x202e);
+    const repo = await nodeWith([grouped('One', `Re${bidi}\nlease`)]);
+    const text = plainText(valueOf(await run(repo, { words: ['show'] })));
+    expect(text).not.toContain(bidi);
+    expect(headingsOf(text.trimEnd().split('\n'))).toEqual(['group: Re lease']);
+  });
+
+  it('holds 30 rows in 5 groups to 20 lines, counts the headings in the lines of the table, and says how many rows are not shown', async () => {
+    const names = ['Delta', 'Alpha', 'Echo', 'Bravo', 'Charlie'];
+    const repo = await nodeWith(Array.from({ length: 30 }, (_, at) => grouped(`Row ${at + 1}`, names[at % names.length])));
+    const lines = linesOf(await run(repo, { words: ['show'] }));
+    expect(lines).toHaveLength(20);
+    expect(lines[0]).toBe('30 rows in the queue.');
+    expect(headingsOf(lines)).toEqual(['group: Delta', 'group: Alpha', 'group: Echo']);
+    expect(rowCellsOf(lines).map((cells) => cells[0])).toEqual(['1', '6', '11', '16', '21', '26', '2', '7', '12', '17', '22', '27', '3', '8']);
+    expect(lines[19]).toBe('16 more rows.');
+  });
+
+  it('shows a heading when the heading and the first row of its group both fit in the lines of the table', async () => {
+    const repo = await nodeWith([...groupRows('Alpha', 1, maxTrackLines - 3), ...groupRows('Beta', 20, 24)]);
+    const lines = linesOf(await run(repo, { words: ['show'] }));
+    expect(headingsOf(lines)).toEqual(['group: Alpha', 'group: Beta']);
+    expect(lines).toHaveLength(20);
+    expect(lines[19]).toBe('4 more rows.');
+  });
+
+  it('shows no heading in the last line of the table, because its first row would not fit, and no heading with no row under it', async () => {
+    const repo = await nodeWith([...groupRows('Alpha', 1, maxTrackLines - 2), ...groupRows('Beta', 20, 24)]);
+    const lines = linesOf(await run(repo, { words: ['show'] }));
+    expect(headingsOf(lines)).toEqual(['group: Alpha']);
+    expect(rowCellsOf(lines)).toHaveLength(maxTrackLines - 2);
+    expect(lines).toHaveLength(19);
+    expect(lines[18]).toBe('5 more rows.');
+  });
+
+  it('keeps the rows of the JSON document flat, in the order of their places, with no cap, and gives the group of each row as text or as null', async () => {
+    const repo = await nodeWith([...groupRows('Beta', 1, 20), row('Plain'), grouped('Alpha row', 'Alpha'), grouped('Odd', 7)]);
+    const rows = valueOf(await run(repo, { words: ['show'] })).json['rows'] as { position: number; releaseGroup: string | null }[];
+    expect(rows.map((entry) => entry.position)).toEqual(Array.from({ length: 23 }, (_, at) => at + 1));
+    expect(rows.map((entry) => entry.releaseGroup)).toEqual([...Array<string>(20).fill('Beta'), null, 'Alpha', null]);
   });
 });
 

@@ -978,8 +978,9 @@ describe('the item and track commands in the command line', () => {
     expect(asked.out).toMatch(/--option KEY=TEXT\s+With add: one answer that the owner can give/);
     const queue = await run(['queue', '--help']);
     expect(queue.code).toBe(0);
-    expect(queue.out).toContain('factory queue set NAME [--item ID]... [--note TEXT] [--field NAME=VALUE]... [--position N] [--home DIR]');
+    expect(queue.out).toContain('factory queue set NAME [--item ID]... [--note TEXT] [--release-group TEXT] [--field NAME=VALUE]... [--position N] [--home DIR]');
     expect(queue.out).toMatch(/--position N\s+With set: the place of the row in the queue/);
+    expect(queue.out).toMatch(/--release-group TEXT\s+With set: the group of the row/);
   });
 
   it('names no decide command in the help of request or of queue', async () => {
@@ -1032,6 +1033,20 @@ describe('the item and track commands in the command line', () => {
     expect((await runBoard(['queue', 'show'])).out).toMatch(/1\s+Docs\s+B-1\s+true/);
     expect((await runBoard(['request', 'close', 'D-1'])).out).toBe('Closed D-1: Pick\n');
     expect(repo.commits).toHaveLength(3);
+  });
+
+  it('passes the release group flag of queue set to the command, shows the group heading, and refuses the flag on queue show', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1')], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    expect((await runBoard(['queue', 'set', 'Docs', '--release-group', 'Release 2'])).out).toBe('Added row 1 to the queue: Docs\n');
+    expect((await runBoard(['queue', 'show'])).out).toMatch(/\ngroup: Release 2\n1\s+Docs/);
+    const refused = await runBoard(['queue', 'show', '--release-group', 'Release 2']);
+    expect(refused.code).toBe(2);
+    expect(refused.err).toContain('--release-group is not for');
   });
 
   it('passes the later flag of request add to the command, lists the group in the JSON document, and refuses the flag on request list', async () => {
@@ -1106,7 +1121,7 @@ describe('the item and track commands in the command line', () => {
     expect(JSON.parse(queueSink.out.join(''))).toEqual({
       schema: 'factory.queue/v1',
       action: 'set',
-      row: { name: 'Docs', position: 1, items: ['B-1'], created: true, changed: true },
+      row: { name: 'Docs', position: 1, items: ['B-1'], releaseGroup: null, created: true, changed: true },
     });
   });
 

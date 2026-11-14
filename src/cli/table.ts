@@ -771,7 +771,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
     name: commands.queue,
     summary: 'Add, change and show the rows of the queue. The queue is the order of the finished work that waits for an approval point.',
     usage: [
-      `${commandText(commandLines.queueSet)} NAME [${flagText(flags.item)} ID]... [${flagText(flags.note)} TEXT] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.position)} N] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.queueSet)} NAME [${flagText(flags.item)} ID]... [${flagText(flags.note)} TEXT] [${flagText(flags.releaseGroup)} TEXT] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.position)} N] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.queueShow)} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
@@ -789,6 +789,13 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
         type: 'string',
         placeholder: 'TEXT',
         description: `With ${queueCommands.set}: a note for the row. One line of at most ${boardTextLimits.maxTextChars} characters.`,
+      },
+      [flags.releaseGroup]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description:
+          `With ${queueCommands.set}: the group of the row. ${commandText(commandLines.queueShow)} lists the rows under one heading for each group. ` +
+          `One line of at most ${boardTextLimits.maxReleaseGroupChars} characters. A new text replaces the old one. The group can not be cleared.`,
       },
       [flags.field]: {
         type: 'string',
@@ -812,6 +819,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           words: given.positionals(),
           items: given.strings(flags.item),
           note: given.string(flags.note),
+          releaseGroup: given.string(flags.releaseGroup),
           fields: given.strings(flags.field),
           position: given.string(flags.position),
         },
