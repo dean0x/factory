@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { renderBlock } from '../../src/blocks/managed.js';
+import { parseBlocks, renderBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import {
@@ -249,6 +249,70 @@ describe('doctor: blocks', () => {
     const missing = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
     expect(missing.level).toBe('warn');
     expect(missing.text).toContain('worker (missing');
+  });
+
+  describe('a block that the file lacks', () => {
+    const NODE_JSON = `${HOME}/.factory/node.json`;
+
+    /** Cut the work rules block out of the coordinator file. */
+    const cutWorkRules = (deps: FakeDeps): void => {
+      const text = deps.files.get(CLAUDE_MD) ?? '';
+      const parsed = parseBlocks(text);
+      const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === 'work-rules') : undefined;
+      expect(block).toBeDefined();
+      if (block !== undefined) deps.files.set(CLAUDE_MD, `${text.slice(0, block.start)}${text.slice(block.end)}`);
+    };
+
+    /** Take the name of a block out of the record of the node state. */
+    const forget = (deps: FakeDeps, name: string): void => {
+      const state = JSON.parse(deps.files.get(NODE_JSON) ?? '{}') as { blocks: Record<string, number> };
+      expect(state.blocks[name]).toBeDefined();
+      delete state.blocks[name];
+      deps.files.set(NODE_JSON, `${JSON.stringify(state, null, 2)}\n`);
+    };
+
+    const allNames = layer1Blocks.map((template) => template.name);
+
+    it('names the upgrade command when the state never recorded the block', async () => {
+      const deps = await initialized();
+      cutWorkRules(deps);
+      const result = checkBlocks(
+        await inspectBlocks(deps, HOME, layer1Blocks),
+        new Set(allNames.filter((name) => name !== 'work-rules')),
+      );
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('work-rules (missing');
+      expect(result.text).toContain('Run "factory upgrade".');
+      expect(result.text).not.toContain('--overwrite work-rules');
+    });
+
+    it('keeps the overwrite command when the state records the block', async () => {
+      const deps = await initialized();
+      cutWorkRules(deps);
+      const result = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks), new Set(allNames));
+      expect(result.text).toContain('work-rules (missing');
+      expect(result.text).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+    });
+
+    it('counts every block as recorded when no record is known', async () => {
+      const deps = await initialized();
+      cutWorkRules(deps);
+      const result = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks), null);
+      expect(result.text).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+    });
+
+    it('reads the record from the state file of the node', async () => {
+      const deps = await initialized();
+      cutWorkRules(deps);
+      const recorded = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+      expect(recorded.text).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+      forget(deps, 'work-rules');
+      const forgotten = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+      expect(forgotten.level).toBe('warn');
+      expect(forgotten.text).toContain('work-rules (missing');
+      expect(forgotten.text).toContain('Run "factory upgrade".');
+      expect(forgotten.text).not.toContain('--overwrite work-rules');
+    });
   });
 
   it('fails when the markers of the file that holds the safety block are broken', async () => {

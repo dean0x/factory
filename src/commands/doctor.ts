@@ -1,6 +1,14 @@
 import { join, resolve } from 'node:path';
 import { linesOutsideBlocks, parseBlocks } from '../blocks/managed.js';
-import { inspectBlocks, isSafetyStop, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
+import {
+  inspectBlocks,
+  isBlockRecorded,
+  isSafetyStop,
+  NO_PENDING_FILES,
+  recordedBlockNames,
+  renamedFromOf,
+  type BlockStatus,
+} from '../blocks/status.js';
 import { exitCodeOf, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { probeChildren } from '../comms/children.js';
@@ -379,7 +387,7 @@ const editedRemedy = (name: string): string => {
  * match. An intact block whose text differs from the rendered text is out of date: `upgrade` renders it again. An edited
  * block stays as it is until the person names it with `--overwrite`.
  */
-const describeBlockProblem = (status: BlockStatus): BlockProblem[] => {
+const describeBlockProblem = (status: BlockStatus, recorded: ReadonlySet<string> | null): BlockProblem[] => {
   const name = status.template.name;
   const where = `${status.kind}, in ${status.file}`;
   const old = renamedFromOf(status);
@@ -395,13 +403,11 @@ const describeBlockProblem = (status: BlockStatus): BlockProblem[] => {
         : [{ text: `${name} (out of date, in ${status.file})`, remedy: UPGRADE_REMEDY }];
     case 'edited':
       return [{ text: `${name} (${where})`, remedy: editedRemedy(name) }];
-    case 'missing':
-      return [
-        {
-          text: `${name} (${where})`,
-          remedy: setupBlockNames.includes(name) ? UPGRADE_REMEDY : `Run "${overwriteCommand(name)}" to add it.`,
-        },
-      ];
+    case 'missing': {
+      // `upgrade` adds a setup block and a block that the state never recorded. A block that the state records was removed.
+      const upgradeAdds = setupBlockNames.includes(name) || !isBlockRecorded(recorded, name);
+      return [{ text: `${name} (${where})`, remedy: upgradeAdds ? UPGRADE_REMEDY : `Run "${overwriteCommand(name)}" to add it.` }];
+    }
     case 'malformed':
       return [{ text: `${name} (${where})`, remedy: `Fix the marker lines in ${status.file}, then run "${commandText(commands.upgrade)}".` }];
     default: {
@@ -411,9 +417,12 @@ const describeBlockProblem = (status: BlockStatus): BlockProblem[] => {
   }
 };
 
-/** A safety block that is edited, missing or malformed fails the check. Any other block problem is a warning. */
-export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
-  const problems = statuses.flatMap(describeBlockProblem);
+/**
+ * A safety block that is edited, missing or malformed fails the check. Any other block problem is a warning.
+ * `recorded` holds the names that the node state records. With null, every block counts as recorded.
+ */
+export const checkBlocks = (statuses: readonly BlockStatus[], recorded: ReadonlySet<string> | null = null): CheckResult => {
+  const problems = statuses.flatMap((status) => describeBlockProblem(status, recorded));
   return problems.length === 0
     ? check(checkIds.blocks, 'ok', `${statuses.length} managed blocks are intact`)
     : check(
@@ -480,7 +489,10 @@ export const checkNodeBlocks = async (
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
   const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value));
   const pending = { ...NO_PENDING_FILES, renames: [...blockRenamesOf(fileSteps), ...roleBlockRenames(input.recipe, input.layer)] };
-  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending));
+  // A node state that is not valid gives no record, and every block then counts as recorded.
+  const nodeState = await inspectState(deps, home);
+  const recorded = nodeState.kind === 'valid' ? recordedBlockNames(nodeState.raw, pending.renames) : null;
+  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending), recorded);
 };
 
 /** A rendered file, the setup file that its text comes from, and the names of both for the output. */
