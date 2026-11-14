@@ -452,6 +452,16 @@ describe('request close', () => {
     expect(logOf(repo).rows).toHaveLength(2);
   });
 
+  it('keeps the open time and the group of the other open requests', async () => {
+    const kept = entry('D-1', { [decisionKeys.openedAt]: '2030-01-02T03:04:05.678Z', [decisionKeys.group]: requestGroups.later });
+    const repo = await boardNode({ waiting: waitingText([kept, entry('D-2')]) });
+    valueOf(await run(repo, { words: ['close', 'D-2'] }));
+    expect(waitingOf(repo).items).toEqual([kept]);
+    expect(await listedRows(repo)).toEqual([
+      { id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: '2030-01-02T03:04:05.678Z', group: requestGroups.later },
+    ]);
+  });
+
   it('never gives the number of a closed request again', async () => {
     const repo = await boardNode();
     valueOf(await run(repo, ADD));

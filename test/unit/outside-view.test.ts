@@ -102,9 +102,9 @@ const factoryWith = async (older: readonly Record<string, unknown>[] = []) => {
 
 describe('the facts of a worker row and of the waiting requests, from the JSON output alone', () => {
   it('fills the row of a busy worker and the waiting count with the oldest date', async () => {
-    const { deps, openedAt } = await factoryWith();
+    const { deps, stageAt, openedAt } = await factoryWith();
     const [worker] = await workersOf(deps);
-    expect(worker).toBeDefined();
+    expect(worker?.stageAt).toBe(stageAt);
     expect(rowOf(worker as WorkerFacts, deps.now())).toEqual({
       worker: 'w1',
       title: TITLE,
