@@ -1,7 +1,8 @@
 import { isRecord } from '../migrate/inspect.js';
-import { decisionKeys, optionKeys } from '../names.js';
-import type { BoardRequest } from './contract.js';
+import { decisionKeys, optionKeys, requestGroups } from '../names.js';
+import type { BoardRequest, RequestGroup } from './contract.js';
 import type { WaitingDoc, WaitingItem } from './files.js';
+import { storedTimeOf } from './stored-time.js';
 
 /**
  * The requests of the waiting file as the commands show them. The reader of the file checks the id of an entry and nothing else, so
@@ -25,5 +26,17 @@ const optionKeysOf = (item: WaitingItem): readonly string[] => {
   });
 };
 
+/** The group of a waiting entry: a word of `requestGroups`. A group that is missing, or is any other value, reads as `now`. */
+const groupOf = (item: WaitingItem): RequestGroup => {
+  const group = item.record[decisionKeys.group];
+  return Object.values(requestGroups).find((known) => known === group) ?? requestGroups.now;
+};
+
 export const requestsOf = (waiting: WaitingDoc): readonly BoardRequest[] =>
-  waiting.items.map((item) => ({ id: item.id, title: requestTitleOf(item), options: optionKeysOf(item) }));
+  waiting.items.map((item) => ({
+    id: item.id,
+    title: requestTitleOf(item),
+    options: optionKeysOf(item),
+    openedAt: storedTimeOf(item.record[decisionKeys.openedAt]),
+    group: groupOf(item),
+  }));
