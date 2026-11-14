@@ -121,7 +121,7 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
  */
 export const hookCommandFor = (registry: RecipeRegistry): Command => ({
   name: commands.hook,
-  summary: `Record when a ${places.session} was last seen. At the ${startEvent} of a ${roles.worker} ${places.session}, give it its role text. Claude Code runs it, not a person.`,
+  summary: `Record when a ${places.session} was last seen. At the ${startEvent} of a ${roles.worker} ${places.session}, give it its role text after the checks of the text. Claude Code runs it, not a person.`,
   usage: `${commandText(commands.hook)} ${[...hookNames.events, hookNames.statusline].join('|')}`,
   options: {},
   positionals: true,
