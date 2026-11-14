@@ -472,10 +472,10 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
 
 /**
  * `item`: add, update, move, close and list the items of the board, record a passed check of the recipe, take the worker off an
- * item, and link a file to an item (`doc`). The words and the flags are checked first (exit 2), then the node is found and the connector runs the action. A write is one
- * state commit through the connector, and the connector refuses it for a hosted tracker kind. `list` reads the local files with no
- * lock and has no JSON output. With the follow flag, `list` draws the list again at each change of the board, until its reader goes
- * (`followBoard`).
+ * item, and link a file to an item (`doc`). The words and the flags are checked first (exit 2), then the node is found and the
+ * connector runs the action. A write is one state commit through the connector, and the connector refuses it for a hosted tracker
+ * kind. `list` reads the local files with no lock and has no JSON output. With the follow flag, `list` draws the list again at each
+ * change of the board, until its reader goes (`followBoard`).
  */
 export const runItem = async (deps: Deps, options: ItemOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);
