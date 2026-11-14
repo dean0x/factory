@@ -17,6 +17,7 @@ export default defineConfig({
   define: { __FACTORY_VERSION__: JSON.stringify(pkg.version) },
   test: {
     testTimeout: scaled(30_000),
+    hookTimeout: scaled(30_000),
     projects: [
       {
         extends: true,

@@ -45,7 +45,7 @@ const fakeClaude = (dir: string): string =>
 
 const tmux = (args: readonly string[]): Promise<RunResult> =>
   new Promise((resolve) => {
-    execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: 20_000 }, (error, stdout, stderr) => {
+    execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: scaled(20_000) }, (error, stdout, stderr) => {
       resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr });
     });
   });

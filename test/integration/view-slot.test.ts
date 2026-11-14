@@ -20,7 +20,7 @@ if (!hasTmux) console.warn('view-slot.test.ts is skipped: tmux 3.0 or newer is n
 const CASE_MS = scaled(120_000);
 const STEP_MS = 100;
 const STOP_STEPS = scaled(30);
-/** The follow loop polls every 2 s, so a change shows within about 2 s. The wait for it ends after 20 s. */
+/** The follow loop polls every 2 s, so a change shows within about 2 s. The wait for it ends after 20 s, times the wait factor. */
 const SCREEN_STEP_MS = 200;
 const SCREEN_STEPS = scaled(100);
 const EXIT_STEPS = scaled(100);
@@ -37,7 +37,7 @@ let socket: string;
 
 const tmux = (args: readonly string[]): Promise<RunResult> =>
   new Promise((resolve) => {
-    execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: 20_000 }, (error, stdout, stderr) => {
+    execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: scaled(20_000) }, (error, stdout, stderr) => {
       resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr });
     });
   });

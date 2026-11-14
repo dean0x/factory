@@ -56,6 +56,8 @@ const SIGNAL_WAIT_MS = scaled(15_000);
 const SIGNAL_TEST_TIMEOUT_MS = SIGNAL_START_WAIT_MS + SIGNAL_WAIT_MS + scaled(15_000);
 /** The wait after the end of a run for the write of a process that the stop did not reach: twice the 1 s that it needs. */
 const LATE_WRITE_WAIT_MS = 2_000;
+/** The upper bound of a run that must end soon, times the wait factor. It stays below the `sleep 30` of the owner command, so a run that waits for that command still fails. */
+const CHECK_END_MS = Math.min(scaled(15_000), 25_000);
 
 /** The first value that `probe` gives, tried every few milliseconds for at most `maxMs`. A test fails when none comes. */
 const waitFor = async <T>(probe: () => Promise<T | undefined>, maxMs: number): Promise<T> => {
@@ -260,7 +262,7 @@ describe('factory hook (built binary)', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('');
     expect(result.stderr).toMatch(/^factory hook: [^\n]+\n$/);
-    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(Date.now() - started).toBeLessThan(CHECK_END_MS);
     expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
   });
 
@@ -390,7 +392,7 @@ describe('factory hook statusline (built binary)', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('context ?%');
     expect(result.stderr).toMatch(/^factory hook: [^\n]+\n$/);
-    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(Date.now() - started).toBeLessThan(CHECK_END_MS);
     expect(await exists(lastSeenFile())).toBe(false);
   });
 
@@ -413,7 +415,7 @@ describe('factory hook statusline (built binary)', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('context 8%');
     expect(result.stderr).toMatch(/^factory hook: [^\n]+\n$/);
-    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(Date.now() - started).toBeLessThan(CHECK_END_MS);
   });
 
   it('stops every process of a command with a pipe at the time limit, so none of them runs on', async () => {
@@ -423,7 +425,7 @@ describe('factory hook statusline (built binary)', () => {
     const result = await statusline(STATUS_INPUT);
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('context 8%');
-    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(Date.now() - started).toBeLessThan(CHECK_END_MS);
     // The wait starts at the end of the run, not before the start of the binary: the late write comes 3 s after the command
     // starts, and the run ends 2 s after that, so a group that was not stopped writes within 1 s of this point.
     await new Promise((resolve) => setTimeout(resolve, LATE_WRITE_WAIT_MS));
