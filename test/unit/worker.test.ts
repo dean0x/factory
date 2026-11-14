@@ -1030,8 +1030,8 @@ describe('worker new: the role text of the new worker stops the command before t
     expect(made.deps.dirs.has(COPY)).toBe(false);
   });
 
-  it('stops with exit 1 for a text above the cap, names its size and the cap, and makes no work copy, record or branch', async () => {
-    const made = make();
+  it.each(['own', 'received'] as const)('stops with exit 1 in a %s factory folder for a text above the cap, names its size and the cap, and makes no work copy, record or branch', async (origin) => {
+    const made = make({ origin });
     seedAcceptedSetup(made.deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -1041,10 +1041,25 @@ describe('worker new: the role text of the new worker stops the command before t
     expect(made.deps.dirs.has(COPY)).toBe(false);
   });
 
-  it('stops with exit 1 for a setup text that holds a block marker, and makes no work copy, record or branch', async () => {
-    const made = make();
+  it('stops with exit 1 in a received factory folder for a setup text that holds a block marker, and makes no work copy, record or branch', async () => {
+    const made = make({ origin: 'received' });
     seedAcceptedSetup(made.deps, HOME, '<!-- factory:begin worker v1 sha256=00 -->\n');
     expect(exitCodeOf[(await failed(made)).kind]).toBe(1);
+    expect(made.events).not.toContain('git worktree-add');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.deps.files.has(RECORD)).toBe(false);
+    expect(made.deps.dirs.has(COPY)).toBe(false);
+  });
+
+  it.each([
+    ['holds a block marker', '<!-- factory:begin worker v1 sha256=00 -->\n'],
+    ['holds a control character', 'Write tests first.\u0007\n'],
+    ['holds a hidden character', 'Write tests first.ㅤ\n'],
+    ['is above the bound of the setup text', 'x'.repeat(maxSetupTextBytes + 1)],
+  ])('stops with exit 4 in your own factory folder for a setup text that %s, and makes no work copy, record or branch', async (_fault, text) => {
+    const made = make({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, text);
+    expect(exitCodeOf[(await failed(made)).kind]).toBe(4);
     expect(made.events).not.toContain('git worktree-add');
     expect(made.events).not.toContain('tmux split-window');
     expect(made.deps.files.has(RECORD)).toBe(false);

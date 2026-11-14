@@ -4,7 +4,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { activeMachine, env, roleText, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
+import { activeMachine, env, marker, roleText, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -92,6 +92,8 @@ interface Setup {
   readonly config?: FactoryConfig;
   readonly claudeFile?: string;
   readonly hookSettings?: string;
+  /** How the factory folder came to this machine. Default: no origin, which counts as received. */
+  readonly origin?: 'own' | 'received';
   /** A terminal window with this answer to the question about the hook settings. Default: no terminal window. */
   readonly answer?: string;
   /** The mark of the active machine: of this machine, or of another one. Default: no mark. */
@@ -264,7 +266,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   deps.seed(`${COORDINATOR}/CLAUDE.md`, setup.claudeFile ?? claudeFileText(config));
   deps.seed(SETTINGS_FILE, setup.hookSettings ?? OWN_SETTINGS);
   for (const project of config.recipe.projects) deps.seedDir(`${HOME}/${project.path}`);
-  registerRoot(deps, HOME, config.core.node.id);
+  registerRoot(deps, HOME, config.core.node.id, [], setup.origin);
   for (const id of worked) await seedWorker(deps, id, specs[id] ?? {});
   if (setup.coordinatorResumes === true) {
     must(await writeCoordinatorSession(deps, HOME, COORDINATOR_SESSION));
@@ -913,6 +915,24 @@ describe('restart', () => {
       expect(exitCodeOf[error.kind]).toBe(1);
       expect(error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
       expectNothingStopped(made);
+    });
+
+    it('exits 4 and stops nothing in your own factory folder for an accepted setup text that holds a block marker', async () => {
+      const made = await make({ origin: 'own' });
+      seedAcceptedSetup(made.deps, HOME, `Write tests first.\n<!-- ${marker.prefix}${marker.begin} rules v1 -->\n`);
+      const error = await failed(restart(made, 'alpha'));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+    });
+
+    it('exits 1 and stops nothing in a received factory folder for an accepted setup text that holds a block marker', async () => {
+      const made = await make({ origin: 'received' });
+      seedAcceptedSetup(made.deps, HOME, `Write tests first.\n<!-- ${marker.prefix}${marker.begin} rules v1 -->\n`);
+      const error = await failed(restart(made, 'alpha'));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
     });
 
     it('stops nothing for a worker that has no pane when its role text is refused', async () => {
