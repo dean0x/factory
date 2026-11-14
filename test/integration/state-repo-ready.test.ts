@@ -53,7 +53,7 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
-describe('the ready check of the state repo with a staged submodule pointer (TP-9)', () => {
+describe('the ready check of the state repo with a staged submodule pointer', () => {
   const stageGitlink = async (): Promise<void> => {
     const head = (await mustGit(['rev-parse', 'HEAD'])).stdout.trim();
     await mustGit(['update-index', '--add', '--cacheinfo', `160000,${head},sub`]);
@@ -99,7 +99,7 @@ describe('the git steps of the state repo start no file monitor program', () => 
   });
 });
 
-describe('the git config check of a state repo whose config names a program (TP-16)', () => {
+describe('the git config check of a state repo whose config names a program', () => {
   const FILTER_FILE = 'attributes-filter.cfg';
 
   it('stops with exit 4, names the key, and starts no program, for a filter in a file that the local config includes', async () => {

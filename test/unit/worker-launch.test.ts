@@ -171,7 +171,7 @@ const panesOf = (made: Made): number => made.tmux.panes().length;
 const START_PANES = 3;
 
 describe('the launch of a worker: the pane and the argument list', () => {
-  it('makes one pane in the workers window, in the work copy, marks it, and gives the argument list of a worker with its session name (TP-9)', async () => {
+  it('makes one pane in the workers window, in the work copy, marks it, and gives the argument list of a worker with its session name', async () => {
     const made = make();
     const outcome = await launched(made, { proxy: null });
     expect(outcome).toEqual({ paneId: FIRST_NEW_PANE, proxy: null, warnings: [] });
@@ -408,7 +408,7 @@ describe('the launch of a worker: the window workers stays tiled', () => {
   });
 });
 
-describe('the launch of a worker: the proxy (TP-61)', () => {
+describe('the launch of a worker: the proxy', () => {
   it('uses no proxy when the config names none, whatever the environment says', async () => {
     const made = make();
     const outcome = await launched(made, { proxy: null });
@@ -527,7 +527,7 @@ describe('the launch of a worker: the proxy (TP-61)', () => {
   });
 });
 
-describe('the launch of a worker: the settings of the work copy (TP-15, TP-16)', () => {
+describe('the launch of a worker: the settings of the work copy', () => {
   const put = (made: Made, text: string): void => made.deps.seed(SETTINGS_FILE, text);
 
   it.each([
@@ -627,7 +627,7 @@ describe('the launch of a worker: the settings of the work copy (TP-15, TP-16)',
   });
 });
 
-describe('the launch of a worker: the instruction files above the work copy (TP-18)', () => {
+describe('the launch of a worker: the instruction files above the work copy', () => {
   it.each([
     ['CLAUDE.md in the work copies folder', '/h/node/work-copies/CLAUDE.md'],
     ['AGENTS.md in the folder of the project', '/h/node/work-copies/web/AGENTS.md'],
@@ -697,7 +697,7 @@ describe('the launch of a worker: the instruction files above the work copy (TP-
   });
 });
 
-describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
+describe('the launch of a worker: a launch with a resume id', () => {
   /** The panes that the launch read after the start, in order. */
   const readPanes = (made: Made): readonly string[] =>
     made.tmux.calls.filter((call) => call.args[0] === 'display-message').map((call) => call.args[3] ?? '');
@@ -714,7 +714,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     expect(readPanes(made)).toEqual([FIRST_NEW_PANE]);
   });
 
-  it('names the session of a launch with a resume id once, after the id and before the folder (TP-9)', async () => {
+  it('names the session of a launch with a resume id once, after the id and before the folder', async () => {
     const made = make();
     await launched(made, { proxy: null }, { resumeId: UUID });
     const words = wordsOf(made.tmux);

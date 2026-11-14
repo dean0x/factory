@@ -17,20 +17,20 @@ const refused = (text: string, key = 'merge') => {
   return result.error;
 };
 
-describe('the rename of the queue key in the text of the board (TP-30)', () => {
-  it('M5-1b TP-30 renames the key of the top level and no other key or value with the same word', () => {
+describe('the rename of the queue key in the text of the board', () => {
+  it('renames the key of the top level and no other key or value with the same word', () => {
     const before = '{"note": "queue", "queue": [], "x": {"queue": 1}, "y": ["queue"]}';
     expect(renamed(before)).toBe('{"note": "queue", "merge": [], "x": {"queue": 1}, "y": ["queue"]}');
   });
 
-  it('M5-1b TP-30 finds a key that the file wrote with an escape', () => {
+  it('finds a key that the file wrote with an escape', () => {
     expect(renamed(`{"qu${escapeOf('0065')}ue": []}`)).toBe('{"merge": []}');
   });
 
   it.each([
     ['an escaped quote', '{"a": "\\"", "queue": []}', '{"a": "\\"", "merge": []}'],
     ['an escaped backslash', '{"a": "x\\\\", "queue": []}', '{"a": "x\\\\", "merge": []}'],
-  ])('M5-1b TP-30 finds the key after a string value with %s, and the data is the old data with the key renamed', (_name, before, after) => {
+  ])('finds the key after a string value with %s, and the data is the old data with the key renamed', (_name, before, after) => {
     const result = renamed(before);
     expect(result).toBe(after);
     const old = JSON.parse(before) as Record<string, unknown>;
@@ -38,23 +38,23 @@ describe('the rename of the queue key in the text of the board (TP-30)', () => {
     expect(JSON.parse(result ?? '')).toEqual(withNewKey);
   });
 
-  it('M5-1b TP-30 writes a key with a letter that is not ASCII as an escape, as the writers of the board do', () => {
+  it('writes a key with a letter that is not ASCII as an escape, as the writers of the board do', () => {
     expect(renamed('{"queue": []}', 'café')).toBe(`{"caf${escapeOf('00e9')}": []}`);
   });
 
-  it('M5-1b TP-30 gives null when the board has no old key, and when the key of the recipe is the default', () => {
+  it('gives null when the board has no old key, and when the key of the recipe is the default', () => {
     expect(renamed('{"merge": [], "items": []}')).toBeNull();
     expect(renamed('{"queue": [], "items": []}', 'queue')).toBeNull();
   });
 
-  it('M5-1b TP-30 stops with exit 1 when the board has both keys, names the file and names a command', () => {
+  it('stops with exit 1 when the board has both keys, names the file and names a command', () => {
     const error = refused('{"queue": [], "merge": [], "items": []}');
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe('board.json has both the key "queue" and the key "merge"');
     expect(error.hint).toContain('factory upgrade');
   });
 
-  it('M5-1b TP-30 stops with exit 1 when the old key is in the text twice', () => {
+  it('stops with exit 1 when the old key is in the text twice', () => {
     const error = refused('{"queue": [], "queue": [], "items": []}');
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe('board.json holds the key "queue" twice');
@@ -64,7 +64,7 @@ describe('the rename of the queue key in the text of the board (TP-30)', () => {
   it.each([
     ['text that is not JSON', 'not json{', 'cannot read board.json: the text is not valid JSON'],
     ['a list', '[1]', 'cannot read board.json: the top level is not an object'],
-  ])('M5-1b TP-30 stops with exit 1 for %s, and names the file and a command', (_name, text, message) => {
+  ])('stops with exit 1 for %s, and names the file and a command', (_name, text, message) => {
     const error = refused(text);
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(message);

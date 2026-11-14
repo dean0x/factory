@@ -571,13 +571,13 @@ describe('node deps: the terminal', () => {
       expect(await text).toEqual({ ok: true, value: '' });
     });
 
-    it('accepts an input of exactly the limit (TP-8)', async () => {
+    it('accepts an input of exactly the limit', async () => {
       const text = createNodeDeps().readStdin(5);
       input.end('12345');
       expect(await text).toEqual({ ok: true, value: '12345' });
     });
 
-    it('returns an error for an input of one byte more than the limit (TP-8)', async () => {
+    it('returns an error for an input of one byte more than the limit', async () => {
       const text = createNodeDeps().readStdin(5);
       input.end('123456');
       const result = await text;
@@ -662,7 +662,7 @@ describe('node deps: the terminal', () => {
       expect(result.ok).toBe(false);
     });
 
-    it('returns empty text at once when a person types at the input (TP-124)', async () => {
+    it('returns empty text at once when a person types at the input', async () => {
       const terminal = Object.assign(new PassThrough(), { isTTY: true });
       replaceStdin(terminal);
       const result = await Promise.race([createNodeDeps().readStdin(1024), wait(2000).then(() => 'blocked' as const)]);
@@ -798,7 +798,7 @@ describe('node deps: fs', () => {
     /** The byte 0xff never occurs in UTF-8. A lenient decode turns it into U+FFFD. */
     const BAD_BYTES = Buffer.from([0x61, 0xff, 0x62]);
 
-    it('M5-1b TP-51 fails for a byte sequence that is not UTF-8, names the file, and gives no text', async () => {
+    it('fails for a byte sequence that is not UTF-8, names the file, and gives no text', async () => {
       const file = fresh('strict-bad.json');
       await writeFile(file, BAD_BYTES);
       const result = await deps.fs.readTextLimited(file, 100, 'fatal');
@@ -809,7 +809,7 @@ describe('node deps: fs', () => {
       }
     });
 
-    it('M5-1b TP-51 reads valid text, with multi-byte characters and a byte order mark, as the lenient read does', async () => {
+    it('reads valid text, with multi-byte characters and a byte order mark, as the lenient read does', async () => {
       const file = fresh('strict-good.json');
       const text = '﻿{"title":"é 日本 \u{1F600}"}\n';
       await writeFile(file, text, 'utf8');
@@ -817,7 +817,7 @@ describe('node deps: fs', () => {
       expect(await deps.fs.readTextLimited(file, 100, 'lenient')).toEqual({ ok: true, value: text });
     });
 
-    it('M5-1b TP-51 still says that a file over the limit is too large', async () => {
+    it('still says that a file over the limit is too large', async () => {
       const file = fresh('strict-over.json');
       await writeFile(file, 'abcdef', 'utf8');
       const result = await deps.fs.readTextLimited(file, 5, 'fatal');
@@ -825,20 +825,20 @@ describe('node deps: fs', () => {
       if (!result.ok) expect(result.error.message).toContain('larger than 5 bytes');
     });
 
-    it('M5-1b TP-98 keeps the lenient decode when the read names no decode', async () => {
+    it('keeps the lenient decode when the read names no decode', async () => {
       const file = fresh('lenient-default.json');
       await writeFile(file, BAD_BYTES);
       expect(await deps.fs.readTextLimited(file, 100)).toEqual({ ok: true, value: 'a�b' });
     });
 
-    it('M5-1b TP-98 keeps the lenient decode when the read names the lenient decode', async () => {
+    it('keeps the lenient decode when the read names the lenient decode', async () => {
       const file = fresh('lenient-named.json');
       await writeFile(file, BAD_BYTES);
       expect(await deps.fs.readTextLimited(file, 100, 'lenient')).toEqual({ ok: true, value: 'a�b' });
     });
   });
 
-  describe('a digest of the bytes of a file (TP-171)', () => {
+  describe('a digest of the bytes of a file', () => {
     const sha256Of = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
     const BOUND = 1_000_000;
 
@@ -1362,25 +1362,25 @@ describe('node deps: the reader of a long program', () => {
     vi.restoreAllMocks();
   });
 
-  it('M5-1b TP-102 gives the id of the parent process as the system gives it now', () => {
+  it('gives the id of the parent process as the system gives it now', () => {
     expect(createNodeDeps().parentPid()).toBe(process.ppid);
   });
 
-  it('M5-1b TP-102 asks the system at each call whether stdout is a terminal, so a change shows', () => {
+  it('asks the system at each call whether stdout is a terminal, so a change shows', () => {
     const made = createNodeDeps();
     vi.mocked(isatty).mockReturnValueOnce(true).mockReturnValueOnce(false);
     expect([made.stdoutIsTerminal(), made.stdoutIsTerminal()]).toEqual([true, false]);
     expect(isatty).toHaveBeenLastCalledWith(1);
   });
 
-  it('M5-1b TP-56 writes the text to stdout and waits until the write is done', async () => {
+  it('writes the text to stdout and waits until the write is done', async () => {
     const taken = stdoutWrites((callback) => callback(null));
     const result = await createNodeDeps().writeStdout('a frame\n');
     expect(result.ok).toBe(true);
     expect(taken).toEqual(['a frame\n']);
   });
 
-  it.each(['EPIPE', 'EIO'])('M5-1b TP-56 fails with the code %s of a write that fails, and the error event of the stream that follows is handled', async (code) => {
+  it.each(['EPIPE', 'EIO'])('fails with the code %s of a write that fails, and the error event of the stream that follows is handled', async (code) => {
     const before = process.stdout.listenerCount('error');
     const broken = Object.assign(new Error(`write ${code}`), { code });
     // As the stream does: the callback of the write gets the error first, and then the stream emits it.
@@ -1395,7 +1395,7 @@ describe('node deps: the reader of a long program', () => {
     expect(process.stdout.listenerCount('error')).toBe(before);
   });
 
-  it('M5-1b TP-56 leaves no listener on stdout after a write that fails with no error event', async () => {
+  it('leaves no listener on stdout after a write that fails with no error event', async () => {
     const before = process.stdout.listenerCount('error');
     stdoutWrites((callback) => callback(Object.assign(new Error('write EIO'), { code: 'EIO' })));
     expect((await createNodeDeps().writeStdout('x')).ok).toBe(false);

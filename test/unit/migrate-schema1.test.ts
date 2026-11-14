@@ -68,7 +68,7 @@ describe('config migration, schema 1 to 2', () => {
     expect(parseMixed(migrated).success).toBe(true);
   });
 
-  describe('a node that lists a project (decision D-3 B, TP-62)', () => {
+  describe('a node that lists a project', () => {
     it('stops with a failure, says to make the node again with init, and gives no value', () => {
       const result = migrateConfig(schema1DocWithProject());
       expect(result.ok).toBe(false);

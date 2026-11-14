@@ -59,9 +59,9 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
-describe('the board commands with the delete guard off (TP-59)', () => {
+describe('the board commands with the delete guard off', () => {
   it(
-    'M5-1b TP-59 exits 4 for item add, update, move and close, track add, request add and queue set, writes nothing, and the lists still work',
+    'exits 4 for item add, update, move and close, track add, request add and queue set, writes nothing, and the lists still work',
     async () => {
       await mustRun(['item', 'add', '--title', 'First']);
       await mustRun(['track', 'add', 'core', '--name', 'Core']);
@@ -117,11 +117,11 @@ const rerunOnLockWait = async (run: () => Promise<RunResult>, maxReruns: number 
   return result;
 };
 
-describe('the board commands that run at the same time (TP-61, TP-99, TP-186)', () => {
+describe('the board commands that run at the same time', () => {
   const PARALLEL = [1, 2, 3, 4, 5] as const;
 
   it(
-    'M5-1b TP-186 runs a process again only after exit 1 with "holds the lock" in stderr, and at most two more times',
+    'runs a process again only after exit 1 with "holds the lock" in stderr, and at most two more times',
     async () => {
       const lockHeld: RunResult = { code: 1, stdout: '', stderr: `cannot write board.json: another process ${LOCK_HELD_TEXT} /state/locks/state.lock\n` };
       const cases: readonly { name: string; resultOf: (call: number) => RunResult; calls: number; code: number }[] = [
@@ -145,7 +145,7 @@ describe('the board commands that run at the same time (TP-61, TP-99, TP-186)', 
   );
 
   it(
-    'M5-1b TP-61 makes five state commits, each of the board file only, for five item move calls that run at the same time',
+    'makes five state commits, each of the board file only, for five item move calls that run at the same time',
     async () => {
       for (const number of PARALLEL) await mustRun(['item', 'add', '--title', `Item ${number}`]);
       const before = await commitCount();
@@ -162,7 +162,7 @@ describe('the board commands that run at the same time (TP-61, TP-99, TP-186)', 
   );
 
   it(
-    'M5-1b TP-99 gives five request add calls that run at the same time five different numbers, and makes five commits of the waiting file only',
+    'gives five request add calls that run at the same time five different numbers, and makes five commits of the waiting file only',
     async () => {
       const before = await commitCount();
       const results = await Promise.all(

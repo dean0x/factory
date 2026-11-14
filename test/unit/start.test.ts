@@ -251,7 +251,7 @@ describe('start:a new session', () => {
     ]);
   });
 
-  it('M5-1b TP-45 starts the board pane with the program words and the follow view of the home as separate words', async () => {
+  it('starts the board pane with the program words and the follow view of the home as separate words', async () => {
     const { deps, tmux } = make();
     await succeeded(deps);
     const split = tmux.calls.find((call) => call.args[0] === 'split-window')?.args ?? [];
@@ -259,7 +259,7 @@ describe('start:a new session', () => {
     expect(tmux.panes().find((pane) => pane.options['@slot'] === 'board')?.command).toEqual(BOARD_WORDS);
   });
 
-  it('M5-1b TP-45 starts no session when the path of its own program is not known, because the board pane has no program', async () => {
+  it('starts no session when the path of its own program is not known, because the board pane has no program', async () => {
     const { deps, tmux } = make({ guard: 'off' });
     const result = await startFactory({ ...deps, programArgv: [] });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
@@ -268,7 +268,7 @@ describe('start:a new session', () => {
     expect(tmux.sessions().size).toBe(0);
   });
 
-  it('starts in the coordinator folder, with the root as the home, and adds no folder for the root (TP-46)', async () => {
+  it('starts in the coordinator folder, with the root as the home, and adds no folder for the root', async () => {
     const { deps, tmux } = make();
     await succeeded(deps);
     const start = tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
@@ -334,7 +334,7 @@ describe('start:a new session', () => {
     expect(tmux.calls.some((call) => call.args.includes('-g'))).toBe(false);
   });
 
-  it('puts the session marker in the environment of the session only, before any other window or pane exists (TP-80)', async () => {
+  it('puts the session marker in the environment of the session only, before any other window or pane exists', async () => {
     const { deps, tmux } = make();
     await succeeded(deps);
     const commands = tmux.commands();
@@ -393,7 +393,7 @@ describe('start:a new session', () => {
     expect(launch.slice(launch.indexOf('--add-dir'))).toEqual([...LAUNCH_DIRS, '--add-dir', '/w/node/api']);
   });
 
-  describe('a project folder that is missing (TP-120)', () => {
+  describe('a project folder that is missing', () => {
     const twoProjects = (): FactoryConfig => {
       const config = sampleConfig();
       const second = { ...config.recipe.projects[0]!, id: 'api', url: 'https://github.com/acme/api', path: 'api' };
@@ -454,7 +454,7 @@ describe('start:a new session', () => {
   });
 });
 
-describe('start:the delete guard of the state repo (TP-6, TP-14)', () => {
+describe('start:the delete guard of the state repo', () => {
   it('prints no warning when the guard is on', async () => {
     const { deps } = make();
     const output = await succeeded(deps);
@@ -513,7 +513,7 @@ describe('start:the delete guard of the state repo (TP-6, TP-14)', () => {
   });
 });
 
-describe('start:the reviews folder (TP-31)', () => {
+describe('start:the reviews folder', () => {
   const REVIEWS = layoutOf(HOME).reviewsDir;
 
   it('makes the reviews folder with mode 0700 in a real run', async () => {
@@ -695,7 +695,7 @@ describe('start:a session that runs already', () => {
   it.each([
     ['another home', { demo: '/w/other-factory' }],
     ['no home option', { demo: null }],
-  ])('refuses with exit kind safety for a session with %s, and the remedy names factory shutdown (TP-132)', async (_name, sessions) => {
+  ])('refuses with exit kind safety for a session with %s, and the remedy names factory shutdown', async (_name, sessions) => {
     const { deps, tmux } = make({ tmux: { sessions } });
     const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
@@ -911,7 +911,7 @@ describe('start:--dry-run', () => {
     expect(output.json).toMatchObject({ schema: 'factory.start/v1', session: 'demo', started: false, attached: false, dryRun: true });
   });
 
-  it('M5-1b TP-45 shows the call of the board pane with each word as a person could type it', async () => {
+  it('shows the call of the board pane with each word as a person could type it', async () => {
     const { deps } = make();
     const output = await succeeded(deps, { dryRun: true });
     const text = output.lines.map((line) => line.text).join('\n');
@@ -971,7 +971,7 @@ describe('start:--dry-run', () => {
   });
 });
 
-describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16, TP-17, TP-18, TP-19)', () => {
+describe('start:the hook settings of the coordinator', () => {
   const noFile = { hookSettings: false } as const;
   const WRITE_CALLS = ['writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'mkdir', 'chmod', 'copyTree', 'removeEmptyDir'];
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(SETTINGS_FILE) ?? 'null');
@@ -990,7 +990,7 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
     return result.error;
   };
 
-  describe('on a terminal window (TP-15)', () => {
+  describe('on a terminal window', () => {
     it('prints the exact change and the target before the write, and writes after a yes', async () => {
       const seen: { fileAtQuestion: boolean | null } = { fileAtQuestion: null };
       const held: { deps?: FakeDeps } = {};
@@ -1016,7 +1016,7 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
     });
   });
 
-  describe('with no terminal window and no yes flag (TP-16)', () => {
+  describe('with no terminal window and no yes flag', () => {
     it('writes nothing, starts nothing and exits 2 with the change, the target and the remedy', async () => {
       const { deps, tmux } = make(noFile);
       const before = JSON.stringify([...deps.files.entries()].sort()) + [...deps.dirs].sort().join(',');
@@ -1031,7 +1031,7 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
     });
   });
 
-  describe('with the yes flag (TP-17)', () => {
+  describe('with the yes flag', () => {
     it('writes only the settings file of the coordinator, keeps its other keys and prints the change first', async () => {
       const { deps, tmux } = make({ hookSettings: '{"model":"opus"}\n' });
       const before = otherFiles(deps);
@@ -1051,7 +1051,7 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
     });
   });
 
-  describe('a second start (TP-18, AC-11)', () => {
+  describe('a second start', () => {
     it('asks nothing, writes nothing and shows no presence warning for the file that the first start wrote', async () => {
       const { deps } = make(noFile);
       await succeeded(deps, { yes: true });
@@ -1077,7 +1077,7 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
     });
   });
 
-  describe('inside a factory session (TP-19)', () => {
+  describe('inside a factory session', () => {
     it('exits 2 with the yes flag, writes nothing and starts nothing', async () => {
       const { deps, tmux } = make({ ...noFile, env: { [env.session]: 'demo' } });
       const before = JSON.stringify([...deps.files.entries()].sort());
@@ -1154,7 +1154,7 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
   });
 });
 
-describe('start:the recovery after a kill of the server and the mark of the active machine (AC-16, AC-17, AC-25, TP-17, TP-34, TP-35, TP-36, TP-37, TP-38, TP-39, TP-62, TP-134)', () => {
+describe('start:the recovery after a kill of the server and the mark of the active machine', () => {
   const COPIES = `${HOME}/work-copies/web`;
   const IDS = ['alpha', 'beta', 'gamma'] as const;
   const SESSION = {
@@ -1283,7 +1283,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     return { deps: withProgram(noted, tmux, seed.program ?? startsSessions(HOME, byResume)), tmux, splitsAtWarnings };
   };
 
-  describe('the workers (AC-16, TP-34)', () => {
+  describe('the workers', () => {
     it('resumes each recorded worker with the session id of its own pointer, and prints the ids that run again', async () => {
       const made = await seeded();
       const output = await succeeded(made.deps);
@@ -1346,7 +1346,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     });
   });
 
-  describe('a session that runs already (AC-16)', () => {
+  describe('a session that runs already', () => {
     const RUNNING = { demo: HOME };
     const paneOf = (worker: string, dead = false): PaneFixture => ({
       session: 'demo',
@@ -1450,7 +1450,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     });
   });
 
-  describe('the coordinator (AC-16, TP-37)', () => {
+  describe('the coordinator', () => {
     const startArgs =(tmux: TmuxLog): readonly string[] => tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
 
     it('resumes the session of its pointer in the launch of the new session, before the folders', async () => {
@@ -1497,7 +1497,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     });
   });
 
-  describe('a worker with no usable id (AC-16, TP-35, TP-134)', () => {
+  describe('a worker with no usable id', () => {
     it.each<[string, Seed]>([
       ['no pointer', { pointers: { beta: null } }],
       ['a pointer that holds no session id', { pointers: { beta: 'junk' } }],
@@ -1519,7 +1519,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     });
   });
 
-  describe('a worker that does not start again (AC-17, TP-36, TP-17)', () => {
+  describe('a worker that does not start again', () => {
     it('warns with the worker, does not try again, goes on and keeps the session, when its pane ends at once', async () => {
       const made = await seeded({ program: endsPaneFor(SESSION.beta) });
       const result = await startFactory(made.deps);
@@ -1556,7 +1556,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     });
   });
 
-  describe('the proxy (AC-25, TP-62)', () => {
+  describe('the proxy', () => {
     it('asks a proxy once for the run, for the coordinator and for three workers that use it', async () => {
       const base = withProxy('stop');
       const config: FactoryConfig = {
@@ -1570,7 +1570,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     });
   });
 
-  describe('the mark of the active machine (AC-16, TP-38, TP-39)', () => {
+  describe('the mark of the active machine', () => {
     it('writes the machine id once and commits the mark that names it, with no other file', async () => {
       const made = await seeded();
       await succeeded(made.deps);
@@ -1618,7 +1618,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       expect(resumesOf(made.tmux)).toEqual(SESSION);
     });
 
-    describe('git that can not list the config scopes (AC-26, TP-55)', () => {
+    describe('git that can not list the config scopes', () => {
       /** The exit code of a git that does not know the option `--show-scope`. */
       const UNKNOWN_OPTION = 129;
 
@@ -1675,7 +1675,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       });
     });
 
-    describe('the state lock stays held to the bound (AC-8, TP-19)', () => {
+    describe('the state lock stays held to the bound', () => {
       const LOCK_FILE = `${layoutOf(HOME).locksDir}/${stateLock.name}${stateLock.lock.suffix}`;
 
       it('prints one warning line with the lock path, exits 0, and writes no mark and no commit', async () => {
@@ -1870,7 +1870,7 @@ describe('start:the two config files', () => {
   });
 
   it.each([false, true])(
-    'exits 4 with one remedy line for a local file that is a link, before the owner check, and changes no mode (TP-147, dry run: %s)',
+    'exits 4 with one remedy line for a local file that is a link, before the owner check, and changes no mode (dry run: %s)',
     async (dryRun) => {
       const { deps, tmux } = make({ links: { [LOCAL]: '/outside/factory.local.yaml' }, fetch: answers });
       deps.modes.set(LOCAL, 0o644);
@@ -1897,7 +1897,7 @@ describe('start:the two config files', () => {
   });
 });
 
-describe('start:instruction files at the root and above it (TP-33)', () => {
+describe('start:instruction files at the root and above it', () => {
   const ABOVE = '/w/CLAUDE.md';
 
   /** The deps whose first call of tmux notes how many warnings were printed by then. */
@@ -1966,7 +1966,7 @@ describe('start:instruction files at the root and above it (TP-33)', () => {
   });
 });
 
-describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-134, TP-154, TP-155, TP-168, TP-179, TP-180)', () => {
+describe('start:the root checks', () => {
   const BYPASS = JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } });
   const ALL_PROBES = ['factory.local.yaml', '.factory/node.json', 'coordinator/CLAUDE.md', 'work-copies/probe', 'web/CLAUDE.md'];
 
@@ -1981,7 +1981,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     return result.error;
   };
 
-  it('stops with exit 4 when git tracks the local file, names the path and the remedy, and starts nothing (TP-20)', async () => {
+  it('stops with exit 4 when git tracks the local file, names the path and the remedy, and starts nothing', async () => {
     const { deps, tmux } = make({ origin: 'own', tracked: ['factory.local.yaml'] });
     const error = await stopOf(deps);
     expect(error.message).toContain('factory.local.yaml');
@@ -1992,7 +1992,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
   it.each([
     ['a path under the state folder', '.factory/node.json'],
     ['a path under the coordinator folder', 'coordinator/CLAUDE.md'],
-  ])('stops for %s that git tracks (TP-123)', async (_name, path) => {
+  ])('stops for %s that git tracks', async (_name, path) => {
     const { deps, tmux } = make({ origin: 'own', tracked: [path] });
     const error = await stopOf(deps);
     expect(error.message).toContain(path);
@@ -2007,7 +2007,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(tmux.calls).toEqual([]);
   });
 
-  it('stops when git does not ignore the local file, and goes on when git does not ignore the coordinator folder (TP-61)', async () => {
+  it('stops when git does not ignore the local file, and goes on when git does not ignore the coordinator folder', async () => {
     const stopped = make({ ignored: ALL_PROBES.filter((path) => path !== 'factory.local.yaml') });
     const error = await stopOf(stopped.deps);
     expect(error.message).toContain('factory.local.yaml');
@@ -2036,7 +2036,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(tmux.calls).toEqual([]);
   });
 
-  it('goes on, with a warning that names the path, when an own root tracks an instruction file (TP-155)', async () => {
+  it('goes on, with a warning that names the path, when an own root tracks an instruction file', async () => {
     const { deps } = make({ origin: 'own', tracked: ['AGENTS.md'] });
     const output = await succeeded(deps);
     expect(output.json).toMatchObject({ started: true });
@@ -2061,7 +2061,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(deps.warned).toEqual([]);
   });
 
-  it('stops for a project folder that is a link to a folder outside the root (TP-63)', async () => {
+  it('stops for a project folder that is a link to a folder outside the root', async () => {
     const { deps, tmux } = make({ links: { [`${HOME}/web`]: '/elsewhere/web' } });
     deps.seedDir('/elsewhere/web');
     const error = await stopOf(deps);
@@ -2070,7 +2070,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(tmux.calls).toEqual([]);
   });
 
-  it('stops for a token in a tracked file, names the file and never shows the value (TP-45, TP-134)', async () => {
+  it('stops for a token in a tracked file, names the file and never shows the value', async () => {
     const { deps, tmux } = make({ origin: 'own', tracked: ['docs/notes.md'] });
     deps.seed(`${HOME}/docs/notes.md`, `key ${FAKE_GITHUB_TOKEN}\n`);
     const error = await stopOf(deps);
@@ -2091,7 +2091,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
   it.each([
     ['the coordinator folder', 'coordinator'],
     ['a project folder', 'web'],
-  ])('stops for a setting that skips permission prompts in %s (TP-133)', async (_name, folder) => {
+  ])('stops for a setting that skips permission prompts in %s', async (_name, folder) => {
     const { deps, tmux } = make();
     deps.seed(`${HOME}/${folder}/.claude/settings.local.json`, BYPASS);
     const error = await stopOf(deps);
@@ -2100,7 +2100,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(tmux.calls).toEqual([]);
   });
 
-  it('stops for such a setting in a tracked settings path at any depth, also after the owner accepted the files (TP-168)', async () => {
+  it('stops for such a setting in a tracked settings path at any depth, also after the owner accepted the files', async () => {
     const path = 'tools/deep/.claude/settings.json';
     const { deps, tmux } = make({ origin: 'received', tracked: [path] });
     deps.seed(`${HOME}/${path}`, BYPASS);
@@ -2110,7 +2110,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(tmux.calls).toEqual([]);
   });
 
-  it('stops for a settings file that sets or clears the session marker (TP-179)', async () => {
+  it('stops for a settings file that sets or clears the session marker', async () => {
     const { deps } = make();
     deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { [env.session]: '' } }));
     const error = await stopOf(deps);
@@ -2119,7 +2119,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
   });
 
   it.each([env.home, 'FACTORY_ANYTHING'])(
-    'stops for a coordinator settings file whose env sets %s, with exit 4 and one remedy line, before any tmux call (AC-8, TP-23)',
+    'stops for a coordinator settings file whose env sets %s, with exit 4 and one remedy line, before any tmux call',
     async (name) => {
       const { deps, tmux } = make();
       deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify({ env: { [name]: 'x' } }));
@@ -2131,7 +2131,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     },
   );
 
-  it('stops for a coordinator settings file that can not be read, with exit 4, and starts nothing (AC-8, TP-24)', async () => {
+  it('stops for a coordinator settings file that can not be read, with exit 4, and starts nothing', async () => {
     const { deps, tmux } = make();
     const file = `${COORDINATOR}/.claude/settings.local.json`;
     deps.seed(file, '{}');
@@ -2146,7 +2146,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
   it.each([
     ['a settings file', 'settings.local.json'],
     ['a settings folder', ''],
-  ])('stops for a coordinator %s that is a link, with exit 4, and starts nothing (AC-8, TP-24)', async (_name, file) => {
+  ])('stops for a coordinator %s that is a link, with exit 4, and starts nothing', async (_name, file) => {
     const target = file === '' ? `${COORDINATOR}/.claude` : `${COORDINATOR}/.claude/${file}`;
     const { deps, tmux } = make({ links: { [target]: '/elsewhere/claude' } });
     deps.seed('/elsewhere/claude/settings.local.json', '{}');
@@ -2180,7 +2180,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(warned.deps.warned.join(' ')).toContain('hooks');
   });
 
-  it('goes on, with a warning, for a settings file in the coordinator folder and for a whole-tool allow rule (TP-154)', async () => {
+  it('goes on, with a warning, for a settings file in the coordinator folder and for a whole-tool allow rule', async () => {
     const { deps } = make({ hookSettings: JSON.stringify({ ...ownSettingsEntries, permissions: { allow: ['Bash'] } }) });
     const output = await succeeded(deps);
     expect(output.json).toMatchObject({ started: true });
@@ -2188,7 +2188,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(deps.warned.join(' ')).toContain('Bash');
   });
 
-  it('goes on, with a warning that names the setting, for a setting that approves project MCP servers (TP-180)', async () => {
+  it('goes on, with a warning that names the setting, for a setting that approves project MCP servers', async () => {
     const { deps } = make();
     deps.seed(`${HOME}/web/.claude/settings.json`, JSON.stringify({ enableAllProjectMcpServers: true }));
     const output = await succeeded(deps);
@@ -2197,7 +2197,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(deps.warned.join(' ')).toContain('web/.claude/settings.json');
   });
 
-  it('prints the active delegations before the first call of tmux, and a value with no record as a warning (TP-78)', async () => {
+  it('prints the active delegations before the first call of tmux, and a value with no record as a warning', async () => {
     const config = sampleConfig();
     const delegated = { ...config, core: { ...config.core, approval: { ...config.core.approval, merge: 'delegated' as const, release: 'delegated' as const } } };
     const { deps } = make({ config: delegated });
@@ -2231,7 +2231,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
   });
 });
 
-describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, TP-153, TP-158, TP-160, TP-165, TP-173, TP-174, TP-175, TP-178, TP-182, TP-183)', () => {
+describe('start:the setup text needs the owner', () => {
   const SETUP_FILE = `${HOME}/setup/coordinator.md`;
   const SETUP_PATH = 'setup/coordinator.md';
   const ACCEPT_COMMAND = 'Run "factory start" or "factory upgrade" in a terminal window outside a factory session.';
@@ -2289,7 +2289,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
     });
   });
 
-  describe('no acceptance at all for the root (TP-173, TP-183, TP-145, TP-182)', () => {
+  describe('no acceptance at all for the root', () => {
     it.each([
       ['no terminal window', {}, {}],
       ['a terminal window', { tty: true }, {}],
@@ -2312,7 +2312,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
       expect(made.deps.files.has(ACCEPTANCES)).toBe(false);
     });
 
-    it('exits 4 on a moved root that tracks only the config, the ignore file and the setup file, also on a terminal window (TP-145)', async () => {
+    it('exits 4 on a moved root that tracks only the config, the ignore file and the setup file, also on a terminal window', async () => {
       const made = make({
         origin: 'received',
         tty: true,
@@ -2327,7 +2327,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
       expect(made.deps.files.has(ACCEPTANCES)).toBe(false);
     });
 
-    it('exits 4 for a received root with an empty setup file and a tracked instruction file (TP-182)', async () => {
+    it('exits 4 for a received root with an empty setup file and a tracked instruction file', async () => {
       const made = make({ origin: 'received', tty: true, prompt: yes, tracked: [SETUP_PATH, 'CLAUDE.md'] });
       made.deps.seed(SETUP_FILE, '');
       const error = await stopped(made);
@@ -2337,7 +2337,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
       expect(made.deps.prompts).toEqual([]);
     });
 
-    it('does not ask after a no at init: start exits 4 and names the same command (TP-183)', async () => {
+    it('does not ask after a no at init: start exits 4 and names the same command', async () => {
       const made = make({ origin: 'received', tty: true, prompt: yes, tracked: ['scripts/run.sh'] });
       const error = await stopped(made);
       expect(error.hint).toBe(INIT_COMMAND);
@@ -2346,7 +2346,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
   });
 
   describe('a change after an older acceptance', () => {
-    it('shows the old and the new hash and the change, and with a yes records the new hash and goes on (TP-151)', async () => {
+    it('shows the old and the new hash and the change, and with a yes records the new hash and goes on', async () => {
       const made = await changed({ tty: true, prompt: yes });
       const oldHash = recordsOf(made.deps)[0]?.hash ?? '';
       const newHash = await hashOf(made.deps, [SETUP_PATH]);
@@ -2427,7 +2427,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
       expect(made.deps.files.has('/elsewhere/CLAUDE.md')).toBe(false);
     });
 
-    it('exits 4 with one remedy line on a no, and writes no acceptance (TP-152)', async () => {
+    it('exits 4 with one remedy line on a no, and writes no acceptance', async () => {
       const made = await changed({ tty: true, prompt: no });
       const before = storeOf(made.deps);
       const error = await stopped(made);
@@ -2444,11 +2444,11 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
     });
 
     it.each([
-      ['a terminal window in a factory session (TP-153)', { tty: true, env: { FACTORY_SESSION: 'demo' } }, {}],
-      ['a terminal window in a dry run (TP-174)', { tty: true }, { dryRun: true }],
-      ['no terminal window (TP-175)', {}, {}],
-      ['a terminal window for input and none for output (TP-178)', { tty: true, stdoutTty: false }, {}],
-      ['a terminal window for output and none for input (TP-178)', { tty: false, stdoutTty: true }, {}],
+      ['a terminal window in a factory session', { tty: true, env: { FACTORY_SESSION: 'demo' } }, {}],
+      ['a terminal window in a dry run', { tty: true }, { dryRun: true }],
+      ['no terminal window', {}, {}],
+      ['a terminal window for input and none for output', { tty: true, stdoutTty: false }, {}],
+      ['a terminal window for output and none for input', { tty: false, stdoutTty: true }, {}],
     ])('asks nothing, exits 4, names the accept command and writes no acceptance, with %s', async (_name, setup, options) => {
       const made = await changed({ prompt: yes, ...setup });
       const before = storeOf(made.deps);
@@ -2556,7 +2556,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
     });
   });
 
-  describe('the files of a received root (TP-158, TP-160, TP-165)', () => {
+  describe('the files of a received root', () => {
     const received = async (path: string, before: string, after: string, setup: Setup = {}) => {
       const made = make({ origin: 'received', tracked: [path], ...setup });
       made.deps.seed(`${HOME}/${path}`, before);
@@ -2565,21 +2565,21 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
       return made;
     };
 
-    it('exits 4 with the accept command when an accepted tracked file changed and no terminal window can ask (TP-158)', async () => {
+    it('exits 4 with the accept command when an accepted tracked file changed and no terminal window can ask', async () => {
       const made = await received('scripts/run.sh', 'echo one\n', 'echo two\n');
       const error = await stopped(made);
       expect(error.message).toContain('scripts/run.sh');
       expect(error.hint).toBe(ACCEPT_COMMAND);
     });
 
-    it('exits 4 with the accept command when the tracked MCP config file changed (TP-165)', async () => {
+    it('exits 4 with the accept command when the tracked MCP config file changed', async () => {
       const made = await received('.mcp.json', '{"mcpServers":{}}\n', '{"mcpServers":{"a":{}}}\n');
       const error = await stopped(made);
       expect(error.message).toContain('.mcp.json');
       expect(error.hint).toBe(ACCEPT_COMMAND);
     });
 
-    it('names the settings file as changed and shows its change, and a no writes no acceptance (TP-160)', async () => {
+    it('names the settings file as changed and shows its change, and a no writes no acceptance', async () => {
       const made = await received('.claude/settings.json', '{"model":"sonnet"}\n', '{"model":"opus"}\n', {
         tty: true,
         prompt: no,
@@ -2601,7 +2601,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
   });
 });
 
-describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => {
+describe('start:the safety block', () => {
   const STORE = '/state/factory/owner-records.json';
   const REMEDY = 'factory upgrade --overwrite safety';
   const RENDERED_NOTICE = 'Rendered the block safety in coordinator/CLAUDE.md again, because the package or a setting changed its text.';
@@ -2651,7 +2651,7 @@ describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => 
     expect(deps.warned.join(' ')).not.toContain('safety');
   });
 
-  it('exits 4 for an edited block, in a real run and in a dry run, and names the command (TP-43)', async () => {
+  it('exits 4 for an edited block, in a real run and in a dry run, and names the command', async () => {
     for (const dryRun of [false, true]) {
       const error = await stopOf({ claudeFile: editedSafety }, { dryRun });
       expect(error.message).toBe('the block safety in coordinator/CLAUDE.md was edited');
@@ -2659,7 +2659,7 @@ describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => 
     }
   });
 
-  it('exits 4 for a safety block that is not in the file (TP-43)', async () => {
+  it('exits 4 for a safety block that is not in the file', async () => {
     const error = await stopOf({ claudeFile: `Notes of mine.\n\n${withoutSafety(rendered)}` });
     expect(error.message).toBe('the block safety is missing in coordinator/CLAUDE.md');
     expect(error.hint).toBe(`Run "${REMEDY}" to add it.`);
@@ -2668,7 +2668,7 @@ describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => 
   it.each([
     ['the file is not there', { claudeFile: false as const }],
     ['the coordinator folder is not there', { coordinatorFolder: false }],
-  ])('exits 4 when %s (TP-43)', async (_name, setup) => {
+  ])('exits 4 when %s', async (_name, setup) => {
     const error = await stopOf(setup);
     expect(error.message).toBe('the block safety is missing in coordinator/CLAUDE.md');
     expect(error.hint).toBe(`Run "${REMEDY}" to add it.`);
@@ -2680,7 +2680,7 @@ describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => 
     expect(error.hint).toBe('Fix the marker lines in coordinator/CLAUDE.md, then run "factory doctor".');
   });
 
-  it('exits 4 for an edited prefix line, because the owner prefix is part of the block (TP-125)', async () => {
+  it('exits 4 for an edited prefix line, because the owner prefix is part of the block', async () => {
     const text = rendered.replace(/- The owner prefix is `[^`]*`/, '- The owner prefix is `[From anyone]`');
     expect(text).not.toBe(rendered);
     const error = await stopOf({ claudeFile: text });
@@ -2692,7 +2692,7 @@ describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => 
     expect(error.hint).toContain(REMEDY);
   });
 
-  it('renders an intact block again with a notice after a new prefix value in the local file, and goes on (TP-125)', async () => {
+  it('renders an intact block again with a notice after a new prefix value in the local file, and goes on', async () => {
     const config = withPrefix('[From {owner}, sent by {node}, {date}]');
     const { deps } = make({ config, claudeFile: `My own rules.\n\n${claudeFileText(sampleConfig())}\nMore of my rules.\n` });
     const output = await succeeded(deps);
@@ -2702,7 +2702,7 @@ describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => 
     expect(deps.warned).toContain(RENDERED_NOTICE);
   });
 
-  it('renders the block again, with a notice, after a delegation record goes away (TP-77)', async () => {
+  it('renders the block again, with a notice, after a delegation record goes away', async () => {
     const config = delegatedMerge();
     const { deps } = make({ config });
     deps.seed(STORE, delegationRecord);
@@ -2723,7 +2723,7 @@ describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => 
     expect(deps.warned).toContain(RENDERED_NOTICE);
   });
 
-  it('renders the block again, with a notice, when the package renders another text (TP-77)', async () => {
+  it('renders the block again, with a notice, when the package renders another text', async () => {
     const other = renderBlock({ name: 'safety', version: 2, body: 'An older text of the package.' });
     if (!other.ok) throw new Error(other.error.message);
     const { deps } = make({ claudeFile: `${withoutSafety(rendered).trimEnd()}\n\n${other.value}\n` });
@@ -2761,13 +2761,13 @@ describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => 
     expect(tmux.calls.some((call) => call.args[0] === 'new-session')).toBe(false);
   });
 
-  it('exits 4 for a link at coordinator/CLAUDE.md, and reads nothing through it (TP-131)', async () => {
+  it('exits 4 for a link at coordinator/CLAUDE.md, and reads nothing through it', async () => {
     const error = await stopOf({ links: { [CLAUDE_FILE]: '/outside/CLAUDE.md' } });
     expect(error.message).toBe('coordinator/CLAUDE.md is a link, so factory does not use it');
     expect(error.hint).toContain('Replace the link with a plain file');
   });
 
-  it('exits 4 for a link at the coordinator folder (TP-131)', async () => {
+  it('exits 4 for a link at the coordinator folder', async () => {
     const error = await stopOf({ links: { [COORDINATOR]: '/outside' } });
     expect(error.message).toBe('coordinator is a link, so factory does not use it');
   });

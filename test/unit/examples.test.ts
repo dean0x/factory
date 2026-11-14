@@ -19,13 +19,13 @@ const readExample = (name: string): string => readFileSync(join(ROOT, 'examples'
 /** The local file of the sample config. The sample setup is a shared file, so a load needs a local file next to it. */
 const LOCAL_TEXT = renderConfig(sampleConfig()).local;
 
-describe('the sample setup in examples/ (M5-1b TP-50)', () => {
-  it('M5-1b TP-50 loads through the real config schema', () => {
+describe('the sample setup in examples/', () => {
+  it('loads through the real config schema', () => {
     const loaded = parseConfigTexts(readExample('factory.board.yaml'), LOCAL_TEXT);
     expect(loaded.ok, loaded.ok ? '' : loaded.error.message).toBe(true);
   });
 
-  it('M5-1b TP-50 names a worker field that the sample declares with the target item', () => {
+  it('names a worker field that the sample declares with the target item', () => {
     const loaded = parseConfigTexts(readExample('factory.board.yaml'), LOCAL_TEXT);
     const board = loaded.ok ? loaded.value.core.board : undefined;
     const workerField = board?.worker_field;
@@ -33,15 +33,15 @@ describe('the sample setup in examples/ (M5-1b TP-50)', () => {
     expect(board?.fields?.find((field) => field.name === workerField)).toMatchObject({ target: 'item' });
   });
 
-  it('M5-1b TP-50 declares a release field with the target row', () => {
+  it('declares a release field with the target row', () => {
     const loaded = parseConfigTexts(readExample('factory.board.yaml'), LOCAL_TEXT);
     const fields = loaded.ok ? (loaded.value.core.board?.fields ?? []) : [];
     expect(fields.find((field) => field.name === 'release')).toMatchObject({ target: 'row', kind: 'flag' });
   });
 });
 
-describe('the README of the sample setup (M5-1b TP-50)', () => {
-  it('M5-1b TP-50 is short, names the sample file, and holds no old word and no jargon word', () => {
+describe('the README of the sample setup', () => {
+  it('is short, names the sample file, and holds no old word and no jargon word', () => {
     const text = readExample('README.md');
     expect(text.split('\n').length).toBeLessThanOrEqual(40);
     expect(text).toContain('factory.board.yaml');
@@ -50,8 +50,8 @@ describe('the README of the sample setup (M5-1b TP-50)', () => {
   });
 });
 
-describe('the package files (M5-1b TP-50)', () => {
-  it('M5-1b TP-50 ships the examples folder, so that the sample setup that the messages name is in an installed package', () => {
+describe('the package files', () => {
+  it('ships the examples folder, so that the sample setup that the messages name is in an installed package', () => {
     const manifest: unknown = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({ files: expect.arrayContaining(['examples']) });
   });

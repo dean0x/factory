@@ -290,7 +290,7 @@ describe('dismiss ID: the dry run', () => {
     expect(lineExists(made, 'alpha')).toBe(true);
   });
 
-  it('names the ignored files that the removal deletes, at most the cap, says that there are more, and changes nothing (TP-56)', async () => {
+  it('names the ignored files that the removal deletes, at most the cap, says that there are more, and changes nothing', async () => {
     const files = Array.from({ length: dismissWords.maxIgnoredShown + 5 }, (_, index) => `cache/file-${String(index).padStart(2, '0')}.log`);
     const made = await make({ workers: [{ id: 'alpha' }], git: { ignoredFiles: { [copyOf('alpha')]: files } } });
     const text = textOf(await outputOf(made, { words: ['alpha'] }));
@@ -304,20 +304,20 @@ describe('dismiss ID: the dry run', () => {
     expect(lineExists(made, 'alpha')).toBe(true);
   });
 
-  describe('an ignored file with a hidden character in its name (TP-91, TP-105)', () => {
+  describe('an ignored file with a hidden character in its name', () => {
     const BIDI = String.fromCodePoint(0x202e);
     const NAME = `cache/a${BIDI}b\nSTUCK c.log`;
     const dirtyCopy = async (): Promise<Made> =>
       make({ workers: [{ id: 'alpha' }], git: { ignoredFiles: { [copyOf('alpha')]: [NAME, 'dist/'] } } });
 
-    it('M5-1b TP-91 prints the name as one clean line, and adds no line of its own', async () => {
+    it('prints the name as one clean line, and adds no line of its own', async () => {
       const output = await outputOf(await dirtyCopy(), { words: ['alpha'] });
       const line = output.lines.find((candidate) => candidate.text.startsWith('The removal deletes'));
       expect(line?.text).toBe('The removal deletes 2 ignored files: cache/ab STUCK c.log, dist/.');
       expect(output.lines.every((candidate) => !/[\n\r\t]/.test(candidate.text) && !candidate.text.includes(BIDI))).toBe(true);
     });
 
-    it('M5-1b TP-105 removes only the hidden characters from the JSON, and keeps the line break as an escape', async () => {
+    it('removes only the hidden characters from the JSON, and keeps the line break as an escape', async () => {
       const output = await outputOf(await dirtyCopy(), { words: ['alpha'] });
       const text = renderJson(output.json);
       expect(text).not.toContain(BIDI);
@@ -339,7 +339,7 @@ describe('dismiss ID: the dry run', () => {
     await expectNothingChanged(made, ['alpha']);
   });
 
-  describe('the inbox files that the free deletes (TP-29)', () => {
+  describe('the inbox files that the free deletes', () => {
     const inboxOf = (id: string): string => workerPathsOf(HOME, id).inboxDir;
 
     it('names them, carries them in the json, and keeps them', async () => {
@@ -501,7 +501,7 @@ describe('dismiss ID: the work must be pushed', () => {
     ],
   ];
 
-  it.each(cases)('prints a STUCK line and frees nothing when %s (TP-54)', async (_name, git, reason) => {
+  it.each(cases)('prints a STUCK line and frees nothing when %s', async (_name, git, reason) => {
     const made = await make({ workers: [{ id: 'alpha' }], git });
     const dry = await outputOf(made, { words: ['alpha'] });
     const dryStuck = dry.lines.filter((line) => line.text.startsWith(dismissWords.stuck));
@@ -518,13 +518,13 @@ describe('dismiss ID: the work must be pushed', () => {
     expect(lineExists(made, 'alpha')).toBe(true);
   });
 
-  it('prints one STUCK line for each reason (TP-54)', async () => {
+  it('prints one STUCK line for each reason', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], git: { status: { [alpha]: ' M a.ts\0' }, stashes: { [cloneOf('web')]: 2 } } });
     const output = await outputOf(made, { words: ['alpha'] });
     expect(output.lines.filter((line) => line.text.startsWith(dismissWords.stuck))).toHaveLength(2);
   });
 
-  it('frees a worker that has no commit of its own and was never pushed, because its head is below the default branch of the remote (TP-53)', async () => {
+  it('frees a worker that has no commit of its own and was never pushed, because its head is below the default branch of the remote', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], git: onDefault });
     const dry = await outputOf(made, { words: ['alpha'] });
     expect(dry.failed).toBe(false);
@@ -535,7 +535,7 @@ describe('dismiss ID: the work must be pushed', () => {
     expect(await recordState(made, 'alpha')).toBe('absent');
   });
 
-  it('frees a worker whose branch the remote dropped when its head is below the default branch (TP-53)', async () => {
+  it('frees a worker whose branch the remote dropped when its head is below the default branch', async () => {
     const git: GitFixture = { ...onDefault, remotes: { [cloneOf('web')]: { copies: { 'worker/alpha': HEAD, main: OLDER }, now: { main: OLDER } } } };
     const made = await make({ workers: [{ id: 'alpha' }], git });
     const output = await outputOf(made, { words: ['alpha'], yes: true });
@@ -543,7 +543,7 @@ describe('dismiss ID: the work must be pushed', () => {
     expect(await recordState(made, 'alpha')).toBe('absent');
   });
 
-  it('names the default branch in the reason when the head is on neither remote branch (TP-54)', async () => {
+  it('names the default branch in the reason when the head is on neither remote branch', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], git: offDefault });
     const output = await outputOf(made, { words: ['alpha'] });
     const stuck = output.lines.filter((line) => line.text.startsWith(dismissWords.stuck)).map((line) => line.text);
@@ -564,7 +564,7 @@ describe('dismiss ID: the work must be pushed', () => {
     ]);
   });
 
-  it('fetches the worker branches and the default branch of the clone in one call before it reads the copies of the remote branches (TP-60)', async () => {
+  it('fetches the worker branches and the default branch of the clone in one call before it reads the copies of the remote branches', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], git: onDefault });
     await outputOf(made, { words: ['alpha'] });
     const commands = made.git.commands();
@@ -598,7 +598,7 @@ describe('dismiss ID: the work must be pushed', () => {
 });
 
 describe('dismiss ID --yes: the free', () => {
-  it('ends the pane before it removes the work copy with no force, and deletes the record and its last-seen line (TP-53, TP-55, TP-57)', async () => {
+  it('ends the pane before it removes the work copy with no force, and deletes the record and its last-seen line', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     const pane = paneOf(made, 'alpha');
     const output = await outputOf(made, { words: ['alpha'], yes: true });
@@ -651,7 +651,7 @@ describe('dismiss ID --yes: the free', () => {
     expect(text).toContain('and more');
   });
 
-  it('frees a worker whose work copy holds the excluded settings file, because git ignores it and the removal deletes it (TP-53)', async () => {
+  it('frees a worker whose work copy holds the excluded settings file, because git ignores it and the removal deletes it', async () => {
     const settings = '.claude/settings.local.json';
     const made = await make({ workers: [{ id: 'alpha' }], git: { ignoredFiles: { [copyOf('alpha')]: [settings] } } });
     const dry = await outputOf(made, { words: ['alpha'] });
@@ -778,7 +778,7 @@ describe('dismiss ID: a worker that must not end', () => {
     expect(hasPane(made, 'alpha')).toBe(true);
   });
 
-  it('TP-5: refuses a worker whose session shows a dialog with exit 1, also in the dry run, names its pane, and ends nothing', async () => {
+  it('refuses a worker whose session shows a dialog with exit 1, also in the dry run, names its pane, and ends nothing', async () => {
     const made = await make({ workers: [{ id: 'alpha', event: 'Notification' }] });
     const pane = paneOf(made, 'alpha');
     for (const yes of [false, true]) {
@@ -792,7 +792,7 @@ describe('dismiss ID: a worker that must not end', () => {
     expect(hasPane(made, 'alpha')).toBe(true);
   });
 
-  it('refuses a worker that turns busy after the first read of its state, ends nothing, and names the command to run again (TP-59)', async () => {
+  it('refuses a worker that turns busy after the first read of its state, ends nothing, and names the command to run again', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], atFetch: (turned) => turned.turnBusy('alpha') });
     const error = await errorOf(made, { words: ['alpha'], yes: true });
     expect(error.kind).toBe('failure');
@@ -811,7 +811,7 @@ describe('dismiss ID: a worker that must not end', () => {
     expect(output.failed).toBe(false);
   });
 
-  it('refuses a worker whose state is not known with exit 1 and a remedy that names its pane (TP-59)', async () => {
+  it('refuses a worker whose state is not known with exit 1 and a remedy that names its pane', async () => {
     const made = await make({ workers: [{ id: 'alpha', event: null }] });
     const pane = paneOf(made, 'alpha');
     const error = await errorOf(made, { words: ['alpha'], yes: true });
@@ -822,7 +822,7 @@ describe('dismiss ID: a worker that must not end', () => {
     expect(hasPane(made, 'alpha')).toBe(true);
   });
 
-  it('is a security stop and ends nothing when another folder owns the session of the node, so that session keeps running (TP-59)', async () => {
+  it('is a security stop and ends nothing when another folder owns the session of the node, so that session keeps running', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], tmux: { sessions: { [NODE]: '/other/node' } } });
     const error = await errorOf(made, { words: ['alpha'], yes: true });
     expect(error.kind).toBe('safety');
@@ -833,7 +833,7 @@ describe('dismiss ID: a worker that must not end', () => {
 });
 
 describe('dismiss ID: the path of the work copy', () => {
-  it('is a security stop for a record whose work copy is outside work-copies/ (TP-55)', async () => {
+  it('is a security stop for a record whose work copy is outside work-copies/', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     const file = workerPathsOf(HOME, 'alpha').recordFile;
     made.deps.seed(file, (made.deps.files.get(file) ?? '').replace(copyOf('alpha'), '/elsewhere/alpha'));
@@ -843,7 +843,7 @@ describe('dismiss ID: the path of the work copy', () => {
     await expectNothingChanged(made, []);
   });
 
-  it('is a security stop when a folder above the work copy is a link, and the primary clone is untouched (TP-55)', async () => {
+  it('is a security stop when a folder above the work copy is a link, and the primary clone is untouched', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], links: { [`${HOME}/work-copies/web`]: cloneOf('web') } });
     const error = await errorOf(made, { words: ['alpha'], yes: true });
     expect(error.kind).toBe('safety');
@@ -851,7 +851,7 @@ describe('dismiss ID: the path of the work copy', () => {
     await expectNothingChanged(made, ['alpha']);
   });
 
-  it('is a security stop when the real path of the work copy leaves work-copies/, whatever the checks of the path said (TP-55)', async () => {
+  it('is a security stop when the real path of the work copy leaves work-copies/, whatever the checks of the path said', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], links: { [`${HOME}/work-copies/web`]: '/elsewhere/web' } });
     // The link appears after the check of the path: lstat still says folder, and the real path leads outside.
     const hidden: FakeDeps = { ...made.deps, fs: { ...made.deps.fs, lstat: async (path) => (path === `${HOME}/work-copies/web` ? ok('dir' as const) : made.deps.fs.lstat(path)) } };
@@ -863,7 +863,7 @@ describe('dismiss ID: the path of the work copy', () => {
     await expectNothingChanged(made, ['alpha']);
   });
 
-  it('is a security stop when the clone of the project is a link into the work copy, so the clone is never freed (TP-55)', async () => {
+  it('is a security stop when the clone of the project is a link into the work copy, so the clone is never freed', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], links: { [cloneOf('web')]: copyOf('alpha') } });
     const error = await errorOf(made, { words: ['alpha'], yes: true });
     expect(error.kind).toBe('safety');
@@ -872,7 +872,7 @@ describe('dismiss ID: the path of the work copy', () => {
     await expectNothingChanged(made, ['alpha']);
   });
 
-  it('removes the work copy by the real path that the checks proved, not by the path of the record rule (TP-55)', async () => {
+  it('removes the work copy by the real path that the checks proved, not by the path of the record rule', async () => {
     // The folder of the node is a link: every real path lies below another folder than the path of the record rule.
     const real = (path: string): string => (path.startsWith(HOME) ? `/real/node${path.slice(HOME.length)}` : path);
     const made = await make({ workers: [{ id: 'alpha' }], git: { heads: { [real(copyOf('alpha'))]: HEAD } } });
@@ -919,7 +919,7 @@ describe('dismiss ID: the git link of the work copy', () => {
   /** The git calls that run in the work copy. */
   const readsOf = (made: Made): readonly RunCall[] => made.git.calls.filter((call) => call.args[0] === '-C' && call.args[1] === alpha);
 
-  it('reads the work copy from the git folder that the clone keeps for it, with the file monitor off, and reads the stash and the commits in the clone (TP-55)', async () => {
+  it('reads the work copy from the git folder that the clone keeps for it, with the file monitor off, and reads the stash and the commits in the clone', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     const output = await outputOf(made, { words: ['alpha'] });
     expect(output.failed).toBe(false);
@@ -989,7 +989,7 @@ describe('dismiss ID: the git link of the work copy', () => {
         made.deps.files.delete(link);
       },
     ],
-  ])('is a security stop, with no git read of the work copy and no change, when the .git entry of the work copy %s (TP-55)', async (_name, change) => {
+  ])('is a security stop, with no git read of the work copy and no change, when the .git entry of the work copy %s', async (_name, change) => {
     const made = await make({ workers: [{ id: 'alpha' }, { id: 'beta' }] });
     change(made);
     for (const yes of [false, true]) {
@@ -1087,7 +1087,7 @@ describe('dismiss --idle', () => {
 
   const idleFleet = (change: Partial<Setup> = {}): Promise<Made> => make({ workers: fleet, config, ...change });
 
-  it('lists the idle workers with their state and whether the work is pushed, and changes nothing (TP-58)', async () => {
+  it('lists the idle workers with their state and whether the work is pushed, and changes nothing', async () => {
     const made = await idleFleet({ git: { status: { [copyOf('beta')]: ' M b.ts\0' } } });
     const output = await outputOf(made, { idle: true }, portOf(items));
     const rows = rowsOf(output, 3);
@@ -1102,7 +1102,7 @@ describe('dismiss --idle', () => {
     expect(made.deps.prompts).toEqual([]);
   });
 
-  describe('the ignored files in the table (TP-29)', () => {
+  describe('the ignored files in the table', () => {
     const FILES = ['cache/run.log', 'dist/'];
     const MANY = Array.from({ length: dismissWords.maxIgnoredShown + 4 }, (_, index) => `cache/file-${String(index).padStart(2, '0')}.log`);
 
@@ -1191,13 +1191,13 @@ describe('dismiss --idle', () => {
 
   const fetchedBy = (made: Made): string[] => made.git.calls.filter((call) => call.args[2] === 'fetch').map((call) => call.args[1] ?? '').sort();
 
-  it('fetches once for each clone to list the workers (TP-60)', async () => {
+  it('fetches once for each clone to list the workers', async () => {
     const made = await idleFleet();
     await outputOf(made, { idle: true }, portOf(items));
     expect(fetchedBy(made)).toEqual([cloneOf('api'), cloneOf('web')]);
   });
 
-  it('fetches again, once for each clone of a pick, after the pick, so the pushed test judges the remote of that time (TP-60)', async () => {
+  it('fetches again, once for each clone of a pick, after the pick, so the pushed test judges the remote of that time', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha beta' } });
     await outputOf(made, { idle: true }, portOf(items));
     expect(fetchedBy(made)).toEqual([cloneOf('api'), cloneOf('web'), cloneOf('web')]);
@@ -1211,7 +1211,7 @@ describe('dismiss --idle', () => {
     expect(made.deps.prompts).toEqual([]);
   });
 
-  it('ends only the panes that the owner picks on a terminal window, and frees those workers (TP-58)', async () => {
+  it('ends only the panes that the owner picks on a terminal window, and frees those workers', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha gamma' } });
     const pane = (id: string) => paneOf(made, id).pid;
     const [alphaPid, gammaPid] = [pane('alpha'), pane('gamma')];
@@ -1271,7 +1271,7 @@ describe('dismiss --idle', () => {
     expect(await recordState(made, 'alpha')).toBe('absent');
   });
 
-  it('reads the state of the workers again after the pick, and refuses a pick that turned busy while the owner typed, with nothing ended (TP-59)', async () => {
+  it('reads the state of the workers again after the pick, and refuses a pick that turned busy while the owner typed, with nothing ended', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha beta' }, atPrompt: (turned) => turned.turnBusy('alpha') });
     const error = await errorOf(made, { idle: true }, portOf(items));
     expect(error.kind).toBe('failure');
@@ -1283,7 +1283,7 @@ describe('dismiss --idle', () => {
     expect(hasPane(made, 'beta')).toBe(true);
   });
 
-  it('checks the pushed test again after the pick: work that the owner left changed while typing keeps its pane, and the others are freed (TP-54)', async () => {
+  it('checks the pushed test again after the pick: work that the owner left changed while typing keeps its pane, and the others are freed', async () => {
     const status: Record<string, string> = {};
     const made = await idleFleet({
       terminal: { answer: 'alpha beta' },
@@ -1308,7 +1308,7 @@ describe('dismiss --idle', () => {
     ['a busy worker', 'alpha', { id: 'alpha', event: 'UserPromptSubmit' }, 'dismiss --idle'],
     ['a worker whose state is not known', 'alpha', { id: 'alpha', event: null, percentOnly: true }, 'status'],
     ['a worker with no live pane', 'alpha', { id: 'alpha', pane: false }, 'status'],
-  ])('refuses the pick of %s with a remedy, exit 1, and ends nothing (TP-59)', async (_name, pick, seed, remedy) => {
+  ])('refuses the pick of %s with a remedy, exit 1, and ends nothing', async (_name, pick, seed, remedy) => {
     const made = await make({ workers: [seed, { id: 'zed' }], terminal: { answer: `${pick} zed` } });
     const error = await errorOf(made, { idle: true }, portOf({ alpha: NONE, delta: NONE, zed: NONE }));
     expect(error.kind).toBe('failure');
@@ -1327,7 +1327,7 @@ describe('dismiss --idle', () => {
     expect(output.json).toMatchObject({ workers: [] });
   });
 
-  describe('the work item gates the list and the pick (TP-28)', () => {
+  describe('the work item gates the list and the pick', () => {
     const TWO: readonly Seed[] = [{ id: 'alpha' }, { id: 'beta' }];
 
     it('lists no worker with open work and no worker with an unknown work item, though each is idle', async () => {
@@ -1377,7 +1377,7 @@ describe('dismiss --idle', () => {
     });
   });
 
-  it('lists, then stops with exit 4 in a factory session, and asks nothing (TP-60)', async () => {
+  it('lists, then stops with exit 4 in a factory session, and asks nothing', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha' }, env: { FACTORY_SESSION: 'demo' } });
     const output = await outputOf(made, { idle: true }, portOf(items));
     expect(output.failed).toBe(true);
@@ -1388,7 +1388,7 @@ describe('dismiss --idle', () => {
     await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
   });
 
-  it('stops with exit 4 in a factory session also when no worker is idle, so the exit code does not depend on the list (TP-60)', async () => {
+  it('stops with exit 4 in a factory session also when no worker is idle, so the exit code does not depend on the list', async () => {
     const made = await idleFleet({ env: { FACTORY_SESSION: 'demo' } });
     const output = await outputOf(made, { idle: true });
     expect(textOf(output)).toContain('No idle');
@@ -1397,7 +1397,7 @@ describe('dismiss --idle', () => {
     await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
   });
 
-  it('ends nothing when another folder owns the session of the node, so that session keeps running (TP-59)', async () => {
+  it('ends nothing when another folder owns the session of the node, so that session keeps running', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha' }, tmux: { sessions: { [NODE]: '/other/node' } } });
     const error = await errorOf(made, { idle: true }, portOf(items));
     expect(error.kind).toBe('safety');
@@ -1414,7 +1414,7 @@ describe('dismiss --idle', () => {
   });
 });
 
-describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', () => {
+describe('dismiss --idle: the work items come from the board', () => {
   const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
   const WORKERS: readonly Seed[] = [{ id: 'alpha' }, { id: 'beta' }, { id: 'gamma' }];
   /** Alpha has no item, beta has an item in progress, and gamma has a closed item. */
@@ -1432,7 +1432,7 @@ describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', ()
 
   const BOARD_PORT = boardWorkItems(recipes);
 
-  it('M5-1b TP-44 lists the workers that the board says have no open work, and not the worker with an item in progress', async () => {
+  it('lists the workers that the board says have no open work, and not the worker with an item in progress', async () => {
     const made = await withBoard(BOARD);
     const output = await outputOf(made, { idle: true }, BOARD_PORT);
     expect(idsOf(output)).toEqual(['alpha', 'gamma']);
@@ -1440,7 +1440,7 @@ describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', ()
     await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
   });
 
-  it('M5-1b TP-44 gives the board to the command line: dismiss --idle through runCli lists the idle workers', async () => {
+  it('gives the board to the command line: dismiss --idle through runCli lists the idle workers', async () => {
     const made = await withBoard(BOARD);
     const sink = captureSink();
     expect(await runCli(['dismiss', '--idle', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
@@ -1448,7 +1448,7 @@ describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', ()
     expect(json.workers.map((worker) => worker.id)).toEqual(['alpha', 'gamma']);
   });
 
-  it('M5-1b TP-44 lists no worker when the setup has no board block', async () => {
+  it('lists no worker when the setup has no board block', async () => {
     const made = await withBoard(BOARD, { config: sampleConfig() });
     const output = await outputOf(made, { idle: true }, BOARD_PORT);
     expect(textOf(output)).toContain('No idle');
@@ -1458,7 +1458,7 @@ describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', ()
   it.each([
     ['a board file that is not there', undefined],
     ['a board file that is not JSON', 'not json'],
-  ])('M5-1b TP-44 lists no worker, with a warning that names the board file, for %s', async (_name, text) => {
+  ])('lists no worker, with a warning that names the board file, for %s', async (_name, text) => {
     const made = await withBoard(text);
     const output = await outputOf(made, { idle: true }, BOARD_PORT);
     expect(textOf(output)).toContain('No idle');
@@ -1466,7 +1466,7 @@ describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', ()
     expect(output.warnings[0]).toContain(files.board);
   });
 
-  it('M5-1b TP-64 reads the board file once to list the idle workers, and once more just before the stops', async () => {
+  it('reads the board file once to list the idle workers, and once more just before the stops', async () => {
     const listed = await withBoard(BOARD);
     const listReads = countReadsOf(listed.deps, BOARD_FILE);
     await runDismiss(listReads.deps, optionsOf({ idle: true }), recipes, noLog, BOARD_PORT);
@@ -1478,7 +1478,7 @@ describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', ()
     expect(pickReads.count()).toBe(2);
   });
 
-  it('M5-1b TP-44 refuses a pick of a worker that got an item in progress while the owner typed, with nothing ended', async () => {
+  it('refuses a pick of a worker that got an item in progress while the owner typed, with nothing ended', async () => {
     const made = await withBoard(BOARD, {
       terminal: { answer: 'alpha gamma' },
       atPrompt: (typing) => typing.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha' })])),
@@ -1490,7 +1490,7 @@ describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', ()
   });
 });
 
-describe('the accepted heads of the pushed test (TP-38)', () => {
+describe('the accepted heads of the pushed test', () => {
   const alpha = copyOf('alpha');
   /** The merge commit of a squash merge: a commit that the work copy never held. */
   const MERGE = 'c'.repeat(40);
@@ -1595,7 +1595,7 @@ describe('freeWorker: the check before the removal', () => {
   });
 });
 
-describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 to TP-39)', () => {
+describe('dismiss ID --closed: the in-session free of a finished worker', () => {
   const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
   const BOARD_PORT = boardWorkItems(recipes);
   const alpha = copyOf('alpha');
@@ -1660,7 +1660,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     expect(lineExists(given.made, 'alpha')).toBe(true);
   };
 
-  it('TP-32 writes one decision row that the coordinator decides, and then frees the worker', async () => {
+  it('writes one decision row that the coordinator decides, and then frees the worker', async () => {
     const given = await world({ git: { ignoredFiles: { [alpha]: ['cache/a.log'] } } });
     given.made.deps.seed(`${inbox}/review.md`, 'Looks fine.\n');
     const review = `${layoutOf(HOME).reviewsDir}/B-1.md`;
@@ -1694,7 +1694,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     });
   });
 
-  it('TP-32 names at most the cap of the closed items in the decision row, and counts the rest', async () => {
+  it('names at most the cap of the closed items in the decision row, and counts the rest', async () => {
     const ids = Array.from({ length: dismissWords.maxItemsNamed + 2 }, (_, index) => `B-${index + 1}`);
     const given = await world({}, boardText(ids.map((id) => itemRecord(id, { status: 'done', lane: 'alpha' }))));
     const output = await closedOutput(given);
@@ -1714,16 +1714,16 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
   });
 
   it.each<[string, string | null, Partial<Setup>]>([
-    ['TP-33 an item that was assigned and then unassigned', boardText([itemRecord('B-1', { status: 'doing', [boardKeys.unassignedFrom]: ['alpha'] })]), {}],
+    ['an item that was assigned and then unassigned', boardText([itemRecord('B-1', { status: 'doing', [boardKeys.unassignedFrom]: ['alpha'] })]), {}],
     [
-      'TP-34 an old closed item that was assigned after an unassign',
+      'an old closed item that was assigned after an unassign',
       boardText([itemRecord('B-1', { status: 'open', [boardKeys.unassignedFrom]: ['alpha'] }), itemRecord('B-2', { status: 'done', lane: 'alpha' })]),
       {},
     ],
-    ['TP-34 a worker that no item names', boardText([itemRecord('B-1', { status: 'done', lane: 'beta' })]), {}],
-    ['TP-36 a setup with no worker field', CLOSED, { config: sampleConfig() }],
-    ['TP-36 a board that cannot be read', null, {}],
-    ['TP-36 a board that is not JSON', 'not json', {}],
+    ['a worker that no item names', boardText([itemRecord('B-1', { status: 'done', lane: 'beta' })]), {}],
+    ['a setup with no worker field', CLOSED, { config: sampleConfig() }],
+    ['a board that cannot be read', null, {}],
+    ['a board that is not JSON', 'not json', {}],
   ])('%s is refused with exit 4, the owner remedy, and nothing is written or freed', async (_name, board, change) => {
     const given = await world(change, board);
     const error = await closedError(given);
@@ -1734,7 +1734,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     await expectKept(given);
   });
 
-  it('TP-35 refuses a worker that still holds an open item, and frees nothing', async () => {
+  it('refuses a worker that still holds an open item, and frees nothing', async () => {
     const given = await world({}, boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha' }), itemRecord('B-2', { status: 'done', lane: 'alpha' })]));
     const error = await closedError(given);
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -1742,7 +1742,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     await expectKept(given);
   });
 
-  it('TP-36 refuses a caller in a worker pane before it reads the board or the work copy', async () => {
+  it('refuses a caller in a worker pane before it reads the board or the work copy', async () => {
     const given = await world({ env: { TMUX_PANE: '%3', FACTORY_SESSION: NODE } });
     const reads = countReadsOf(given.made.deps, BOARD_FILE);
     const result = await runDismiss(reads.deps, optionsOf({ words: ['alpha'], closed: true }), recipes, given.log, BOARD_PORT);
@@ -1760,7 +1760,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     expect(given.made.git.commands()).toEqual([]);
   });
 
-  it('TP-36 refuses a caller outside every session before it reads the board or the work copy', async () => {
+  it('refuses a caller outside every session before it reads the board or the work copy', async () => {
     const given = await world({ env: { TMUX_PANE: undefined, FACTORY_SESSION: undefined } });
     const error = await closedError(given);
     expect(error.kind).toBe('usage');
@@ -1773,7 +1773,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     ['--idle', { idle: true, words: [] }],
     ['no id', { words: [] }],
     ['two ids', { words: ['alpha', 'beta'] }],
-  ])('TP-39 takes %s as a usage error and runs no program', async (_name, change) => {
+  ])('takes %s as a usage error and runs no program', async (_name, change) => {
     const given = await world();
     const error = await closedError(given, change);
     expect(error.kind).toBe('usage');
@@ -1793,7 +1793,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     await expectKept(given);
   });
 
-  it('TP-38 frees a squashed branch that the remote dropped only when its head is the recorded head', async () => {
+  it('frees a squashed branch that the remote dropped only when its head is the recorded head', async () => {
     const same = await world({ git: squashed }, recorded(HEAD));
     expect((await closedOutput(same)).failed).toBe(false);
     expect(same.rows).toHaveLength(1);
@@ -1810,7 +1810,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     await expectKept(none);
   });
 
-  it('TP-38 keeps the owner yes path as it was for the same squashed branch', async () => {
+  it('keeps the owner yes path as it was for the same squashed branch', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], git: squashed });
     const output = await outputOf(made, { words: ['alpha'], yes: true });
     expect(output.exitCode).toBe(1);
@@ -1818,7 +1818,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker (TP-32 t
     await expectNothingChanged(made, ['alpha']);
   });
 
-  describe('the check right before the removal (TP-37)', () => {
+  describe('the check right before the removal', () => {
     const expectStopped = async (given: World, reason: string): Promise<void> => {
       const error = await closedError(given);
       expect(error.kind).toBe('failure');

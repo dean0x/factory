@@ -44,7 +44,7 @@ const failureOf = <T>(result: CliResult<T>) => {
   return result.error;
 };
 
-describe('the text of the guard hook (TP-1)', () => {
+describe('the text of the guard hook', () => {
   it('starts the node program and the script by their absolute paths, with the words state guard', () => {
     expect(guardHookText(FAKE_PROGRAM_ARGV)).toEqual({ ok: true, value: HOOK_TEXT });
   });
@@ -81,7 +81,7 @@ describe('the text of the guard hook (TP-1)', () => {
   });
 });
 
-describe('the install of the guard (TP-1)', () => {
+describe('the install of the guard', () => {
   it('writes the package text as pre-commit, pre-merge-commit and pre-applypatch in the guard folder of the git folder, with mode 755, and nothing else', async () => {
     const { deps } = await installed();
     for (const hook of HOOKS) {
@@ -103,7 +103,7 @@ describe('the install of the guard (TP-1)', () => {
     expect(gitCommands()).toContain(`config -- core.hooksPath ${GUARD}`);
   });
 
-  it('names the final state folder in the setting when the install runs in the staging folder (TP-3)', async () => {
+  it('names the final state folder in the setting when the install runs in the staging folder', async () => {
     const staging = `${HOME}/.factory.tmp-4242`;
     const made = make();
     made.deps.seedDir(`${staging}/.git`);
@@ -145,7 +145,7 @@ describe('the install of the guard (TP-1)', () => {
   });
 });
 
-describe('the install of the guard stops before any change (TP-53)', () => {
+describe('the install of the guard stops before any change', () => {
   const unchanged = (made: Made, calls: number): void => {
     expect(made.deps.atomicWrites).toEqual([]);
     expect(made.gitCommands().filter((command) => command.startsWith('config --'))).toEqual([]);
@@ -232,7 +232,7 @@ describe('the install of the guard stops before any change (TP-53)', () => {
   });
 });
 
-describe('the state of the guard (TP-11)', () => {
+describe('the state of the guard', () => {
   it('is on after an install', async () => {
     const { deps } = await installed();
     expect(await guardStateOf(deps, STATE)).toEqual({ ok: true, value: { on: true } });
@@ -302,7 +302,7 @@ describe('the state of the guard (TP-11)', () => {
   });
 });
 
-describe('the plan to write the guard (TP-2, TP-4)', () => {
+describe('the plan to write the guard', () => {
   it('is current when the guard is on', async () => {
     const { deps } = await installed();
     expect(await guardPlanOf(deps, STATE)).toEqual({ ok: true, value: { action: 'current' } });
@@ -485,7 +485,7 @@ describe('the warning for a guard that is off', () => {
   );
 });
 
-describe('the refusal of an off guard (TP-11)', () => {
+describe('the refusal of an off guard', () => {
   it('passes when the guard is on', async () => {
     const { deps } = await installed();
     expect(await requireGuardOn(deps, STATE)).toEqual({ ok: true, value: undefined });

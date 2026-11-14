@@ -78,7 +78,7 @@ const errorOf = <T>(result: CliResult<T>): CliError => {
 const exitOf = <T>(result: CliResult<T>): number => exitCodeOf[errorOf(result).kind];
 
 describe('the board file: the keys and their order', () => {
-  it('M5-1b TP-23 keeps the unknown keys of an item, and the order of the keys of the board and of the item', () => {
+  it('keeps the unknown keys of an item, and the order of the keys of the board and of the item', () => {
     const text = jsonOf({ tracks: [], items: [item('B-1', { zeta: 1, alpha: { k: [1, 2] } })], [QUEUE]: [] });
     const doc = valueOf(parseBoard(text, QUEUE));
     expect(Object.keys(doc.top)).toEqual(['tracks', 'items', QUEUE]);
@@ -86,19 +86,19 @@ describe('the board file: the keys and their order', () => {
     expect(doc.items[0]?.record['alpha']).toEqual({ k: [1, 2] });
   });
 
-  it('M5-1b TP-24 refuses a top key that is not the queue key, items or tracks, and names the file and the key', () => {
+  it('refuses a top key that is not the queue key, items or tracks, and names the file and the key', () => {
     const error = errorOf(parseBoard(jsonOf(boardOf({ extra: 1 })), QUEUE));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.board);
     expect(error.message).toContain('extra');
   });
 
-  it('M5-1b TP-24 accepts the optional tracks key, and a board without it', () => {
+  it('accepts the optional tracks key, and a board without it', () => {
     expect(parseBoard(jsonOf(boardOf({ tracks: [] })), QUEUE).ok).toBe(true);
     expect(parseBoard(jsonOf(boardOf()), QUEUE).ok).toBe(true);
   });
 
-  it('M5-1b TP-24 refuses a board with no queue key, no items key or no JSON object, and names the file', () => {
+  it('refuses a board with no queue key, no items key or no JSON object, and names the file', () => {
     for (const text of [jsonOf({ items: [] }), jsonOf({ [QUEUE]: [] }), jsonOf([]), 'not json', jsonOf({ [QUEUE]: {}, items: [] })]) {
       const result = parseBoard(text, QUEUE);
       expect(exitOf(result), text).toBe(1);
@@ -106,20 +106,20 @@ describe('the board file: the keys and their order', () => {
     }
   });
 
-  it('M5-1b TP-57 stops a board that still has the old queue key with exit 1 and the remedy to upgrade', () => {
+  it('stops a board that still has the old queue key with exit 1 and the remedy to upgrade', () => {
     const error = errorOf(parseBoard(jsonOf({ queue: [], items: [] }), QUEUE));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.board);
     expect(error.hint).toContain(commandText(commands.upgrade));
   });
 
-  it('M5-1b TP-57 takes the default key as the key of the board when the recipe gives that key', () => {
+  it('takes the default key as the key of the board when the recipe gives that key', () => {
     expect(parseBoard(jsonOf({ queue: [], items: [] }), 'queue').ok).toBe(true);
   });
 });
 
 describe('the items of the board file', () => {
-  it('M5-1b TP-24 refuses an item with no title, no state or an id that is not of the form B-n, and names the file', () => {
+  it('refuses an item with no title, no state or an id that is not of the form B-n, and names the file', () => {
     const bad = [
       { id: 'B-1', status: 'open' },
       { id: 'B-1', title: 'T' },
@@ -137,13 +137,13 @@ describe('the items of the board file', () => {
     }
   });
 
-  it('M5-1b TP-24 refuses a track or a stage that is not text', () => {
+  it('refuses a track or a stage that is not text', () => {
     for (const extra of [{ track: 3 }, { stage: ['a'] }]) {
       expect(exitOf(parseBoard(jsonOf(boardOf({ items: [item('B-1', extra)] })), QUEUE))).toBe(1);
     }
   });
 
-  it('M5-1b TP-23 reads the track and the stage of an item, and null when they are not there', () => {
+  it('reads the track and the stage of an item, and null when they are not there', () => {
     const doc = valueOf(parseBoard(jsonOf(boardOf({ items: [item('B-1', { track: 'a', stage: 'building' }), item('B-2')] })), QUEUE));
     expect(doc.items.map(({ id, track, stage }) => [id, track, stage])).toEqual([
       ['B-1', 'a', 'building'],
@@ -151,14 +151,14 @@ describe('the items of the board file', () => {
     ]);
   });
 
-  it('M5-1b TP-88 stops a board with a repeated item id, with exit 1, and names the file and the id', () => {
+  it('stops a board with a repeated item id, with exit 1, and names the file and the id', () => {
     const error = errorOf(parseBoard(jsonOf(boardOf({ items: [item('B-1'), item('B-2'), item('B-2')] })), QUEUE));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.board);
     expect(error.message).toContain('B-2');
   });
 
-  it('M5-1b TP-24 refuses a queue that is not a list of objects', () => {
+  it('refuses a queue that is not a list of objects', () => {
     expect(exitOf(parseBoard(jsonOf(boardOf({ [QUEUE]: [1] })), QUEUE))).toBe(1);
   });
 });
@@ -166,11 +166,11 @@ describe('the items of the board file', () => {
 describe('the tracks of the board file', () => {
   const trackOf = (changes: Record<string, unknown> = {}): Record<string, unknown> => ({ id: 'core', name: 'Core', roadmap: true, ...changes });
 
-  it('M5-1b TP-70 reads an absent tracks key as an empty list', () => {
+  it('reads an absent tracks key as an empty list', () => {
     expect(valueOf(parseBoard(jsonOf(boardOf()), QUEUE)).tracks).toEqual([]);
   });
 
-  it('M5-1b TP-71 reads the tracks, and keeps their order', () => {
+  it('reads the tracks, and keeps their order', () => {
     const doc = valueOf(parseBoard(jsonOf(boardOf({ tracks: [trackOf(), trackOf({ id: 'agent-cost', name: 'Agent cost', roadmap: false })] })), QUEUE));
     expect(doc.tracks).toEqual([
       { id: 'core', name: 'Core', roadmap: true },
@@ -178,7 +178,7 @@ describe('the tracks of the board file', () => {
     ]);
   });
 
-  it('M5-1b TP-71 stops a tracks value that is not a list with exit 1, and names the file', () => {
+  it('stops a tracks value that is not a list with exit 1, and names the file', () => {
     for (const tracks of [{}, 'core', 3, null, { id: 'core' }]) {
       const result = parseBoard(jsonOf(boardOf({ tracks })), QUEUE);
       expect(exitOf(result), JSON.stringify(tracks)).toBe(1);
@@ -186,7 +186,7 @@ describe('the tracks of the board file', () => {
     }
   });
 
-  it('M5-1b TP-71 stops a track with a bad id, name or roadmap value with exit 1, and names the file', () => {
+  it('stops a track with a bad id, name or roadmap value with exit 1, and names the file', () => {
     const bad = [
       trackOf({ id: 'Core' }),
       trackOf({ id: '1core' }),
@@ -214,18 +214,18 @@ describe('the tracks of the board file', () => {
     }
   });
 
-  it('M5-1b TP-71 keeps a key of a track that the core does not own', () => {
+  it('keeps a key of a track that the core does not own', () => {
     expect(parseBoard(jsonOf(boardOf({ tracks: [trackOf({ owner: 'x' })] })), QUEUE).ok).toBe(true);
   });
 
-  it('M5-1b TP-88 stops a board with a repeated track id, with exit 1, and names the file and the id', () => {
+  it('stops a board with a repeated track id, with exit 1, and names the file and the id', () => {
     const error = errorOf(parseBoard(jsonOf(boardOf({ tracks: [trackOf(), trackOf({ name: 'Other' })] })), QUEUE));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.board);
     expect(error.message).toContain('core');
   });
 
-  it('M5-1b TP-80 takes a track id of 32 characters and not one of 33, and a name of 60 characters and not one of 61', () => {
+  it('takes a track id of 32 characters and not one of 33, and a name of 60 characters and not one of 61', () => {
     expect(trackIdIssue('a'.repeat(32))).toBeNull();
     expect(trackIdIssue('a'.repeat(33))).not.toBeNull();
     expect(trackIdIssue('a-1')).toBeNull();
@@ -236,7 +236,7 @@ describe('the tracks of the board file', () => {
     expect(trackNameIssue('Agent cost')).toBeNull();
   });
 
-  it('M5-1b TP-71 reads the tracks of a top object that has no tracks key as an empty list', () => {
+  it('reads the tracks of a top object that has no tracks key as an empty list', () => {
     expect(valueOf(tracksOf({}))).toEqual([]);
   });
 });
@@ -245,14 +245,14 @@ describe('the waiting file and the decision log', () => {
   const waiting = (items: readonly unknown[], extra: Record<string, unknown> = {}): string =>
     jsonOf({ intro: '', groups: [], items, ...extra });
 
-  it('M5-1b TP-23 reads the waiting items with their ids, and keeps the stored keys', () => {
+  it('reads the waiting items with their ids, and keeps the stored keys', () => {
     const doc = valueOf(parseWaiting(waiting([{ id: 'D-1', title: 'T', zeta: 1 }, { id: 'D-2' }])));
     expect(doc.items.map((entry) => entry.id)).toEqual(['D-1', 'D-2']);
     expect(Object.keys(doc.items[0]?.record ?? {})).toEqual(['id', 'title', 'zeta']);
     expect(Object.keys(doc.top)).toEqual(['intro', 'groups', 'items']);
   });
 
-  it('M5-1b TP-24 refuses a waiting file with another top key, a missing key or an id that is not of the form D-n', () => {
+  it('refuses a waiting file with another top key, a missing key or an id that is not of the form D-n', () => {
     for (const text of [
       waiting([], { extra: 1 }),
       jsonOf({ intro: '', items: [] }),
@@ -268,14 +268,14 @@ describe('the waiting file and the decision log', () => {
     }
   });
 
-  it('M5-1b TP-88 stops a waiting file with a repeated D-n, with exit 1, and names the file and the id', () => {
+  it('stops a waiting file with a repeated D-n, with exit 1, and names the file and the id', () => {
     const error = errorOf(parseWaiting(waiting([{ id: 'D-1' }, { id: 'D-3' }, { id: 'D-3' }])));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.waiting);
     expect(error.message).toContain('D-3');
   });
 
-  it('M5-1b TP-23 reads the id at the start of the item text of each row of the log, and null when there is none', () => {
+  it('reads the id at the start of the item text of each row of the log, and null when there is none', () => {
     const rows = [
       { item: 'D-132 Factory PR 20: paste the command', decision: 'x' },
       { item: 'D-7' },
@@ -289,14 +289,14 @@ describe('the waiting file and the decision log', () => {
     expect(doc.rows.map((row) => row.id)).toEqual(['D-132', 'D-7', 'D-12', null, null, null, null]);
   });
 
-  it('M5-1b TP-88 stops a decision log with a repeated D-n, with exit 1, and names the file and the id', () => {
+  it('stops a decision log with a repeated D-n, with exit 1, and names the file and the id', () => {
     const error = errorOf(parseDecisionLog(jsonOf({ rows: [{ item: 'D-7 a' }, { item: 'D-8' }, { item: 'D-7 b' }] })));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.decisionLog);
     expect(error.message).toContain('D-7');
   });
 
-  it('M5-1b TP-24 refuses a decision log with another top key, rows that are not a list or a row that is not an object', () => {
+  it('refuses a decision log with another top key, rows that are not a list or a row that is not an object', () => {
     for (const text of [jsonOf({ rows: [], extra: 1 }), jsonOf({ rows: {} }), jsonOf({}), jsonOf({ rows: ['D-1'] }), 'not json']) {
       const result = parseDecisionLog(text);
       expect(exitOf(result), text).toBe(1);
@@ -312,7 +312,7 @@ describe('the read of the board files', () => {
     return deps;
   };
 
-  it('M5-1b TP-93 reads and parses the board file', async () => {
+  it('reads and parses the board file', async () => {
     const deps = seeded(BOARD_PATH, jsonOf(boardOf({ tracks: [{ id: 'core', name: 'Core', roadmap: true }] })));
     const doc = valueOf(await readBoard(deps, LAYOUT, QUEUE));
     expect(doc.items.map((entry) => entry.id)).toEqual(['B-1']);
@@ -320,7 +320,7 @@ describe('the read of the board files', () => {
     expect(doc.queueKey).toBe(QUEUE);
   });
 
-  it('M5-1b TP-93 reads and parses the waiting file and the decision log', async () => {
+  it('reads and parses the waiting file and the decision log', async () => {
     const deps = createFakeDeps({ cwd: HOME });
     deps.seed(WAITING_PATH, jsonOf({ intro: '', groups: [], items: [{ id: 'D-1' }] }));
     deps.seed(LOG_PATH, jsonOf({ rows: [{ item: 'D-2 x' }] }));
@@ -328,14 +328,14 @@ describe('the read of the board files', () => {
     expect(valueOf(await readDecisionLog(deps, LAYOUT)).rows.map((row) => row.id)).toEqual(['D-2']);
   });
 
-  it('M5-1b TP-51 stops a file that is not JSON with exit 1, and names the file', async () => {
+  it('stops a file that is not JSON with exit 1, and names the file', async () => {
     const deps = seeded(BOARD_PATH, 'not json');
     const result = await readBoard(deps, LAYOUT, QUEUE);
     expect(exitOf(result)).toBe(1);
     expect(errorOf(result).message).toContain(fileNames.board);
   });
 
-  it('M5-1b TP-51 stops a file that is not UTF-8 with exit 1, and names the file', async () => {
+  it('stops a file that is not UTF-8 with exit 1, and names the file', async () => {
     const deps = seeded(WAITING_PATH, jsonOf({ intro: '', groups: [], items: [] }));
     deps.invalidUtf8.add(WAITING_PATH);
     const result = await readWaiting(deps, LAYOUT);
@@ -343,7 +343,7 @@ describe('the read of the board files', () => {
     expect(errorOf(result).message).toContain(fileNames.waiting);
   });
 
-  it('M5-1b TP-51 stops a file that is a link with exit 4, and names the file', async () => {
+  it('stops a file that is a link with exit 4, and names the file', async () => {
     const deps = createFakeDeps({ cwd: HOME, links: { [LOG_PATH]: '/elsewhere/log.json' } });
     deps.seed(LOG_PATH, jsonOf({ rows: [] }));
     const result = await readDecisionLog(deps, LAYOUT);
@@ -351,19 +351,19 @@ describe('the read of the board files', () => {
     expect(errorOf(result).message).toContain(fileNames.decisionLog);
   });
 
-  it('M5-1b TP-51 stops a state folder that is a link with exit 4', async () => {
+  it('stops a state folder that is a link with exit 4', async () => {
     const deps = createFakeDeps({ cwd: HOME, links: { [LAYOUT.stateDir]: '/elsewhere/state' } });
     deps.seed(BOARD_PATH, jsonOf(boardOf()));
     expect(exitOf(await readBoard(deps, LAYOUT, QUEUE))).toBe(4);
   });
 
-  it('M5-1b TP-51 stops a file that is not there with exit 1, and names the file', async () => {
+  it('stops a file that is not there with exit 1, and names the file', async () => {
     const result = await readBoard(createFakeDeps({ cwd: HOME }), LAYOUT, QUEUE);
     expect(exitOf(result)).toBe(1);
     expect(errorOf(result).message).toContain(fileNames.board);
   });
 
-  it('M5-1b TP-57 stops a board with the old queue key with exit 1 and the remedy to upgrade', async () => {
+  it('stops a board with the old queue key with exit 1 and the remedy to upgrade', async () => {
     const deps = seeded(BOARD_PATH, jsonOf({ queue: [], items: [] }));
     const error = errorOf(await readBoard(deps, LAYOUT, QUEUE));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -372,35 +372,35 @@ describe('the read of the board files', () => {
 });
 
 describe('the stages of the recipe', () => {
-  it('M5-1b TP-72 gives the stage list of the recipe, and an empty list for a recipe with no stages', () => {
+  it('gives the stage list of the recipe, and an empty list for a recipe with no stages', () => {
     expect(stagesOf(softwareBoard)).toEqual(['ticket', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released']);
     expect(stagesOf({})).toEqual([]);
   });
 
-  it('M5-1b TP-75 gives the first stage to a new item, and none for a recipe with no stages', () => {
+  it('gives the first stage to a new item, and none for a recipe with no stages', () => {
     expect(firstStageOf(softwareBoard)).toBe('ticket');
     expect(firstStageOf(publishBoard)).toBe('draft');
     expect(firstStageOf({})).toBeNull();
   });
 
-  it('M5-1b TP-74 takes a listed stage', () => {
+  it('takes a listed stage', () => {
     expect(valueOf(requireStage(softwareBoard, 'review'))).toBe('review');
   });
 
-  it('M5-1b TP-74 refuses an unknown stage with exit 2 and lists the stages', () => {
+  it('refuses an unknown stage with exit 2 and lists the stages', () => {
     const result = requireStage(softwareBoard, 'nowhere');
     expect(exitOf(result)).toBe(2);
     for (const stage of stagesOf(softwareBoard)) expect(errorOf(result).message).toContain(stage);
   });
 
-  it('M5-1b TP-74 refuses a stage of a recipe with no stage list with exit 2', () => {
+  it('refuses a stage of a recipe with no stage list with exit 2', () => {
     for (const board of [{}, { stages: [] }]) {
       const result = requireStage(board, 'building');
       expect(exitOf(result)).toBe(2);
     }
   });
 
-  it('M5-1b TP-76 refuses a flow-only stage with exit 2, and names the flow that the recipe gives for it', () => {
+  it('refuses a flow-only stage with exit 2, and names the flow that the recipe gives for it', () => {
     for (const [stage, flow] of Object.entries(softwareBoard.flowOnly ?? {})) {
       const result = requireSettableStage(softwareBoard, stage);
       expect(exitOf(result)).toBe(2);
@@ -409,27 +409,27 @@ describe('the stages of the recipe', () => {
     expect(valueOf(requireSettableStage(softwareBoard, 'building'))).toBe('building');
   });
 
-  it('M5-1b TP-103 names the flow of a recipe whose flow-only mark names another flow', () => {
+  it('names the flow of a recipe whose flow-only mark names another flow', () => {
     const result = requireSettableStage(publishBoard, 'printed');
     expect(exitOf(result)).toBe(2);
     expect(errorOf(result).message).toContain('press flow');
     expect(errorOf(result).message).not.toContain('merge');
   });
 
-  it('M5-1b TP-74 refuses an unknown stage before it looks at the flow-only marks, and still lists the stages', () => {
+  it('refuses an unknown stage before it looks at the flow-only marks, and still lists the stages', () => {
     const result = requireSettableStage(softwareBoard, 'nowhere');
     expect(exitOf(result)).toBe(2);
     expect(errorOf(result).message).toContain('ticket');
   });
 
-  it('M5-1b TP-75 shows a stored stage as written, and a stored stage outside the list with a mark', () => {
+  it('shows a stored stage as written, and a stored stage outside the list with a mark', () => {
     expect(stageShown(softwareBoard, 'building')).toBe('building');
     expect(stageShown(softwareBoard, 'merged')).toBe('merged');
     expect(stageShown(softwareBoard, 'odd')).toBe(`odd${UNLISTED_MARK}`);
     expect(stageShown({}, 'building')).toBe(`building${UNLISTED_MARK}`);
   });
 
-  it('M5-1b TP-91 shows a stored stage with a bidi mark or a line break as one clean line', () => {
+  it('shows a stored stage with a bidi mark or a line break as one clean line', () => {
     expect(stageShown(softwareBoard, 'bui‮lding')).toBe(`building${UNLISTED_MARK}`);
     expect(stageShown(softwareBoard, 're\nview')).toBe(`re view${UNLISTED_MARK}`);
   });
@@ -438,36 +438,36 @@ describe('the stages of the recipe', () => {
 describe('the owner fields', () => {
   const board = sampleBoard();
 
-  it('M5-1b TP-26 declares no field when the setup has no board block', () => {
+  it('declares no field when the setup has no board block', () => {
     expect(declaredFields(undefined, 'item')).toEqual([]);
     expect(declaredFields({}, 'row')).toEqual([]);
   });
 
-  it('M5-1b TP-26 declares the fields of one target', () => {
+  it('declares the fields of one target', () => {
     expect(declaredFields(board, 'item').map((field) => field.name)).toEqual(['priority', 'type', 'lane']);
     expect(declaredFields(board, 'row').map((field) => field.name)).toEqual(['release']);
   });
 
-  it('M5-1b TP-25 stores a value that the setup lists, and a token', () => {
+  it('stores a value that the setup lists, and a token', () => {
     const values = valueOf(
       resolveFields(board, 'item', [{ name: 'priority', value: 'P1' }, { name: 'lane', value: 'lane-a' }], { complete: true }),
     );
     expect(values).toEqual({ priority: 'P1', lane: 'lane-a' });
   });
 
-  it('M5-1b TP-28 reads a flag of a row as a boolean', () => {
+  it('reads a flag of a row as a boolean', () => {
     expect(valueOf(resolveFields(board, 'row', [{ name: 'release', value: 'true' }], { complete: true }))).toEqual({ release: true });
     expect(valueOf(resolveFields(board, 'row', [{ name: 'release', value: 'false' }], { complete: true }))).toEqual({ release: false });
     expect(exitOf(resolveFields(board, 'row', [{ name: 'release', value: 'maybe' }], { complete: true }))).toBe(2);
   });
 
-  it('M5-1b TP-26 refuses a value outside the list with exit 2 and names the field', () => {
+  it('refuses a value outside the list with exit 2 and names the field', () => {
     const result = resolveFields(board, 'item', [{ name: 'priority', value: 'P9' }], { complete: false });
     expect(exitOf(result)).toBe(2);
     expect(errorOf(result).message).toContain('priority');
   });
 
-  it('M5-1b TP-26 refuses a token that is not a token with exit 2 and names the field', () => {
+  it('refuses a token that is not a token with exit 2 and names the field', () => {
     for (const value of ['', 'has space', '-x', 'a'.repeat(41)]) {
       const result = resolveFields(board, 'item', [{ name: 'lane', value }], { complete: false });
       expect(exitOf(result), value).toBe(2);
@@ -475,36 +475,36 @@ describe('the owner fields', () => {
     }
   });
 
-  it('M5-1b TP-26 refuses a field that the setup does not name with exit 2 and names the field', () => {
+  it('refuses a field that the setup does not name with exit 2 and names the field', () => {
     const result = resolveFields(board, 'item', [{ name: 'colour', value: 'red' }], { complete: false });
     expect(exitOf(result)).toBe(2);
     expect(errorOf(result).message).toContain('colour');
   });
 
-  it('M5-1b TP-26 refuses every field when the setup has no board block', () => {
+  it('refuses every field when the setup has no board block', () => {
     const result = resolveFields(undefined, 'item', [{ name: 'priority', value: 'P1' }], { complete: false });
     expect(exitOf(result)).toBe(2);
     expect(errorOf(result).message).toContain('priority');
     expect(valueOf(resolveFields(undefined, 'item', [], { complete: true }))).toEqual({});
   });
 
-  it('M5-1b TP-26 refuses a field of the other target with exit 2', () => {
+  it('refuses a field of the other target with exit 2', () => {
     expect(exitOf(resolveFields(board, 'item', [{ name: 'release', value: 'true' }], { complete: false }))).toBe(2);
     expect(exitOf(resolveFields(board, 'row', [{ name: 'priority', value: 'P1' }], { complete: false }))).toBe(2);
   });
 
-  it('M5-1b TP-26 refuses a field that is given twice with exit 2', () => {
+  it('refuses a field that is given twice with exit 2', () => {
     const inputs = [{ name: 'priority', value: 'P1' }, { name: 'priority', value: 'P2' }];
     expect(exitOf(resolveFields(board, 'item', inputs, { complete: false }))).toBe(2);
   });
 
-  it('M5-1b TP-26 refuses a name that is a member of Object.prototype, and does not reach it', () => {
+  it('refuses a name that is a member of Object.prototype, and does not reach it', () => {
     for (const name of ['constructor', '__proto__', 'toString']) {
       expect(exitOf(resolveFields(board, 'item', [{ name, value: 'x' }], { complete: false })), name).toBe(2);
     }
   });
 
-  it('M5-1b TP-26 asks for each required field when the item is complete, and not when it is a change', () => {
+  it('asks for each required field when the item is complete, and not when it is a change', () => {
     const missing = resolveFields(board, 'item', [{ name: 'type', value: 'bug' }], { complete: true });
     expect(exitOf(missing)).toBe(2);
     expect(errorOf(missing).message).toContain('priority');
@@ -567,7 +567,7 @@ const changedLines = (before: string, after: string): { removed: string[]; added
   return { removed: old.slice(head, old.length - tail), added: now.slice(head, now.length - tail) };
 };
 
-describe('the local connector: the contract suite (TP-21)', () => {
+describe('the local connector: the contract suite', () => {
   describeBoardContract('local', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     return {
@@ -580,21 +580,21 @@ describe('the local connector: the contract suite (TP-21)', () => {
   });
 });
 
-describe('the local connector: changes read (TP-21)', () => {
-  it('M5-1b TP-21 reads no changes: an empty list and no cursor, with a cursor or without', async () => {
+describe('the local connector: changes read', () => {
+  it('reads no changes: an empty list and no cursor, with a cursor or without', async () => {
     const connector = connectorOf(await repoWith(EMPTY_BOARD));
     expect(valueOf(await connector.readChanges(null))).toEqual({ events: [], cursor: null });
     expect(valueOf(await connector.readChanges('c-1'))).toEqual({ events: [], cursor: null });
   });
 
-  it('M5-1b TP-21 names the local kind, and the kind of the hosted tracker when the setup has one', async () => {
+  it('names the local kind, and the kind of the hosted tracker when the setup has one', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     expect(connectorOf(repo).kind).toBe('local');
     expect(connectorOf(repo, { tracker: 'github' }).kind).toBe('github');
   });
 });
 
-describe('the local connector: each write is one state commit of the local files (TP-66)', () => {
+describe('the local connector: each write is one state commit of the local files', () => {
   type Write = (connector: BoardConnector) => Promise<CliResult<unknown>>;
   const WRITES: readonly (readonly [string, Write, readonly string[]])[] = [
     ['item add', (c) => c.addItem({ title: 'New', fields: PRIORITY }), [fileNames.board]],
@@ -607,7 +607,7 @@ describe('the local connector: each write is one state commit of the local files
     ['decision ask', (c) => c.askDecision(DECISION), [fileNames.waiting]],
   ];
 
-  it.each(WRITES)('M5-1b TP-66 %s makes one commit that holds only the local files, and prints no tracker line', async (_name, write, staged) => {
+  it.each(WRITES)('%s makes one commit that holds only the local files, and prints no tracker line', async (_name, write, staged) => {
     const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket' })]));
     const done = await write(connectorOf(repo));
     expect(done.ok).toBe(true);
@@ -616,13 +616,13 @@ describe('the local connector: each write is one state commit of the local files
   });
 });
 
-describe('the local connector: the text of the board file (TP-23)', () => {
-  it('M5-1b TP-23 writes the board of the fixture back byte for byte when nothing changes', () => {
+describe('the local connector: the text of the board file', () => {
+  it('writes the board of the fixture back byte for byte when nothing changes', () => {
     const doc = valueOf(parseBoard(SAMPLE, QUEUE));
     expect(valueOf(boardJsonText(doc.top))).toBe(SAMPLE);
   });
 
-  it('M5-1b TP-23 changes only the title line of the item that an update changes, on a large board', async () => {
+  it('changes only the title line of the item that an update changes, on a large board', async () => {
     const repo = await repoWith(SAMPLE);
     valueOf(await connectorOf(repo).updateItem('B-3', { title: 'Local board connector, write path' }));
     expect(changedLines(SAMPLE, repo.textOf(fileNames.board) ?? '')).toEqual({
@@ -632,7 +632,7 @@ describe('the local connector: the text of the board file (TP-23)', () => {
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-23 adds a new key at the end of the item, and leaves the unknown keys and their order as they are', async () => {
+  it('adds a new key at the end of the item, and leaves the unknown keys and their order as they are', async () => {
     const repo = await repoWith(SAMPLE);
     valueOf(await connectorOf(repo).updateItem('B-3', { text: 'New words' }));
     expect(changedLines(SAMPLE, repo.textOf(fileNames.board) ?? '')).toEqual({
@@ -641,7 +641,7 @@ describe('the local connector: the text of the board file (TP-23)', () => {
     });
   });
 
-  it('M5-1b TP-23 changes only the state line of the item for a move, and only the stage line for a stage move', async () => {
+  it('changes only the state line of the item for a move, and only the stage line for a stage move', async () => {
     const repo = await repoWith(SAMPLE);
     const connector = connectorOf(repo);
     valueOf(await connector.moveItem('B-3', { state: 'blocked' }));
@@ -654,7 +654,7 @@ describe('the local connector: the text of the board file (TP-23)', () => {
     });
   });
 
-  it('M5-1b TP-23 changes only the value line of an owner field', async () => {
+  it('changes only the value line of an owner field', async () => {
     const repo = await repoWith(SAMPLE);
     valueOf(await connectorOf(repo).updateItem('B-3', { fields: { priority: 'P2' } }));
     expect(changedLines(SAMPLE, repo.textOf(fileNames.board) ?? '')).toEqual({
@@ -663,7 +663,7 @@ describe('the local connector: the text of the board file (TP-23)', () => {
     });
   });
 
-  it('M5-1b TP-23 escapes a title that is not ASCII, and keeps the pairs of the fixture that are escaped', async () => {
+  it('escapes a title that is not ASCII, and keeps the pairs of the fixture that are escaped', async () => {
     const repo = await repoWith(SAMPLE);
     const title = 'Café 日本語 😀';
     valueOf(await connectorOf(repo).updateItem('B-4', { title }));
@@ -674,14 +674,14 @@ describe('the local connector: the text of the board file (TP-23)', () => {
     expect(valueOf(parseBoard(after, QUEUE)).items.find((entry) => entry.id === 'B-4')?.title).toBe(title);
   });
 
-  it('M5-1b TP-23 makes no commit and leaves the text as it is for an update that sets the values that the item has', async () => {
+  it('makes no commit and leaves the text as it is for an update that sets the values that the item has', async () => {
     const repo = await repoWith(SAMPLE);
     const done = await connectorOf(repo).updateItem('B-3', { title: 'Local board connector', fields: { priority: 'P0' } });
     expect(done.ok).toBe(true);
     expectUntouched(repo, SAMPLE);
   });
 
-  it('M5-1b TP-23 makes no commit and does not reformat a board that is not in the old form, when a move changes nothing', async () => {
+  it('makes no commit and does not reformat a board that is not in the old form, when a move changes nothing', async () => {
     const wide = JSON.stringify(JSON.parse(SAMPLE) as unknown, null, 4);
     const repo = await repoWith(wide);
     const moved = valueOf(await connectorOf(repo).moveItem('B-3', { state: 'doing' }));
@@ -689,7 +689,7 @@ describe('the local connector: the text of the board file (TP-23)', () => {
     expectUntouched(repo, wide);
   });
 
-  it('M5-1b TP-23 gives the new item the id after the highest one, and the keys in a fixed order', async () => {
+  it('gives the new item the id after the highest one, and the keys in a fixed order', async () => {
     const repo = await repoWith(SAMPLE);
     const added = valueOf(await connectorOf(repo).addItem({ title: 'Brand new', text: 'Words', track: 'docs', fields: { priority: 'P1', type: 'bug', lane: 'w-1' } }));
     expect(added.id).toBe('B-17');
@@ -700,7 +700,7 @@ describe('the local connector: the text of the board file (TP-23)', () => {
   it.each([
     ['a whole number above the safe range', '12345678901234567890'],
     ['a number that is not finite', '1e999'],
-  ])('M5-1b TP-23 refuses a write when the board holds %s, because it would not stay as it is', async (_name, number) => {
+  ])('refuses a write when the board holds %s, because it would not stay as it is', async (_name, number) => {
     const board = SAMPLE.replace('"count": 3', `"count": ${number}`);
     const repo = await repoWith(board);
     const error = errorOf(await connectorOf(repo).addTrack({ id: 'extra', name: 'Extra', roadmap: false }));
@@ -710,7 +710,7 @@ describe('the local connector: the text of the board file (TP-23)', () => {
   });
 });
 
-describe('the local connector: the checks of a write (TP-24)', () => {
+describe('the local connector: the checks of a write', () => {
   const fields = PRIORITY;
   const REFUSED: readonly (readonly [string, ItemAddInput, string])[] = [
     ['an empty title', { title: '  ', fields }, 'title'],
@@ -729,7 +729,7 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     ['a track that is not on the board', { title: 'ok', fields, track: 'missing' }, 'missing'],
   ];
 
-  it.each(REFUSED)('M5-1b TP-24 refuses an item with %s with exit 2, and changes no file', async (_name, input, named) => {
+  it.each(REFUSED)('refuses an item with %s with exit 2, and changes no file', async (_name, input, named) => {
     const repo = await repoWith(EMPTY_BOARD);
     const error = errorOf(await connectorOf(repo).addItem(input));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -737,20 +737,20 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     expectUntouched(repo, EMPTY_BOARD);
   });
 
-  it('M5-1b TP-24 takes a title of 100 characters and a text of 500 characters', async () => {
+  it('takes a title of 100 characters and a text of 500 characters', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     const added = valueOf(await connectorOf(repo).addItem({ title: 'x'.repeat(100), text: 'y'.repeat(500), fields }));
     expect([added.title.length, added.record['text']]).toEqual([100, 'y'.repeat(500)]);
   });
 
-  it('M5-1b TP-24 takes a title with an emoji sequence that holds zero-width joiners', async () => {
+  it('takes a title with an emoji sequence that holds zero-width joiners', async () => {
     const family = [0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467].map((code) => String.fromCodePoint(code)).join('');
     const repo = await repoWith(EMPTY_BOARD);
     const added = valueOf(await connectorOf(repo).addItem({ title: `Team ${family}`, fields }));
     expect(added.title).toBe(`Team ${family}`);
   });
 
-  it('M5-1b TP-24 refuses a change of an item with a long title, a line break or an unknown field, and changes no file', async () => {
+  it('refuses a change of an item with a long title, a line break or an unknown field, and changes no file', async () => {
     const repo = await repoWith(SAMPLE);
     const connector = connectorOf(repo);
     expect(exitOf(await connector.updateItem('B-3', { title: 'x'.repeat(101) }))).toBe(2);
@@ -759,7 +759,7 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     expectUntouched(repo, SAMPLE);
   });
 
-  it('M5-1b TP-24 refuses every write on a board with a top key that is not the queue key, items or tracks', async () => {
+  it('refuses every write on a board with a top key that is not the queue key, items or tracks', async () => {
     const board = jsonOf({ [QUEUE]: [], items: [item('B-1')], extra: 1 });
     const repo = await repoWith(board);
     const connector = connectorOf(repo);
@@ -777,14 +777,14 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     expectUntouched(repo, board);
   });
 
-  it('M5-1b TP-24 accepts a board with the tracks key and a board without it', async () => {
+  it('accepts a board with the tracks key and a board without it', async () => {
     for (const board of [jsonOf({ [QUEUE]: [], items: [], tracks: [] }), jsonOf({ [QUEUE]: [], items: [] })]) {
       const repo = await repoWith(board);
       expect((await connectorOf(repo).addItem({ title: 'New', fields })).ok).toBe(true);
     }
   });
 
-  it('M5-1b TP-24 refuses an item when the setup declares no states, and points to the sample setup', async () => {
+  it('refuses an item when the setup declares no states, and points to the sample setup', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     const error = errorOf(await connectorOf(repo, { config: undefined }).addItem({ title: 'New' }));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -792,7 +792,7 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     expectUntouched(repo, EMPTY_BOARD);
   });
 
-  it('M5-1b TP-24 refuses to close an item when the setup names no closed state, with exit 2', async () => {
+  it('refuses to close an item when the setup names no closed state, with exit 2', async () => {
     const repo = await repoWith(boardWith([item('B-1')]));
     const { closed: _closed, ...config } = sampleBoard();
     expect(exitOf(await connectorOf(repo, { config }).closeItem('B-1'))).toBe(2);
@@ -815,7 +815,7 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     ['two recommended options', { ...DECISION, options: [{ key: 'a', text: 'x', rec: true }, { key: 'b', text: 'y', rec: true }] }, 2, 'recommend'],
   ];
 
-  it.each(REFUSED_DECISIONS)('M5-1b TP-24 refuses a decision with %s, and changes no file', async (_name, input, exit, named) => {
+  it.each(REFUSED_DECISIONS)('refuses a decision with %s, and changes no file', async (_name, input, exit, named) => {
     const repo = await repoWith(EMPTY_BOARD);
     const error = errorOf(await connectorOf(repo).askDecision(input));
     expect(exitCodeOf[error.kind]).toBe(exit);
@@ -825,8 +825,8 @@ describe('the local connector: the checks of a write (TP-24)', () => {
   });
 });
 
-describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
-  it('M5-1b TP-89 refuses a track id that exists with exit 2, and a 31st track with exit 2, and writes nothing', async () => {
+describe('the local connector: the ids of a write', () => {
+  it('refuses a track id that exists with exit 2, and a 31st track with exit 2, and writes nothing', async () => {
     const tracks = Array.from({ length: 30 }, (_, at) => ({ id: `t${at}`, name: `Track ${at}`, roadmap: false }));
     const board = boardWith([], { tracks });
     const repo = await repoWith(board);
@@ -840,7 +840,7 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
     expectUntouched(repo, board);
   });
 
-  it('M5-1b TP-70 creates the tracks key at the end of the board on the first track add, and keeps the other keys', async () => {
+  it('creates the tracks key at the end of the board on the first track add, and keeps the other keys', async () => {
     const board = jsonOf({ [QUEUE]: [], items: [item('B-1')] });
     const repo = await repoWith(board);
     valueOf(await connectorOf(repo).addTrack({ id: 'core', name: 'Core', roadmap: true }));
@@ -849,7 +849,7 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
     expect(top['tracks']).toEqual([{ id: 'core', name: 'Core', roadmap: true }]);
   });
 
-  it('M5-1b TP-23 keeps the keys of a track that the core does not own when another track is added', async () => {
+  it('keeps the keys of a track that the core does not own when another track is added', async () => {
     const repo = await repoWith(SAMPLE);
     valueOf(await connectorOf(repo).addTrack({ id: 'extra', name: 'Extra', roadmap: false }));
     const before = JSON.parse(SAMPLE) as { tracks: unknown[] };
@@ -859,14 +859,14 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
     expect(changedLines(SAMPLE, repo.textOf(fileNames.board) ?? '').removed).toEqual([]);
   });
 
-  it('M5-1b TP-99 gives a decision the id after the highest D-n of the waiting file and the log', async () => {
+  it('gives a decision the id after the highest D-n of the waiting file and the log', async () => {
     const waiting = jsonOf({ intro: '', groups: [], items: [{ id: 'D-3' }, { id: 'D-5' }] });
     const decisionLog = jsonOf({ rows: [{ item: 'D-9 An old plan' }, { item: 'no id' }] });
     const repo = await repoWith(EMPTY_BOARD, { waiting, decisionLog });
     expect(valueOf(await connectorOf(repo).askDecision(DECISION))).toBe('D-10');
   });
 
-  it('M5-1b TP-99 gives the first decision the id D-1, and stores it with its options', async () => {
+  it('gives the first decision the id D-1, and stores it with its options', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     expect(valueOf(await connectorOf(repo).askDecision(DECISION))).toBe('D-1');
     const waiting = valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? ''));
@@ -881,7 +881,7 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
     expect(repo.textOf(fileNames.decisionLog)).toBe(jsonOf({ rows: [] }));
   });
 
-  it('M5-1b TP-89 stops an item add when the numbers B-n are used up, with exit 1, and writes nothing', async () => {
+  it('stops an item add when the numbers B-n are used up, with exit 1, and writes nothing', async () => {
     const board = boardWith([item(`B-${maxBoardNumber}`)]);
     const repo = await repoWith(board);
     const error = errorOf(await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY }));
@@ -890,7 +890,7 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
     expectUntouched(repo, board);
   });
 
-  it('M5-1b TP-99 stops a decision when the numbers D-n are used up, with exit 1, and writes nothing', async () => {
+  it('stops a decision when the numbers D-n are used up, with exit 1, and writes nothing', async () => {
     const waiting = jsonOf({ intro: '', groups: [], items: [{ id: `D-${maxBoardNumber}` }] });
     const repo = await repoWith(EMPTY_BOARD, { waiting });
     const error = errorOf(await connectorOf(repo).askDecision(DECISION));
@@ -900,7 +900,7 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
     expect(repo.textOf(fileNames.waiting)).toBe(waiting);
   });
 
-  it('M5-1b TP-88 stops a decision when the waiting file holds a D-n twice, with exit 1, and writes nothing', async () => {
+  it('stops a decision when the waiting file holds a D-n twice, with exit 1, and writes nothing', async () => {
     const waiting = jsonOf({ intro: '', groups: [], items: [{ id: 'D-1' }, { id: 'D-1' }] });
     const repo = await repoWith(EMPTY_BOARD, { waiting });
     const error = errorOf(await connectorOf(repo).askDecision(DECISION));
@@ -909,7 +909,7 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-88 stops a write on a board with a repeated item id, with exit 1, and writes nothing', async () => {
+  it('stops a write on a board with a repeated item id, with exit 1, and writes nothing', async () => {
     const board = boardWith([item('B-1'), item('B-1')]);
     const repo = await repoWith(board);
     const error = errorOf(await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY }));
@@ -919,8 +919,8 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
   });
 });
 
-describe('the local connector: an old queue key (TP-57)', () => {
-  it('M5-1b TP-57 stops every write with exit 1 and the remedy to upgrade, and writes nothing', async () => {
+describe('the local connector: an old queue key', () => {
+  it('stops every write with exit 1 and the remedy to upgrade, and writes nothing', async () => {
     const board = jsonOf({ queue: [], items: [item('B-1')], tracks: [] });
     const repo = await repoWith(board);
     const connector = connectorOf(repo);
@@ -944,8 +944,8 @@ describe('the local connector: an old queue key (TP-57)', () => {
   });
 });
 
-describe('the local connector: a file that cannot be read (TP-51)', () => {
-  it('M5-1b TP-51 stops a write on a board that is not JSON with exit 1, names the file, and writes nothing', async () => {
+describe('the local connector: a file that cannot be read', () => {
+  it('stops a write on a board that is not JSON with exit 1, names the file, and writes nothing', async () => {
     const repo = await repoWith('not json');
     const error = errorOf(await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY }));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -953,7 +953,7 @@ describe('the local connector: a file that cannot be read (TP-51)', () => {
     expectUntouched(repo, 'not json');
   });
 
-  it('M5-1b TP-51 stops a decision when the waiting file is not UTF-8 with exit 1, names the file, and writes nothing', async () => {
+  it('stops a decision when the waiting file is not UTF-8 with exit 1, names the file, and writes nothing', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     repo.deps.invalidUtf8.add(join(LAYOUT.stateDir, fileNames.waiting));
     const error = errorOf(await connectorOf(repo).askDecision(DECISION));
@@ -972,7 +972,7 @@ describe('the local connector: a file that cannot be read (TP-51)', () => {
       node: NODE,
     });
 
-  it('M5-1b TP-51 stops a write on a board file that is a link with exit 4, names the file, and writes nothing', async () => {
+  it('stops a write on a board file that is a link with exit 4, names the file, and writes nothing', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     const error = errorOf(await linkedConnector(repo, fileNames.board).addItem({ title: 'New', fields: PRIORITY }));
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -981,7 +981,7 @@ describe('the local connector: a file that cannot be read (TP-51)', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-51 stops a decision when the waiting file is a link with exit 4, names the file, and writes nothing', async () => {
+  it('stops a decision when the waiting file is a link with exit 4, names the file, and writes nothing', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     const error = errorOf(await linkedConnector(repo, fileNames.waiting).askDecision(DECISION));
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -991,8 +991,8 @@ describe('the local connector: a file that cannot be read (TP-51)', () => {
   });
 });
 
-describe('the local connector: the lost-id check (TP-60)', () => {
-  it('M5-1b TP-60 refuses with exit 4 a write on a board that lost an item id since the last commit, and writes nothing', async () => {
+describe('the local connector: the lost-id check', () => {
+  it('refuses with exit 4 a write on a board that lost an item id since the last commit, and writes nothing', async () => {
     const head = boardWith([item('B-1'), item('B-2')]);
     const board = boardWith([item('B-1')]);
     const repo = await boardRepo({ board, head });
@@ -1002,7 +1002,7 @@ describe('the local connector: the lost-id check (TP-60)', () => {
     expectUntouched(repo, board);
   });
 
-  it('M5-1b TP-60 refuses with exit 4 a write on a board where an item id differs in case from the last commit', async () => {
+  it('refuses with exit 4 a write on a board where an item id differs in case from the last commit', async () => {
     const head = boardWith([{ id: 'b-1', title: 'Old form', status: 'open' }]);
     const board = boardWith([item('B-1')]);
     const repo = await boardRepo({ board, head });
@@ -1012,7 +1012,7 @@ describe('the local connector: the lost-id check (TP-60)', () => {
     expectUntouched(repo, board);
   });
 
-  it('M5-1b TP-60 lets a track add, a state move and a stage move pass, because they keep every item id', async () => {
+  it('lets a track add, a state move and a stage move pass, because they keep every item id', async () => {
     const board = boardWith([item('B-1'), item('B-2')]);
     const repo = await boardRepo({ board });
     const connector = connectorOf(repo);
@@ -1024,7 +1024,7 @@ describe('the local connector: the lost-id check (TP-60)', () => {
 });
 
 describe('the local connector: an item that is not on the board', () => {
-  it('M5-1b TP-24 refuses an id that is not on the board, or not of the form B-n, with exit 2, and writes nothing', async () => {
+  it('refuses an id that is not on the board, or not of the form B-n, with exit 2, and writes nothing', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     const connector = connectorOf(repo);
     for (const id of ['B-9', 'b-1', 'B-', 'x'.repeat(200), 'B-1\nB-2']) {
@@ -1036,7 +1036,7 @@ describe('the local connector: an item that is not on the board', () => {
     expectUntouched(repo, EMPTY_BOARD);
   });
 
-  it('M5-1b TP-76 refuses a stage that only a flow sets with exit 2, names the flow, and takes no lock', async () => {
+  it('refuses a stage that only a flow sets with exit 2, names the flow, and takes no lock', async () => {
     const repo = await repoWith(boardWith([item('B-1')]));
     const error = errorOf(await connectorOf(repo).moveItem('B-1', { stage: 'merged' }));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -1049,7 +1049,7 @@ describe('the local connector: an item that is not on the board', () => {
 describe('the local connector: a link to a file of the factory (doc link)', () => {
   const link = async (repo: BoardRepo, path: string): Promise<CliResult<unknown>> => connectorOf(repo).linkDoc({ id: 'B-1', path });
 
-  it('M5-1b TP-24 stores the relative path in the docs of the item, and stores a path once', async () => {
+  it('stores the relative path in the docs of the item, and stores a path once', async () => {
     const repo = await repoWith(boardWith([item('B-1', { docs: ['docs/a.md'] })]));
     valueOf(await link(repo, DOC_PATH));
     valueOf(await link(repo, DOC_PATH));
@@ -1058,7 +1058,7 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-24 refuses a path with a right-to-left override, also when the file is there, with exit 2, and writes nothing', async () => {
+  it('refuses a path with a right-to-left override, also when the file is there, with exit 2, and writes nothing', async () => {
     const path = `docs/design${String.fromCodePoint(0x202e)}.md`;
     const board = boardWith([item('B-1')]);
     const repo = await repoWith(board);
@@ -1067,7 +1067,7 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
     expectUntouched(repo, board);
   });
 
-  it('M5-1b TP-24 stops a link when the docs of the item is not a list of text, with exit 1, names the file, and changes nothing', async () => {
+  it('stops a link when the docs of the item is not a list of text, with exit 1, names the file, and changes nothing', async () => {
     const board = boardWith([item('B-1', { docs: 'a.md' })]);
     const repo = await repoWith(board);
     const error = errorOf(await link(repo, DOC_PATH));
@@ -1089,7 +1089,7 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
     ['a path of 201 characters', `${'d'.repeat(198)}.md`],
     ['a file that is not there', 'docs/missing.md'],
     ['a folder', 'docs'],
-  ])('M5-1b TP-24 refuses %s with exit 2, and writes nothing', async (_name, path) => {
+  ])('refuses %s with exit 2, and writes nothing', async (_name, path) => {
     const board = boardWith([item('B-1')]);
     const repo = await repoWith(board);
     repo.deps.seedDir(join(HOME, 'docs'));
@@ -1097,7 +1097,7 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
     expectUntouched(repo, board);
   });
 
-  it('M5-1b TP-24 refuses a file in a folder that is a link with exit 4, and writes nothing', async () => {
+  it('refuses a file in a folder that is a link with exit 4, and writes nothing', async () => {
     const board = boardWith([item('B-1')]);
     const repo = await repoWith(board);
     const linked = createLocalBoard(linkAt(repo.deps, join(HOME, 'docs')), LAYOUT, {
@@ -1114,7 +1114,7 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
 });
 
 describe('the local connector: a list', () => {
-  it('M5-1b TP-47 hides the items of the closed state, and shows them when the list asks for all', async () => {
+  it('hides the items of the closed state, and shows them when the list asks for all', async () => {
     const repo = await repoWith(SAMPLE);
     const connector = connectorOf(repo);
     const open = valueOf(await connector.listItems({ all: false })).map((entry) => entry.id);
@@ -1123,7 +1123,7 @@ describe('the local connector: a list', () => {
     expect(open).toEqual(all.filter((id) => !['B-1', 'B-2', 'B-5'].includes(id)));
   });
 
-  it('M5-1b TP-84 lists the items of one track and refuses an unknown track with exit 2 that lists the track ids', async () => {
+  it('lists the items of one track and refuses an unknown track with exit 2 that lists the track ids', async () => {
     const repo = await repoWith(SAMPLE);
     const connector = connectorOf(repo);
     const listed = valueOf(await connector.listItems({ all: true, track: 'docs' })).map((entry) => entry.id);
@@ -1133,7 +1133,7 @@ describe('the local connector: a list', () => {
     expect(error.message).toContain('core, board, docs');
   });
 
-  it('M5-1b TP-93 reads the list and the tracks while another process holds the state lock, and does not wait', async () => {
+  it('reads the list and the tracks while another process holds the state lock, and does not wait', async () => {
     const repo = await repoWith(SAMPLE);
     repo.deps.seed(LOCK_FILE, '1\n');
     const slept = repo.deps.sleeps.length;
@@ -1270,8 +1270,8 @@ const proofSpy = (
 
 const kindAt = async (repo: BoardRepo, path: string): Promise<string | null> => valueOf(await repo.deps.fs.lstat(path));
 
-describe('the local connector: an open request for the owner (TP-141, TP-145, TP-148, TP-152, TP-173, TP-178, TP-193)', () => {
-  it('M5-1b TP-150 reads an open request with its canonical text, its hash, no stored record and the place, and writes nothing', async () => {
+describe('the local connector: an open request for the owner', () => {
+  it('reads an open request with its canonical text, its hash, no stored record and the place, and writes nothing', async () => {
     const repo = await decideRepo();
     const before = new Map(repo.deps.files);
     const read = valueOf(await localOf(repo.deps).decisionRequest('D-1'));
@@ -1283,13 +1283,13 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     expect(repo.deps.files.has(LOCK_FILE)).toBe(false);
   });
 
-  it('M5-1b TP-173 gives the record of the store for the same request text, with the stored option and time', async () => {
+  it('gives the record of the store for the same request text, with the stored option and time', async () => {
     const repo = await decideRepo({ store: storeOf(storedRecord({ option: 'b' })) });
     const read = valueOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(read.stored).toEqual({ kind: 'record', node: NODE, root: HOME, id: 'D-1', option: 'b', at: AT });
   });
 
-  it('M5-1b TP-178 gives a mismatch with the stored option and time for a record of another request text', async () => {
+  it('gives a mismatch with the stored option and time for a record of another request text', async () => {
     const repo = await decideRepo({ store: storeOf(storedRecord({ hash: requestHashOf(requestTextOf(CHANGED_ENTRY)) })) });
     const read = valueOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(read.stored).toEqual({ kind: 'mismatch', option: 'a', at: AT });
@@ -1298,12 +1298,12 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
   it.each([
     ['another node', { node: 'other' }],
     ['another root', { root: '/h/other' }],
-  ])('M5-1b TP-173 does not count a record of %s', async (_name, overrides) => {
+  ])('does not count a record of %s', async (_name, overrides) => {
     const repo = await decideRepo({ store: storeOf(storedRecord(overrides)) });
     expect(valueOf(await localOf(repo.deps).decisionRequest('D-1')).stored).toEqual({ kind: 'none' });
   });
 
-  it('M5-1b TP-141 stops with exit 4 when the delete guard is off, and changes nothing', async () => {
+  it('stops with exit 4 when the delete guard is off, and changes nothing', async () => {
     const repo = await decideRepo({ store: storeOf() });
     repo.deps.files.delete(HOOK);
     const before = new Map(repo.deps.files);
@@ -1312,14 +1312,14 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     expect(repo.deps.files).toEqual(before);
   });
 
-  it('M5-1b TP-145 exits 2 for a number that no file and no store record holds', async () => {
+  it('exits 2 for a number that no file and no store record holds', async () => {
     const repo = await decideRepo();
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-9'));
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain(fileNames.waiting);
   });
 
-  it('M5-1b TP-145 exits 1 for a closed number and names its date', async () => {
+  it('exits 1 for a closed number and names its date', async () => {
     const repo = await decideRepo({ waiting: waitingOf(), decisionLog: logOf(closedRow()) });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -1327,26 +1327,26 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     expect(error.message).toContain('2030-01-02');
   });
 
-  it('M5-1b TP-148 shows the date of a closed row cleaned of an escape sequence', async () => {
+  it('shows the date of a closed row cleaned of an escape sequence', async () => {
     const repo = await decideRepo({ waiting: waitingOf(), decisionLog: logOf(closedRow({ date: '2030\u001b[31m-01-02' })) });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(error.message).not.toContain('\u001b');
   });
 
-  it('M5-1b TP-145 reports a closed number before it looks for the place of the decision file', async () => {
+  it('reports a closed number before it looks for the place of the decision file', async () => {
     const repo = await decideRepo({ waiting: waitingOf(), decisionLog: logOf(closedRow()), env: {} });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(error.message).toContain('closed');
   });
 
-  it('M5-1b TP-145 exits 1 for a number that only the store holds, and names the stored time', async () => {
+  it('exits 1 for a number that only the store holds, and names the stored time', async () => {
     const repo = await decideRepo({ waiting: waitingOf(), store: storeOf(storedRecord()) });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(AT);
   });
 
-  it('M5-1b TP-145 exits 1 for an answered row with a matching store record, and names the date of the answer', async () => {
+  it('exits 1 for an answered row with a matching store record, and names the date of the answer', async () => {
     const repo = await decideRepo({ waiting: waitingOf(), decisionLog: logOf(answerRow()), store: storeOf(storedRecord()) });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -1360,7 +1360,7 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     ['a record of another request text', answerRow({ request: requestTextOf(CHANGED_ENTRY) }), storeOf(storedRecord())],
     ['a row with no request text', Object.fromEntries(Object.entries(answerRow()).filter(([key]) => key !== 'request')), storeOf(storedRecord())],
     ['another value of the by key', answerRow({ by: 'coordinator' }), storeOf()],
-  ])('M5-1b TP-193 exits 1 for a row with %s: it is not an owner answer, and the remedy adds a new request', async (_name, row, store) => {
+  ])('exits 1 for a row with %s: it is not an owner answer, and the remedy adds a new request', async (_name, row, store) => {
     const repo = await decideRepo({ waiting: waitingOf(), decisionLog: logOf(row), ...(store === undefined ? {} : { store }) });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -1372,14 +1372,14 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     ['an open request', waitingOf(ENTRY), logOf()],
     ['an answered row', waitingOf(), logOf(answerRow())],
     ['a number that is in no file', waitingOf(), logOf()],
-  ])('M5-1b TP-151 exits 1 and names the decision file when it cannot be read, for %s', async (_name, waiting, decisionLog) => {
+  ])('exits 1 and names the decision file when it cannot be read, for %s', async (_name, waiting, decisionLog) => {
     const repo = await decideRepo({ waiting, decisionLog, store: 'not json' });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(DECISIONS_PATH);
   });
 
-  it('M5-1b TP-152 exits 1 before the prompt when no variable names a state folder', async () => {
+  it('exits 1 before the prompt when no variable names a state folder', async () => {
     const repo = await decideRepo({ env: {} });
     const before = new Map(repo.deps.files);
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
@@ -1390,12 +1390,12 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-152 exits 4 when the decision file would be inside the factory folder', async () => {
+  it('exits 4 when the decision file would be inside the factory folder', async () => {
     const repo = await decideRepo({ env: { [env.stateHome]: `${HOME}/state`, [env.userHome]: '/home/me' } });
     expect(exitOf(await localOf(repo.deps).decisionRequest('D-1'))).toBe(4);
   });
 
-  it('M5-1b TP-167 exits 1 and names both files for a number that is in the waiting file and in the log', async () => {
+  it('exits 1 and names both files for a number that is in the waiting file and in the log', async () => {
     const repo = await decideRepo({ decisionLog: logOf(closedRow()) });
     const before = new Map(repo.deps.files);
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
@@ -1406,7 +1406,7 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-168 exits 1 and names the waiting file for an entry with a key that the strict read refuses', async () => {
+  it('exits 1 and names the waiting file for an entry with a key that the strict read refuses', async () => {
     const repo = await decideRepo({ waiting: waitingOf({ ...ENTRY, extra: 1 }) });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -1414,13 +1414,13 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     expect(error.hint).toContain(commandText(commandLines.requestClose));
   });
 
-  it('M5-1b TP-168 reads the strict entry before the store: a bad entry exits 1 with no record needed', async () => {
+  it('reads the strict entry before the store: a bad entry exits 1 with no record needed', async () => {
     const repo = await decideRepo({ waiting: waitingOf({ ...ENTRY, title: 'two\nlines' }), store: 'not json' });
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(error.message).toContain(fileNames.waiting);
   });
 
-  it('M5-1b TP-57 stops on a board with the old queue key, as a write does', async () => {
+  it('stops on a board with the old queue key, as a write does', async () => {
     const repo = await decideRepo();
     repo.deps.seed(BOARD_PATH, jsonOf({ queue: [], items: [] }));
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
@@ -1428,7 +1428,7 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
     expect(error.message).toContain(fileNames.board);
   });
 
-  it('M5-1b TP-93 reads while another process holds the state lock, and does not wait', async () => {
+  it('reads while another process holds the state lock, and does not wait', async () => {
     const repo = await decideRepo();
     repo.deps.seed(LOCK_FILE, '1\n');
     const slept = repo.deps.sleeps.length;
@@ -1438,10 +1438,10 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
   });
 });
 
-describe('the local connector: record the answer of the owner (TP-150, TP-153, TP-156, TP-157, TP-176, TP-195)', () => {
+describe('the local connector: record the answer of the owner', () => {
   const filesOf = (repo: BoardRepo): string[] => [...repo.deps.files.keys()].sort();
 
-  it('M5-1b TP-156 writes the record file and a line at the top of log.md in the same commit as the board files', async () => {
+  it('writes the record file and a line at the top of log.md in the same commit as the board files', async () => {
     const repo = await decideRepo();
     const spy = proofSpy();
     const recorded = valueOf(await localOf(repo.deps).recordDecision(callOf(), spy.writer));
@@ -1459,7 +1459,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     expect(spy.calls).toEqual([{ id: 'D-1', option: 'a', hash: HASH, at: AT }]);
   });
 
-  it('M5-1b TP-154 takes the request off the waiting file and adds the row with by, the option and the canonical text', async () => {
+  it('takes the request off the waiting file and adds the row with by, the option and the canonical text', async () => {
     const repo = await decideRepo({ waiting: waitingOf(ENTRY, { ...ENTRY, id: 'D-2' }) });
     valueOf(await localOf(repo.deps).recordDecision(callOf(), proofSpy().writer));
     expect(valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? '')).items.map((entry) => entry.id)).toEqual(['D-2']);
@@ -1469,7 +1469,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     expect(requestHashOf(String(row?.['request']))).toBe(HASH);
   });
 
-  it('M5-1b TP-156 keeps the rows and the lines that were there, and puts the new line at the top of the list', async () => {
+  it('keeps the rows and the lines that were there, and puts the new line at the top of the list', async () => {
     const old = closedRow({ item: 'D-0: Old' });
     const repo = await decideRepo({ decisionLog: logOf(old), profileLog: '# Decision log\n\n- 2029-12-31 D-0: a ([[older]])\n' });
     valueOf(await localOf(repo.deps).recordDecision(callOf(), proofSpy().writer));
@@ -1479,7 +1479,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     );
   });
 
-  it('M5-1b TP-157 makes the decisions folder and gives log.md its first text after a fresh init', async () => {
+  it('makes the decisions folder and gives log.md its first text after a fresh init', async () => {
     const repo = await decideRepo();
     expect(await kindAt(repo, DECISIONS_DIR)).toBeNull();
     expect(repo.deps.files.has(PROFILE_LOG_PATH)).toBe(false);
@@ -1488,7 +1488,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     expect(repo.textOf(stateRel.profileLog)).toContain('# Decision log');
   });
 
-  it('M5-1b TP-156 puts the note in the record and the date of the time in the file name', async () => {
+  it('puts the note in the record and the date of the time in the file name', async () => {
     const repo = await decideRepo();
     valueOf(await localOf(repo.deps).recordDecision(callOf({ note: 'cheaper', at: '2030-03-04T23:59:59.000Z' }), proofSpy().writer));
     const path = join(stateRel.profileDecisions, '2030-03-04-d-1-pick-a-plan.md');
@@ -1496,7 +1496,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     expect(repo.textOf(fileNames.decisionLog)).toContain('"date": "2030-03-04"');
   });
 
-  it('M5-1b TP-176 writes the owner record first: under the state lock, with the folder made and no board file changed yet', async () => {
+  it('writes the owner record first: under the state lock, with the folder made and no board file changed yet', async () => {
     const repo = await decideRepo();
     const seen: unknown[] = [];
     const spy = proofSpy(undefined, async () => {
@@ -1514,7 +1514,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     expect(repo.deps.files.has(LOCK_FILE)).toBe(false);
   });
 
-  it('M5-1b TP-180 gives the warning of the writer to the result and still writes the board copies', async () => {
+  it('gives the warning of the writer to the result and still writes the board copies', async () => {
     const repo = await decideRepo();
     const spy = proofSpy(ok({ outcome: 'stored', warning: 'the lock file stays' }));
     const recorded = valueOf(await localOf(repo.deps).recordDecision(callOf(), spy.writer));
@@ -1522,7 +1522,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-177 completes the copies of an orphan record: the writer says existing, and the result says so', async () => {
+  it('completes the copies of an orphan record: the writer says existing, and the result says so', async () => {
     const repo = await decideRepo();
     const spy = proofSpy(ok({ outcome: 'existing', warning: null }));
     const recorded = valueOf(await localOf(repo.deps).recordDecision(callOf(), spy.writer));
@@ -1530,7 +1530,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     expect(repo.commits).toHaveLength(1);
   });
 
-  describe('a check that fails under the lock makes no folder, no store write and no commit (TP-147, TP-158, TP-159, TP-166, TP-192, TP-195)', () => {
+  describe('a check that fails under the lock makes no folder, no store write and no commit', () => {
     const BIG_LOG_ROW = closedRow({ item: 'D-9: Big', pad: 'x'.repeat(maxFileBytes - 200) });
     const CASES: readonly (readonly [string, DecideSetup, Partial<DecisionRecordCall>, string])[] = [
       ['the request changed after the prompt', { waiting: waitingOf(CHANGED_ENTRY) }, {}, 'changed after the prompt'],
@@ -1545,7 +1545,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       ['the option is not one of the request', {}, { option: 'z' }, 'option'],
     ];
 
-    it.each(CASES)('M5-1b TP-195 refuses when %s, exit 1, and writes nothing', async (_name, setup, overrides, phrase) => {
+    it.each(CASES)('refuses when %s, exit 1, and writes nothing', async (_name, setup, overrides, phrase) => {
       const repo = await decideRepo(setup);
       const before = new Map(repo.deps.files);
       const spy = proofSpy();
@@ -1558,7 +1558,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.deps.files).toEqual(before);
     });
 
-    it('M5-1b TP-166 names the cap and says how to make room, for the text of log.md', async () => {
+    it('names the cap and says how to make room, for the text of log.md', async () => {
       const repo = await decideRepo({ profileLog: `# Decision log\n\n${'x'.repeat(maxFileBytes - 20)}` });
       const error = errorOf(await localOf(repo.deps).recordDecision(callOf(), proofSpy().writer));
       expect(error.message).toContain(String(maxFileBytes));
@@ -1583,21 +1583,21 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       ['no variable names a state folder', { env: {} }, (board) => board.decisionRequest('D-1')],
     ];
 
-    it.each(REMEDIES)('M5-1b TP-152 names the command that the connector was given, and no other, when %s', async (_name, setup, run) => {
+    it.each(REMEDIES)('names the command that the connector was given, and no other, when %s', async (_name, setup, run) => {
       const repo = await decideRepo(setup);
       const error = errorOf(await run(localOf(repo.deps, commands.decide), repo));
       expect(error.hint).toContain(`"${commandText(commands.decide)}"`);
       expect(error.hint).not.toContain(commandText(commands.start));
     });
 
-    it('M5-1b TP-192 names the cap and says not to remove rows, for the text of the decision log', async () => {
+    it('names the cap and says not to remove rows, for the text of the decision log', async () => {
       const repo = await decideRepo({ decisionLog: logOf(BIG_LOG_ROW) });
       const error = errorOf(await localOf(repo.deps).recordDecision(callOf(), proofSpy().writer));
       expect(error.message).toContain(String(maxFileBytes));
       expect(error.hint).toContain('Do not remove rows');
     });
 
-    it('M5-1b TP-158 refuses a record path that has text already, and overwrites no file', async () => {
+    it('refuses a record path that has text already, and overwrites no file', async () => {
       const repo = await decideRepo();
       repo.deps.seed(RECORD_FILE, 'older text\n');
       const spy = proofSpy();
@@ -1609,7 +1609,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.commits).toEqual([]);
     });
 
-    it('M5-1b TP-158 refuses a time that is not an ISO time in UTC before it takes the lock', async () => {
+    it('refuses a time that is not an ISO time in UTC before it takes the lock', async () => {
       const repo = await decideRepo();
       const spy = proofSpy();
       const error = errorOf(await localOf(repo.deps).recordDecision(callOf({ at: 'yesterday' }), spy.writer));
@@ -1618,7 +1618,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.deps.files.has(LOCK_FILE)).toBe(false);
     });
 
-    it('M5-1b TP-159 names log.md and stops before the store write when it has a change that is not committed', async () => {
+    it('names log.md and stops before the store write when it has a change that is not committed', async () => {
       const repo = await decideRepo({ profileLog: '# Decision log\n' });
       const dirty = {
         ...repo.deps,
@@ -1634,11 +1634,11 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     });
   });
 
-  describe('a link or a missing folder stops the call before the store write (TP-158, TP-195)', () => {
+  describe('a link or a missing folder stops the call before the store write', () => {
     it.each([
       ['the profile folder', PROFILE_DIR],
       ['the decisions folder', DECISIONS_DIR],
-    ])('M5-1b TP-158 exits 4 for a link at %s, writes no record and keeps the files', async (_name, path) => {
+    ])('exits 4 for a link at %s, writes no record and keeps the files', async (_name, path) => {
       const repo = await decideRepo();
       repo.deps.seedDir(DECISIONS_DIR);
       const before = new Map(repo.deps.files);
@@ -1650,7 +1650,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.deps.files).toEqual(before);
     });
 
-    it('M5-1b TP-158 exits 4 for a link that appears at the decisions folder after the read, and writes no record', async () => {
+    it('exits 4 for a link that appears at the decisions folder after the read, and writes no record', async () => {
       const repo = await decideRepo();
       let seen = 0;
       const racing: Deps = {
@@ -1671,7 +1671,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.commits).toEqual([]);
     });
 
-    it('M5-1b TP-195 exits 1 and writes no record when the profile folder is not there', async () => {
+    it('exits 1 and writes no record when the profile folder is not there', async () => {
       const repo = await decideRepo({ profile: false });
       const spy = proofSpy();
       const error = errorOf(await localOf(repo.deps).recordDecision(callOf(), spy.writer));
@@ -1683,12 +1683,12 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     });
   });
 
-  describe('a failure of the writer, or of the commit after it (TP-177, TP-190, TP-191)', () => {
+  describe('a failure of the writer, or of the commit after it', () => {
     const SAVED = 'saved in the owner store';
 
     const failingWriter = (): ProofSpy => proofSpy(failure('the decision was not recorded: the file is full'));
 
-    it('M5-1b TP-174 gives the error of the writer as it is, and no line about a saved answer, and changes no board file', async () => {
+    it('gives the error of the writer as it is, and no line about a saved answer, and changes no board file', async () => {
       const repo = await decideRepo();
       const error = errorOf(await localOf(repo.deps).recordDecision(callOf(), failingWriter().writer));
       expect(exitCodeOf[error.kind]).toBe(1);
@@ -1719,7 +1719,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       };
     };
 
-    it('M5-1b TP-177 says that the answer is saved and the same command finishes the copies, when the files are put back', async () => {
+    it('says that the answer is saved and the same command finishes the copies, when the files are put back', async () => {
       const repo = await decideRepo();
       const error = errorOf(await localOf(committing(repo, 'fails')).recordDecision(callOf(), proofSpy().writer));
       expect(exitCodeOf[error.kind]).toBe(1);
@@ -1729,7 +1729,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.deps.files.has(RECORD_FILE)).toBe(false);
     });
 
-    it('M5-1b TP-180 adds the warning of the writer to the hint after the saved line, when the commit fails after the store write', async () => {
+    it('adds the warning of the writer to the hint after the saved line, when the commit fails after the store write', async () => {
       const repo = await decideRepo();
       const writer = proofSpy(ok({ outcome: 'stored', warning: 'the lock file stays' })).writer;
       const error = errorOf(await localOf(committing(repo, 'fails')).recordDecision(callOf(), writer));
@@ -1738,7 +1738,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(error.hint?.endsWith('the lock file stays')).toBe(true);
     });
 
-    it('M5-1b TP-177 finishes with exit 0 when the same command runs again after the files were put back', async () => {
+    it('finishes with exit 0 when the same command runs again after the files were put back', async () => {
       const repo = await decideRepo();
       errorOf(await localOf(committing(repo, 'fails')).recordDecision(callOf(), proofSpy().writer));
       const again = proofSpy(ok({ outcome: 'existing', warning: null }));
@@ -1747,7 +1747,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.commits).toHaveLength(1);
     });
 
-    it('M5-1b TP-190 says that the answer is recorded and the commit is made, with no retry line, when the commit landed', async () => {
+    it('says that the answer is recorded and the commit is made, with no retry line, when the commit landed', async () => {
       const repo = await decideRepo();
       const error = errorOf(await localOf(committing(repo, 'lands')).recordDecision(callOf(), proofSpy().writer));
       expect(exitCodeOf[error.kind]).toBe(1);
@@ -1758,7 +1758,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.commits).toHaveLength(1);
     });
 
-    it('M5-1b TP-191 says that the answer is saved, gives the git check line and adds no retry line when the head cannot be read', async () => {
+    it('says that the answer is saved, gives the git check line and adds no retry line when the head cannot be read', async () => {
       const repo = await decideRepo();
       const error = errorOf(await localOf(committing(repo, 'lost-head')).recordDecision(callOf(), proofSpy().writer));
       expect(exitCodeOf[error.kind]).toBe(1);
@@ -1768,7 +1768,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(error.hint).not.toContain('again');
     });
 
-    it('M5-1b TP-191 says that the answer is saved, gives the git check line and adds no retry line when a file cannot be put back', async () => {
+    it('says that the answer is saved, gives the git check line and adds no retry line when a file cannot be put back', async () => {
       const repo = await decideRepo();
       // The first write of the waiting file is the new text, the second is the put back after the failed commit.
       const waitingFile = join(LAYOUT.stateDir, fileNames.waiting);
@@ -1781,7 +1781,7 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(error.hint).not.toContain('again');
     });
 
-    it('M5-1b TP-177 adds no saved line to a failure that comes before the store write', async () => {
+    it('adds no saved line to a failure that comes before the store write', async () => {
       const repo = await decideRepo({ waiting: waitingOf(CHANGED_ENTRY) });
       const error = errorOf(await localOf(repo.deps).recordDecision(callOf(), proofSpy().writer));
       expect(error.hint ?? '').not.toContain(SAVED);
@@ -1790,19 +1790,19 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
   });
 });
 
-describe('the local connector: request add and request close read the owner decision file (TP-160, TP-161, TP-179, TP-192)', () => {
+describe('the local connector: request add and request close read the owner decision file', () => {
   const UNREADABLE: readonly (readonly [string, string])[] = [
     ['text that is not JSON', 'not json'],
     ['a file with another schema number', jsonOf({ schema: 2, records: [] })],
   ];
 
-  it('M5-1b TP-160 numbers a new request above the highest D-n of the store, the waiting file and the log', async () => {
+  it('numbers a new request above the highest D-n of the store, the waiting file and the log', async () => {
     const repo = await decideRepo({ decisionLog: logOf(closedRow({ item: 'D-3: Old' })), store: storeOf(storedRecord({ id: 'D-7' })) });
     expect(valueOf(await localOf(repo.deps).askDecision(DECISION))).toBe('D-8');
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-160 numbers a new request above a stored D-n that the waiting file and the log no longer hold', async () => {
+  it('numbers a new request above a stored D-n that the waiting file and the log no longer hold', async () => {
     const repo = await decideRepo({ waiting: waitingOf(), store: storeOf(storedRecord({ id: 'D-4' })) });
     expect(valueOf(await localOf(repo.deps).askDecision(DECISION))).toBe('D-5');
   });
@@ -1810,17 +1810,17 @@ describe('the local connector: request add and request close read the owner deci
   it.each([
     ['another node', { node: 'other' }],
     ['another root', { root: '/h/other' }],
-  ])('M5-1b TP-160 does not count a record of %s', async (_name, overrides) => {
+  ])('does not count a record of %s', async (_name, overrides) => {
     const repo = await decideRepo({ store: storeOf(storedRecord({ ...overrides, id: 'D-7' })) });
     expect(valueOf(await localOf(repo.deps).askDecision(DECISION))).toBe('D-2');
   });
 
-  it('M5-1b TP-160 counts no record when no variable names a state folder', async () => {
+  it('counts no record when no variable names a state folder', async () => {
     const repo = await decideRepo({ env: {}, store: storeOf(storedRecord({ id: 'D-7' })) });
     expect(valueOf(await localOf(repo.deps).askDecision(DECISION))).toBe('D-2');
   });
 
-  it('M5-1b TP-160 reads the decision file under the state lock and leaves its lock file alone', async () => {
+  it('reads the decision file under the state lock and leaves its lock file alone', async () => {
     const repo = await decideRepo({ store: storeOf(storedRecord({ id: 'D-7' })) });
     const before = repo.deps.files.get(DECISIONS_PATH);
     valueOf(await localOf(repo.deps).askDecision(DECISION));
@@ -1828,7 +1828,7 @@ describe('the local connector: request add and request close read the owner deci
     expect([...repo.deps.files.keys()].filter((path) => path.startsWith(DECISIONS_PATH) && path !== DECISIONS_PATH)).toEqual([]);
   });
 
-  it.each(UNREADABLE)('M5-1b TP-161 exits 1, names the decision file and writes nothing for a request add with %s', async (_name, store) => {
+  it.each(UNREADABLE)('exits 1, names the decision file and writes nothing for a request add with %s', async (_name, store) => {
     const repo = await decideRepo({ store });
     const before = new Map(repo.deps.files);
     const error = errorOf(await localOf(repo.deps).askDecision(DECISION));
@@ -1839,14 +1839,14 @@ describe('the local connector: request add and request close read the owner deci
     expect(repo.deps.files).toEqual(before);
   });
 
-  it('M5-1b TP-161 exits 4 and writes nothing for a request add when the decision file would be inside the factory folder', async () => {
+  it('exits 4 and writes nothing for a request add when the decision file would be inside the factory folder', async () => {
     const repo = await decideRepo({ env: { [env.stateHome]: `${HOME}/state`, [env.userHome]: '/home/me' } });
     const before = new Map(repo.deps.files);
     expect(exitOf(await localOf(repo.deps).askDecision(DECISION))).toBe(4);
     expect(repo.deps.files).toEqual(before);
   });
 
-  it('M5-1b TP-179 refuses to close a request that has a record, says that the owner answered, names decide, and writes nothing', async () => {
+  it('refuses to close a request that has a record, says that the owner answered, names decide, and writes nothing', async () => {
     const repo = await decideRepo({ store: storeOf(storedRecord()) });
     const before = new Map(repo.deps.files);
     const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
@@ -1858,7 +1858,7 @@ describe('the local connector: request add and request close read the owner deci
     expect(repo.deps.files).toEqual(before);
   });
 
-  it('M5-1b TP-179 refuses to close a request whose record has another request hash', async () => {
+  it('refuses to close a request whose record has another request hash', async () => {
     const repo = await decideRepo({ store: storeOf(storedRecord({ hash: requestHashOf(requestTextOf(CHANGED_ENTRY)) })) });
     const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -1870,18 +1870,18 @@ describe('the local connector: request add and request close read the owner deci
     ['another D-n', { id: 'D-2' }],
     ['another node', { node: 'other' }],
     ['another root', { root: '/h/other' }],
-  ])('M5-1b TP-179 closes a request when the only record is a record of %s', async (_name, overrides) => {
+  ])('closes a request when the only record is a record of %s', async (_name, overrides) => {
     const repo = await decideRepo({ store: storeOf(storedRecord(overrides)) });
     expect(valueOf(await localOf(repo.deps).closeRequest('D-1'))).toEqual({ id: 'D-1', title: 'Pick a plan', decider: null });
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-179 closes a request when no variable names a state folder', async () => {
+  it('closes a request when no variable names a state folder', async () => {
     const repo = await decideRepo({ env: {}, store: storeOf(storedRecord()) });
     expect(valueOf(await localOf(repo.deps).closeRequest('D-1')).id).toBe('D-1');
   });
 
-  it.each(UNREADABLE)('M5-1b TP-179 exits 1, names the decision file and writes nothing for a request close with %s', async (_name, store) => {
+  it.each(UNREADABLE)('exits 1, names the decision file and writes nothing for a request close with %s', async (_name, store) => {
     const repo = await decideRepo({ store });
     const before = new Map(repo.deps.files);
     const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
@@ -1891,7 +1891,7 @@ describe('the local connector: request add and request close read the owner deci
     expect(repo.deps.files).toEqual(before);
   });
 
-  it('M5-1b TP-179 keeps the message of an answered row for a number that the log holds, with a record in the store', async () => {
+  it('keeps the message of an answered row for a number that the log holds, with a record in the store', async () => {
     const repo = await decideRepo({ waiting: waitingOf(), decisionLog: logOf(answerRow()), store: storeOf(storedRecord()) });
     const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -1915,7 +1915,7 @@ describe('the local connector: request add and request close read the owner deci
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-192 names the cap and says not to remove rows when the new text of the decision log is over the cap, and writes nothing', async () => {
+  it('names the cap and says not to remove rows when the new text of the decision log is over the cap, and writes nothing', async () => {
     const repo = await decideRepo({ decisionLog: logOf(closedRow({ item: 'D-9: Big', pad: 'x'.repeat(maxFileBytes - 200) })) });
     const before = new Map(repo.deps.files);
     const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));

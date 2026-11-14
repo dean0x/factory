@@ -122,11 +122,11 @@ describe('parseJsonText and initial files', () => {
     expect(initialBoardText('queue').endsWith('\n')).toBe(true);
   });
 
-  it('M5-1b TP-29 writes the queue key that the caller gives, then the items and the tracks', () => {
+  it('writes the queue key that the caller gives, then the items and the tracks', () => {
     expect(initialBoardText('line')).toBe('{\n  "line": [],\n  "items": [],\n  "tracks": []\n}\n');
   });
 
-  it('M5-1b TP-70 seeds the tracks as an empty list', () => {
+  it('seeds the tracks as an empty list', () => {
     expect(JSON.parse(initialBoardText('line'))).toHaveProperty('tracks', []);
   });
 });
@@ -177,7 +177,7 @@ describe('layout', () => {
   });
 });
 
-describe('the share list in the root .gitignore (TP-69)', () => {
+describe('the share list in the root .gitignore', () => {
   const lines = (text: string): string[] => text.split('\n');
 
   it('ignores everything, and allows .gitignore, factory.yaml and the setup folder', () => {
@@ -295,7 +295,7 @@ describe('ignoresLine: when git ignores the inbox by the state .gitignore', () =
   });
 });
 
-describe('the .gitignore of the state repo: the reviews folder (TP-31)', () => {
+describe('the .gitignore of the state repo: the reviews folder', () => {
   const BEFORE_REVIEWS = 'state/\nlocks/\nbackups/\nworkers/\ninbox/\noutbox/\n';
 
   it('ignores the reviews folder from the start', () => {

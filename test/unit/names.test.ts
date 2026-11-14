@@ -274,7 +274,7 @@ const propertyNamesOf = (tree: Readonly<Record<string, unknown>>): string[] =>
   ]);
 
 describe('the limits of the track list', () => {
-  it('M5-1b TP-83 holds the track lines to the output cap minus the summary line, the table heading and the more-tracks line', () => {
+  it('holds the track lines to the output cap minus the summary line, the table heading and the more-tracks line', () => {
     expect(maxTrackLines).toBe(MAX_OUTPUT_LINES - 3);
     expect(maxTrackLines).toBe(17);
   });
@@ -732,7 +732,7 @@ describe('the install check', () => {
   });
 });
 
-describe('the old words and the jargon words in the text of the source (TP-60)', () => {
+describe('the old words and the jargon words in the text of the source', () => {
   /** The folders that print text, and the top files of src. */
   const TEXT_FOLDERS = [
     'board',
@@ -851,7 +851,7 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
   });
 });
 
-describe('the words home and root for a factory folder in the text of the source (TP-138)', () => {
+describe('the words home and root for a factory folder in the text of the source', () => {
   /**
    * The words that the table of plain words rules out in user text for the folder of a factory: home and root, as whole
    * words. The flag `--home`, the variable `FACTORY_HOME`, and a name with a hyphen or an underscore are names of code,
@@ -893,7 +893,7 @@ describe('the words home and root for a factory folder in the text of the source
   });
 });
 
-describe('the name of the worker window in the docs that a user reads (TP-138)', () => {
+describe('the name of the worker window in the docs that a user reads', () => {
   /**
    * The README and the docs that explain the tool name the window `workers`. The old name `bench` stays only where the
    * design and the glossary quote it as an old word: `docs/design.md` (its history rows) and `docs/glossary.md`.
@@ -1094,7 +1094,7 @@ describe('the approval points of a recipe', () => {
   });
 });
 
-describe('the writers of the approval record and of the setup acceptance (TP-39, TP-144)', () => {
+describe('the writers of the approval record and of the setup acceptance', () => {
   const OWNER_RECORD = join(SRC, 'core', 'owner-record.ts');
   const SETUP_ACCEPTANCE = join(SRC, 'core', 'setup-acceptance.ts');
   const PRIVATE_FILE = join(SRC, 'core', 'private-file.ts');
@@ -1111,12 +1111,12 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
     expect(rel(withText(/\bownerRecords\b/))).toEqual(['core/owner-record.ts']);
   });
 
-  it('M5-1b TP-155 has the owner decision file and its names in one module only: the owner record writer', () => {
+  it('has the owner decision file and its names in one module only: the owner record writer', () => {
     expect(rel(withText(/\bownerDecisions\b/))).toEqual(['core/owner-record.ts']);
     expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/owner-record.ts']);
   });
 
-  it('M5-1b TP-155 lets only the code of decide name the decision writer, and only decide call recordDecision', () => {
+  it('lets only the code of decide name the decision writer, and only decide call recordDecision', () => {
     const decide = 'commands/decide.ts';
     const callersOf = (pattern: RegExp, owners: readonly string[]): string[] =>
       rel(withText(pattern)).filter((path) => !owners.includes(path));
@@ -1125,7 +1125,7 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
     expect(callersOf(/\brecordDecision\(/, ['board/local.ts', 'board/contract.ts', decide])).toEqual([]);
   });
 
-  it('M5-1b TP-155 limits the key of the decisions folder to the state layout, the record path and the local board', () => {
+  it('limits the key of the decisions folder to the state layout, the record path and the local board', () => {
     expect(rel(withText(/\bprofileDecisions\b/))).toEqual([
       'board/decision-record.ts',
       'board/local.ts',
@@ -1134,7 +1134,7 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
     expect(rel(withText(/\bdirs\.decisions\b/))).toEqual(['state/layout.ts']);
   });
 
-  it('M5-1b TP-165 reads the stage key in none of the decide sources', () => {
+  it('reads the stage key in none of the decide sources', () => {
     const decideSources = [
       'commands/decide.ts',
       'board/decide.ts',
@@ -1202,7 +1202,7 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
   });
 });
 
-describe('the layers of the board source (TP-104)', () => {
+describe('the layers of the board source', () => {
   const BOARD_DIR = join(SRC, 'board');
   const LOWER_FOLDERS = ['state', 'core', 'workers'];
 
@@ -1214,19 +1214,19 @@ describe('the layers of the board source (TP-104)', () => {
       .filter((target) => target === BOARD_DIR || target.startsWith(`${BOARD_DIR}${sep}`))
       .map((target) => relative(SRC, target));
 
-  it('M5-1b TP-104 has a board folder with the files of the connector core, and scans it', () => {
+  it('has a board folder with the files of the connector core, and scans it', () => {
     const scanned = allSourceFiles(BOARD_DIR).map((path) => relative(BOARD_DIR, path)).sort();
     expect(scanned).toEqual(expect.arrayContaining(['contract.ts', 'fields.ts', 'files.ts', 'stages.ts', 'tracks.ts']));
   });
 
-  it('M5-1b TP-104 lets no file of src/state, src/core or src/workers import the board folder', () => {
+  it('lets no file of src/state, src/core or src/workers import the board folder', () => {
     const found = LOWER_FOLDERS.flatMap((folder) => allSourceFiles(join(SRC, folder))).flatMap((path) =>
       boardImportsOf(path, readFileSync(path, 'utf8')).map((target) => `${relative(SRC, path)} imports ${target}`),
     );
     expect(found).toEqual([]);
   });
 
-  it('M5-1b TP-104 finds each form of import of the board folder from a lower folder', () => {
+  it('finds each form of import of the board folder from a lower folder', () => {
     const file = join(SRC, 'state', 'sample.ts');
     const source = [
       "import { a } from '../board/local.js';",
@@ -1246,33 +1246,33 @@ describe('the layers of the board source (TP-104)', () => {
     ]);
   });
 
-  it('M5-1b TP-104 lets a board file import the work item port type of src/workers', () => {
+  it('lets a board file import the work item port type of src/workers', () => {
     const file = join(BOARD_DIR, 'local.ts');
     expect(boardImportsOf(file, "import type { WorkItemPort } from '../workers/work-items.js';")).toEqual([]);
     expect(boardImportsOf(file, "import { a } from './files.js';")).toEqual([join('board', 'files.js')]);
   });
 
-  it('M5-1b TP-104 parses JSON in the board folder with parseJsonText only', () => {
+  it('parses JSON in the board folder with parseJsonText only', () => {
     const found = allSourceFiles(BOARD_DIR).filter((path) => /\bJSON\.parse\b/.test(stripComments(readFileSync(path, 'utf8'))));
     expect(found.map((path) => relative(SRC, path))).toEqual([]);
   });
 });
 
-describe('the work item port is a required parameter (TP-64, TP-77)', () => {
+describe('the work item port is a required parameter', () => {
   const COMMANDS = ['status.ts', 'dismiss.ts', 'worker-list.ts'].map((file) => join(SRC, 'commands', file));
   const codeOf = (path: string): string => stripComments(readFileSync(path, 'utf8'));
 
-  it('M5-1b TP-64 holds no name of the unknown default in any source file', () => {
+  it('holds no name of the unknown default in any source file', () => {
     const found = allSourceFiles(SRC).filter((path) => /\bunknownWorkItems\b/.test(codeOf(path)));
     expect(found.map((path) => relative(SRC, path))).toEqual([]);
   });
 
-  it.each(COMMANDS)('M5-1b TP-64 gives the port parameter of %s no default', (path) => {
+  it.each(COMMANDS)('gives the port parameter of %s no default', (path) => {
     expect(codeOf(path)).toMatch(/\bworkItems:\s*WorkItemPort\b/);
     expect(codeOf(path)).not.toMatch(/\bworkItems:\s*WorkItemPort\s*=/);
   });
 
-  it('M5-1b TP-64 passes the port of the board at each call of status, dismiss and worker list', () => {
+  it('passes the port of the board at each call of status, dismiss and worker list', () => {
     const lastArguments = (file: string, name: string): (string | undefined)[] =>
       callsOf(readFileSync(join(SRC, file), 'utf8'), name).map((args) => args.at(-1)?.trim());
     expect(lastArguments('cli/table.ts', 'runStatus')).toEqual(['boardWorkItems(registry)']);
@@ -1280,7 +1280,7 @@ describe('the work item port is a required parameter (TP-64, TP-77)', () => {
     expect(lastArguments('commands/worker.ts', 'runWorkerList')).toEqual(['boardWorkItems(registry)']);
   });
 
-  it('M5-1b TP-77 sets no flow-only mark in a command, and the port never reads the stage', () => {
+  it('sets no flow-only mark in a command, and the port never reads the stage', () => {
     const files = allSourceFiles(join(SRC, 'commands')).concat(join(SRC, 'board', 'work-items.ts'));
     const found = files.flatMap((path) => literalsOf(readFileSync(path, 'utf8')).filter((literal) => /^(merged|released)$/i.test(literal)));
     expect(found).toEqual([]);
@@ -1304,7 +1304,7 @@ describe('the caps that the change log and the pull request state', () => {
   });
 });
 
-describe('the instruction files (TP-32, TP-34)', () => {
+describe('the instruction files', () => {
   const textOf = (path: string): string => stripComments(readFileSync(path, 'utf8'));
   const withText = (pattern: RegExp): string[] =>
     allSourceFiles(SRC)
@@ -1351,7 +1351,7 @@ describe('the instruction files (TP-32, TP-34)', () => {
     expect(withText(/\brealPathOf\b|\bisSameOrInsideFolder\b/).filter((path) => readers.includes(path))).toEqual([]);
   });
 
-  it('TP-25: every use of the Claude folder name in src is on the allow list, and no template holds a user Claude path', () => {
+  it('every use of the Claude folder name in src is on the allow list, and no template holds a user Claude path', () => {
     // dirs.claude is the only place of the folder name outside names.ts (see the test of the names above), so a path
     // below the user home and the Claude folder needs both words in one module. Another module with both is a new
     // reader of that folder, and this test makes a person look at it first.
@@ -1372,7 +1372,7 @@ describe('the instruction files (TP-32, TP-34)', () => {
   });
 });
 
-describe('the root checks (TP-44, TP-179, TP-180)', () => {
+describe('the root checks', () => {
   const textOf = (path: string): string => stripComments(readFileSync(path, 'utf8'));
   const withText = (pattern: RegExp): string[] =>
     allSourceFiles(SRC)
@@ -1407,7 +1407,7 @@ describe('the root checks (TP-44, TP-179, TP-180)', () => {
   });
 });
 
-describe('the agent program (TP-3)', () => {
+describe('the agent program', () => {
   const sources = allSourceFiles(SRC).map((path) => ({ file: relative(SRC, path), code: stripComments(readFileSync(path, 'utf8')) }));
   const withText = (pattern: RegExp): string[] => sources.filter(({ code }) => pattern.test(code)).map(({ file }) => file);
   const callsIn = (names: readonly string[]): { readonly file: string; readonly args: readonly string[] }[] =>
@@ -1442,7 +1442,7 @@ describe('the agent program (TP-3)', () => {
   });
 });
 
-describe('the names of the sessions (TP-10)', () => {
+describe('the names of the sessions', () => {
   const valueOf = (result: ReturnType<typeof sessionNames.coordinator>): string | null => (result.ok ? result.value : null);
 
   it('names the session of the coordinator with the id of the node', () => {
@@ -1624,36 +1624,36 @@ describe('the names of the board records', () => {
   });
 });
 
-describe('the lessons file of the coordinator (AC-7)', () => {
-  it('TP-23 has one name for the file, in the state folder, and the coordinator texts write its path from their folder', () => {
+describe('the lessons file of the coordinator', () => {
+  it('has one name for the file, in the state folder, and the coordinator texts write its path from their folder', () => {
     expect(files.lessons).toBe('lessons.md');
     expect(templateValues['lessonsFile']).toBe(`${dirs.state}/${files.lessons}`);
     expect(coordinatorTemplateValues['lessonsFile']).toBe(`../${dirs.state}/${files.lessons}`);
   });
 
-  it('TP-23 gives the file a name that no other file of the state folder has', () => {
+  it('gives the file a name that no other file of the state folder has', () => {
     expect(Object.values(files).filter((name) => name === files.lessons)).toHaveLength(1);
   });
 
-  it('TP-23 holds at most 40 entries, and the texts get that number as a value', () => {
+  it('holds at most 40 entries, and the texts get that number as a value', () => {
     expect(lessonLimits.maxEntries).toBe(40);
     expect(templateValues['maxLessons']).toBe('40');
     expect(coordinatorTemplateValues['maxLessons']).toBe('40');
   });
 
-  it('TP-23 holds at most 32768 bytes, and the texts get that number as a value', () => {
+  it('holds at most 32768 bytes, and the texts get that number as a value', () => {
     expect(lessonLimits.maxBytes).toBe(32_768);
     expect(templateValues['maxLessonBytes']).toBe('32768');
     expect(coordinatorTemplateValues['maxLessonBytes']).toBe('32768');
   });
 });
 
-describe('the typed lines of a reset (AC-7)', () => {
-  it('TP-24 keeps the two typed lines as two constant lines', () => {
+describe('the typed lines of a reset', () => {
+  it('keeps the two typed lines as two constant lines', () => {
     expect(typing.lines).toEqual({ clear: '/clear', compact: '/compact' });
   });
 
-  it('TP-24 holds no typed line in any block, so a block has no hint for a compact', () => {
+  it('holds no typed line in any block, so a block has no hint for a compact', () => {
     for (const template of allBlocks) {
       for (const line of Object.values(typing.lines)) expect(template.body, `${template.name} ${line}`).not.toContain(line);
     }

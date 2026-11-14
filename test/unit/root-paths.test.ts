@@ -181,7 +181,7 @@ describe('the tracked set of a received root', () => {
   });
 });
 
-describe('requireNoTrackedLinks (TP-164)', () => {
+describe('requireNoTrackedLinks', () => {
   const tracked = ['setup/coordinator.md', 'CLAUDE.md', '.claude/settings.json'];
   const seededRoot = (links: Readonly<Record<string, string>> = {}): FakeDeps => {
     const deps = createFakeDeps({ links });
@@ -219,7 +219,7 @@ describe('requireNoTrackedLinks (TP-164)', () => {
   });
 });
 
-describe('the tracked paths that stop init (TP-86, TP-122)', () => {
+describe('the tracked paths that stop init', () => {
   const cloneFolders = ['web', 'api'];
   const kinds = (tracked: readonly string[], clones: readonly string[] = cloneFolders) =>
     trackedProblems(tracked, clones).map((problem) => [problem.path, problem.kind]);
@@ -271,7 +271,7 @@ describe('the tracked paths that stop init (TP-86, TP-122)', () => {
   });
 });
 
-describe('the tracked paths that a session can load (TP-155, TP-168)', () => {
+describe('the tracked paths that a session can load', () => {
   it.each([
     'CLAUDE.md',
     'CLAUDE.local.md',
@@ -316,7 +316,7 @@ describe('the tracked paths that a session can load (TP-155, TP-168)', () => {
   );
 });
 
-describe('the tracked paths under one folder (TP-20)', () => {
+describe('the tracked paths under one folder', () => {
   const tracked = ['factory.yaml', 'web/a.ts', 'Web/b.ts', 'work-copies/x', 'WORK-COPIES/y', 'webapp/c.ts', 'a/web/d.ts'];
 
   it('gives the paths whose first part is the folder, in any letter case, in the order of the list', () => {
@@ -334,7 +334,7 @@ describe('the tracked paths under one folder (TP-20)', () => {
   });
 });
 
-describe('the paths that the ignore check probes (TP-61)', () => {
+describe('the paths that the ignore check probes', () => {
   it('names the local file, the node file of the state folder, a coordinator file, a work copies path and a file in each clone', () => {
     expect(ignoreProbesOf(['web', 'api'])).toEqual({
       local: 'factory.local.yaml',

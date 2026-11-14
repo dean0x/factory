@@ -68,25 +68,25 @@ describe('the glossary of the program', () => {
     expect(count).toBeLessThanOrEqual(MAX_WORDS);
   });
 
-  it('TP-41: says in the entry for an assignment that a worker gets it as a file in its assignment folder', () => {
+  it('says in the entry for an assignment that a worker gets it as a file in its assignment folder', () => {
     const text = glossary.find((word) => word.term === 'assignment')?.text ?? '';
     expect(text).toContain('A worker gets it as a file in its assignment folder.');
   });
 
-  it.each(['worker', 'session reset', 'request', 'queue'])('TP-41: does not call the built word "%s" unbuilt', (term) => {
+  it.each(['worker', 'session reset', 'request', 'queue'])('does not call the built word "%s" unbuilt', (term) => {
     const text = glossary.find((word) => word.term === term)?.text ?? '';
     expect(text.length, term).toBeGreaterThan(0);
     expect(text, term).not.toContain('Not built yet');
   });
 
-  it.each(['worker', 'assignment', 'session reset', 'request', 'queue'])('TP-41: holds the same text as docs/glossary.md for "%s"', (term) => {
+  it.each(['worker', 'assignment', 'session reset', 'request', 'queue'])('holds the same text as docs/glossary.md for "%s"', (term) => {
     const program = glossary.find((word) => word.term === term)?.text;
     const entry = partEntries(CORE_HEADING).find((candidate) => candidate.term === term);
     expect(entry, term).toBeDefined();
     expect(entry?.text).toBe(program);
   });
 
-  it('TP-41: has no entry for the doorbell, and the inbox is the assignment folder of a worker', () => {
+  it('has no entry for the doorbell, and the inbox is the assignment folder of a worker', () => {
     const entries = partEntries(CORE_HEADING);
     expect(entries.find((entry) => entry.term === 'doorbell')).toBeUndefined();
     expect(entries.find((entry) => entry.term === 'inbox')?.text).toContain('assignment folder of a worker');
@@ -110,39 +110,39 @@ describe('the glossary of the program', () => {
   });
 });
 
-describe('the words track and stage (M5-1b TP-94)', () => {
+describe('the words track and stage', () => {
   const textOf = (term: string): string => glossary.find((word) => word.term === term)?.text ?? '';
   const docTextOf = (term: string): string | undefined =>
     partEntries(CORE_HEADING).find((entry) => entry.term === term)?.text;
 
-  it('M5-1b TP-94: lists track and stage as terms of every factory, after the earlier terms', () => {
+  it('lists track and stage as terms of every factory, after the earlier terms', () => {
     expect(terms.slice(-2)).toEqual(['track', 'stage']);
   });
 
-  it('M5-1b TP-94: says that a track is a named stream of work with its own roadmap, and that a worker is not a track', () => {
+  it('says that a track is a named stream of work with its own roadmap, and that a worker is not a track', () => {
     const text = textOf('track');
     expect(text).toContain('A track is a named stream of work with its own roadmap.');
     expect(text).toContain('A worker is not a track.');
   });
 
-  it('M5-1b TP-94: names the stage as the place of a work item on the board, apart from the work cycle and from an approval', () => {
+  it('names the stage as the place of a work item on the board, apart from the work cycle and from an approval', () => {
     const text = textOf('stage');
     expect(text).toContain('A stage is where a work item is on the board.');
     expect(text).toContain('It is not a step of the work cycle.');
     expect(text).toContain('It is never an approval.');
   });
 
-  it.each(['track', 'stage'])('M5-1b TP-94: holds the same text in the program and in the first part of docs/glossary.md for "%s"', (term) => {
+  it.each(['track', 'stage'])('holds the same text in the program and in the first part of docs/glossary.md for "%s"', (term) => {
     expect(textOf(term).length, term).toBeGreaterThan(0);
     expect(docTextOf(term), term).toBe(textOf(term));
   });
 
-  it.each(['track', 'stage'])('M5-1b TP-94: names no software word in the sentence for "%s"', (term) => {
+  it.each(['track', 'stage'])('names no software word in the sentence for "%s"', (term) => {
     expect(textOf(term).length, term).toBeGreaterThan(0);
     expect(textOf(term), term).not.toMatch(/\b(?:merge|merged|pull request|release|released|git|CI|ticket|building)\b/i);
   });
 
-  it.each(['track', 'stage'])('M5-1b TP-94: gives "%s" no mark for an old word', (term) => {
+  it.each(['track', 'stage'])('gives "%s" no mark for an old word', (term) => {
     const entry = docEntries().find((candidate) => candidate.term === term);
     expect(entry, term).toBeDefined();
     expect(entry?.was, term).toBeUndefined();

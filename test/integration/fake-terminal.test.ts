@@ -111,7 +111,7 @@ it.runIf(gate === 'fail')('needs the program script, because the variable CI is 
 });
 
 describe.skipIf(gate !== 'run')('the fake terminal (script)', () => {
-  it('gives the command a terminal on its standard input and output, and ends with the exit code (TP-18)', async () => {
+  it('gives the command a terminal on its standard input and output, and ends with the exit code', async () => {
     const result = await runInTerminal(box, ['/bin/sh', '-c', 'test -t 0 && test -t 1 && echo TTY']);
     expect(result.screen).toContain('TTY');
     expect(result.screen).toMatch(/(?:^|\n)EXIT:0\n/);
@@ -123,7 +123,7 @@ describe.skipIf(gate !== 'run')('the fake terminal (script)', () => {
     expect(result.code).toBe(7);
   }, CASE_MS);
 
-  it('quotes each word, so a quote, a dollar sign and a back tick reach the command as text (TP-8)', async () => {
+  it('quotes each word, so a quote, a dollar sign and a back tick reach the command as text', async () => {
     const word = `it's $HOME \`id\` ; "q" *`;
     const result = await runInTerminal(box, ['/bin/sh', '-c', 'printf "<%s>" "$1"', 'sh', word]);
     expect(result.screen).toContain(`<${word}>`);
@@ -145,7 +145,7 @@ describe.skipIf(gate !== 'run')('the fake terminal (script)', () => {
     expect(result.code).toBe(0);
   }, CASE_MS);
 
-  it('fails at once for a prompt that no exchange names, shows the screen, and stops the group of the command (TP-8)', async () => {
+  it('fails at once for a prompt that no exchange names, shows the screen, and stops the group of the command', async () => {
     const started = Date.now();
     const error = await errorOf(
       runInTerminal(box, ['/bin/sh', '-c', 'printf "Continue? [y/N] "; sleep 60'], {
@@ -159,7 +159,7 @@ describe.skipIf(gate !== 'run')('the fake terminal (script)', () => {
     await expectGroupGone(groupOf(error.message));
   }, CASE_MS);
 
-  it('counts the prompt limit from the start of the command, and stops the group of the command (TP-8)', async () => {
+  it('counts the prompt limit from the start of the command, and stops the group of the command', async () => {
     const error = await errorOf(
       runInTerminal(box, ['/bin/sh', '-c', 'echo busy; sleep 60'], {
         exchanges: [{ prompt: /Name: $/, answer: 'Ada' }],
@@ -170,7 +170,7 @@ describe.skipIf(gate !== 'run')('the fake terminal (script)', () => {
     await expectGroupGone(groupOf(error.message));
   }, CASE_MS);
 
-  it('ends at the run limit in wall time when a timer is late, and stops a command that ignores the hangup (TP-8)', async () => {
+  it('ends at the run limit in wall time when a timer is late, and stops a command that ignores the hangup', async () => {
     const blockMs = 2_000;
     const pidFile = join(box.root, 'command.pid');
     // The block starts in the check phase of the loop. The next turn then runs the due timer of the helper before the poll phase
@@ -193,7 +193,7 @@ describe.skipIf(gate !== 'run')('the fake terminal (script)', () => {
     }
   }, CASE_MS);
 
-  it('runs every kill and keeps the error of the run when the first kill fails (TP-8)', async () => {
+  it('runs every kill and keeps the error of the run when the first kill fails', async () => {
     const { error, kills } = await failAfterFirstKillFails(() =>
       runInTerminal(box, ['/bin/sh', '-c', 'printf "Continue? [y/N] "; sleep 60']),
     );
@@ -205,13 +205,13 @@ describe.skipIf(gate !== 'run')('the fake terminal (script)', () => {
     }
   }, CASE_MS);
 
-  it('fails a run that worked when a kill fails, and still runs the other kill (TP-8)', async () => {
+  it('fails a run that worked when a kill fails, and still runs the other kill', async () => {
     const { error, kills } = await failAfterFirstKillFails(() => runInTerminal(box, ['/bin/true']));
     expect(error.message).toContain('EPERM');
     expect(kills).toHaveLength(2);
   }, CASE_MS);
 
-  it('drops TMUX from the environment of the command, as the sandbox does for each command (TP-8)', async () => {
+  it('drops TMUX from the environment of the command, as the sandbox does for each command', async () => {
     const result = await runInTerminal(box, ['/bin/sh', '-c', 'printf "<%s>" "${TMUX-unset}"'], {
       env: { TMUX: '/private/tmux-user,1,0' },
     });
@@ -225,7 +225,7 @@ describe.skipIf(gate !== 'run')('the fake terminal (script)', () => {
     expect(error.message).toContain('ended before the prompt');
   }, CASE_MS);
 
-  it('stops before it spawns anything when HOME is not inside the sandbox root (TP-8)', async () => {
+  it('stops before it spawns anything when HOME is not inside the sandbox root', async () => {
     const error = await errorOf(runInTerminal(box, ['/bin/true'], { env: { HOME: '/nonexistent-home' } }));
     expect(error.message).toContain('HOME');
     expect(error.message).toContain('not inside the sandbox root');

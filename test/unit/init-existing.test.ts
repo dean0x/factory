@@ -246,7 +246,7 @@ const stateGit = (log: { calls: { command: string; args: readonly string[] }[] }
     .filter((call) => call.command === 'git' && call.args[0] === '-C' && call.args[1] === STATE)
     .map((call) => withoutStateWords(call.args).slice(2).join(' '));
 
-describe('init: a registered root, the checks and the acceptance (TP-181)', () => {
+describe('init: a registered root, the checks and the acceptance', () => {
   it('asks on a terminal window, writes the acceptance, and changes no other file', async () => {
     const asked: string[] = [];
     const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person({}, asked) });
@@ -432,7 +432,7 @@ describe('init: a registered root, the checks and the acceptance (TP-181)', () =
   });
 });
 
-describe('init: a root that holds both config files in a factory session (TP-83)', () => {
+describe('init: a root that holds both config files in a factory session', () => {
   it.each([
     ['a registered root', {}],
     ['a moved root', { entry: null }],
@@ -450,7 +450,7 @@ describe('init: a root that holds both config files in a factory session (TP-83)
   });
 });
 
-describe('init: the mode of the local file on a registered root (TP-108, TP-146, TP-147)', () => {
+describe('init: the mode of the local file on a registered root', () => {
   const NOTICE = 'set the mode of factory.local.yaml to 600';
 
   it.each([
@@ -829,7 +829,7 @@ describe('init: the text of the coordinator follows a changed mode of a register
   });
 });
 
-describe('init: a moved root, with no entry in the factory list (TP-82)', () => {
+describe('init: a moved root, with no entry in the factory list', () => {
   const moved = (made: Existing = {}, extra: FakeOptions = {}) => {
     const made2 = existing({ ...made, entry: null }, extra);
     registerRoot(made2.deps, '/w/old', 'demo');
@@ -921,7 +921,7 @@ describe('init: a moved root, with no entry in the factory list (TP-82)', () => 
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('exits 4 before any write for a tracked instruction file with no terminal window, also with the yes flag (TP-157)', async () => {
+  it('exits 4 before any write for a tracked instruction file with no terminal window, also with the yes flag', async () => {
     const { deps } = moved({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'], unaccepted: true });
     const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
@@ -992,7 +992,7 @@ describe('init: a moved root, with no entry in the factory list (TP-82)', () => 
     expect(result.ok && result.value.json['approval']).toEqual({ merge: 'owner', release: 'owner' });
   });
 
-  it('exits 1 and changes nothing when the factory list can not be written (TP-95)', async () => {
+  it('exits 1 and changes nothing when the factory list can not be written', async () => {
     const { deps } = moved({ unaccepted: true }, { ...terminal, prompt: person() });
     const before = snapshot(deps);
     const result = await runInit(failingWrite(deps, '/homes.json'), options());
@@ -1002,7 +1002,7 @@ describe('init: a moved root, with no entry in the factory list (TP-82)', () => 
   });
 });
 
-describe('init: an entry with another node id (TP-84, TP-169, TP-170)', () => {
+describe('init: an entry with another node id', () => {
   it('shows the old and the new id and the reason, and replaces the entry with the origin received', async () => {
     const asked: string[] = [];
     const { deps } = existing({ entry: 'old', origin: 'own' }, { ...terminal, prompt: person({}, asked) });
@@ -1069,7 +1069,7 @@ describe('init: an entry with another node id (TP-84, TP-169, TP-170)', () => {
   });
 });
 
-describe('init: a root with no state folder (TP-85)', () => {
+describe('init: a root with no state folder', () => {
   it('makes the state folder as the received path does, registers the root, and the root rule passes', async () => {
     const { deps, log } = existing({ state: 'absent', origin: 'own' });
     const before = outsideState(deps);
@@ -1118,7 +1118,7 @@ describe('init: a root with no state folder (TP-85)', () => {
     expect([...made.deps.files.keys()].some((path) => path.startsWith(`${STATE}/`))).toBe(false);
   });
 
-  it('removes the state folder it made and changes nothing else when the factory list can not be written (TP-95)', async () => {
+  it('removes the state folder it made and changes nothing else when the factory list can not be written', async () => {
     const { deps } = existing({ state: 'absent' });
     const before = snapshot(deps);
     const result = await runInit(failingWrite(deps, '/homes.json'), options({ yes: true }));
@@ -1134,7 +1134,7 @@ describe('init: a root with no state folder (TP-85)', () => {
   });
 });
 
-describe('init: a root whose state folder has a missing or broken marker (TP-96, TP-124)', () => {
+describe('init: a root whose state folder has a missing or broken marker', () => {
   it.each([
     ['missing', 'no-marker' as const],
     ['broken', 'broken-marker' as const],
@@ -1221,7 +1221,7 @@ describe('init: a root whose state folder has a missing or broken marker (TP-96,
     expect(warningsOf(result).join('\n')).toContain('not committed');
   });
 
-  describe('and the state lock (TP-19)', () => {
+  describe('and the state lock', () => {
     const LOCK_FILE = `${STATE}/locks/${stateLock.name}${stateLock.lock.suffix}`;
 
     it.each([
@@ -1279,7 +1279,7 @@ describe('init: a root whose state folder has a missing or broken marker (TP-96,
     });
   });
 
-  it('refuses a state folder that is not the top of its own work tree: exit 4, and nothing is written (TP-124)', async () => {
+  it('refuses a state folder that is not the top of its own work tree: exit 4, and nothing is written', async () => {
     const { deps, log } = existing({ state: 'no-marker', stateRepo: false });
     const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
@@ -1319,7 +1319,7 @@ describe('init: a root whose state folder has a missing or broken marker (TP-96,
   });
 });
 
-describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () => {
+describe('init: the delete guard of a state repo that exists', () => {
   const GUARD = `${STATE}/.git/${stateGuard.folder}`;
   const HOOKS = stateGuard.hookFiles.map((name) => `${GUARD}/${name}`);
   const HOOK = `${GUARD}/${stateGuard.hookFiles[0]}`;
@@ -1451,7 +1451,7 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
     expect(linesOf(result)).not.toContain('factory-guard');
   });
 
-  it('exits 4 before any write when the local git config of the state folder names a program, and names the key (AC-7)', async () => {
+  it('exits 4 before any write when the local git config of the state folder names a program, and names the key', async () => {
     const configList = { [STATE]: 'local\0filter.lfs.clean\ngit-lfs clean\0' };
     const { deps, log } = existing({ state: 'valid', entry: null, fixture: { configList } });
     repo(deps);
@@ -1551,7 +1551,7 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
   });
 });
 
-describe('init: a state path that is not a folder (TP-119)', () => {
+describe('init: a state path that is not a folder', () => {
   it.each([
     ['a registered root', {}],
     ['a moved root', { entry: null }],
@@ -1600,7 +1600,7 @@ describe('init: the warning for another entry with the same node id', () => {
   });
 });
 
-describe('init: the hook settings of a registered root (TP-16)', () => {
+describe('init: the hook settings of a registered root', () => {
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(HOOK_FILE) ?? 'null');
 
   it('asks nothing and writes nothing when the entries are in place, also with no terminal window and no yes flag', async () => {

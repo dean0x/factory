@@ -44,7 +44,7 @@ describe('looksLikeToken', () => {
   });
 });
 
-describe('textHasToken (TP-45)', () => {
+describe('textHasToken', () => {
   it.each([
     ['a GitHub token in a line', `token: ${FAKE_GITHUB_TOKEN}\n`],
     ['an Anthropic key in a sentence', 'Use sk-ant-api03-abcdefghijklmnop for the proxy.'],

@@ -62,8 +62,8 @@ const logOf = (...rows: readonly Entry[]): DecisionLogDoc => unwrap(parseDecisio
 
 const strictOf = (changes: Entry = {}): DecideRequest => unwrap(strictRequestOf(waitingOf(entry(changes)), 'D-3'));
 
-describe('the strict read of a request (TP-168, TP-196)', () => {
-  it('M5-1b TP-168 gives the request, its canonical text and its hash, with the stored strings as they are', () => {
+describe('the strict read of a request', () => {
+  it('gives the request, its canonical text and its hash, with the stored strings as they are', () => {
     const padded = entry({ title: '  Which database?  ' });
     const request = unwrap(strictRequestOf(waitingOf(padded), 'D-3'));
     expect(request.id).toBe('D-3');
@@ -77,19 +77,19 @@ describe('the strict read of a request (TP-168, TP-196)', () => {
     expect(request.hash).toBe(requestHashOf(request.canonical));
   });
 
-  it('M5-1b TP-168 hashes the same request to the same value, whatever the order of the keys', () => {
+  it('hashes the same request to the same value, whatever the order of the keys', () => {
     const reordered = { options: entry().options, question: entry().question, title: entry().title, id: 'D-3' };
     expect(unwrap(strictRequestOf(waitingOf(reordered), 'D-3')).hash).toBe(strictOf().hash);
   });
 
-  it('M5-1b TP-168 accepts one option, nine options and a rec mark of false', () => {
+  it('accepts one option, nine options and a rec mark of false', () => {
     const nine = Array.from({ length: 9 }, (_, index) => ({ key: `k${index}`, text: `Option ${index}` }));
     expect(strictOf({ options: [{ key: 'a', text: 'Only.' }] }).options).toHaveLength(1);
     expect(strictOf({ options: nine }).options).toHaveLength(9);
     expect(strictOf({ options: [{ key: 'a', text: 'One.', rec: false }] }).options).toEqual([{ key: 'a', text: 'One.' }]);
   });
 
-  it('M5-1b TP-168 gives exit 1 for a request that is not in the waiting file', () => {
+  it('gives exit 1 for a request that is not in the waiting file', () => {
     const error = errorOf(strictRequestOf(waitingOf(entry()), 'D-9'));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(files.waiting);
@@ -128,7 +128,7 @@ describe('the strict read of a request (TP-168, TP-196)', () => {
     ['an id with a leading zero', entry({ id: 'D-05' })],
   ];
 
-  it.each(FAULTS)('M5-1b TP-168 M5-1b TP-196 refuses %s with exit 1, names the waiting file and repeats no stored text', (_name, stored) => {
+  it.each(FAULTS)('refuses %s with exit 1, names the waiting file and repeats no stored text', (_name, stored) => {
     const id = typeof stored['id'] === 'string' ? stored['id'] : 'D-3';
     const error = errorOf(strictRequestOf(waitingOf(stored), id));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -137,7 +137,7 @@ describe('the strict read of a request (TP-168, TP-196)', () => {
     expect(error.hint ?? '').not.toContain('EVIL');
   });
 
-  it.each(FAULTS)('M5-1b TP-196 gives a second remedy sentence for %s: close the request that is not changed and add a new one', (_name, stored) => {
+  it.each(FAULTS)('gives a second remedy sentence for %s: close the request that is not changed and add a new one', (_name, stored) => {
     const id = typeof stored['id'] === 'string' ? stored['id'] : 'D-3';
     const hint = errorOf(strictRequestOf(waitingOf(stored), id)).hint ?? '';
     expect(hint).toContain(`${commandText(commandLines.requestClose)} ${id}`);
@@ -145,7 +145,7 @@ describe('the strict read of a request (TP-168, TP-196)', () => {
   });
 });
 
-describe('a character that the display removes (TP-182)', () => {
+describe('a character that the display removes', () => {
   const HIDDEN = [
     ['a zero width space', ZERO_WIDTH_SPACE],
     ['a tag character', TAG_LETTER],
@@ -156,7 +156,7 @@ describe('a character that the display removes (TP-182)', () => {
     ['a lone surrogate', at(0xd800)],
   ] as const;
 
-  it.each(HIDDEN)('M5-1b TP-182 refuses %s in the title, the question and the text of an option, with exit 1', (_name, hidden) => {
+  it.each(HIDDEN)('refuses %s in the title, the question and the text of an option, with exit 1', (_name, hidden) => {
     const changes: readonly Entry[] = [
       { title: `Which${hidden} database?` },
       { question: `Which${hidden} database?` },
@@ -169,33 +169,33 @@ describe('a character that the display removes (TP-182)', () => {
     }
   });
 
-  it('M5-1b TP-182 refuses the joiner of an emoji, because the display removes it', () => {
+  it('refuses the joiner of an emoji, because the display removes it', () => {
     const error = errorOf(strictRequestOf(waitingOf(entry({ title: `a${at(0x200d)}b` })), 'D-3'));
     expect(exitCodeOf[error.kind]).toBe(1);
   });
 });
 
-describe('the state of a request (TP-145, TP-167, TP-189)', () => {
+describe('the state of a request', () => {
   const ROW = { item: 'D-3: Which database?', decision: 'a', date: '2030-01-02' };
 
-  it('M5-1b TP-145 is open for an entry that the log does not name', () => {
+  it('is open for an entry that the log does not name', () => {
     expect(unwrap(requestStateOf(waitingOf(entry()), logOf(), 'D-3'))).toEqual({ kind: 'open' });
   });
 
-  it('M5-1b TP-145 is unknown for a number that neither file holds', () => {
+  it('is unknown for a number that neither file holds', () => {
     expect(unwrap(requestStateOf(waitingOf(entry()), logOf(ROW), 'D-9'))).toEqual({ kind: 'unknown' });
   });
 
-  it('M5-1b TP-145 is closed, with the date, for a row that has no by key', () => {
+  it('is closed, with the date, for a row that has no by key', () => {
     expect(unwrap(requestStateOf(waitingOf(), logOf(ROW), 'D-3'))).toEqual({ kind: 'closed', date: '2030-01-02' });
   });
 
-  it('M5-1b TP-145 is closed for a row that has a who key and no by key, because it gives no proof', () => {
+  it('is closed for a row that has a who key and no by key, because it gives no proof', () => {
     const row = { ...ROW, who: 'owner' };
     expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3')).kind).toBe('closed');
   });
 
-  it('M5-1b TP-145 has a null date for a row with no date text', () => {
+  it('has a null date for a row with no date text', () => {
     const row = { item: 'D-3: t', decision: 'a', date: 5 };
     expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'))).toEqual({ kind: 'closed', date: null });
   });
@@ -210,14 +210,14 @@ describe('the state of a request (TP-145, TP-167, TP-189)', () => {
     expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'))).toEqual({ kind: 'closed', date: '2030-01-02' });
   });
 
-  it('M5-1b TP-189 is answered, a candidate only, for a row that has a by key, and gives the date and the request text of the row and no option', () => {
+  it('is answered, a candidate only, for a row that has a by key, and gives the date and the request text of the row and no option', () => {
     const row = { ...ROW, decision: 'zzz-edited', by: 'owner', request: 'the text of the row' };
     const state = unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'));
     expect(state).toEqual({ kind: 'answered', date: '2030-01-02', request: 'the text of the row' });
     expect(JSON.stringify(state)).not.toContain('zzz-edited');
   });
 
-  it('M5-1b TP-145 is answered for a row with a by key of any value, because the owner store decides', () => {
+  it('is answered for a row with a by key of any value, because the owner store decides', () => {
     const row = { ...ROW, by: 'someone else' };
     expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'))).toEqual({ kind: 'answered', date: '2030-01-02', request: null });
   });
@@ -242,37 +242,37 @@ describe('the state of a request (TP-145, TP-167, TP-189)', () => {
     expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3')).kind).toBe('answered');
   });
 
-  it('M5-1b TP-167 exits 1 and names both files for a number that is in the waiting file and in the log', () => {
+  it('exits 1 and names both files for a number that is in the waiting file and in the log', () => {
     const error = errorOf(requestStateOf(waitingOf(entry()), logOf(ROW), 'D-3'));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(files.waiting);
     expect(error.message).toContain(files.decisionLog);
   });
 
-  it('M5-1b TP-167 exits 1 for a number that is in both files, also when the row has a by key', () => {
+  it('exits 1 for a number that is in both files, also when the row has a by key', () => {
     const row = { ...ROW, by: 'owner' };
     expect(exitCodeOf[errorOf(requestStateOf(waitingOf(entry()), logOf(row), 'D-3')).kind]).toBe(1);
   });
 });
 
-describe('the states that stop decide (TP-145, TP-148)', () => {
-  it('M5-1b TP-145 lets an open request go on', () => {
+describe('the states that stop decide', () => {
+  it('lets an open request go on', () => {
     expect(requireOpen({ kind: 'open' }, 'D-3').ok).toBe(true);
   });
 
-  it('M5-1b TP-145 exits 2 for an unknown number', () => {
+  it('exits 2 for an unknown number', () => {
     const error = errorOf(requireOpen({ kind: 'unknown' }, 'D-3'));
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain('D-3');
   });
 
-  it('M5-1b TP-145 exits 1 for a closed number and names the date', () => {
+  it('exits 1 for a closed number and names the date', () => {
     const error = errorOf(requireOpen({ kind: 'closed', date: '2030-01-02' }, 'D-3'));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('2030-01-02');
   });
 
-  it('M5-1b TP-148 shows a stored date through the echo rule: clean and cut', () => {
+  it('shows a stored date through the echo rule: clean and cut', () => {
     const date = `${ESCAPE}[31mEVIL${'x'.repeat(100)}`;
     const message = errorOf(requireOpen({ kind: 'closed', date }, 'D-3')).message;
     expect(message).not.toContain(ESCAPE);
@@ -299,51 +299,51 @@ describe('the states that stop decide (TP-145, TP-148)', () => {
     expect(errorOf(requireOpen({ kind: 'closed', date: '2030-01-02' }, 'D-3')).message).not.toContain('decided by');
   });
 
-  it('M5-1b TP-145 gives no pass to an answered row: the store read is the next step', () => {
+  it('gives no pass to an answered row: the store read is the next step', () => {
     const state = { kind: 'answered', date: '2030-01-02', request: null } as const;
     expect(exitCodeOf[errorOf(requireOpen(state, 'D-3')).kind]).toBe(1);
   });
 });
 
-describe('the chosen option (TP-145)', () => {
-  it('M5-1b TP-145 gives the option of the request', () => {
+describe('the chosen option', () => {
+  it('gives the option of the request', () => {
     expect(unwrap(chosenOptionOf(strictOf(), 'b'))).toEqual({ key: 'b', text: 'Use Postgres.' });
   });
 
-  it('M5-1b TP-145 exits 2 for an option that the request does not have, and names the options', () => {
+  it('exits 2 for an option that the request does not have, and names the options', () => {
     const error = errorOf(chosenOptionOf(strictOf(), 'c'));
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain('a, b');
   });
 
-  it('M5-1b TP-148 shows a typed key through the echo rule', () => {
+  it('shows a typed key through the echo rule', () => {
     const error = errorOf(chosenOptionOf(strictOf(), `${ESCAPE}[31m${'y'.repeat(100)}`));
     expect(error.message).not.toContain(ESCAPE);
     expect(error.message).not.toContain('y'.repeat(60));
   });
 });
 
-describe('the recheck under the lock (TP-147)', () => {
+describe('the recheck under the lock', () => {
   const hashNow = strictOf().hash;
 
-  it('M5-1b TP-147 gives the request again when nothing changed', () => {
+  it('gives the request again when nothing changed', () => {
     const request = unwrap(recheckRequest(waitingOf(entry()), logOf(), 'D-3', hashNow));
     expect(request.hash).toBe(hashNow);
     expect(request.canonical).toBe(strictOf().canonical);
   });
 
-  it('M5-1b TP-147 exits 1 when the hash is not equal: the request changed after the prompt', () => {
+  it('exits 1 when the hash is not equal: the request changed after the prompt', () => {
     const error = errorOf(recheckRequest(waitingOf(entry({ question: 'Another question?' })), logOf(), 'D-3', hashNow));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('changed after the prompt');
   });
 
-  it('M5-1b TP-147 exits 1 when a moved separator or one more option changes the hash', () => {
+  it('exits 1 when a moved separator or one more option changes the hash', () => {
     const more = entry({ options: [...(entry()['options'] as unknown[]), { key: 'c', text: 'Use a file.' }] });
     expect(exitCodeOf[errorOf(recheckRequest(waitingOf(more), logOf(), 'D-3', hashNow)).kind]).toBe(1);
   });
 
-  it('M5-1b TP-147 exits 1 when the request is closed or answered after the prompt', () => {
+  it('exits 1 when the request is closed or answered after the prompt', () => {
     const row = { item: 'D-3: Which database?', decision: 'a', date: '2030-01-02', by: 'owner' };
     for (const [waiting, log] of [
       [waitingOf(), logOf()],
@@ -356,31 +356,31 @@ describe('the recheck under the lock (TP-147)', () => {
     }
   });
 
-  it('M5-1b TP-147 exits 1 and names both files when the number is in both', () => {
+  it('exits 1 and names both files when the number is in both', () => {
     const row = { item: 'D-3: Which database?', decision: 'a', date: '2030-01-02' };
     const error = errorOf(recheckRequest(waitingOf(entry()), logOf(row), 'D-3', hashNow));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(files.decisionLog);
   });
 
-  it('M5-1b TP-168 runs the strict read again: an entry that breaks a rule exits 1 and names the waiting file', () => {
+  it('runs the strict read again: an entry that breaks a rule exits 1 and names the waiting file', () => {
     const error = errorOf(recheckRequest(waitingOf(entry({ title: `Which${ZERO_WIDTH_SPACE}?` })), logOf(), 'D-3', hashNow));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(files.waiting);
   });
 
-  it('M5-1b TP-147 gives a remedy line that names the decide command', () => {
+  it('gives a remedy line that names the decide command', () => {
     const error = errorOf(recheckRequest(waitingOf(entry({ title: 'Changed' })), logOf(), 'D-3', hashNow));
     expect(error.hint ?? '').toContain(commandText('decide'));
   });
 });
 
-describe('the room of the decision log (TP-192)', () => {
-  it('M5-1b TP-192 accepts a text of exactly the cap in bytes', () => {
+describe('the room of the decision log', () => {
+  it('accepts a text of exactly the cap in bytes', () => {
     expect(requireLogRoom('x'.repeat(maxFileBytes)).ok).toBe(true);
   });
 
-  it('M5-1b TP-192 exits 1, names the file and the cap, and says not to remove rows, for a text over the cap', () => {
+  it('exits 1, names the file and the cap, and says not to remove rows, for a text over the cap', () => {
     const error = errorOf(requireLogRoom('x'.repeat(maxFileBytes + 1)));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(files.decisionLog);
@@ -388,15 +388,15 @@ describe('the room of the decision log (TP-192)', () => {
     expect(error.hint ?? '').toMatch(/do not remove rows/i);
   });
 
-  it('M5-1b TP-192 counts bytes, not characters', () => {
+  it('counts bytes, not characters', () => {
     const twoBytes = 'é'.repeat(maxFileBytes / 2 + 1);
     expect(twoBytes.length).toBeLessThan(maxFileBytes);
     expect(exitCodeOf[errorOf(requireLogRoom(twoBytes)).kind]).toBe(1);
   });
 });
 
-describe('the note (TP-184)', () => {
-  it('M5-1b TP-184 gives a note of one line as typed, with no trim', () => {
+describe('the note', () => {
+  it('gives a note of one line as typed, with no trim', () => {
     expect(unwrap(checkNote(' Cheaper to run. '))).toBe(' Cheaper to run. ');
     expect(unwrap(checkNote('x'))).toBe('x');
     expect(unwrap(checkNote('é'.repeat(500)))).toHaveLength(500);
@@ -417,17 +417,17 @@ describe('the note (TP-184)', () => {
     ['an escape', `${ESCAPE}[31mred`],
   ] as const;
 
-  it.each(BAD)('M5-1b TP-184 exits 2 for a note with %s', (_name, text) => {
+  it.each(BAD)('exits 2 for a note with %s', (_name, text) => {
     const error = errorOf(checkNote(text));
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).not.toContain(ESCAPE);
   });
 });
 
-describe('the log row of an owner answer (TP-154, TP-173, TP-189)', () => {
+describe('the log row of an owner answer', () => {
   const request = strictOf();
 
-  it('M5-1b TP-154 holds item, decision, date, by and request, and no other key', () => {
+  it('holds item, decision, date, by and request, and no other key', () => {
     const row = unwrap(decideLogRow(request, 'b', '2030-01-02'));
     expect(Object.keys(row).sort()).toEqual(['by', 'date', 'decision', 'item', 'request']);
     expect(row['decision']).toBe('b');
@@ -436,40 +436,40 @@ describe('the log row of an owner answer (TP-154, TP-173, TP-189)', () => {
     expect(row['item']).toBe('D-3: Which database?');
   });
 
-  it('M5-1b TP-154 puts the canonical text in request exactly as the hash covers it', () => {
+  it('puts the canonical text in request exactly as the hash covers it', () => {
     const row = unwrap(decideLogRow(request, 'a', '2030-01-02'));
     expect(row['request']).toBe(request.canonical);
     expect(row['request']).toBe(canonicalOf(entry()));
   });
 
-  it('M5-1b TP-173 lets a consumer hash the stored text with no other step and get the hash of the request', () => {
+  it('lets a consumer hash the stored text with no other step and get the hash of the request', () => {
     const row = unwrap(decideLogRow(request, 'a', '2030-01-02'));
     expect(requestHashOf(String(row['request']))).toBe(request.hash);
   });
 
-  it('M5-1b TP-173 gives a different hash for a row text that was edited', () => {
+  it('gives a different hash for a row text that was edited', () => {
     const row = unwrap(decideLogRow(request, 'a', '2030-01-02'));
     const edited = String(row['request']).replace('SQLite', 'Oracle');
     expect(requestHashOf(edited)).not.toBe(request.hash);
   });
 
-  it('M5-1b TP-173 reads back as an answered row with the same request text, through the file readers', () => {
+  it('reads back as an answered row with the same request text, through the file readers', () => {
     const row = unwrap(decideLogRow(request, 'a', '2030-01-02'));
     const log = logOf(row);
     expect(log.rows[0]?.id).toBe('D-3');
     expect(unwrap(requestStateOf(waitingOf(), log, 'D-3'))).toEqual({ kind: 'answered', date: '2030-01-02', request: request.canonical });
   });
 
-  it('M5-1b TP-154 exits 1 for an option that the request does not have', () => {
+  it('exits 1 for an option that the request does not have', () => {
     expect(exitCodeOf[errorOf(decideLogRow(request, 'zzz', '2030-01-02')).kind]).toBe(1);
   });
 
-  it.each(['2030-1-2', '2030-01-02T10:00:00Z', '', 'today'])('M5-1b TP-154 exits 1 for the date %j', (date) => {
+  it.each(['2030-1-2', '2030-01-02T10:00:00Z', '', 'today'])('exits 1 for the date %j', (date) => {
     expect(exitCodeOf[errorOf(decideLogRow(request, 'a', date)).kind]).toBe(1);
   });
 });
 
-describe('the request block (TP-181)', () => {
+describe('the request block', () => {
   /** The block lines without the mark, after a check that every line starts with it and stays inside the width. */
   const blockOf = (...args: Parameters<typeof requestBlockLines>): readonly string[] => {
     const lines = requestBlockLines(...args);
@@ -486,7 +486,7 @@ describe('the request block (TP-181)', () => {
       .join('');
   };
 
-  it('M5-1b TP-181 shows the number, the title, the question, every option and the note', () => {
+  it('shows the number, the title, the question, every option and the note', () => {
     const lines = blockOf(strictOf(), 'a', 'Cheaper to run.');
     expect(lines[0]).toBe('Decision D-3');
     expect(lines).toContain('Title:    Which database?');
@@ -497,17 +497,17 @@ describe('the request block (TP-181)', () => {
     expect(lines).toContain('Note:     Cheaper to run.');
   });
 
-  it('M5-1b TP-181 marks the chosen option when it is not the recommended one', () => {
+  it('marks the chosen option when it is not the recommended one', () => {
     const lines = blockOf(strictOf(), 'b', null);
     expect(lines).toContain('  a (recommended): Use SQLite.');
     expect(lines).toContain('  b (chosen): Use Postgres.');
   });
 
-  it('M5-1b TP-181 shows no note line when there is no note', () => {
+  it('shows no note line when there is no note', () => {
     expect(blockOf(strictOf(), 'a', null).some((line) => line.startsWith('Note:'))).toBe(false);
   });
 
-  it('M5-1b TP-181 wraps a question of 500 characters and cuts no text', () => {
+  it('wraps a question of 500 characters and cuts no text', () => {
     const question = Array.from({ length: 500 }, (_, index) => String.fromCharCode(97 + (index % 26))).join('');
     const lines = blockOf(strictOf({ question }), 'a', null);
     const shown = lines.slice(lines.findIndex((line) => line.startsWith('Question:')), lines.indexOf('Options:'));
@@ -515,7 +515,7 @@ describe('the request block (TP-181)', () => {
     expect(shown.map((line) => line.slice('Question: '.length)).join('')).toBe(question);
   });
 
-  it('M5-1b TP-181 wraps a title, an option text and a note at the width and cuts no text', () => {
+  it('wraps a title, an option text and a note at the width and cuts no text', () => {
     const title = 'T'.repeat(100);
     const text = 'o'.repeat(200);
     const note = 'n'.repeat(500);
@@ -534,7 +534,7 @@ describe('the request block (TP-181)', () => {
     ).toBe(text);
   });
 
-  it('M5-1b TP-181 wraps at the width also for the longest option key and both marks', () => {
+  it('wraps at the width also for the longest option key and both marks', () => {
     const key = 'k'.repeat(40);
     const text = 'z'.repeat(200);
     const request = strictOf({ options: [{ key, text, rec: true }] });
@@ -542,7 +542,7 @@ describe('the request block (TP-181)', () => {
     expect(lines.join('').split('z').length - 1).toBe(200);
   });
 
-  it('M5-1b TP-181 marks every line, so a text that looks like an option line cannot pass for one in a narrow terminal', () => {
+  it('marks every line, so a text that looks like an option line cannot pass for one in a narrow terminal', () => {
     const terminalWidth = 80;
     const fake = '  b (chosen): Use Postgres.';
     const question = `${'x'.repeat(terminalWidth - BLOCK_MARK.length - 'Question: '.length)}${fake}`;

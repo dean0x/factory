@@ -100,7 +100,7 @@ const fixtureFiles = (): { readonly paths: string[]; readonly complete: boolean 
 
 const REAL: RealValues = { homeDir: homedir(), repoDir: REPO_DIR };
 
-describe('the payload fixtures (TP-4)', () => {
+describe('the payload fixtures', () => {
   it('hold placeholders only: no real home path, cwd, transcript path or session id', () => {
     const files = fixtureFiles();
     expect(files.complete, 'the fixture folder reached a limit of file count or file size').toBe(true);
@@ -204,7 +204,7 @@ describe('payloads.json', () => {
     for (const [event, payload] of Object.entries(parsed.hooks)) expect(payload.hook_event_name).toBe(event);
   });
 
-  it('TP-3: holds 6 payloads; the 2 new ones are not captured and name a docs source, and the Notification payload carries a type of the list', () => {
+  it('holds 6 payloads; the 2 new ones are not captured and name a docs source, and the Notification payload carries a type of the list', () => {
     const parsed = payloadsFile.parse(fixture);
     expect(Object.keys(parsed.hooks)).toHaveLength(6);
     expect(Object.keys(parsed.hook_sources).sort()).toEqual(['Notification', 'PreToolUse']);

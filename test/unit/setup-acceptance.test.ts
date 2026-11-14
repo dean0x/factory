@@ -90,7 +90,7 @@ const entryOf = (path: string, text: string): ManifestEntry => ({
   blob: null,
 });
 
-describe('setup acceptance: the manifest and its hash (TP-171)', () => {
+describe('setup acceptance: the manifest and its hash', () => {
   it('holds the path, the type, the size, the SHA-256 of the bytes and the blob id of each file', async () => {
     const deps = person();
     deps.seed(`${ROOT}/.claude/settings.json`, '{}\n');
@@ -245,7 +245,7 @@ describe('setup acceptance: the manifest and its hash (TP-171)', () => {
     expect(message).not.toMatch(/[\n\t\u001b\u007f]/);
   });
 
-  describe('the byte cap of one file (TP-167)', () => {
+  describe('the byte cap of one file', () => {
     const cap = trackedFiles.maxFileBytes;
 
     it('gives the cap to the read of each file, so that the read itself is bounded', async () => {
@@ -330,12 +330,12 @@ describe('setup acceptance: the manifest and its hash (TP-171)', () => {
 });
 
 describe('setup acceptance: the visible text', () => {
-  it('M5-1b TP-92 shows each control character apart from the newline and the tab as an escape', () => {
+  it('shows each control character apart from the newline and the tab as an escape', () => {
     expect(visibleText(`a${ESC}[2Jb${at(0)}c${at(13)}d${at(0x7f)}e${NEXT_LINE}f`)).toBe('a\\x1b[2Jb\\x00c\\x0dd\\x7fe\\x85f');
     expect(visibleText('line\n\tindent')).toBe('line\n\tindent');
   });
 
-  it('M5-1b TP-92 shows the characters that only format text as an escape', () => {
+  it('shows the characters that only format text as an escape', () => {
     const text = `a${RIGHT_TO_LEFT_OVERRIDE}b${ZERO_WIDTH_SPACE}c${BYTE_ORDER_MARK}d${LINE_SEPARATOR}e`;
     expect(visibleText(text)).toBe('a\\u{202e}b\\u{200b}c\\u{feff}d\\u{2028}e');
   });
@@ -358,7 +358,7 @@ describe('setup acceptance: the visible text', () => {
   });
 });
 
-describe('setup acceptance: the accept prompt (TP-161, TP-162)', () => {
+describe('setup acceptance: the accept prompt', () => {
   const collectedOf = (files: Record<string, string | null>, sizes: Record<string, number> = {}): Collected => ({
     manifest: manifestOf(
       Object.entries(files).map(([path, text]) => ({ ...entryOf(path, text ?? ''), size: sizes[path] ?? Buffer.byteLength(text ?? '') })),
@@ -389,7 +389,7 @@ describe('setup acceptance: the accept prompt (TP-161, TP-162)', () => {
     expect(text).not.toContain('accepted before');
   });
 
-  it('prints the hash of the older acceptance next to the new hash, when an older acceptance exists (TP-170)', () => {
+  it('prints the hash of the older acceptance next to the new hash, when an older acceptance exists', () => {
     const accepted = [entryOf(SETUP, 'OLD TEXT')];
     const current = collectedOf({ [SETUP]: 'NEW TEXT' });
     const text = acceptPromptText({ root: ROOT, node: NODE, current, accepted });
@@ -397,7 +397,7 @@ describe('setup acceptance: the accept prompt (TP-161, TP-162)', () => {
     expect(text).toContain(`Hash of the files that you accepted before: ${manifestHash(accepted)}`);
   });
 
-  it('M5-1b TP-92 shows a control character of a file text and of a file name as an escape, and no raw one', () => {
+  it('shows a control character of a file text and of a file name as an escape, and no raw one', () => {
     const current = collectedOf({ [`odd${ESC}.md`]: `before${ESC}[31mred${at(7)}${RIGHT_TO_LEFT_OVERRIDE}after` });
     const text = acceptPromptText({ root: ROOT, node: NODE, current, accepted: null });
     expect(text).toContain('before\\x1b[31mred\\x07\\u{202e}after');
@@ -601,7 +601,7 @@ describe('setup acceptance: the accept step', () => {
   });
 });
 
-describe('setup acceptance: the writer (TP-144, TP-184)', () => {
+describe('setup acceptance: the writer', () => {
   describe('with a person in a terminal window outside a factory session', () => {
     it('writes the root, the node id, the file, the version, the manifest, the hash, the reason and the time', async () => {
       const deps = person();
@@ -689,7 +689,7 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
       ['a file next to the roles text', 'setup/roles/other.md'],
       ['a setup file with another name', 'setup/extra.md'],
       ['a root instruction file', 'CLAUDE.md'],
-    ])('refuses a record that covers %s with the setup text, also for init with yes (TP-163)', async (_name, path) => {
+    ])('refuses a record that covers %s with the setup text, also for init with yes', async (_name, path) => {
       const deps = person({ stdinIsTTY: false, stdoutIsTTY: false });
       deps.seed(`${ROOT}/${WORKER_SETUP}`, 'Worker text.\n');
       deps.seed(`${ROOT}/${path}`, 'x');
@@ -699,7 +699,7 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
       expect(deps.files.has(STORE)).toBe(false);
     });
 
-    it('refuses a record that covers a file apart from the setup file, also for init with yes (TP-184)', async () => {
+    it('refuses a record that covers a file apart from the setup file, also for init with yes', async () => {
       const deps = person({ stdinIsTTY: false, stdoutIsTTY: false });
       deps.seed(`${ROOT}/.claude/settings.json`, '{}');
       const collected = await collect(deps, [SETUP, '.claude/settings.json']);
@@ -777,7 +777,7 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
     });
   });
 
-  it('leaves the approval record store alone and has its own file in the same state folder (TP-143)', async () => {
+  it('leaves the approval record store alone and has its own file in the same state folder', async () => {
     const deps = person({ stdinIsTTY: false, stdoutIsTTY: false });
     deps.seed(APPROVAL_STORE, '{"schema":1,"records":[]}\n');
     await recordSetupAcceptance(deps, inputOf(await collect(deps)), { fromInitYes: true });

@@ -853,31 +853,31 @@ describe('scripts/check-intent-docs.sh, check 10: the lines of the core parts', 
   });
 });
 
-describe('TP-40: the docs of FAC-M4 PR 3 keep the rules of the docs script', () => {
+describe('the docs of FAC-M4 PR 3 keep the rules of the docs script', () => {
   const docsText = (name: string): string => readFileSync(join(ROOT, 'docs', name), 'utf8');
 
-  it('TP-40: keeps the word self in a row of the Command map, and factory self reset in the core commands of design 4.2', () => {
+  it('keeps the word self in a row of the Command map, and factory self reset in the core commands of design 4.2', () => {
     const map = docsText('roadmap-v2.md').split('### Command map')[1]?.split('\n### ')[0] ?? '';
     expect(map).toMatch(/^\| .*`self`.* \| FAC-M4 \|$/m);
     const core = docsText('design.md').split('**Core commands**')[1]?.split('**Software recipe commands**')[0] ?? '';
     expect(core).toMatch(/^factory self reset\b/m);
   });
 
-  it('TP-40: has no command of the removed inbox in the Command map or in design 4.2', () => {
+  it('has no command of the removed inbox in the Command map or in design 4.2', () => {
     const map = docsText('roadmap-v2.md').split('### Command map')[1]?.split('\n### ')[0] ?? '';
     const commands = docsText('design.md').split('### 4.2 Commands')[1]?.split('### 4.3 ')[0] ?? '';
     expect(map).not.toMatch(/`inbox`|worker send/);
     expect(commands).not.toMatch(/^factory (?:inbox|worker send)\b/m);
   });
 
-  it('TP-40: holds no tmux and no git word in the part "Words of every factory" of the glossary', () => {
+  it('holds no tmux and no git word in the part "Words of every factory" of the glossary', () => {
     const text = docsText('glossary.md');
     const core = text.slice(text.indexOf('## Words of every factory'), text.indexOf('## Words of the software recipe'));
     expect(core.length).toBeGreaterThan(0);
     expect(core).not.toMatch(/\b(?:tmux|git)\b/i);
   });
 
-  it('TP-40: passes the docs script on the docs of the repo', () => {
+  it('passes the docs script on the docs of the repo', () => {
     expect(check(join(ROOT, 'docs')).code).toBe(0);
   });
 });
@@ -1089,7 +1089,7 @@ describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
   });
 });
 
-describe('docs/roadmap-v2.md: the resource check of worker new (TP-136)', () => {
+describe('docs/roadmap-v2.md: the resource check of worker new', () => {
   const roadmap = readFileSync(join(ROOT, 'docs', 'roadmap-v2.md'), 'utf8');
 
   it('says that worker new warns, and still starts, when a resource limit fails or a machine fact is unknown', () => {
@@ -1103,7 +1103,7 @@ describe('docs/roadmap-v2.md: the resource check of worker new (TP-136)', () => 
   });
 });
 
-describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)', () => {
+describe('docs of the board of each track', () => {
   const docsText = (name: string): string => readFileSync(join(ROOT, 'docs', name), 'utf8');
   const design = docsText('design.md');
   const roadmap = docsText('roadmap-v2.md');
@@ -1150,7 +1150,7 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
     expect(migration).toContain('FAC-M3 moves the items into GitHub issues with a private repo as the decision store. It does not retire the page.');
   });
 
-  it('TP-94: gives the terms track and stage in design 4.1 and in the glossary, and calls the steps of the work cycle steps', () => {
+  it('gives the terms track and stage in design 4.1 and in the glossary, and calls the steps of the work cycle steps', () => {
     const concepts = part(design, '### 4.1 Concepts', '\n### 4.2');
     expect(concepts).toMatch(/^- \*\*Track\*\*: a named stream of work with its own roadmap\. A worker is not a track\./m);
     expect(concepts).toMatch(/^- \*\*Stage\*\*: where a work item is on the board\. It is not a step of the work cycle/m);
@@ -1187,7 +1187,7 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
     expect(notes.filter((note) => !rows.has(note))).toEqual([]);
   });
 
-  it('TP-106: tells in the README and in design 4.2 that --json removes only hidden characters from string values', () => {
+  it('tells in the README and in design 4.2 that --json removes only hidden characters from string values', () => {
     const sentence =
       'In `--json` output, only control, bidi and invisible characters are removed from string values. A line break stays as an escape, and no string is cut to a width.';
     expect(readme).toContain(sentence);
@@ -1203,7 +1203,7 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
     expect(item).toContain('The local board part states this as a limit.');
   });
 
-  it('TP-109: adds no decide row to the Commands table of the README and no decide command to the guide', () => {
+  it('adds no decide row to the Commands table of the README and no decide command to the guide', () => {
     const commands = part(readme, '## Commands', '\n### Make a factory');
     expect(commands).not.toMatch(/^\| `factory decide/m);
     expect(docsText('quick-start.md')).not.toContain('factory decide');
@@ -1226,7 +1226,7 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
   });
 });
 
-describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170, TP-171)', () => {
+describe('docs of the owner store record and decide', () => {
   const docsText = (name: string): string => readFileSync(join(ROOT, 'docs', name), 'utf8');
   const design = docsText('design.md');
   const roadmap = docsText('roadmap-v2.md');
@@ -1239,7 +1239,7 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
   const KNOWN_LIMIT_16 =
     'The review desk page only reads. A page answer is a board event: it shows and wakes, and it records nothing. Only `factory decide` records a decision.';
 
-  it('M5-1b TP-169 README names decide, and says it refuses inside Claude Code, so the owner runs it in an own terminal window and not as a paste', () => {
+  it('README names decide, and says it refuses inside Claude Code, so the owner runs it in an own terminal window and not as a paste', () => {
     const section = part(readme, '### Answer a decision', '\n### ');
     expect(section).toContain('`factory decide <D-n> <option> [--note TEXT] [--home DIR]`');
     expect(section).toContain('refuses with exit code 4 inside a Claude Code session (`CLAUDECODE` is set)');
@@ -1247,31 +1247,31 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
     expect(section).toContain('Do not paste it into a Claude Code session as a `!` command.');
   });
 
-  it('M5-1b TP-169 README says that the owner store record is the only proof, and the log row and the profile record are display copies', () => {
+  it('README says that the owner store record is the only proof, and the log row and the profile record are display copies', () => {
     const section = part(readme, '### Answer a decision', '\n### ');
     expect(section).toContain('The record in the owner store is the only proof.');
     expect(section).toContain('The log row and the profile record are display copies.');
     expect(section).toContain('`request add` and `request close` exit with code 1 when the owner decision file cannot be read.');
   });
 
-  it('M5-1b TP-169 README keeps no sentence that puts decide in a later milestone or a page answer in the owner store', () => {
+  it('README keeps no sentence that puts decide in a later milestone or a page answer in the owner store', () => {
     expect(readme).not.toContain('The command `factory decide` comes in FAC-M5');
     expect(readme).not.toContain('A page answer that records through the owner store');
   });
 
-  it('M5-1b TP-170 finds a line that names a log row with by owner and has no display copy label', () => {
+  it('finds a line that names a log row with by owner and has no display copy label', () => {
     expect(namesRowWithoutLabel('The log row with `by: owner` in `decision-log.json` is a copy.')).toBe(true);
     expect(namesRowWithoutLabel('A record in `decision-log.json` with `by: owner` proves it.')).toBe(true);
     expect(namesRowWithoutLabel('The log row with `by: owner` is a display copy.')).toBe(false);
     expect(namesRowWithoutLabel('The log row of a close has no `by`.')).toBe(false);
   });
 
-  it('M5-1b TP-170 no line of the design or the roadmap names a log row with by owner unless it says display copy', () => {
+  it('no line of the design or the roadmap names a log row with by owner unless it says display copy', () => {
     expect(design.split('\n').filter(namesRowWithoutLabel)).toEqual([]);
     expect(roadmap.split('\n').filter(namesRowWithoutLabel)).toEqual([]);
   });
 
-  it('M5-1b TP-170 design proof form 1 names the owner store record as the only proof and the only source of the option', () => {
+  it('design proof form 1 names the owner store record as the only proof and the only source of the option', () => {
     const form = lineStarting(design, '1. **A decision.**');
     expect(form).toContain('A record in the owner store, which `factory decide` writes, that approves the work.');
     expect(form).toContain('The log row with `by: owner` is a display copy and proves nothing.');
@@ -1282,7 +1282,7 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
     expect(form).toContain('A display copy that names another option is wrong, and the record is never wrong.');
   });
 
-  it('M5-1b TP-170 design 4.10 and the engineering note keep the owner store record as the proof and the log row and profile record as display copies', () => {
+  it('design 4.10 and the engineering note keep the owner store record as the proof and the log row and profile record as display copies', () => {
     const connector = part(design, '### 4.10 Board connector', '\n### 4.11');
     const bullet = lineStarting(connector, '- `factory decide <D-n> <option>` records the decision');
     expect(bullet).toContain('The owner store record is the proof, and the only source of the option.');
@@ -1294,7 +1294,7 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
     expect(note).not.toContain('with every board kind');
   });
 
-  it('M5-1b TP-171 design 4.10 says that decide refuses in Claude Code and in a paste, and that a hosted kind refuses until FAC-M11 and FAC-M3', () => {
+  it('design 4.10 says that decide refuses in Claude Code and in a paste, and that a hosted kind refuses until FAC-M11 and FAC-M3', () => {
     const connector = part(design, '### 4.10 Board connector', '\n### 4.11');
     const bullet = lineStarting(connector, '- `factory decide <D-n> <option>` records the decision');
     expect(bullet).toContain('inside Claude Code (`CLAUDECODE` is set)');
@@ -1302,7 +1302,7 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
     expect(connector).toContain('Until FAC-M11 and FAC-M3, `decide` with a hosted kind refuses (exit 4), as every board write does.');
   });
 
-  it('M5-1b TP-171 design names CLAUDECODE in the session stop row, decide in the hosted stop row, and no --principle in the 4.2 command', () => {
+  it('design names CLAUDECODE in the session stop row, decide in the hosted stop row, and no --principle in the 4.2 command', () => {
     const session = lineStarting(design, '| Stop (exit 4): `decide <D-n> <option>`, `dismiss <worker> --yes`');
     expect(session).toContain('or `decide` when `CLAUDECODE` is set');
     expect(session).toContain('inside a factory session');
@@ -1315,7 +1315,7 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
     expect(decide).not.toContain('with every board kind');
   });
 
-  it('M5-1b TP-171 design counts the owner decision records in the next request number and lets request close refuse a D-n with a record', () => {
+  it('design counts the owner decision records in the next request number and lets request close refuse a D-n with a record', () => {
     const requests = lineStarting(design, '- **Requests and the queue.**');
     expect(requests).toContain(
       'in the waiting file, in the decision log, and in the owner decision records of this node and this real root',
@@ -1324,12 +1324,12 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
     expect(requests).toContain('exit 1 when the owner decision file cannot be read');
   });
 
-  it('M5-1b TP-171 design 8.2 says that --principle is not in this version', () => {
+  it('design 8.2 says that --principle is not in this version', () => {
     const row = lineStarting(design, '| 19 | Write a decision record and link a principle');
     expect(row).toContain('`--principle` is not in this version.');
   });
 
-  it('M5-1b TP-171 roadmap holds the --principle line under FAC-M5 and the request list note under FAC-M7', () => {
+  it('roadmap holds the --principle line under FAC-M5 and the request list note under FAC-M7', () => {
     const board = part(roadmap, '### FAC-M5: ', '\n### ');
     expect(board).toContain('`--principle` is not in the local board part of FAC-M5.');
     expect(board).toContain('each decision record has `principles: []`');
@@ -1337,7 +1337,7 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
     expect(adopted).toContain('`request list` must show answered rows.');
   });
 
-  it('M5-1b TP-171 roadmap names the display copy, CLAUDECODE and the owner store record in the decide criteria', () => {
+  it('roadmap names the display copy, CLAUDECODE and the owner store record in the decide criteria', () => {
     const board = part(roadmap, '### FAC-M5: ', '\n### ');
     expect(board).toContain('the owner store record, the proof, and a display copy of it as a log row with `by: owner`');
     expect(board).toContain('with no terminal window, when `FACTORY_SESSION` is set, and when `CLAUDECODE` is set.');
@@ -1346,11 +1346,11 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
     expect(hosted).toContain('the owner store record is the proof');
   });
 
-  it('M5-1b TP-171 README holds the exact text of known limit 16', () => {
+  it('README holds the exact text of known limit 16', () => {
     expect(part(readme, '### Answer a decision', '\n### ')).toContain(KNOWN_LIMIT_16);
   });
 
-  it('M5-1b TP-171 npm run check:docs passes on the docs of the repo', () => {
+  it('npm run check:docs passes on the docs of the repo', () => {
     const result = check(join(ROOT, 'docs'));
     expect({ code: result.code, err: result.err }).toEqual({ code: 0, err: '' });
     expect(failedChecks(result.out)).toEqual([]);

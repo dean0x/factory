@@ -12,7 +12,7 @@ import {
 import { createFakeDeps, exited } from '../helpers/fake-deps.js';
 
 describe('the programs that factory starts', () => {
-  it('TP-20: names git, tmux, gh, claude and ps, each by its program name', () => {
+  it('names git, tmux, gh, claude and ps, each by its program name', () => {
     expect(toolNames).toEqual({ git: 'git', tmux: 'tmux', gh: 'gh', claude: 'claude', ps: 'ps' });
   });
 });
@@ -48,7 +48,7 @@ describe('tmux version', () => {
   });
 });
 
-describe('agent version (TP-35)', () => {
+describe('agent version', () => {
   it.each([
     ['2.1.224', { major: 2, minor: 1, patch: 224 }],
     ['2.1.224 (Claude Code)', { major: 2, minor: 1, patch: 224 }],

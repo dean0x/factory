@@ -354,7 +354,7 @@ const expectKeptCopyHint = (error: CliError): void => {
   expect(hint).toContain(`To remove the worker by hand, run "${REMOVE_COPY}" and then "${DELETE_BRANCH}". Then delete the folder ${RECORD_DIR}.`);
 };
 
-describe('worker new: the work, in order (TP-5)', () => {
+describe('worker new: the work, in order', () => {
   it('makes the work copy, the record, the exclude entry, the settings file and the pane, in this order', async () => {
     const made = make();
     await succeeded(made);
@@ -451,7 +451,7 @@ describe('worker new: the work, in order (TP-5)', () => {
   });
 });
 
-describe('worker new: a node on a layer of 2 or more holds workers (AC-1)', () => {
+describe('worker new: a node on a layer of 2 or more holds workers', () => {
   const layerOf = (layer: number): FactoryConfig => {
     const config = sampleConfig();
     return { ...config, core: { ...config.core, node: { ...config.core.node, layer } } };
@@ -465,14 +465,14 @@ describe('worker new: a node on a layer of 2 or more holds workers (AC-1)', () =
   });
 });
 
-describe('worker new: the output is short (TP-63)', () => {
+describe('worker new: the output is short', () => {
   it('has a short first line and few lines, also with warnings', async () => {
     const made = make({ machine: { memory: 'System-wide memory free percentage: 5%\n', disk: null } });
     const output = await succeeded(made);
     expectShortOutput(plainText(output));
   });
 
-  it('has the size of its output on this fixture in the token budget, row 4 (TP-64)', async () => {
+  it('has the size of its output on this fixture in the token budget, row 4', async () => {
     const text = plainText(await succeeded(make()));
     const row = budgetRow(4);
     expect(row.command).toBe('`factory worker new`');
@@ -481,14 +481,14 @@ describe('worker new: the output is short (TP-63)', () => {
   });
 });
 
-describe('worker new --assignment: the source check and the copy (TP-32, TP-33, TP-34)', () => {
+describe('worker new --assignment: the source check and the copy', () => {
   const TASK = '# Task\n\nFix the build.\n';
   const TREE = '/w/tree';
   const ASSIGNMENT = `${INBOX}/assignment.md`;
   const SOURCE = `${TREE}/docs/task.md`;
   const WITH_SOURCE = { tree: TREE, seed: { [SOURCE]: TASK } } as const;
 
-  it('TP-33: copies a file of the git work tree of the working folder to the inbox, after the record and before the exclude entry and the launch', async () => {
+  it('copies a file of the git work tree of the working folder to the inbox, after the record and before the exclude entry and the launch', async () => {
     const made = make(WITH_SOURCE);
     await succeeded(made, { assignment: SOURCE });
     expect(made.deps.files.get(ASSIGNMENT)).toBe(TASK);
@@ -502,20 +502,20 @@ describe('worker new --assignment: the source check and the copy (TP-32, TP-33, 
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  it('TP-33: reads a path that starts at the working folder', async () => {
+  it('reads a path that starts at the working folder', async () => {
     const made = make(WITH_SOURCE);
     await succeeded(made, { assignment: 'tree/docs/task.md' });
     expect(made.deps.files.get(ASSIGNMENT)).toBe(TASK);
   });
 
-  it('TP-33: copies a file of the orders folder of the factory folder', async () => {
+  it('copies a file of the orders folder of the factory folder', async () => {
     const orders = '/w/node/.factory/orders/task.md';
     const made = make({ seed: { [orders]: TASK } });
     await succeeded(made, { assignment: orders });
     expect(made.deps.files.get(ASSIGNMENT)).toBe(TASK);
   });
 
-  it('TP-33: names the copy in one more line of the output and in the JSON document, and makes no assignment file without the flag', async () => {
+  it('names the copy in one more line of the output and in the JSON document, and makes no assignment file without the flag', async () => {
     const withFile = await succeeded(make(WITH_SOURCE), { assignment: SOURCE });
     expect(plainText(withFile)).toBe(
       'Made the worker alpha in work-copies/web/alpha on the branch worker/alpha.\n' +
@@ -530,7 +530,7 @@ describe('worker new --assignment: the source check and the copy (TP-32, TP-33, 
     expect(without.deps.files.has(ASSIGNMENT)).toBe(false);
   });
 
-  it('TP-33: the flag --assignment reaches the command through the command line', async () => {
+  it('the flag --assignment reaches the command through the command line', async () => {
     const made = make(WITH_SOURCE);
     const sink = captureSink();
     const code = await runCli(
@@ -548,14 +548,14 @@ describe('worker new --assignment: the source check and the copy (TP-32, TP-33, 
     ['a path with a dot part', `${TREE}/.secret/task.md`, 4],
     ['the local config of the factory folder', '/w/node/factory.local.yaml', 4],
     ['a file that does not exist', `${TREE}/none.md`, 2],
-  ])('TP-32: refuses %s before any write', async (_name, path, code) => {
+  ])('refuses %s before any write', async (_name, path, code) => {
     const made = make({ tree: TREE, seed: { '/w/other/task.md': TASK, [`${TREE}/.secret/task.md`]: TASK } });
     const error = await failed(made, { assignment: path });
     expect(exitCodeOf[error.kind], error.message).toBe(code);
     expectNothingChanged(made);
   });
 
-  it('TP-32: runs the source check before the question for the consent', async () => {
+  it('runs the source check before the question for the consent', async () => {
     const made = make({ tree: TREE, tty: true, prompt: () => ok('y'), seed: { '/w/other/task.md': TASK, [TREE]: null } });
     const error = await failed(made, { assignment: '/w/other/task.md', yes: false });
     expect(exitCodeOf[error.kind], error.message).toBe(4);
@@ -563,7 +563,7 @@ describe('worker new --assignment: the source check and the copy (TP-32, TP-33, 
     expectNothingChanged(made);
   });
 
-  it('TP-34: a copy that fails is exit 1, keeps the worker, does not launch it, and names the copy by hand and then worker resume', async () => {
+  it('a copy that fails is exit 1, keeps the worker, does not launch it, and names the copy by hand and then worker resume', async () => {
     const made = make({ ...WITH_SOURCE, failWrite: `${ASSIGNMENT}.tmp-4242-0` });
     const error = await failed(made, { assignment: SOURCE });
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -580,7 +580,7 @@ describe('worker new --assignment: the source check and the copy (TP-32, TP-33, 
   });
 });
 
-describe('worker new: the root checks come first (TP-130)', () => {
+describe('worker new: the root checks come first', () => {
   it('stops with exit 4 for a failing root check, and changes nothing', async () => {
     const made = make({ origin: 'own', tracked: ['factory.local.yaml'] });
     const error = await failed(made);
@@ -691,8 +691,8 @@ describe('worker new: the command line', () => {
   });
 });
 
-describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
-  it('exits 2 for a project that the config does not list (TP-6), names the listed projects, and changes nothing', async () => {
+describe('worker new: the checks before any write', () => {
+  it('exits 2 for a project that the config does not list, names the listed projects, and changes nothing', async () => {
     const made = make();
     const error = await failed(made, { project: 'nope' });
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -710,7 +710,7 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     expectNothingChanged(made);
   });
 
-  it('exits 2 for the id of the node (TP-7), and changes nothing', async () => {
+  it('exits 2 for the id of the node, and changes nothing', async () => {
     const made = make();
     const error = await failed(made, { words: ['new', 'demo'] });
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -718,7 +718,7 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     expectNothingChanged(made);
   });
 
-  it('exits 2 for the id of a child (AC-2), names a remedy, and changes nothing', async () => {
+  it('exits 2 for the id of a child, names a remedy, and changes nothing', async () => {
     const config = sampleConfig();
     const made = make({
       config: {
@@ -737,7 +737,7 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     expectNothingChanged(made);
   });
 
-  it('exits 2 for an id that has a record (TP-7), and changes nothing more', async () => {
+  it('exits 2 for an id that has a record, and changes nothing more', async () => {
     const made = make();
     await succeeded(made);
     const before = { files: new Map(made.deps.files), dirs: new Set(made.deps.dirs), splits: made.events.filter((e) => e === 'tmux split-window').length };
@@ -751,7 +751,7 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     expect(made.events.filter((e) => e === 'tmux split-window')).toHaveLength(before.splits);
   });
 
-  it('exits 2 for an id whose work copy folder exists (TP-7)', async () => {
+  it('exits 2 for an id whose work copy folder exists', async () => {
     const made = make({ seed: { [COPY]: null } });
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -759,7 +759,7 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     expectNothingChanged(made);
   });
 
-  it('exits 2 for an id whose branch exists in the clone (TP-7)', async () => {
+  it('exits 2 for an id whose branch exists in the clone', async () => {
     const made = make({ branches: [BRANCH] });
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -781,7 +781,7 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     ['work-copies/web is a link', { seed: { [COPIES]: null }, links: { [PROJECT_COPIES]: '/elsewhere' } }, 'work-copies/web is a link'],
     ['work-copies is a file', { seed: { [COPIES]: 'text' } }, 'work-copies is not a folder'],
     ['work-copies/web is a file', { seed: { [PROJECT_COPIES]: 'text' } }, 'work-copies/web is not a folder'],
-  ] as const)('exits 4 when %s (TP-8), and changes nothing', async (_name, setup, message) => {
+  ] as const)('exits 4 when %s, and changes nothing', async (_name, setup, message) => {
     const made = make(setup);
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -810,10 +810,10 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
   });
 });
 
-describe('worker new: the consent for the hook settings (TP-12, TP-13)', () => {
+describe('worker new: the consent for the hook settings', () => {
   const NO_TERMINAL = { tty: false } as const;
 
-  it('writes nothing and exits 2 with no terminal window and no yes flag (TP-12), and shows the change', async () => {
+  it('writes nothing and exits 2 with no terminal window and no yes flag, and shows the change', async () => {
     const made = make(NO_TERMINAL);
     const error = await failed(made, { yes: false });
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -822,7 +822,7 @@ describe('worker new: the consent for the hook settings (TP-12, TP-13)', () => {
     expectNothingChanged(made);
   });
 
-  it('writes only the settings file in the work copy with the yes flag (TP-12)', async () => {
+  it('writes only the settings file in the work copy with the yes flag', async () => {
     const made = make(NO_TERMINAL);
     await succeeded(made, { yes: true });
     expect([...made.deps.files.keys()].filter((path) => path.startsWith(`${COPY}/`))).toEqual([SETTINGS_FILE]);
@@ -858,7 +858,7 @@ describe('worker new: the consent for the hook settings (TP-12, TP-13)', () => {
     expect(output.json).toMatchObject({ pane: FIRST_NEW_PANE });
   });
 
-  it('counts the yes flag inside a factory session for a work copy that has no settings file (TP-13)', async () => {
+  it('counts the yes flag inside a factory session for a work copy that has no settings file', async () => {
     const made = make({ ...NO_TERMINAL, env: { FACTORY_SESSION: 'demo' } });
     await succeeded(made, { yes: true });
     expect(made.deps.files.get(SETTINGS_FILE)).toBe(OWN_SETTINGS);
@@ -872,7 +872,7 @@ describe('worker new: the consent for the hook settings (TP-12, TP-13)', () => {
     expectNothingChanged(made);
   });
 
-  it('exits 2 inside a factory session for a work copy that the checkout gives a settings file (TP-13), before the work copy exists', async () => {
+  it('exits 2 inside a factory session for a work copy that the checkout gives a settings file, before the work copy exists', async () => {
     const made = make({ ...NO_TERMINAL, env: { FACTORY_SESSION: 'demo' }, checkout: '{"permissions":{"allow":["Read"]}}\n' });
     const error = await failed(made, { yes: true });
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -986,7 +986,7 @@ describe('worker new: the settings that the clone tracks stop the command before
   });
 });
 
-describe('worker new: the exclude entry of the clone (TP-14)', () => {
+describe('worker new: the exclude entry of the clone', () => {
   it('keeps every line of the exclude file and adds the entry once', async () => {
     const made = make();
     await succeeded(made);
@@ -1007,7 +1007,7 @@ describe('worker new: the exclude entry of the clone (TP-14)', () => {
     expect(made.events.filter((event) => event.startsWith(`writeTextExclusive ${EXCLUDE}.tmp-`))).toHaveLength(1);
   });
 
-  it('stops with exit 4 and keeps the copy and the record for an exclude file that is a link, and the remedy names factory dismiss (TP-136)', async () => {
+  it('stops with exit 4 and keeps the copy and the record for an exclude file that is a link, and the remedy names factory dismiss', async () => {
     const made = make({ links: { [EXCLUDE]: '/elsewhere/exclude' }, seed: { '/elsewhere/exclude': TEMPLATE } });
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -1020,7 +1020,7 @@ describe('worker new: the exclude entry of the clone (TP-14)', () => {
   });
 });
 
-describe('worker new: the machine warning (TP-21)', () => {
+describe('worker new: the machine warning', () => {
   it('prints nothing about the machine when every limit holds', async () => {
     const made = make();
     await succeeded(made);
@@ -1296,7 +1296,7 @@ const SESSION_STATES: readonly (readonly [HookEvent, string])[] = [
   ['UserPromptSubmit', 'busy'],
 ];
 
-describe('worker stop: the stop of one worker (TP-26)', () => {
+describe('worker stop: the stop of one worker', () => {
   for (const [event, state] of SESSION_STATES) {
     it(`sends TERM to the process of the pane for a session that is ${state}, then closes the pane`, async () => {
       const made = await withWorkers({ tmux: { panes: [alphaPane()] } }, { lines: [{ session: ALPHA_SESSION, event }] });
@@ -1389,7 +1389,7 @@ describe('worker stop: the stop of one worker (TP-26)', () => {
   });
 });
 
-describe('worker stop: a state that is not known is exit 3 (TP-28)', () => {
+describe('worker stop: a state that is not known is exit 3', () => {
   it('exits 3 and names the pane and the process when the worker has no last-seen line', async () => {
     const made = await withWorkers({ tmux: { panes: [alphaPane()] } }, { pointer: null, lines: [] });
     const error = await stopFailed(made);
@@ -1427,7 +1427,7 @@ describe('worker stop: a state that is not known is exit 3 (TP-28)', () => {
   });
 });
 
-describe('worker stop: a process that does not end is exit 1 (TP-29)', () => {
+describe('worker stop: a process that does not end is exit 1', () => {
   it('names the process, sends no KILL, and keeps the pane', async () => {
     const made = await withWorkers(
       { tmux: { panes: [alphaPane()] }, termEndsAfterChecks: stopPoll.attempts + 10 },
@@ -1448,7 +1448,7 @@ describe('worker stop: a process that does not end is exit 1 (TP-29)', () => {
   });
 });
 
-describe('worker resume: the root checks and the session come first (TP-130)', () => {
+describe('worker resume: the root checks and the session come first', () => {
   it('stops with exit 4 for a failing root check, and changes nothing', async () => {
     const made = await withWorkers({ origin: 'own', tracked: ['factory.local.yaml'] });
     const error = await resumeFailed(made);
@@ -1499,7 +1499,7 @@ describe('worker resume: the root checks and the session come first (TP-130)', (
   });
 });
 
-describe('worker resume: the session of the worker (TP-30)', () => {
+describe('worker resume: the session of the worker', () => {
   it('starts the program with --resume and the session id of the last-seen line, in a marked pane', async () => {
     const made = await withWorkers();
     const output = await resumed(made);

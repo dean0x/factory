@@ -70,7 +70,7 @@ const addDirsOf = (argv: readonly string[]): readonly (string | undefined)[] =>
   argv.flatMap((arg, index) => (arg === '--add-dir' ? [argv[index + 1]] : []));
 
 describe('launch argument list', () => {
-  it('strips the variables of a parent session, clears the proxy variable, sets the two variables, and starts claude in auto mode with the name of the session (TP-9)', () => {
+  it('strips the variables of a parent session, clears the proxy variable, sets the two variables, and starts claude in auto mode with the name of the session', () => {
     expect(argvOf()).toEqual([
       ...HEAD,
       'FACTORY_HOME=/w/demo-factory',
@@ -181,7 +181,7 @@ describe('launch argument list', () => {
     expect(launchArgv(input(change)).ok).toBe(false);
   });
 
-  it('never holds a flag other than the six of the launch, whatever the input is (TP-9)', () => {
+  it('never holds a flag other than the six of the launch, whatever the input is', () => {
     const known = ['--permission-mode', '--effort', '--model', '--resume', '--name', '--add-dir'];
     const hostile = ['--dangerously-skip-permissions', '--permission-mode=bypassPermissions', 'bypassPermissions'];
     for (const value of hostile) {
@@ -235,13 +235,13 @@ describe('launch argument list', () => {
 });
 
 describe('the variables of a parent session', () => {
-  it('strips them in the coordinator launch before env runs, with the fixed strip text (TP-10)', () => {
+  it('strips them in the coordinator launch before env runs, with the fixed strip text', () => {
     const argv = argvOf();
     expect(argv.slice(0, HEAD.length)).toEqual(HEAD);
     for (const name of PARENT_VARIABLES) expect(argv).not.toContain(name);
   });
 
-  it('strips them in the worker launch before env runs, with the fixed strip text (TP-10)', () => {
+  it('strips them in the worker launch before env runs, with the fixed strip text', () => {
     const argv = workerArgvOf();
     expect(argv.slice(0, HEAD.length)).toEqual(HEAD);
     for (const name of PARENT_VARIABLES) expect(argv).not.toContain(name);
@@ -261,7 +261,7 @@ describe('the variables of a parent session', () => {
   });
 });
 
-describe('the resume id of the coordinator launch (TP-11)', () => {
+describe('the resume id of the coordinator launch', () => {
   it('adds --resume and the id once, before the folders, when the id is a UUID', () => {
     const argv = argvOf({ resumeId: SESSION_ID });
     expect(argv.filter((arg) => arg === '--resume')).toHaveLength(1);
@@ -293,7 +293,7 @@ describe('the resume id of the coordinator launch (TP-11)', () => {
   });
 });
 
-describe('the worker launch argument list (TP-10)', () => {
+describe('the worker launch argument list', () => {
   const INBOX = '/w/demo-factory/.factory/workers/web-search/inbox';
 
   it('strips the variables, clears the proxy variable, sets the three variables, and starts the agent in auto mode with the inbox folder', () => {
@@ -371,10 +371,10 @@ describe('the worker launch argument list (TP-10)', () => {
   });
 
   it.each([
-    ['a resume id that is not a UUID (TP-11)', { resumeId: 'latest' }],
-    ['a resume id with upper case letters (TP-11)', { resumeId: SESSION_ID.toUpperCase() }],
-    ['a resume id that is a flag (TP-11)', { resumeId: '--dangerously-skip-permissions' }],
-    ['an empty resume id (TP-11)', { resumeId: '' }],
+    ['a resume id that is not a UUID', { resumeId: 'latest' }],
+    ['a resume id with upper case letters', { resumeId: SESSION_ID.toUpperCase() }],
+    ['a resume id that is a flag', { resumeId: '--dangerously-skip-permissions' }],
+    ['an empty resume id', { resumeId: '' }],
     ['a relative home', { home: 'demo-factory' }],
     ['a worker id that is a path', { workerId: '../web' }],
     ['a worker id that starts with a dash', { workerId: '-x' }],
@@ -397,7 +397,7 @@ describe('the worker launch argument list (TP-10)', () => {
   });
 });
 
-describe('the name of the session (TP-9)', () => {
+describe('the name of the session', () => {
   const flagAt = (argv: readonly string[]): number[] => argv.flatMap((arg, index) => (arg === '--name' ? [index] : []));
 
   it('gives the coordinator the id of the node as its name, once, after --resume and before the first --add-dir', () => {
@@ -465,7 +465,7 @@ describe('the tmux calls that start a session', () => {
   const launch = ['env', 'PATH=/bin:/x;', 'FACTORY_HOME=/w/node;', 'claude', '--add-dir', '/w/web;'];
   const program = ['/opt/bin/node', '/opt/lib/factory.js'] as const;
 
-  it('starts every window in the coordinator folder, and keeps the home in the session option (TP-46)', () => {
+  it('starts every window in the coordinator folder, and keeps the home in the session option', () => {
     const steps = startSteps({ id: 'demo', home: '/w/node', coordinatorDir: '/w/node/coordinator', launch: ['claude'], program });
     const commands = steps.flatMap(chainOf);
     const folders = commands.flatMap((command) => (command.includes('-c') ? [command[command.indexOf('-c') + 1]] : []));
@@ -474,7 +474,7 @@ describe('the tmux calls that start a session', () => {
     expect(commands[0]).toEqual(['new-session', '-d', '-s', 'demo', '-n', 'view', '-c', '/w/node/coordinator', '--', 'claude']);
   });
 
-  it('puts the session marker in the environment of the session before the second pane and every other window (TP-80)', () => {
+  it('puts the session marker in the environment of the session before the second pane and every other window', () => {
     const steps = startSteps({ id: 'demo', home: '/w/node', coordinatorDir: '/w/node/coordinator', launch: ['claude'], program });
     const commands = steps.flatMap(chainOf);
     const marker = commands.findIndex((command) => command[0] === 'set-environment' && command.includes(env.session));

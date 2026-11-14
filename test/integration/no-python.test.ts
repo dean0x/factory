@@ -109,7 +109,7 @@ const startCode = (name: string): Promise<string | number | null> =>
 
 afterAll(removeOpenSandboxes);
 
-describe.skipIf(!hasTools)('the commands with a PATH of node, git, sh, grep, script and tmux only (built binary, AC-21)', () => {
+describe.skipIf(!hasTools)('the commands with a PATH of node, git, sh, grep, script and tmux only (built binary)', () => {
   beforeEach(async () => {
     box = await makeSandbox();
     bin = join(box.root, 'restricted-bin');
@@ -124,7 +124,7 @@ describe.skipIf(!hasTools)('the commands with a PATH of node, git, sh, grep, scr
   });
 
   it(
-    'M5-1b TP-49 holds the six programs in the folder of the PATH, and finds none of python3, jq and glow',
+    'holds the six programs in the folder of the PATH, and finds none of python3, jq and glow',
     async () => {
       expect((await readdir(bin)).sort()).toEqual([...TOOLS].sort());
       for (const name of ABSENT_TOOLS) expect(await startCode(name), name).toBe('ENOENT');
@@ -133,7 +133,7 @@ describe.skipIf(!hasTools)('the commands with a PATH of node, git, sh, grep, scr
   );
 
   it(
-    'M5-1b TP-49 runs init, track, item, request, queue and status, and each write makes one state commit',
+    'runs init, track, item, request, queue and status, and each write makes one state commit',
     async () => {
       await makeNode();
       const before = await commitCount();
@@ -155,7 +155,7 @@ describe.skipIf(!hasTools)('the commands with a PATH of node, git, sh, grep, scr
   );
 
   it.skipIf(scriptForm() === null)(
-    'M5-1b TP-162 records the answer of decide in a fake terminal, with the PATH of the six programs only',
+    'records the answer of decide in a fake terminal, with the PATH of the six programs only',
     async () => {
       await makeNode();
       await mustRun(['request', 'add', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Yes', '--option', 'b=No']);
@@ -180,7 +180,7 @@ describe.skipIf(!hasTools)('the commands with a PATH of node, git, sh, grep, scr
   );
 
   it(
-    'M5-1b TP-49 passes a manual commit that keeps every item id, and stops a manual commit that removes an item id',
+    'passes a manual commit that keeps every item id, and stops a manual commit that removes an item id',
     async () => {
       await makeNode();
       await mustRun(['item', 'add', '--title', 'One']);
