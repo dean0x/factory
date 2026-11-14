@@ -19,6 +19,7 @@ import {
   files,
   flags,
   ghTimeoutMs,
+  guardCommands,
   guardIds,
   guardKinds,
   guardListWords,
@@ -1808,6 +1809,15 @@ describe('the names of the guards', () => {
     expect(ids.every(isSlug)).toBe(true);
     const taken = new Set<string>(recipes.flatMap((entry) => entry.approvalPoints.map((point) => point.id)));
     expect(ids.filter((id) => taken.has(id))).toEqual([]);
+  });
+
+  it('names the guard command, its three subcommands and the family flag', () => {
+    expect(commands.guard).toBe('guard');
+    expect(guardCommands).toEqual({ list: 'list', set: 'set', confirm: 'confirm' });
+    expect(commandLines.guardList).toBe('guard list');
+    expect(commandLines.guardSet).toBe('guard set');
+    expect(commandLines.guardConfirm).toBe('guard confirm');
+    expect(flags.family).toBe('family');
   });
 
   it('names the kinds, the values, the harm mark, the schema id of the list and the term', () => {

@@ -63,6 +63,7 @@ export const commands = {
   upgrade: 'upgrade',
   hook: 'hook',
   state: 'state',
+  guard: 'guard',
   version: 'version',
   help: 'help',
 } as const;
@@ -154,6 +155,9 @@ export const selfCommands = { reset: 'reset' } as const;
 /** The subcommands of `state`. */
 export const stateCommands = { guard: 'guard' } as const;
 
+/** The subcommands of `guard`. */
+export const guardCommands = { list: 'list', set: 'set', confirm: 'confirm' } as const;
+
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
   nodeSend: `${commands.node} ${nodeCommands.send}`,
@@ -182,6 +186,9 @@ export const commandLines = {
   lockRun: `${commands.lock} ${lockCommands.run}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
   stateGuard: `${commands.state} ${stateCommands.guard}`,
+  guardList: `${commands.guard} ${guardCommands.list}`,
+  guardSet: `${commands.guard} ${guardCommands.set}`,
+  guardConfirm: `${commands.guard} ${guardCommands.confirm}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -217,6 +224,7 @@ export const flags = {
   state: 'state',
   stage: 'stage',
   all: 'all',
+  family: 'family',
   follow: 'follow',
   roadmap: 'roadmap',
   question: 'question',
