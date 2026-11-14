@@ -4,8 +4,9 @@ import { machineNames, powerSources } from '../names.js';
 /**
  * The power of the machine: the source of the power (the mains or the battery) and the charge of the battery. Only
  * `factory machine --json` reads it. It is no fact of the machine check: it has no limit and no verdict, and it never changes
- * the result of `worker new`. Each reading is bounded, and an answer that does not parse gives `unknown` with no percent. The
- * result holds a source word and a number only: no program output, file text or entry name goes into it.
+ * the result of `worker new`. Each reading has a limit on count or size, and only the call of `pmset` has a time limit. An answer
+ * that does not parse gives `unknown` with no percent. The result holds a source word and a number only: no program output,
+ * file text or entry name goes into it.
  */
 
 const {

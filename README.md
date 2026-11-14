@@ -399,7 +399,7 @@ The promise holds these keys and forms:
 - **The source.** `worker list --json` is the source of the worker rows for a view outside the core, and `status --json` holds the same row keys. `request list --json` is the source of the waiting requests. The waiting count of a view includes all open requests, in both groups.
 - **Facts and no final state word.** Factory gives facts. A view makes its own state words from `paneLive`, `sessionState`, `stalled` and the item keys. `stalled` is a hint (see "List the workers").
 - **Known gaps.** Factory records no fact that a worker stopped after an error. Factory has no parked or on-hold mark for a worker. Issue 49 of the public factory repository tracks that mark (https://github.com/dean0x/factory/issues/49). The key `mark` is the context mark and is not that mark. `itemStatus` and `parkedCount` are plain facts of the board. They promise no Parked or On hold meaning.
-- **Text.** A title is text of the owner. A command that writes a title refuses a title that holds a line break, a control character or a mark of text direction, with exit code 2. A command that prints a title removes the hidden characters from it. A view must escape the title for its own output.
+- **Text.** A title is text of the owner. A command that writes a title refuses a title that holds a line break, a control character or a mark of text direction, with exit code 2. A command that prints a title removes the hidden characters from it. In `--json` output, a string value keeps its line breaks, and `itemStatus` and `stage` go out as they are stored. A view must escape every string value of the JSON for its own output, not only the title.
 
 ### Answer a decision
 
@@ -725,7 +725,7 @@ Each fact has one format: a value, a limit and a verdict, `ok`, `fail` or `unkno
 - On Linux, it reads `/proc/meminfo` and `/proc/loadavg`, and runs `df -Pk` and `nproc`. The free memory is `MemAvailable` of `MemTotal`. For the power, it reads the supplies in `/sys/class/power_supply`. A battery that discharges gives `battery`. Else a mains or USB supply that is online gives `ac`. The percent is the charge of the first battery of the machine.
 - On another system, each fact is `unknown`, and so is the power source.
 
-The power reading is bounded: it reads at most 16 supplies, at most 64 bytes of each file and at most 4,096 characters of the output of `pmset`. A program that fails, and an answer that does not parse, give the source `unknown` and a percent of null. No text of a program or of a file goes into the JSON.
+The power reading has limits on count and size: it reads at most 16 supplies, at most 64 bytes of each file and at most 4,096 characters of the output of `pmset`. The time limit applies only to the call of `pmset -g batt`. The reads of `/sys/class/power_supply` have no time limit. A program that fails, and an answer that does not parse, give the source `unknown` and a percent of null. No text of a program or of a file goes into the JSON.
 
 Each program has 5 seconds. A program that does not run, that takes too long or that exits with an error gives `unknown`. So does an output that does not parse. The command exits with code 0 for every verdict. It exits with another code only for a usage error, or when it finds no valid factory folder.
 
