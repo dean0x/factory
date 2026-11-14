@@ -6,6 +6,7 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import type { PaneRow } from '../launch/tmux.js';
 import { durationBounds, keys, roles } from '../names.js';
+import { readHold, type HoldRead } from './hold.js';
 import { readOwnLastSeen } from './last-seen.js';
 import { readPanes } from './panes.js';
 import { listWorkerRecords, type InvalidWorker, type WorkerRecord } from './registry.js';
@@ -49,6 +50,13 @@ const linesOf = async (deps: Deps, home: string, records: readonly WorkerRecord[
   return lines;
 };
 
+/** The read of the hold file of each worker, by id (`readHold`). */
+const holdsOf = async (deps: Deps, home: string, records: readonly WorkerRecord[]): Promise<ReadonlyMap<string, HoldRead>> => {
+  const holds = new Map<string, HoldRead>();
+  for (const record of records) holds.set(record.id, await readHold(deps, home, record.id));
+  return holds;
+};
+
 /**
  * The work items of the workers from the port. A port that fails gives a warning and no work item, so each one is unknown. With
  * no worker, the port is not asked.
@@ -72,7 +80,7 @@ const itemsOf = async (
 
 /**
  * The facts of the worker table, read once for `status` and `worker list`: the registry, one list of the panes (none when no
- * session of this factory runs), the last-seen line of each worker and the work items from the port. The builder (`buildStatus`)
+ * session of this factory runs), the last-seen line and the hold file of each worker, and the work items from the port. The builder (`buildStatus`)
  * makes the entries. Nothing is changed. A folder of the registry with no valid record is named in a warning and in `invalid`,
  * and the other workers are listed.
  */
@@ -88,12 +96,14 @@ export const readStatus = async (deps: Deps, request: StatusRequest): Promise<Cl
 
   const workers = records.value.workers;
   const lines = await linesOf(deps, home, workers);
+  const holds = await holdsOf(deps, home, workers);
   const items = await itemsOf(deps, home, workers, workItems);
   const built = buildStatus({
     records: workers,
     panes: panes.value,
     lines,
     workItems: items.items,
+    holds,
     now: deps.now(),
     idleAfterMinutes,
     limits: config.core.limits,

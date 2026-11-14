@@ -58,6 +58,7 @@ import {
   typing,
   values,
   workerCommands,
+  workerHold,
 } from '../names.js';
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_VERSION } from '../version.js';
@@ -375,7 +376,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
   },
   {
     name: commands.worker,
-    summary: `Make, run, reset and watch the ${roles.worker}s of the ${roles.node}.`,
+    summary: `Make, run, reset, watch and mark the ${roles.worker}s of the ${roles.node}.`,
     usage: [
       `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.assignment)} FILE] [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
       `${commandText(commandLines.workerList)} [${flagText(flags.home)} DIR]`,
@@ -384,6 +385,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
       `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerReset)} ID ${flagText(flags.clear)}|${flagText(flags.compact)} [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.ready)} ID]... [${flagText(flags.since)} TIME] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerMark)} ID ${[...Object.values(workerHold.words), workerHold.none].join('|')} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
