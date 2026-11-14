@@ -10,6 +10,7 @@ import {
   commandLines,
   commands,
   coordinatorTemplateValues,
+  decisionKeys,
   decisionLogKeys,
   dirs,
   env,
@@ -23,6 +24,7 @@ import {
   lessonLimits,
   lockLine,
   lockWords,
+  machineNames,
   marker,
   markLimits,
   maxFileBytes,
@@ -34,10 +36,14 @@ import {
   nodeInbox,
   nodeSendReasons,
   permissionSkipList,
+  powerKeys,
+  powerSources,
   program,
   relayedMarker,
   requestCommands,
+  requestGroups,
   requestHash,
+  requestRowKeys,
   reservedFieldNames,
   reservedRootNames,
   roles,
@@ -53,6 +59,8 @@ import {
   trackedFiles,
   typing,
   values,
+  workItemDisplayKeys,
+  workerRowKeys,
 } from '../../src/names.js';
 import { projectPathIssue } from '../../src/core/project-path.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
@@ -1657,5 +1665,54 @@ describe('the typed lines of a reset', () => {
     for (const template of allBlocks) {
       for (const line of Object.values(typing.lines)) expect(template.body, `${template.name} ${line}`).not.toContain(line);
     }
+  });
+});
+
+describe('the names of the data for a view outside the core', () => {
+  it('names the key of the time of the last stage change, and reserves it so that no owner field can take its name', () => {
+    expect(boardKeys.stageAt).toBe('stage_at');
+    expect(reservedFieldNames).toContain(boardKeys.stageAt);
+    expect(duplicatesOf(reservedFieldNames)).toEqual([]);
+  });
+
+  it('names the open time and the group of a request, the two groups, and the flag of the later group', () => {
+    expect(decisionKeys.openedAt).toBe('opened_at');
+    expect(decisionKeys.group).toBe('group');
+    expect(Object.values(requestGroups)).toEqual(['now', 'later']);
+    expect(flags.later).toBe(requestGroups.later);
+  });
+
+  it('fixes the keys of a worker row and of the display data of its work item', () => {
+    expect(Object.values(workerRowKeys)).toEqual([
+      'itemId',
+      'itemTitle',
+      'itemStatus',
+      'stage',
+      'stageAt',
+      'parkedCount',
+      'paneLive',
+      'sessionState',
+      'activityAt',
+      'stalled',
+    ]);
+    expect(Object.values(workItemDisplayKeys)).toEqual(['title', 'stage', 'stageAt', 'status']);
+    expect(duplicatesOf(Object.values(workerRowKeys))).toEqual([]);
+  });
+
+  it('fixes the keys of a request row, the key of the power reading and its sources', () => {
+    expect(Object.values(requestRowKeys)).toEqual(['openedAt', 'group']);
+    expect(Object.values(powerKeys)).toEqual(['power', 'source', 'percent']);
+    expect(Object.values(powerSources)).toEqual(['ac', 'battery', 'unknown']);
+  });
+
+  it('names the programs, the files, the words and the bounds of the power reading of the machine check', () => {
+    expect(machineNames.programs.pmset).toBe('pmset');
+    expect(machineNames.pmsetArgs).toEqual(['-g', 'batt']);
+    expect(machineNames.powerSupplyDir).toBe('/sys/class/power_supply');
+    expect(Object.values(machineNames.supplyFiles)).toEqual(['type', 'scope', 'online', 'status', 'capacity']);
+    expect(Object.values(machineNames.supplyWords)).toEqual(['Mains', 'USB', 'Battery', 'Device', 'System', 'Discharging']);
+    expect(machineNames.maxPowerSupplies).toBe(16);
+    expect(machineNames.maxPowerFileBytes).toBe(64);
+    expect(machineNames.maxPowerOutputChars).toBe(4_096);
   });
 });

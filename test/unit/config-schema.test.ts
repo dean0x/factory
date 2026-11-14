@@ -815,8 +815,8 @@ describe('the board block', () => {
     expect(checkBoard((board) => (board.fields[1].name = 'stages'))).toBeNull();
   });
 
-  it('refuses the keys of a merge record and of an unassign mark as the name of a field, and says to rename the field', () => {
-    for (const name of [boardKeys.mergedPrHead, boardKeys.unassignedFrom]) {
+  it('refuses the keys of a merge record, of an unassign mark and of the stage time as the name of a field, and says to rename the field', () => {
+    for (const name of [boardKeys.mergedPrHead, boardKeys.unassignedFrom, boardKeys.stageAt]) {
       const message = checkBoard((board) => (board.fields[1].name = name));
       expect(message, name).toContain('board.fields.1.name:');
       expect(message, name).toContain('Rename the field');
