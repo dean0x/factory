@@ -403,7 +403,7 @@ In the local board part of FAC-M5, a hosted kind has no connector. Every write s
   - The in and out table has the rows Claude, Codex and total for the week and the month.
   - The highlight bars with 0, 1 and 2 or more full earlier periods, and a current week above the old highest that does not move the bar.
   - The thin rule under each table header, and `periods: null`.
-  - The coding table stays in the output. Until a source for PRs and lines exists, it shows `-` for each value.
+  - The coding table stays in the output. Until the token meter package gives the counts of PRs and lines, it shows `-` for each value.
   The output follows the line cap of the views. The static test of FAC-M4 (no source file opens a path under `~/.claude`) covers this code.
 - [ ] Forecast and share. The usage view shows the forecast and the share of the weekly capacity that the token meter package gives, and the usage view test checks both on its fixture.
 - [ ] Token estimate. Test `item estimate gives a token range from closed items` (`test/unit/item-estimate.test.ts`), on a fixture answer of the token meter package. When the package gives a basis (it learns from the closed items), `factory item estimate <id>` prints the token range and the basis name and exits 0. When the basis is `none`, it prints `NO BASIS` on line 1 and exits 3. The output follows the output rule. `docs/token-budget.md` keeps its 17 rows, because design §3 lists no job for these two commands (docs check 6).
@@ -548,8 +548,7 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - Answered (FAC-M4): the bound of `worker watch`: 2,880 checks of 30 s, which is 24 hours (`watchPoll` in `src/names.ts`), then `NO CHANGE`.
 - Answered (FAC-M5): the bound of `pr watch`: 60 reads, 60 s apart, one `gh` call each (`prWatchPoll` in `src/recipes/software/words.ts`), then `NO CHANGE` with exit 3.
 - Before the milestone that builds each of the other watch commands (FAC-M11 for `factory watch` with `local` and `artifact`, FAC-M3 for `factory watch` with `github`): the bound of each command. The design gives no value for the number of reads per run of `factory watch` for each connector. It also gives no result when the bound ends. Each value is a named number in `src/names.ts`.
-- Answered (Dean, 2026-11-14): the source of the token and limit data of every subscription, Codex too, is the token meter package. Factory collects nothing for the usage view. The worker agent setting for an agent other than `claude` stays a separate decision.
-- Before FAC-M5b builds the usage view: the source of the coding table (PRs merged, lines added and lines deleted). The token meter package does not count them now, and factory does not count them.
+- Answered (Dean, 2026-11-14): the source of the token and limit data of every subscription, Codex too, is the token meter package. The package is also the planned source of the counts of the coding table (PRs merged, lines added and lines deleted), which it does not count yet. Factory collects nothing for the usage view. The worker agent setting for an agent other than `claude` stays a separate decision.
 - Before FAC-M10: the old local paths in the git history. The owner decides; the history is not rewritten.
 - Before FAC-M10: the first publish and the public visibility of the repo. The owner writes a decision id in `docs/release-approval.md`.
 - Open: the choice between tracks and epics. An item has a track and an epic, and both stay for now (design §10).
