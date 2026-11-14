@@ -48,6 +48,7 @@ import {
   relayedMarker,
   requestCommands,
   requestDeciders,
+  requestGroups,
   requestWords,
   roles,
   schemaIds,
@@ -653,7 +654,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
       `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, close a ${requestWords.request} with no answer or with a decision that the ${requestDeciders.coordinator} or a ${requestDeciders.delegate} made, ` +
       `close a ${requestWords.request} to pass on an answer of the ${roles.owner}, or log a decision that no ${requestWords.request} asked for.`,
     usage: [
-      `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.later)}] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestList)} [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestClose)} ID [${flagText(flags.madeBy)} WHO ${flagText(flags.decision)} TEXT] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestClose)} ID ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT [${flagText(flags.home)} DIR]`,
@@ -686,6 +687,12 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
         type: 'string',
         placeholder: 'KEY',
         description: `With ${requestCommands.add}: the key of the answer that you recommend.`,
+      },
+      [flags.later]: {
+        type: 'boolean',
+        description:
+          `With ${requestCommands.add}: put the ${requestWords.request} in the group ${requestGroups.later}, for a ${requestWords.request} that can wait. ` +
+          `Without it the ${requestWords.request} is in the group ${requestGroups.now}. The group is set when you add the ${requestWords.request} and it does not change.`,
       },
       [flags.madeBy]: {
         type: 'string',
@@ -726,6 +733,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           decider: given.string(flags.madeBy),
           decision: given.string(flags.decision),
           relayed: given.bool(flags.relayed),
+          later: given.bool(flags.later),
         },
         registry,
       ),

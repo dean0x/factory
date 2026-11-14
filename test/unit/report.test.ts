@@ -30,7 +30,7 @@ import { boardText, itemRecord } from '../helpers/board-node.js';
 import { EMPTY_WAITING } from '../helpers/board-repo.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleBoard, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
-import { knownItem } from '../helpers/work-item.js';
+import { knownItem, sampleDisplay } from '../helpers/work-item.js';
 import { captureSink } from '../helpers/sink.js';
 import { allSourceFiles, importPathsOf, stripComments } from '../helpers/source-scan.js';
 import { tmuxHandler, type PaneFixture, type TmuxLog } from '../helpers/tmux-fake.js';
@@ -298,6 +298,16 @@ describe('report builder: the document', () => {
     ]);
   });
 
+  it('keeps the keys of a worker and of its work item when the work item carries display data', async () => {
+    const fixture = await fixtureOf({ items, workers: [{ id: 'alpha', event: 'PreToolUse', percent: 12 }] });
+    const stageAt = '2030-01-02T10:11:12.345Z';
+    const display = sampleDisplay('B-1', 'doing', { stage: 'building', stageAt });
+    const report = await reportOf(fixture, { port: portOf({ alpha: knownItem('B-1', { display }) }) });
+    expect(Object.keys(report.workers[0] ?? {})).toEqual(Object.values(reportKeys.worker));
+    expect(report.workers[0]?.workItem).toEqual({ state: 'known', item: 'B-1' });
+    expect(JSON.stringify(report)).not.toContain(stageAt);
+  });
+
   it('shows the item of a work item as one clean line within the text cap, and keeps the state known', async () => {
     const item = `B-1\nline two ‮evil${'x'.repeat(reportLimits.maxTextChars)}`;
     const fixture = await fixtureOf({ workers: [{ id: 'alpha' }] });
@@ -365,6 +375,13 @@ describe('report builder: the document', () => {
       { id: 'D-4', title: 'Pick a name', origin: `${node}#D-4` },
       { id: 'D-9', title: 'Pick a color', origin: `${node}#D-9` },
     ]);
+  });
+
+  it('gives the same keys for a request that holds an open time and a group', async () => {
+    const stored = { ...requestRecord('D-4', 'Pick a name'), opened_at: '2030-01-02T10:11:12.345Z', group: 'later' };
+    const fixture = await fixtureOf({ requests: [stored] });
+    const report = await reportOf(fixture);
+    expect(report.requests).toEqual([{ id: 'D-4', title: 'Pick a name', origin: `${fixture.config.core.node.id}#D-4` }]);
   });
 
   it('shows each text as one clean line within the text cap', async () => {

@@ -460,7 +460,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const checked = checkNewItem(setup, input);
       if (!checked.ok) return checked;
-      return itemWrite(commitMessages.addItem, (doc) => addItemIn(doc, checked.value));
+      return itemWrite(commitMessages.addItem, (doc) => addItemIn(doc, checked.value, deps.now().toISOString()));
     },
 
     async updateItem(id, patch) {
@@ -482,7 +482,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!ready.ok) return ready;
       return boardWrite<boolean, ItemRecorded>({
         message: recordMessage(id, checked),
-        edit: (doc) => recordCheckedIn(doc, setup, id, checked, worker),
+        edit: (doc) => recordCheckedIn(doc, setup, id, checked, worker, deps.now().toISOString()),
         resultOf: (doc, changed) => {
           const found = itemIn(doc, id);
           return found.ok ? ok({ item: found.value, changed }) : found;
@@ -516,7 +516,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!checked.ok) return checked;
       return boardWrite<ItemMoved, ItemMoved>({
         message: commitMessages.moveItem(id),
-        edit: (doc) => moveItemIn(doc, id, checked.value),
+        edit: (doc) => moveItemIn(doc, id, checked.value, deps.now().toISOString()),
         resultOf: (_doc, moved) => ok(moved),
       });
     },
@@ -578,7 +578,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         if (!read.ok) return read;
         const stored = await storedIdsOf(place.value);
         if (!stored.ok) return stored;
-        const edited = askIn(read.value.waiting, read.value.log, checked.value, stored.value);
+        const edited = askIn(read.value.waiting, read.value.log, checked.value, stored.value, deps.now().toISOString());
         if (!edited.ok) return edited;
         const written = newText(files.waiting, edited.value.top, parseWaiting);
         if (!written.ok) return written;

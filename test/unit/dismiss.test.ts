@@ -17,7 +17,7 @@ import { fetchClone, freeWorker, inboxFilesIn, planDismiss, unpushedReasons, typ
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { readPanes } from '../../src/workers/panes.js';
 import { readWorkerRecord, writeWorkerRecord } from '../../src/workers/registry.js';
-import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
+import type { WorkItem, WorkItemDisplay, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
@@ -2014,5 +2014,64 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
     expect(error.message).toContain('the test gives no decision log');
     await expectNothingChanged(given.made, ['alpha']);
     expect(hasPane(given.made, 'alpha')).toBe(true);
+  });
+
+  describe('display data on the work item is never read', () => {
+    /** Display data that claims the work is done and merged. */
+    const CLAIM: WorkItemDisplay = { title: 'Merged', stage: 'merged', stageAt: '2030-01-02T10:11:12.345Z', status: 'done' };
+    const OPEN = boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha' }), itemRecord('B-2', { status: 'done', lane: 'alpha' })]);
+
+    /** The port of the board with the display data of each known work item set to `display`, or left off when it is null. */
+    const shownAs = (display: WorkItemDisplay | null): WorkItemPort => ({
+      itemsOf: async (deps, home, ids) => {
+        const read = await BOARD_PORT.itemsOf(deps, home, ids);
+        if (!read.ok) return read;
+        const shown = ([id, work]: readonly [string, WorkItem]): [string, WorkItem] => [
+          id,
+          work.state === 'known'
+            ? knownItem(work.item, { closed: work.closed, parked: work.parked, mergedPrHeads: work.mergedPrHeads, ...(display === null ? {} : { display }) })
+            : work,
+        ];
+        return ok(new Map([...read.value].map(shown)));
+      },
+    });
+
+    it.each<[string, WorkItemDisplay | null]>([
+      ['no display data', null],
+      ['display data that claims the work is done', CLAIM],
+    ])('frees a finished worker with the same result and the same row for %s', async (_name, display) => {
+      const plain = await world();
+      const shown = await world();
+      const expected = await outputOf(plain.made, { words: ['alpha'], closed: true }, shownAs(null), plain.log);
+      const output = await outputOf(shown.made, { words: ['alpha'], closed: true }, shownAs(display), shown.log);
+      expect(output.failed).toBe(false);
+      expect({ exitCode: output.exitCode, text: textOf(output), json: output.json }).toEqual({
+        exitCode: expected.exitCode,
+        text: textOf(expected),
+        json: expected.json,
+      });
+      expect(shown.rows).toEqual(plain.rows);
+      expect(shown.made.events).toEqual(plain.made.events);
+    });
+
+    it('refuses a worker with open work the same way when the display data of its item claims that the work is done', async () => {
+      const plain = await world({}, OPEN);
+      const shown = await world({}, OPEN);
+      const expected = await errorOf(plain.made, { words: ['alpha'], closed: true }, shownAs(null), plain.log);
+      const error = await errorOf(shown.made, { words: ['alpha'], closed: true }, shownAs(CLAIM), shown.log);
+      expect(error).toEqual(expected);
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('open work: B-1');
+      await expectKept(shown);
+    });
+
+    it('refuses a worker with open work in the free of an idle worker, whatever the display data says', async () => {
+      const made = await make({ workers: [{ id: 'alpha' }] });
+      const open = knownItem('item 7', { display: CLAIM });
+      const error = await errorOf(made, { words: ['alpha'], yes: true }, portOf({ alpha: open }));
+      expect(error).toEqual(await errorOf(made, { words: ['alpha'], yes: true }, portOf({ alpha: busyWith('item 7') })));
+      expect(error.message).toContain('open work: item 7');
+      await expectNothingChanged(made, ['alpha']);
+    });
   });
 });

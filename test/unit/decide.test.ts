@@ -482,6 +482,18 @@ describe('decide: a yes answer records the answer', () => {
     expect(requestHashOf(String(row?.['request']))).toBe(HASH);
   });
 
+  it('records the answer for a request that request add wrote in the group later, and shows its open time and group in the request block', async () => {
+    const repo = await nodeOf({ waiting: waitingOf() });
+    const add = { home: HOME, words: ['add'], title: 'Pick a plan', question: 'Which plan do we build?', options: ['a=Plan A', 'b=Plan B'], recommend: 'a', decider: undefined, decision: undefined, relayed: false, later: true };
+    valueOf(await runRequest(repo.deps, add, recipes));
+    const opened = repo.deps.now().toISOString();
+    valueOf(await decide(atTerminal(repo).deps));
+    expect(shownOf(repo)).toContain(`> Opened:   ${opened}`);
+    expect(shownOf(repo)).toContain('> Group:    later');
+    expect(storedRecords(repo)).toHaveLength(1);
+    expect(waitingIds(repo)).toEqual([]);
+  });
+
   it('puts the note in the profile record only, and shows it in the request block', async () => {
     const repo = await nodeOf();
     valueOf(await decide(atTerminal(repo).deps, { note: 'cheaper to run' }));
@@ -574,7 +586,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
       during.lock = repo.deps.files.has(LOCK_FILE);
       during.added = await runRequest(
         repo.deps,
-        { home: HOME, words: ['add'], title: 'Second', question: 'Which?', options: ['a=Yes'], recommend: undefined, decider: undefined, decision: undefined, relayed: false },
+        { home: HOME, words: ['add'], title: 'Second', question: 'Which?', options: ['a=Yes'], recommend: undefined, decider: undefined, decision: undefined, relayed: false, later: false },
         recipes,
       );
       return ok('y');

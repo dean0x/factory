@@ -17,14 +17,16 @@ import {
   maxFileBytes,
   optionKeys,
   relayedMarker,
+  requestGroups,
   requestWords,
   roles,
   waitingKeys,
 } from '../names.js';
-import type { RequestDecider } from './contract.js';
+import type { RequestDecider, RequestGroup } from './contract.js';
 import { isDecider, shown } from './edit.js';
 import type { DecisionRecordOption, DecisionRecordRequest } from './decision-record.js';
 import type { DecisionLogDoc, WaitingDoc } from './files.js';
+import { storedTimeOf } from './stored-time.js';
 import { holdsBreak } from './text.js';
 
 /**
@@ -39,8 +41,15 @@ import { holdsBreak } from './text.js';
 
 type Stored = Readonly<Record<string, unknown>>;
 
-/** A request that passed the strict read, with its canonical text and the hash of that text. */
+/**
+ * A request that passed the strict read, with its canonical text and the hash of that text. The open time and the group are the
+ * two keys that `request add` stores beside the four; a row of four keys holds neither, and both are null.
+ */
 export interface DecideRequest extends DecisionRecordRequest {
+  /** The time at which the request was added, as the row holds it, or null for a row with no such key. */
+  readonly openedAt: string | null;
+  /** The group of the request, or null for a row with no such key. */
+  readonly group: RequestGroup | null;
   /** The canonical request text. The log row keeps it as it is, and the owner record hash covers it. */
   readonly canonical: string;
   /** The request hash: SHA-256 of the canonical text, as lowercase hex. */
@@ -61,7 +70,14 @@ export type RequestState =
   | { readonly kind: 'closed'; readonly date: string | null; readonly decider?: RequestDecider; readonly relayed?: true }
   | { readonly kind: 'unknown' };
 
-const REQUEST_KEYS: readonly string[] = [waitingKeys.id, decisionKeys.title, decisionKeys.question, decisionKeys.options];
+const REQUEST_KEYS: readonly string[] = [
+  waitingKeys.id,
+  decisionKeys.title,
+  decisionKeys.question,
+  decisionKeys.options,
+  decisionKeys.openedAt,
+  decisionKeys.group,
+];
 const OPTION_KEYS: readonly string[] = [optionKeys.key, optionKeys.text, optionKeys.rec];
 
 /** The words as a phrase: "a, b or c". */
@@ -121,11 +137,29 @@ const optionsOf = (id: string, value: unknown): CliResult<readonly DecisionRecor
   return ok(options);
 };
 
+/** The open time of the row: null when the row has no such key, else an exact stored time. A key with any other value is a fault. */
+const openedAtOf = (id: string, record: Stored): CliResult<string | null> => {
+  if (!Object.hasOwn(record, decisionKeys.openedAt)) return ok(null);
+  const time = storedTimeOf(record[decisionKeys.openedAt]);
+  return time === null ? strictFault(id, `has an "${decisionKeys.openedAt}" that is not an exact ISO time in UTC`) : ok(time);
+};
+
+/** The group of the row: null when the row has no such key, else a value of `requestGroups`. A key with any other value is a fault. */
+const groupOf = (id: string, record: Stored): CliResult<RequestGroup | null> => {
+  if (!Object.hasOwn(record, decisionKeys.group)) return ok(null);
+  const value = record[decisionKeys.group];
+  const group = Object.values(requestGroups).find((known) => known === value);
+  return group === undefined ? strictFault(id, `has a "${decisionKeys.group}" that is not ${listOf(Object.values(requestGroups))}`) : ok(group);
+};
+
 /**
  * The request of the waiting file, read strictly: the id has no leading zero; the entry holds no key beyond the
- * four; a title, a question and the text of an option are one line, within their caps, with no character that the display removes;
- * the option keys are tokens and differ; there are 1 to 9 options; at most one is recommended. Each fault is exit 1 that names the
- * waiting file and says to close and add the request when it was not changed. The texts are not trimmed.
+ * four of the request and the two that `request add` stores (`opened_at` and `group`); a title, a question and the text of an option
+ * are one line, within their caps, with no character that the display removes; the option keys are tokens and differ; there are
+ * 1 to 9 options; at most one is recommended; an open time, when the entry holds one, is an exact ISO time in UTC; a group, when the
+ * entry holds one, is a value of `requestGroups`. Each fault is exit 1 that names the waiting file and says to close and add the
+ * request when it was not changed. The texts are not trimmed. The canonical text covers the whole entry, so a row of four keys keeps
+ * the text and the hash that it always had, and a row of six keys has a hash of its own.
  */
 export const strictRequestOf = (waiting: WaitingDoc, id: string): CliResult<DecideRequest> => {
   const found = waiting.items.find((item) => item.id === id);
@@ -141,6 +175,10 @@ export const strictRequestOf = (waiting: WaitingDoc, id: string): CliResult<Deci
   if (!question.ok) return question;
   const options = optionsOf(id, record[decisionKeys.options]);
   if (!options.ok) return options;
+  const openedAt = openedAtOf(id, record);
+  if (!openedAt.ok) return openedAt;
+  const group = groupOf(id, record);
+  if (!group.ok) return group;
   const canonical = canonicalRequestText(record);
   if (!canonical.ok) return strictFault(id, `holds a value that JSON can not hold: ${canonical.error}`);
   return ok({
@@ -148,6 +186,8 @@ export const strictRequestOf = (waiting: WaitingDoc, id: string): CliResult<Deci
     title: title.value,
     question: question.value,
     options: options.value,
+    openedAt: openedAt.value,
+    group: group.value,
     canonical: canonical.value,
     hash: requestHashOf(canonical.value),
   });
@@ -279,6 +319,8 @@ export const decideLogRow = (request: DecideRequest, option: string, date: strin
 
 const LABEL_TITLE = 'Title:    ';
 const LABEL_QUESTION = 'Question: ';
+const LABEL_OPENED = 'Opened:   ';
+const LABEL_GROUP = 'Group:    ';
 const LABEL_NOTE = 'Note:     ';
 
 /**
@@ -297,15 +339,18 @@ const optionLabel = (option: DecisionRecordOption, chosen: string): string =>
   `  ${option.key}${option.rec === true ? ' (recommended)' : ''}${option.key === chosen ? ' (chosen)' : ''}: `;
 
 /**
- * The block that decide shows before it asks: the number, the title, the full question, every option with its key and its
- * text (the recommended one and the chosen one marked) and the note. A long text wraps and no text is cut. Each line starts with
- * `BLOCK_MARK`. The request passed the strict read, so the display shows exactly the text that the hash covers.
+ * The block that decide shows before it asks: the number, the title, the full question, the open time and the group (each only
+ * when the row holds it), every option with its key and its text (the recommended one and the chosen one marked) and the note. A
+ * long text wraps and no text is cut. Each line starts with `BLOCK_MARK`. The request passed the strict read, so the display shows
+ * exactly the text that the hash covers.
  */
-export const requestBlockLines = (request: DecisionRecordRequest, chosen: string, note: string | null): readonly string[] =>
+export const requestBlockLines = (request: DecideRequest, chosen: string, note: string | null): readonly string[] =>
   [
     `Decision ${request.id}`,
     ...labeled(LABEL_TITLE, request.title),
     ...labeled(LABEL_QUESTION, request.question),
+    ...(request.openedAt === null ? [] : labeled(LABEL_OPENED, request.openedAt)),
+    ...(request.group === null ? [] : labeled(LABEL_GROUP, request.group)),
     'Options:',
     ...request.options.flatMap((option) => labeled(optionLabel(option, chosen), option.text)),
     ...(note === null ? [] : labeled(LABEL_NOTE, note)),

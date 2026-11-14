@@ -896,3 +896,42 @@ describe('item record: the record check belongs to the recipe of the node', () =
     expectUntouched(repo, PROOF_BOARD);
   });
 });
+
+describe('item: the time of the last stage change', () => {
+  const STAGE_AT = '2029-12-31T23:59:59.999Z';
+  const timeOf = (repo: BoardRepo): string => repo.deps.now().toISOString();
+
+  it('stores the time of the add with the first stage of a new item', async () => {
+    const repo = await boardNode({ board: START });
+    const at = timeOf(repo);
+    valueOf(await run(repo, { words: ['add'], title: 'New', fields: ['priority=P1'] }));
+    expect(itemIn(repo, 'B-2')).toMatchObject({ stage: 'ticket', [boardKeys.stageAt]: at });
+  });
+
+  it('stores the time of the move when item move changes the stage, and keeps it when the stage stays', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { stage: 'ticket', [boardKeys.stageAt]: STAGE_AT })], TRACKS) });
+    repo.deps.advance(5_000);
+    const at = timeOf(repo);
+    valueOf(await run(repo, { words: ['move', 'B-1'], stage: 'building' }));
+    expect(itemIn(repo, 'B-1')).toMatchObject({ stage: 'building', [boardKeys.stageAt]: at });
+    repo.deps.advance(5_000);
+    valueOf(await run(repo, { words: ['move', 'B-1'], stage: 'building' }));
+    expect(itemIn(repo, 'B-1')[boardKeys.stageAt]).toBe(at);
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it('keeps the stored time when item move or item close changes the state', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { stage: 'ticket', [boardKeys.stageAt]: STAGE_AT })], TRACKS) });
+    repo.deps.advance(5_000);
+    valueOf(await run(repo, { words: ['move', 'B-1'], state: 'doing' }));
+    valueOf(await run(repo, { words: ['close', 'B-1'] }));
+    expect(itemIn(repo, 'B-1')[boardKeys.stageAt]).toBe(STAGE_AT);
+  });
+
+  it('stores the time of the record when item record changes the stage', async () => {
+    const world = await mergeWorld();
+    const at = timeOf(world.repo);
+    valueOf(await runMerge(world));
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', [boardKeys.stageAt]: at });
+  });
+});

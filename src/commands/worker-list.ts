@@ -7,7 +7,7 @@ import { ok } from '../core/result.js';
 import { commands, hookNames, roles, schemaIds, workerListWords } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { readStatus } from '../workers/status-read.js';
-import type { WorkerStatus } from '../workers/status.js';
+import { boardRowOf, type WorkerStatus } from '../workers/status.js';
 import type { WorkItemPort } from '../workers/work-items.js';
 
 export interface WorkerListOptions {
@@ -36,7 +36,8 @@ const cellsOf = (entry: WorkerStatus): readonly string[] =>
  * one list of the panes and the last-seen line of each worker, and it changes nothing. With no tmux session of this factory,
  * every pane is none. A folder with no valid record is named in a warning and in the JSON, and the other workers are listed.
  * The facts come from the builder of `status`, which asks the work item port. The list shows no work item, but a fault of the port
- * is a warning here as in `status`. The port is a required parameter. Each cell of the table is one clean line.
+ * is a warning here as in `status`. The port is a required parameter. Each cell of the table is one clean line. Each worker of the JSON
+ * carries the `boardRowOf` facts, the same as in `status`.
  */
 export const runWorkerList = async (
   deps: Deps,
@@ -71,6 +72,7 @@ export const runWorkerList = async (
         state: entry.state,
         contextPct: entry.contextPct,
         mark: entry.mark,
+        ...boardRowOf(entry),
       })),
       invalid,
     },

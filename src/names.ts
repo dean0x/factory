@@ -221,6 +221,7 @@ export const flags = {
   question: 'question',
   option: 'option',
   recommend: 'recommend',
+  later: 'later',
   item: 'item',
   note: 'note',
   position: 'position',
@@ -628,6 +629,11 @@ export const boardKeys = {
   defaultQueue: 'queue',
   mergedPrHead: 'merged_pr_head',
   unassignedFrom: 'unassigned_from',
+  /**
+   * The time of the last stage change of an item: an exact ISO time in UTC, as `toISOString` writes it. A write of the stage sets it,
+   * and no other write does. It is a reserved field name. A stored value of any other form reads as no time.
+   */
+  stageAt: 'stage_at',
 } as const;
 
 /** The keys of the waiting file: the top keys, and the id of a waiting item. */
@@ -774,8 +780,19 @@ export const maxBoardNumber = 999_999_999;
  * a title, a question and a list of options. An option holds a key that the owner types, a text, and a mark for the option that the
  * asker recommends.
  */
-export const decisionKeys = { title: 'title', question: 'question', options: 'options' } as const;
+export const decisionKeys = {
+  title: 'title',
+  question: 'question',
+  options: 'options',
+  /** The time at which a request was added: an exact ISO time in UTC, as `toISOString` writes it. */
+  openedAt: 'opened_at',
+  /** The group of a request: one of `requestGroups`. */
+  group: 'group',
+} as const;
 export const optionKeys = { key: 'key', text: 'text', rec: 'rec' } as const;
+
+/** The groups of a request. A new request is in `now`, and the asker puts it in `later` with the `later` flag. */
+export const requestGroups = { now: 'now', later: 'later' } as const;
 
 /**
  * The limits of the text of a board write. A title, a text, a question and the text of an option are one line each, with at most
@@ -830,6 +847,7 @@ export const reservedFieldNames: readonly string[] = [
   boardKeys.stage,
   boardKeys.mergedPrHead,
   boardKeys.unassignedFrom,
+  boardKeys.stageAt,
 ];
 
 /** The most workers that the list of former workers of one item (`boardKeys.unassignedFrom`) holds. */
@@ -1341,6 +1359,30 @@ export const workerListWords = {
 } as const;
 
 /**
+ * The keys of the JSON output for a view outside the core. A row of `worker list --json` and of `status --json` holds the
+ * `workerRowKeys` next to its older keys; `sessionState` holds one of `workerListWords.states`. The display data of a work item
+ * holds the `workItemDisplayKeys`. A row of `request list --json` holds the `requestRowKeys`. The `machine --json` output holds the
+ * `powerKeys.power` key, and its value holds the other `powerKeys`, with a source that is one of `powerSources`. The output gives
+ * facts only: a view makes its own state words.
+ */
+export const workerRowKeys = {
+  itemId: 'itemId',
+  itemTitle: 'itemTitle',
+  itemStatus: 'itemStatus',
+  stage: 'stage',
+  stageAt: 'stageAt',
+  parkedCount: 'parkedCount',
+  paneLive: 'paneLive',
+  sessionState: 'sessionState',
+  activityAt: 'activityAt',
+  stalled: 'stalled',
+} as const;
+export const workItemDisplayKeys = { title: 'title', stage: 'stage', stageAt: 'stageAt', status: 'status' } as const;
+export const requestRowKeys = { openedAt: 'openedAt', group: 'group' } as const;
+export const powerKeys = { power: 'power', source: 'source', percent: 'percent' } as const;
+export const powerSources = { ac: 'ac', battery: 'battery', unknown: 'unknown' } as const;
+
+/**
  * The words of the output of `worker watch`. The output holds these words and the ids of workers, and no other text of the pane or of
  * a file. `kinds` names what changed for a worker: the pane ended, the pane is gone, the pane is not the launch of the worker any more,
  * the last-seen line is not valid or does not belong to the worker, a dialog waits for an answer, or the session works and was silent
@@ -1843,7 +1885,19 @@ export const durationBounds = { minMinutes: 1, maxMinutes: 24 * 60 } as const;
 export const machineNames = {
   facts: { memory: 'memory', disk: 'disk', load: 'load', cpus: 'cpus' },
   systems: { macos: 'darwin', linux: 'linux' },
-  programs: { memoryPressure: 'memory_pressure', sysctl: 'sysctl', df: 'df', nproc: 'nproc' },
+  programs: { memoryPressure: 'memory_pressure', sysctl: 'sysctl', df: 'df', nproc: 'nproc', pmset: 'pmset' },
+  /** The arguments of `pmset` that print the power source and the battery. */
+  pmsetArgs: ['-g', 'batt'],
+  /** The folder of the Linux kernel that holds one folder for each power supply. */
+  powerSupplyDir: '/sys/class/power_supply',
+  /** The files of one power supply in that folder. */
+  supplyFiles: { type: 'type', scope: 'scope', online: 'online', status: 'status', capacity: 'capacity' },
+  /** The words of those files: the types Mains, USB and Battery, the scope System, and the status Discharging. */
+  supplyWords: { mains: 'Mains', usb: 'USB', battery: 'Battery', system: 'System', discharging: 'Discharging' },
+  /** The most power supplies, the most bytes of one supply file and the most characters of the `pmset` output that the reading takes. */
+  maxPowerSupplies: 16,
+  maxPowerFileBytes: 64,
+  maxPowerOutputChars: 4_096,
   /** The names that `sysctl` reads on macOS: the load averages and the count of processors. */
   sysctlNames: { load: 'vm.loadavg', cpus: 'hw.ncpu' },
   /** The files of the Linux kernel that give the memory and the load. */

@@ -8,10 +8,12 @@ import {
   commandLines,
   commands,
   commandText,
+  decisionKeys,
   files as fileNames,
   program,
   relayedMarker,
   requestCommands,
+  requestGroups,
   requestWords,
 } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
@@ -33,6 +35,7 @@ const BASE: RequestOptions = {
   decider: undefined,
   decision: undefined,
   relayed: false,
+  later: false,
 };
 
 const ADD: Partial<RequestOptions> = {
@@ -64,6 +67,12 @@ const run = (repo: BoardRepo, overrides: Partial<RequestOptions>): Promise<CliRe
   runRequest(repo.deps, { ...BASE, ...overrides }, recipes);
 
 const linesOf = (output: CliResult<CommandOutput>): string[] => plainText(valueOf(output)).trimEnd().split('\n');
+
+/** The rows of the JSON document of `request list`. */
+const listedRows = async (repo: BoardRepo): Promise<readonly Record<string, unknown>[]> => {
+  const requests = valueOf(await run(repo, { words: ['list'] })).json['requests'];
+  return Array.isArray(requests) ? (requests as Record<string, unknown>[]) : [];
+};
 
 const entry = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
   id,
@@ -113,6 +122,7 @@ const nodeWithStore = async (store: string, setup: Parameters<typeof boardNode>[
 describe('request add', () => {
   it('stores the decision with the first D-n, prints one line, and makes one commit that holds only the waiting file', async () => {
     const repo = await boardNode();
+    const at = repo.deps.now().toISOString();
     expect(linesOf(await run(repo, ADD))).toEqual(['Added D-1: Pick a plan']);
     expect(waitingOf(repo).items).toEqual([
       {
@@ -123,9 +133,36 @@ describe('request add', () => {
           { key: 'a', text: 'Plan A', rec: true },
           { key: 'b', text: 'Plan B' },
         ],
+        [decisionKeys.openedAt]: at,
+        [decisionKeys.group]: requestGroups.now,
       },
     ]);
     expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.waiting]]);
+  });
+
+  it('stores the time of each add, so a later add has a later open time', async () => {
+    const repo = await boardNode();
+    const first = repo.deps.now().toISOString();
+    valueOf(await run(repo, ADD));
+    repo.deps.advance(60_000);
+    const second = repo.deps.now().toISOString();
+    valueOf(await run(repo, { ...ADD, title: 'Other' }));
+    expect(waitingOf(repo).items.map((item) => item[decisionKeys.openedAt])).toEqual([first, second]);
+    expect(first).not.toBe(second);
+  });
+
+  it('puts a request in the group now when the later flag is absent, and in the group later when it is given', async () => {
+    const repo = await boardNode();
+    valueOf(await run(repo, ADD));
+    valueOf(await run(repo, { ...ADD, title: 'Other', later: true }));
+    expect(waitingOf(repo).items.map((item) => item[decisionKeys.group])).toEqual([requestGroups.now, requestGroups.later]);
+  });
+
+  it('prints the same line and the same JSON document for a request in the group later', async () => {
+    const repo = await boardNode();
+    const output = valueOf(await run(repo, { ...ADD, later: true }));
+    expect(plainText(output).trimEnd()).toBe('Added D-1: Pick a plan');
+    expect(output.json).toEqual({ schema: 'factory.request/v1', action: 'add', id: 'D-1', title: 'Pick a plan' });
   });
 
   it('takes the number after the highest D-n of the waiting file and of the decision log', async () => {
@@ -150,6 +187,7 @@ describe('request add', () => {
     const error = errorOf(await run(repo, { words: ['update', 'D-1'] }));
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain(Object.values(requestCommands).join(', '));
+    repo.deps.advance(60_000);
     valueOf(await run(repo, { ...ADD, title: 'Other', options: ['x=Plan X'], recommend: undefined }));
     expect(waitingOf(repo).items).toHaveLength(2);
     expect(waitingOf(repo).items[0]).toEqual(first);
@@ -273,6 +311,10 @@ describe('the words and the flags of request', () => {
     ['add with the relayed flag', { ...ADD, relayed: true }, '--relayed is not for'],
     ['list with the relayed flag', { words: ['list'], relayed: true }, '--relayed is not for'],
     ['log with the relayed flag', { ...LOG, relayed: true }, '--relayed is not for'],
+    ['list with the later flag', { words: ['list'], later: true }, '--later is not for'],
+    ['close with the later flag', { words: ['close', 'D-1'], later: true }, '--later is not for'],
+    ['close with the relayed flag and the later flag', { words: ['close', 'D-1'], relayed: true, decision: 'Yes', later: true }, '--later is not for'],
+    ['log with the later flag', { ...LOG, later: true }, '--later is not for'],
     ['log with no title', { ...LOG, title: undefined }, '--title'],
     ['log with no decider and no decision', { ...LOG, decider: undefined, decision: undefined }, '--made-by'],
     ['log with a decider and no decision', { ...LOG, decision: undefined }, 'go together'],
@@ -333,12 +375,61 @@ describe('request list', () => {
     expect(lines[19]).toBe('8 more requests.');
   });
 
-  it('prints the JSON document with the title as it is stored, one entry for each request', async () => {
+  it('prints the JSON document with the title as it is stored, one entry for each request, and null and now for a row from before the two keys', async () => {
     const repo = await boardNode({ waiting: waitingText([entry('D-1')]) });
     expect(valueOf(await run(repo, { words: ['list'] })).json).toEqual({
       schema: 'factory.request-list/v1',
-      requests: [{ id: 'D-1', title: 'Request D-1', options: ['a'] }],
+      requests: [{ id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: null, group: 'now' }],
     });
+  });
+
+  it('gives the open time and the group of each request that request add stored', async () => {
+    const repo = await boardNode();
+    const first = repo.deps.now().toISOString();
+    valueOf(await run(repo, ADD));
+    repo.deps.advance(60_000);
+    const second = repo.deps.now().toISOString();
+    valueOf(await run(repo, { ...ADD, title: 'Other', later: true }));
+    expect(valueOf(await run(repo, { words: ['list'] })).json).toEqual({
+      schema: 'factory.request-list/v1',
+      requests: [
+        { id: 'D-1', title: 'Pick a plan', options: ['a', 'b'], openedAt: first, group: requestGroups.now },
+        { id: 'D-2', title: 'Other', options: ['a', 'b'], openedAt: second, group: requestGroups.later },
+      ],
+    });
+  });
+
+  it.each([
+    ['a time that is not an exact time', '2030-01-02', null],
+    ['a time with no millisecond part', '2030-01-02T03:04:05Z', null],
+    ['a time that is no text', 1893553445678, null],
+    ['an exact time', '2030-01-02T03:04:05.678Z', '2030-01-02T03:04:05.678Z'],
+  ])('reads %s of a hand edited row as %j', async (_name, stored, expected) => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1', { [decisionKeys.openedAt]: stored })]) });
+    const rows = await listedRows(repo);
+    expect(rows[0]?.['openedAt']).toBe(expected);
+  });
+
+  it.each([
+    ['a group that is no word of the list', 'soon'],
+    ['a group that is no text', 3],
+    ['a group in capital letters', 'LATER'],
+    ['the group now', requestGroups.now],
+  ])('reads %s of a hand edited row as now', async (_name, stored) => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1', { [decisionKeys.group]: stored })]) });
+    const rows = await listedRows(repo);
+    expect(rows[0]?.['group']).toBe(requestGroups.now);
+  });
+
+  it('reads the group later of a row', async () => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1', { [decisionKeys.group]: requestGroups.later })]) });
+    const rows = await listedRows(repo);
+    expect(rows[0]?.['group']).toBe(requestGroups.later);
+  });
+
+  it('prints the text of a list with no open time and no group, so the table keeps its columns', async () => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1', { [decisionKeys.openedAt]: '2030-01-02T03:04:05.678Z', [decisionKeys.group]: requestGroups.later })]) });
+    expect(linesOf(await run(repo, { words: ['list'] })).slice(1).map((line) => line.split(/ {2,}/))).toEqual([['ID', 'TITLE', 'OPTIONS'], ['D-1', 'Request D-1', 'a']]);
   });
 });
 
@@ -359,6 +450,16 @@ describe('request close', () => {
     expect(waitingOf(repo).items).toEqual([entry('D-1', { extra: { kept: true } })]);
     expect(logOf(repo).rows[0]).toEqual(logRow('D-7'));
     expect(logOf(repo).rows).toHaveLength(2);
+  });
+
+  it('keeps the open time and the group of the other open requests', async () => {
+    const kept = entry('D-1', { [decisionKeys.openedAt]: '2030-01-02T03:04:05.678Z', [decisionKeys.group]: requestGroups.later });
+    const repo = await boardNode({ waiting: waitingText([kept, entry('D-2')]) });
+    valueOf(await run(repo, { words: ['close', 'D-2'] }));
+    expect(waitingOf(repo).items).toEqual([kept]);
+    expect(await listedRows(repo)).toEqual([
+      { id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: '2030-01-02T03:04:05.678Z', group: requestGroups.later },
+    ]);
   });
 
   it('never gives the number of a closed request again', async () => {

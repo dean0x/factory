@@ -4,7 +4,7 @@ import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
-import { capitalize, commands, schemaIds } from '../names.js';
+import { capitalize, commands, powerKeys, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import {
   factText,
@@ -13,6 +13,7 @@ import {
   type FactVerdict,
   type MachineReport,
 } from '../workers/machine.js';
+import { readPower, type Power } from '../workers/power.js';
 
 export interface MachineOptions {
   readonly home: string | undefined;
@@ -23,8 +24,11 @@ const LEVEL_OF: Readonly<Record<FactVerdict, LineLevel>> = { ok: 'ok', fail: 'fa
 const countOf = (report: MachineReport, verdict: FactVerdict): number =>
   report.filter((fact) => fact.verdict === verdict).length;
 
-/** The verdict on the first line, then one line for each fact. A failed limit or an unknown fact does not fail the command. */
-export const machineOutput = (home: string, report: MachineReport): CommandOutput => {
+/**
+ * The verdict on the first line, then one line for each fact. A failed limit or an unknown fact does not fail the command. The
+ * power is in the JSON only: it is no fact, and it changes neither the lines nor the verdict.
+ */
+export const machineOutput = (home: string, report: MachineReport, power: Power): CommandOutput => {
   const verdict = machineVerdict(report);
   const counts = `${countOf(report, 'ok')} ok, ${countOf(report, 'fail')} fail, ${countOf(report, 'unknown')} unknown`;
   const width = Math.max(...report.map((fact) => fact.name.length));
@@ -32,7 +36,14 @@ export const machineOutput = (home: string, report: MachineReport): CommandOutpu
     { level: LEVEL_OF[verdict], text: `${capitalize(commands.machine)}: ${verdict} (${counts})` },
     ...report.map((fact) => ({ level: LEVEL_OF[fact.verdict], text: `${fact.name.padEnd(width)}  ${factText(fact)}` })),
   ];
-  return { lines, json: { schema: schemaIds.machine, home, verdict, facts: report }, warnings: [], failed: false };
+  const json = {
+    schema: schemaIds.machine,
+    home,
+    verdict,
+    facts: report,
+    [powerKeys.power]: { [powerKeys.source]: power.source, [powerKeys.percent]: power.percent },
+  };
+  return { lines, json, warnings: [], failed: false };
 };
 
 export const runMachine = async (
@@ -50,5 +61,6 @@ export const runMachine = async (
   const home = located.value.home;
   const config = await loadConfig(deps, home, registry);
   if (!config.ok) return config;
-  return ok(machineOutput(home, await gatherMachine(deps, home, config.value.core.limits)));
+  const [report, power] = await Promise.all([gatherMachine(deps, home, config.value.core.limits), readPower(deps)]);
+  return ok(machineOutput(home, report, power));
 };

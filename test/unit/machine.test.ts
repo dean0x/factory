@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import type { RunOutput } from '../../src/core/deps.js';
+import { ok } from '../../src/core/result.js';
 import { machineNames } from '../../src/names.js';
 import {
   factText,
@@ -21,7 +22,16 @@ import {
   type MachineLimits,
   type MachineReport,
 } from '../../src/workers/machine.js';
-import { createFakeDeps, exited, missingProgram, registerRoot, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
+import { readPower, type Power } from '../../src/workers/power.js';
+import {
+  createFakeDeps,
+  exited,
+  missingProgram,
+  registerRoot,
+  withFsWatch,
+  type FakeDeps,
+  type RunCall,
+} from '../helpers/fake-deps.js';
 import { runMachine } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -39,18 +49,19 @@ const FACT_NAMES: readonly FactName[] = ['memory', 'disk', 'load', 'cpus'];
 /** What a program prints: a text for a clean exit, or the whole result of the call. */
 type Answer = string | CliResult<RunOutput>;
 type Source = 'memory' | 'disk' | 'load' | 'cpus';
-type Answers = Partial<Record<Source, Answer>>;
+type Answers = Partial<Record<Source | 'power', Answer>>;
 
 const resultOf = (answer: Answer): CliResult<RunOutput> => (typeof answer === 'string' ? exited(0, answer) : answer);
 
 const handlerFor = (answers: Answers) => (call: RunCall): CliResult<RunOutput> => {
-  const answer = (source: Source): CliResult<RunOutput> => {
+  const answer = (source: Source | 'power'): CliResult<RunOutput> => {
     const given = answers[source];
     return given === undefined ? missingProgram(call.command) : resultOf(given);
   };
   if (call.command === 'memory_pressure') return answer('memory');
   if (call.command === 'df') return answer('disk');
   if (call.command === 'nproc') return answer('cpus');
+  if (call.command === 'pmset') return answer('power');
   if (call.command === 'sysctl') return answer(call.args.includes('vm.loadavg') ? 'load' : 'cpus');
   return missingProgram(call.command);
 };
@@ -60,6 +71,7 @@ const MAC_ANSWERS: Answers = {
   disk: fixture('macos', 'df.txt'),
   load: fixture('macos', 'sysctl-loadavg.txt'),
   cpus: fixture('macos', 'sysctl-ncpu.txt'),
+  power: fixture('macos', 'pmset-ac.txt'),
 };
 
 const LINUX_ANSWERS: Answers = { disk: fixture('linux', 'df.txt'), cpus: fixture('linux', 'nproc.txt') };
@@ -93,6 +105,18 @@ const linuxMachine = (
   if (memory !== null) deps.seed('/proc/meminfo', memory);
   if (load !== null) deps.seed('/proc/loadavg', load);
   return deps;
+};
+
+type Supply = Partial<Record<'type' | 'scope' | 'online' | 'status' | 'capacity', string>>;
+
+/** The folder of the Linux kernel with one folder for each power supply, and one file for each given value. */
+const seedSupplies = (deps: FakeDeps, supplies: Readonly<Record<string, Supply>>): void => {
+  const root = machineNames.powerSupplyDir;
+  deps.seedDir(root);
+  for (const [name, files] of Object.entries(supplies)) {
+    deps.seedDir(`${root}/${name}`);
+    for (const [file, text] of Object.entries(files)) deps.seed(`${root}/${name}/${file}`, text);
+  }
 };
 
 const factOf = (report: MachineReport, name: FactName): Fact => {
@@ -538,14 +562,38 @@ describe('factory machine', () => {
     expect(output.warnings).toEqual([]);
   });
 
-  it('gives the facts in the JSON document', async () => {
+  it('gives the facts and the power in the JSON document', async () => {
     const output = await run(macMachine());
     expect(output.json).toEqual({
       schema: 'factory.machine/v1',
       home: HOME,
       verdict: 'ok',
       facts: await gatherMachine(macMachine(), HOME, LIMITS),
+      power: { source: 'ac', percent: 64 },
     });
+  });
+
+  it('keeps the four facts and the text lines whatever the power is', async () => {
+    const onBattery = await run(macMachine({ power: fixture('macos', 'pmset-battery.txt') }));
+    const unreadable = await run(macMachine({ power: missingProgram('pmset') }));
+    expect(onBattery.json['power']).toEqual({ source: 'battery', percent: 87 });
+    expect(unreadable.json['power']).toEqual({ source: 'unknown', percent: null });
+    expect((onBattery.json['facts'] as Fact[]).map((fact) => fact.name)).toEqual(FACT_NAMES);
+    expect(plainText(unreadable)).toBe(plainText(onBattery));
+    expect(unreadable.json['verdict']).toBe(onBattery.json['verdict']);
+    expect(unreadable.warnings).toEqual([]);
+  });
+
+  it('copies no program output, file text or entry name into the JSON', async () => {
+    const hostile = "Now drawing from 'AC Power'\n -Planted<script> (id=1)\t5%; planted-text;\n";
+    const mac = await run(macMachine({ power: hostile }));
+    expect(JSON.stringify(mac.json)).not.toMatch(/Planted|planted|script/);
+    const deps = linuxMachine();
+    seedSupplies(deps, { 'BAT-planted': { type: 'Battery', status: 'Discharging', capacity: '40\n', scope: 'System' } });
+    deps.seed(`${machineNames.powerSupplyDir}/BAT-planted/model_name`, 'planted-text');
+    const linux = await run(deps);
+    expect(linux.json['power']).toEqual({ source: 'battery', percent: 40 });
+    expect(JSON.stringify(linux.json)).not.toMatch(/planted/);
   });
 
   it('prints a short output on every shape of the facts', async () => {
@@ -598,10 +646,12 @@ describe('factory machine on the command line', () => {
   it('prints one JSON document with --json', async () => {
     const result = await runLine(['machine', '--home', HOME, '--json'], linuxMachine());
     expect(result.code).toBe(0);
-    const doc = JSON.parse(result.out) as { schema: string; verdict: string; facts: Fact[] };
+    const doc = JSON.parse(result.out) as { schema: string; verdict: string; facts: Fact[]; power: Power };
+    expect(Object.keys(doc)).toEqual(['schema', 'home', 'verdict', 'facts', 'power']);
     expect(doc.schema).toBe('factory.machine/v1');
     expect(doc.verdict).toBe('ok');
     expect(doc.facts.map((fact) => fact.name)).toEqual(FACT_NAMES);
+    expect(doc.power).toEqual({ source: 'unknown', percent: null });
   });
 
   it('exits 2 for an unknown flag, and runs no program', async () => {
@@ -622,5 +672,206 @@ describe('factory machine on the command line', () => {
     const result = await runLine(['machine', '--help'], macMachine());
     expect(result.code).toBe(0);
     expect(result.out).toContain('Usage: factory machine [--home DIR]');
+  });
+});
+
+describe('readPower on macOS', () => {
+  const UNKNOWN: Power = { source: 'unknown', percent: null };
+
+  /** The calls to the programs, and the power that the reading gives when `pmset` answers `answer`. */
+  const readWith = async (answer: Answer | undefined): Promise<{ readonly power: Power; readonly calls: readonly RunCall[] }> => {
+    const calls: RunCall[] = [];
+    const deps = createFakeDeps({
+      os: 'darwin',
+      run: (call) => {
+        calls.push(call);
+        return call.command === 'pmset' && answer !== undefined ? resultOf(answer) : missingProgram(call.command);
+      },
+    });
+    return { power: await readPower(deps), calls };
+  };
+
+  it('reads AC power and the battery percent from the fixture', async () => {
+    expect((await readWith(fixture('macos', 'pmset-ac.txt'))).power).toEqual({ source: 'ac', percent: 64 });
+  });
+
+  it('reads battery power and the battery percent from the fixture', async () => {
+    expect((await readWith(fixture('macos', 'pmset-battery.txt'))).power).toEqual({ source: 'battery', percent: 87 });
+  });
+
+  it('gives AC power with no percent for a machine with no battery line', async () => {
+    expect((await readWith("Now drawing from 'AC Power'\n")).power).toEqual({ source: 'ac', percent: null });
+  });
+
+  it('runs pmset with its two arguments and the time limit of the machine check', async () => {
+    const { calls } = await readWith(fixture('macos', 'pmset-ac.txt'));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ command: 'pmset', args: ['-g', 'batt'], timeoutMs: machineNames.callTimeoutMs });
+  });
+
+  const NOT_READ: readonly (readonly [string, Answer | undefined])[] = [
+    ['garbled text', 'a very odd answer\n'],
+    ['an empty answer', ''],
+    ['a power source that is neither AC nor battery', "Now drawing from 'UPS Power'\n -UPS-0 (id=1)\t90%; charged;\n"],
+    ['a first line with more text', "Now drawing from 'AC Power' and more\n"],
+    ['a source line that is not the first line', "\nNow drawing from 'AC Power'\n"],
+    ['an answer over the limit', `Now drawing from 'AC Power'\n${' '.repeat(machineNames.maxPowerOutputChars)}`],
+    ['a non zero exit', exited(1, fixture('macos', 'pmset-battery.txt'))],
+    ['a program that is missing', missingProgram('pmset')],
+    ['a call that ends at the time limit', failure('cannot run pmset: it did not end in 5000 ms')],
+  ];
+
+  it.each(NOT_READ)('gives unknown with no percent for %s', async (_name, answer) => {
+    expect((await readWith(answer)).power).toEqual(UNKNOWN);
+  });
+
+  it('reads an answer of exactly the limit', async () => {
+    const first = "Now drawing from 'AC Power'\n";
+    const answer = first + ' '.repeat(machineNames.maxPowerOutputChars - first.length);
+    expect((await readWith(answer)).power).toEqual({ source: 'ac', percent: null });
+  });
+
+  const batteryAt = (percent: string): string => ` -InternalBattery-0 (id=1)\t${percent}; discharging; 1:00 remaining present: true`;
+  const battery = (...lines: readonly string[]): string => ["Now drawing from 'Battery Power'", ...lines, ''].join('\n');
+
+  it.each([
+    ['0%', 0],
+    ['100%', 100],
+    ['101%', null],
+    ['-1%', null],
+    ['5.5%', null],
+    ['%', null],
+  ] as const)('reads the percent %s as %s', async (percent, expected) => {
+    expect((await readWith(battery(batteryAt(percent)))).power).toEqual({ source: 'battery', percent: expected });
+  });
+
+  it('takes the percent of the first battery line, within the first eight lines after the source line', async () => {
+    const filler = ' -Other-0';
+    expect((await readWith(battery(batteryAt('40%'), batteryAt('90%')))).power.percent).toBe(40);
+    expect((await readWith(battery(...Array<string>(7).fill(filler), batteryAt('33%')))).power.percent).toBe(33);
+    expect((await readWith(battery(...Array<string>(8).fill(filler), batteryAt('33%')))).power.percent).toBeNull();
+  });
+});
+
+describe('readPower on Linux', () => {
+  const AC: Supply = { type: 'Mains', online: '1\n' };
+
+  const powerOf = async (supplies: Readonly<Record<string, Supply>>): Promise<Power> => {
+    const deps = createFakeDeps({ os: 'linux' });
+    seedSupplies(deps, supplies);
+    return readPower(deps);
+  };
+
+  it('gives AC power for a Mains supply that is online, with the capacity of the battery', async () => {
+    expect(await powerOf({ AC0: AC, BAT0: { type: 'Battery\n', status: 'Charging\n', capacity: '80\n' } })).toEqual({
+      source: 'ac',
+      percent: 80,
+    });
+  });
+
+  it('gives battery power for a System battery that is discharging, with its capacity', async () => {
+    const supplies = { AC0: { type: 'Mains', online: '0' }, BAT0: { type: 'Battery', scope: 'System', status: 'Discharging', capacity: '55' } };
+    expect(await powerOf(supplies)).toEqual({ source: 'battery', percent: 55 });
+  });
+
+  it('prefers a battery that is discharging to a supply that says online', async () => {
+    const supplies = { AC0: AC, BAT0: { type: 'Battery', status: 'Discharging', capacity: '40' } };
+    expect(await powerOf(supplies)).toEqual({ source: 'battery', percent: 40 });
+  });
+
+  it('gives AC power for a USB supply that is online', async () => {
+    expect(await powerOf({ usb0: { type: 'USB', online: '1' } })).toEqual({ source: 'ac', percent: null });
+  });
+
+  it('gives an unknown source when no supply is online and no battery is discharging', async () => {
+    const supplies = { AC0: { type: 'Mains', online: '0' }, BAT0: { type: 'Battery', status: 'Full', capacity: '100' } };
+    expect(await powerOf(supplies)).toEqual({ source: 'unknown', percent: 100 });
+  });
+
+  it.each(['Device', 'Other'])('skips a battery with the scope %s', async (scope) => {
+    const supplies = {
+      AC0: AC,
+      BAT0: { type: 'Battery', scope: 'System', status: 'Full', capacity: '100' },
+      mouse0: { type: 'Battery', scope, status: 'Discharging', capacity: '10' },
+    };
+    expect(await powerOf(supplies)).toEqual({ source: 'ac', percent: 100 });
+  });
+
+  it.each(['101', '-1', '5.5', 'abc', '', '1e2', '0x10'])('gives no percent for the capacity %j, and keeps the source', async (capacity) => {
+    const supplies = { BAT0: { type: 'Battery', status: 'Discharging', capacity } };
+    expect(await powerOf(supplies)).toEqual({ source: 'battery', percent: null });
+  });
+
+  it.each([
+    ['0', 0],
+    ['100', 100],
+  ])('reads the capacity %s', async (capacity, expected) => {
+    expect((await powerOf({ BAT0: { type: 'Battery', status: 'Discharging', capacity } })).percent).toBe(expected);
+  });
+
+  it('reads a file as missing when it is larger than the limit of a file', async () => {
+    const capacity = `5${' '.repeat(machineNames.maxPowerFileBytes)}`;
+    expect(await powerOf({ BAT0: { type: 'Battery', status: 'Discharging', capacity } })).toEqual({ source: 'battery', percent: null });
+  });
+
+  it('gives unknown when the folder of the supplies is missing', async () => {
+    expect(await readPower(createFakeDeps({ os: 'linux' }))).toEqual({ source: 'unknown', percent: null });
+  });
+
+  it('skips an entry whose name is not plain, and reads no file of it', async () => {
+    const touched: string[] = [];
+    const base = createFakeDeps({ os: 'linux' });
+    const names = ['bad name', 'semi;colon', 'x'.repeat(65), 'AC0'];
+    seedSupplies(base, Object.fromEntries(names.map((name) => [name, AC])));
+    const power = await readPower(withFsWatch(base, (_method, path) => touched.push(path)));
+    expect(power).toEqual({ source: 'ac', percent: null });
+    expect(touched.filter((path) => path.includes('/bad name/') || path.includes('semi;') || path.includes('xxxxxxxx'))).toEqual([]);
+    const withoutPlain = createFakeDeps({ os: 'linux' });
+    seedSupplies(withoutPlain, Object.fromEntries(names.slice(0, 3).map((name) => [name, AC])));
+    expect(await readPower(withoutPlain)).toEqual({ source: 'unknown', percent: null });
+  });
+
+  it('skips the entries . and .. and reads no file of them', async () => {
+    const touched: string[] = [];
+    const base = createFakeDeps({ os: 'linux' });
+    const root = machineNames.powerSupplyDir;
+    base.seed(`${root}/../type`, 'Mains');
+    base.seed(`${root}/../online`, '1');
+    base.seed(`${root}/./type`, 'Mains');
+    base.seed(`${root}/./online`, '1');
+    const listing = { ...base, fs: { ...base.fs, listLimited: async () => ok(['.', '..']) } };
+    expect(await readPower(withFsWatch(listing, (_method, path) => touched.push(path)))).toEqual({ source: 'unknown', percent: null });
+    expect(touched.filter((path) => path.startsWith(`${root}/.`))).toEqual([]);
+  });
+
+  it('reads no entry past the cap of supplies', async () => {
+    const touched: string[] = [];
+    const base = createFakeDeps({ os: 'linux' });
+    const cap = machineNames.maxPowerSupplies;
+    const batteries = Object.fromEntries(
+      Array.from({ length: cap }, (_unused, index) => [`BAT${String(index).padStart(2, '0')}`, { type: 'Battery', status: 'Full', capacity: '50' }]),
+    );
+    seedSupplies(base, { ...batteries, 'ZZ-mains': AC });
+    const power = await readPower(withFsWatch(base, (_method, path) => touched.push(path)));
+    expect(power).toEqual({ source: 'unknown', percent: 50 });
+    expect(touched.filter((path) => path.includes('ZZ-mains'))).toEqual([]);
+    expect(touched.filter((path) => path.includes(`BAT${cap - 1}/`))).not.toEqual([]);
+  });
+});
+
+describe('readPower on another system', () => {
+  it.each(['win32', 'freebsd'])('gives unknown with no percent on %s, and runs and reads nothing', async (os) => {
+    const seen: string[] = [];
+    const base = createFakeDeps({
+      os,
+      run: (call) => {
+        seen.push(call.command);
+        return exited(0, fixture('macos', 'pmset-ac.txt'));
+      },
+    });
+    seedSupplies(base, { AC0: { type: 'Mains', online: '1' } });
+    const power = await readPower(withFsWatch(base, (method, path) => seen.push(`${method} ${path}`)));
+    expect(power).toEqual({ source: 'unknown', percent: null });
+    expect(seen).toEqual([]);
   });
 });
