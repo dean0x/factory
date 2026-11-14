@@ -1699,6 +1699,7 @@ describe('the names of the data for a view outside the core', () => {
       'sessionState',
       'activityAt',
       'stalled',
+      'hold',
     ]);
     expect(Object.values(workItemDisplayKeys)).toEqual(['title', 'stage', 'stageAt', 'status']);
     expect(duplicatesOf(Object.values(workerRowKeys))).toEqual([]);

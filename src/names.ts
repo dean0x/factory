@@ -116,6 +116,7 @@ export const workerCommands = {
   summon: 'summon',
   reset: 'reset',
   watch: 'watch',
+  mark: 'mark',
 } as const;
 
 /**
@@ -163,6 +164,7 @@ export const commandLines = {
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
   workerReset: `${commands.worker} ${workerCommands.reset}`,
   workerWatch: `${commands.worker} ${workerCommands.watch}`,
+  workerMark: `${commands.worker} ${workerCommands.mark}`,
   itemAdd: `${commands.item} ${itemCommands.add}`,
   itemUpdate: `${commands.item} ${itemCommands.update}`,
   itemMove: `${commands.item} ${itemCommands.move}`,
@@ -250,6 +252,8 @@ export const files = {
   workerRecord: 'worker.json',
   /** The pointer of one worker to its newest session: `workers/<id>/last-session` holds a session id. */
   workerLastSession: 'last-session',
+  /** The hold word of one worker: `workers/<id>/hold-word` holds `parked` or `on-hold`. No file: the worker has no hold word. */
+  workerHold: 'hold-word',
   /** The notes of a worker for its next turn, in its inbox folder: a reset needs them before it clears or compacts the session. */
   resume: 'resume.md',
   /** The assignment of a worker, in its inbox folder: `worker new --assignment FILE` copies the text of FILE to this file. */
@@ -1360,7 +1364,8 @@ export const workerListWords = {
 
 /**
  * The keys of the JSON output for a view outside the core. A row of `worker list --json` and of `status --json` holds the
- * `workerRowKeys` next to its older keys; `sessionState` holds one of `workerListWords.states`. The display data of a work item
+ * `workerRowKeys` next to its older keys; `sessionState` holds one of `workerListWords.states`, and `hold` holds a word of `workerHold`
+ * or null for a hold file that can not be read. The display data of a work item
  * holds the `workItemDisplayKeys`. A row of `request list --json` holds the `requestRowKeys`. The `machine --json` output holds the
  * `powerKeys.power` key, and its value holds the other `powerKeys`, with a source that is one of `powerSources`. The output gives
  * facts only: a view makes its own state words.
@@ -1376,6 +1381,7 @@ export const workerRowKeys = {
   sessionState: 'sessionState',
   activityAt: 'activityAt',
   stalled: 'stalled',
+  hold: 'hold',
 } as const;
 export const workItemDisplayKeys = { title: 'title', stage: 'stage', stageAt: 'stageAt', status: 'status' } as const;
 export const requestRowKeys = { openedAt: 'openedAt', group: 'group' } as const;
@@ -1745,6 +1751,17 @@ export const workerRecord = {
   /** The permission bits of a worker folder and of its record. The record is private to the user. */
   folderMode: privateFile.folderMode,
   fileMode: privateFile.fileMode,
+} as const;
+
+/**
+ * The hold word of a worker (design 4.11). `worker mark ID parked|on-hold|none` sets it, and the key `hold` of a worker row shows it.
+ * `none` removes the file, and it is the word of a worker with no hold word. The file holds one word and a new line, and a reader
+ * refuses a file of more bytes than `maxBytes`. A hold word is no approval.
+ */
+export const workerHold = {
+  words: { parked: 'parked', onHold: 'on-hold' },
+  none: 'none',
+  maxBytes: 64,
 } as const;
 
 /**
@@ -2193,6 +2210,7 @@ export const schemaIds = {
   workerSummon: `${program}.worker-summon/v1`,
   workerReset: `${program}.worker-reset/v1`,
   workerWatch: `${program}.worker-watch/v1`,
+  workerMark: `${program}.worker-mark/v1`,
   selfReset: `${program}.self-reset/v1`,
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
