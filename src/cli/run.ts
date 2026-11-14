@@ -1,18 +1,11 @@
 import type { Deps } from '../core/deps.js';
+import { hookOutputOf, runHook } from '../hooks/hook.js';
 import { runStatusline } from '../hooks/statusline.js';
 import { commands, commandText, flags, flagShorts, flagText, helpTopics, hookNames, program, schemaIds } from '../names.js';
 import { exitCodeFor, exitCodeOf, failure } from './errors.js';
 import { detectStyle, printable, renderError, renderJson, renderText, renderWarnings } from './output.js';
 import { recipes, type RecipeRegistry } from '../recipes/index.js';
-import {
-  commandTableFor,
-  globalOptions,
-  hookCommandFor,
-  parseFlags,
-  renderCommandHelp,
-  renderHelp,
-  type Given,
-} from './table.js';
+import { commandTableFor, globalOptions, parseFlags, renderCommandHelp, renderHelp } from './table.js';
 import { wordsOutput } from './words.js';
 
 export interface Sink {
@@ -31,19 +24,12 @@ const NATIVE_WINDOWS = 'win32';
 /** True when the command line is the route of the hook of Claude Code: a hook event or the status line. */
 export const isHookRoute = (argv: readonly string[]): boolean => argv[0] === commands.hook;
 
-/** The words after `hook` are the whole input of the route: it reads no flag. */
-const wordsOnly = (words: readonly string[]): Given => ({
-  string: () => undefined,
-  strings: () => [],
-  bool: () => false,
-  positionals: () => words,
-  afterTerminator: () => [],
-});
-
 /**
  * The hook of Claude Code. It never fails the session that runs it, so every path exits 0: the route comes before the
  * check of the platform and before the flags. A refusal or a failure of any kind, a throw included, becomes one line on
- * stderr. An event prints nothing to stdout. The word `statusline` prints the status line, which is the only output.
+ * stderr. The `SessionStart` of a worker prints one JSON object with its role text, or the refusal text, in one write to
+ * stdout, and each problem of the hook is one line on stderr. Every other event prints nothing to stdout. The word
+ * `statusline` prints the status line.
  */
 const runHookRoute = async (words: readonly string[], deps: Deps, sink: Sink, registry: RecipeRegistry): Promise<number> => {
   const note = (reason: string): string => `${program} ${commands.hook}: ${printable(reason).replace(/\s+/g, ' ')}\n`;
@@ -54,8 +40,13 @@ const runHookRoute = async (words: readonly string[], deps: Deps, sink: Sink, re
       if (shown.note !== null) await sink.stderr(note(shown.note));
       return EXIT_OK;
     }
-    const result = await hookCommandFor(registry).run(wordsOnly(words), deps);
-    if (!result.ok) await sink.stderr(note(result.error.message));
+    const result = await runHook(deps, words, registry);
+    if (!result.ok) {
+      await sink.stderr(note(result.error.message));
+    } else {
+      if (result.value.context !== null) await sink.stdout(JSON.stringify(hookOutputOf(result.value.context)));
+      for (const problem of result.value.problems) await sink.stderr(note(problem));
+    }
   } catch (cause) {
     await sink.stderr(note(`internal error: ${cause instanceof Error ? cause.message : 'unknown'}`));
   }

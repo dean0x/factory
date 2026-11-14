@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { hookNames, type HookEvent } from '../../src/names.js';
+import { hookNames, roleText, type HookEvent } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 
 let box: Sandbox;
@@ -177,6 +177,54 @@ describe('factory hook (built binary)', () => {
         session_id: SESSION,
         event: 'Stop',
       });
+    });
+
+    /** The context of the SessionStart output of a worker, from the JSON object that the hook printed. */
+    const contextOf = (stdout: string): string => {
+      const printed = JSON.parse(stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+      expect(Object.keys(printed)).toEqual(['hookSpecificOutput']);
+      expect(Object.keys(printed.hookSpecificOutput)).toEqual(['hookEventName', 'additionalContext']);
+      expect(printed.hookSpecificOutput.hookEventName).toBe('SessionStart');
+      return printed.hookSpecificOutput.additionalContext;
+    };
+
+    const startOfWorker = (): Promise<RunResult> =>
+      hook('SessionStart', JSON.stringify(FIXTURE.hooks.SessionStart), { FACTORY_SESSION: WORKER_ID });
+
+    it('prints the role text as one JSON object at the SessionStart of a worker: the source line, the worker rules and the accepted setup text', async () => {
+      await writeRecord(WORKER_ID);
+      const result = await startOfWorker();
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe('');
+      const context = contextOf(result.stdout);
+      expect(context.split('\n')[0]).toBe(roleText.sourceLine);
+      expect(context.endsWith(await readFile(join(home, 'setup', 'roles', 'worker.md'), 'utf8'))).toBe(true);
+      expect(context.length).toBeLessThanOrEqual(roleText.maxChars);
+    });
+
+    it('prints no text of the rendered worker file, which is a copy for people', async () => {
+      await writeRecord(WORKER_ID);
+      await writeFile(join(home, '.factory', 'roles', 'worker.md'), 'DECOY TEXT\n');
+      const result = await startOfWorker();
+      expect(result.code).toBe(0);
+      expect(contextOf(result.stdout)).not.toContain('DECOY');
+    });
+
+    it('prints only the refusal text and one fixed reason when the setup text changed after the owner accepted it', async () => {
+      await writeRecord(WORKER_ID);
+      const setup = join(home, 'setup', 'roles', 'worker.md');
+      await writeFile(setup, `${await readFile(setup, 'utf8')}Changed after the accept.\n`);
+      const result = await startOfWorker();
+      expect(result.code).toBe(0);
+      expect(contextOf(result.stdout)).toBe(roleText.refusal);
+      expect(result.stderr).toBe(`factory hook: ${roleText.reasons.notAccepted}\n`);
+      expect(result.stdout).not.toContain('Changed after the accept');
+    });
+
+    it('prints nothing to stdout for the SessionStart of a worker that has no record', async () => {
+      const result = await startOfWorker();
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe('');
     });
 
     it('writes nothing for an id that has no record, and says why on one line of stderr', async () => {

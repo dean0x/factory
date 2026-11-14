@@ -5,8 +5,10 @@ import type { CliResult } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
-import { hookNames, schemaIds, type HookEvent } from '../../src/names.js';
+import type { HookOutcome } from '../../src/hooks/hook.js';
+import { blockNames, files, hookNames, roleText, schemaIds, setupFileOf, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
+import { workerFileTemplatesFor } from '../../src/templates/index.js';
 import {
   promptStateOf,
   readOwnCoordinatorSession,
@@ -15,10 +17,12 @@ import {
   type LastSeen,
 } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
+import { composeRoleText } from '../../src/workers/role-text.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { runHook } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
+import { ACCEPTANCES, acceptSetupText } from '../helpers/setup-acceptance.js';
 
 const HOME = '/h/factory';
 const NODE_ID = sampleConfig().core.node.id;
@@ -67,7 +71,10 @@ const snapshot = (deps: FakeDeps): string => JSON.stringify([...deps.files.entri
 
 const lineOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(FILE) ?? 'null');
 
-const errorOf = (result: CliResult<void>): string => {
+/** The outcome of a hook that prints nothing and has nothing to report. */
+const SILENT = { ok: true, value: { context: null, problems: [] } } as const;
+
+const errorOf = (result: CliResult<HookOutcome>): string => {
   if (result.ok) throw new Error('the hook should have refused');
   return result.error.message;
 };
@@ -81,7 +88,7 @@ const runLine = async (argv: readonly string[], deps: Deps) => {
 describe('factory hook: the last-seen line of each captured payload (TP-5)', () => {
   it.each(hookNames.events)('writes one last-seen line for %s', async (event) => {
     const deps = make({ stdin: JSON.stringify(FIXTURE.hooks[event]) });
-    expect(await runHook(deps, [event])).toEqual({ ok: true, value: undefined });
+    expect(await runHook(deps, [event])).toEqual(SILENT);
     expect(lineOf(deps)).toEqual({
       schema: schemaIds.lastSeen,
       session_id: SESSION,
@@ -98,7 +105,7 @@ describe('factory hook: the last-seen line of each captured payload (TP-5)', () 
     const deps = make({ stdin: payload('Stop'), cwd: '/w/child/deep' });
     deps.seed('/w/child/factory.yaml', 'schema: 2\n');
     deps.seedDir('/w/child/deep');
-    expect(await runHook(deps, ['Stop'])).toEqual({ ok: true, value: undefined });
+    expect(await runHook(deps, ['Stop'])).toEqual(SILENT);
     expect(lineOf(deps)).toMatchObject({ event: 'Stop', session_marker: NODE_ID });
   });
 
@@ -139,14 +146,14 @@ describe('factory hook: the dialog states of the Notification and PreToolUse eve
 
   it.each(hookNames.notificationTypes)('TP-4: writes the state waits for the Notification type %s', async (type) => {
     const deps = make({ stdin: payload('Notification', { [hookNames.inputKeys.notificationType]: type }) });
-    expect(await runHook(deps, ['Notification'])).toEqual({ ok: true, value: undefined });
+    expect(await runHook(deps, ['Notification'])).toEqual(SILENT);
     expect(lineOf(deps)).toMatchObject({ event: 'Notification', session_id: SESSION });
     expect(stateOfLine(deps)).toBe('waits');
   });
 
   it('TP-4: writes the state busy for PreToolUse', async () => {
     const deps = make({ stdin: payload('PreToolUse') });
-    expect(await runHook(deps, ['PreToolUse'])).toEqual({ ok: true, value: undefined });
+    expect(await runHook(deps, ['PreToolUse'])).toEqual(SILENT);
     expect(stateOfLine(deps)).toBe('busy');
   });
 
@@ -159,7 +166,7 @@ describe('factory hook: the dialog states of the Notification and PreToolUse eve
   ])('TP-4: writes no line for a Notification with %s, and reports no fault', async (_name, fields) => {
     const deps = make({ stdin: payload('Notification', fields) });
     const before = snapshot(deps);
-    expect(await runHook(deps, ['Notification'])).toEqual({ ok: true, value: undefined });
+    expect(await runHook(deps, ['Notification'])).toEqual(SILENT);
     expect(snapshot(deps)).toBe(before);
   });
 
@@ -167,7 +174,7 @@ describe('factory hook: the dialog states of the Notification and PreToolUse eve
     const { [hookNames.inputKeys.notificationType]: _type, ...withoutType } = FIXTURE.hooks.Notification;
     const deps = make({ stdin: JSON.stringify(withoutType) });
     const before = snapshot(deps);
-    expect(await runHook(deps, ['Notification'])).toEqual({ ok: true, value: undefined });
+    expect(await runHook(deps, ['Notification'])).toEqual(SILENT);
     expect(snapshot(deps)).toBe(before);
   });
 
@@ -345,7 +352,7 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
 
   it('writes the last-seen line of the session for the id of a worker that has a record', async () => {
     const deps = await makeWorker();
-    expect(await runHook(deps, ['Stop'])).toEqual({ ok: true, value: undefined });
+    expect(await runHook(deps, ['Stop'])).toEqual(SILENT);
     expect(lineOf(deps)).toEqual({
       schema: schemaIds.lastSeen,
       session_id: SESSION,
@@ -661,10 +668,242 @@ describe('factory hook: outside a factory session', () => {
         return deps.readStdin(maxBytes);
       },
     };
-    expect(await runHook(spy, ['Stop'])).toEqual({ ok: true, value: undefined });
+    expect(await runHook(spy, ['Stop'])).toEqual(SILENT);
     expect(touched).toEqual([]);
     expect(reads).toBe(0);
     expect(snapshot(deps)).toBe(before);
+  });
+});
+
+describe('factory hook: the role text of a worker session', () => {
+  const WORKER_ID = 'fix-login';
+  const SETUP = 'Write tests first.\n';
+  const REL = setupFileOf(blockNames.setupWorker);
+  const SETUP_FILE = layoutOf(HOME).setupWorkerFile;
+  const DECOY_FILE = layoutOf(HOME).workerMd;
+  const paths = workerPathsOf(HOME, WORKER_ID);
+
+  const textOf = (setup: string | null): string => composeRoleText(workerFileTemplatesFor(sampleConfig(), setup));
+  const outputOf = (text: string): string =>
+    JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } });
+  const refusedOutput = outputOf(roleText.refusal);
+  const reasonLine = (reason: string): string => `factory hook: ${reason}\n`;
+
+  interface World extends MakeOptions {
+    /** The text of the setup file, or null for no file. */
+    readonly text?: string | null;
+    /** The text that the owner accepted. The default is `text`. Null: no acceptance. */
+    readonly accepted?: string | null;
+  }
+
+  /** A node with a worker that has a record, a setup file that the owner accepted, and the environment of a SessionStart of that worker. */
+  const makeStart = async (world: World = {}): Promise<FakeDeps> => {
+    const { text = SETUP, accepted = text, ...options } = world;
+    const deps = make({ stdin: payload('SessionStart'), ...options, env: { FACTORY_SESSION: WORKER_ID, ...options.env } });
+    const written = await writeWorkerRecord(deps, HOME, {
+      id: WORKER_ID,
+      project: 'web',
+      workCopy: '/h/factory/work-copies/web/fix-login',
+      branch: 'worker/fix-login',
+    });
+    expect(written.ok).toBe(true);
+    if (text !== null) deps.seed(SETUP_FILE, text);
+    if (accepted !== null) acceptSetupText(deps, HOME, NODE_ID, [REL], { [REL]: accepted });
+    return deps;
+  };
+
+  /** Run the hook of an event through the router, and keep each write to stdout and to stderr apart. */
+  const ranFor = async (deps: Deps, event: HookEvent = 'SessionStart') => {
+    const sink = captureSink();
+    const code = await runCli(['hook', event], deps, sink);
+    return { code, out: sink.out, err: sink.errors };
+  };
+
+  const touchedBy = (deps: FakeDeps): { readonly watched: FakeDeps; readonly setupCalls: () => string[] } => {
+    const calls: string[] = [];
+    return {
+      watched: withFsWatch(deps, (method, path) => calls.push(`${method} ${path}`)),
+      setupCalls: () => calls.filter((call) => call.includes('setup')),
+    };
+  };
+
+  it('prints one JSON object that starts with the source line and holds the package worker rules and the accepted setup text', async () => {
+    const ran = await ranFor(await makeStart());
+    expect(ran).toEqual({ code: 0, out: [outputOf(textOf(SETUP))], err: [] });
+    const printed = JSON.parse(ran.out[0] ?? '') as { hookSpecificOutput: { additionalContext: string } };
+    const text = printed.hookSpecificOutput.additionalContext;
+    expect(text.split('\n')[0]).toBe(roleText.sourceLine);
+    expect(text.endsWith(SETUP)).toBe(true);
+  });
+
+  it.each(['startup', 'resume', 'clear', 'compact'])('prints the same text at a session start with the source %s', async (source) => {
+    const deps = await makeStart({ stdin: payload('SessionStart', { source }) });
+    expect(await ranFor(deps)).toEqual({ code: 0, out: [outputOf(textOf(SETUP))], err: [] });
+  });
+
+  it('prints the package worker rules alone when the setup file is absent and never accepted', async () => {
+    const ran = await ranFor(await makeStart({ text: null, accepted: null }));
+    expect(ran).toEqual({ code: 0, out: [outputOf(textOf(null))], err: [] });
+  });
+
+  it('never reads the rendered worker file, and prints no text of it', async () => {
+    const deps = await makeStart();
+    deps.seed(DECOY_FILE, 'DECOY TEXT');
+    const calls: string[] = [];
+    const ran = await ranFor(withFsWatch(deps, (method, path) => calls.push(`${method} ${path}`)));
+    expect(ran.out).toEqual([outputOf(textOf(SETUP))]);
+    expect(ran.out.join('')).not.toContain('DECOY');
+    expect(calls.filter((call) => call.includes(DECOY_FILE))).toEqual([]);
+  });
+
+  it('prints nothing to stdout for the SessionStart of the coordinator, and reads no setup file', async () => {
+    const deps = make({ stdin: payload('SessionStart') });
+    deps.seed(SETUP_FILE, SETUP);
+    acceptSetupText(deps, HOME, NODE_ID, [REL], { [REL]: SETUP });
+    const { watched, setupCalls } = touchedBy(deps);
+    expect(await ranFor(watched)).toEqual({ code: 0, out: [], err: [] });
+    expect(setupCalls()).toEqual([]);
+  });
+
+  it.each(hookNames.events.filter((event) => event !== 'SessionStart'))(
+    'prints nothing to stdout for %s of a worker, and reads no setup file',
+    async (event) => {
+      const deps = await makeStart({ stdin: JSON.stringify(FIXTURE.hooks[event]) });
+      const { watched, setupCalls } = touchedBy(deps);
+      expect(await ranFor(watched, event)).toEqual({ code: 0, out: [], err: [] });
+      expect(setupCalls()).toEqual([]);
+    },
+  );
+
+  it.each([
+    ['no home variable', { FACTORY_HOME: undefined }],
+    ['an empty session marker', { FACTORY_SESSION: '' }],
+    ['an id that is not a slug', { FACTORY_SESSION: '../fix-login' }],
+    ['a slug with no record', { FACTORY_SESSION: 'other-worker' }],
+  ])('prints nothing to stdout for %s, with a decoy file in place', async (_name, env) => {
+    const deps = await makeStart({ env });
+    deps.seed(DECOY_FILE, 'DECOY TEXT');
+    const { watched, setupCalls } = touchedBy(deps);
+    const ran = await ranFor(watched);
+    expect(ran.code).toBe(0);
+    expect(ran.out).toEqual([]);
+    expect(setupCalls()).toEqual([]);
+  });
+
+  it('prints nothing to stdout for a record that is a link', async () => {
+    const links: Record<string, string> = {};
+    const deps = await makeStart({ links });
+    links[paths.recordFile] = '/elsewhere/worker-record';
+    const { watched, setupCalls } = touchedBy(deps);
+    const ran = await ranFor(watched);
+    expect(ran.code).toBe(0);
+    expect(ran.out).toEqual([]);
+    expect(setupCalls()).toEqual([]);
+  });
+
+  describe('a check that fails', () => {
+    const changed = async (change: (deps: FakeDeps) => void, world: World = {}): Promise<FakeDeps> => {
+      const deps = await makeStart(world);
+      change(deps);
+      return deps;
+    };
+
+    it.each([
+      ['a link in the path of the setup file', roleText.reasons.link, () => makeStart({ links: { [SETUP_FILE]: '/elsewhere/worker.md' } })],
+      ['a setup file that a group may write', roleText.reasons.ownerOrMode, () => changed((deps) => deps.modes.set(SETUP_FILE, 0o666))],
+      ['a setup file that another user owns', roleText.reasons.ownerOrMode, () => changed((deps) => deps.owners.set(SETUP_FILE, 2000))],
+      ['text above the cap', roleText.reasons.tooLarge, () => makeStart({ text: 'x'.repeat(roleText.maxChars + 1) })],
+      ['bytes that are not UTF-8', roleText.reasons.notUtf8, () => changed((deps) => deps.invalidUtf8.add(SETUP_FILE))],
+      ['a control character', roleText.reasons.notPlainText, () => makeStart({ text: 'Before\u0001after.\n' })],
+      ['a block marker', roleText.reasons.blockMarker, () => makeStart({ text: '<!-- factory:begin safety v1 sha256=abc -->\n' })],
+      ['text that the owner did not accept', roleText.reasons.notAccepted, () => makeStart({ accepted: null })],
+      ['text that changed after the owner accepted it', roleText.reasons.notAccepted, () => makeStart({ text: 'Changed.\n', accepted: SETUP })],
+      ['a store of acceptances that cannot be used', roleText.reasons.readFailed, () => changed((deps) => deps.seed(ACCEPTANCES, 'not json'))],
+      [
+        'a config that is not usable',
+        roleText.reasons.configNotUsable,
+        () => changed((deps) => deps.seed(`${HOME}/${files.localConfig}`, 'core: [not closed')),
+      ],
+    ])('prints only the refusal text and one fixed reason for %s', async (_name, reason, build) => {
+      const ran = await ranFor(await build());
+      expect(ran).toEqual({ code: 0, out: [refusedOutput], err: [reasonLine(reason)] });
+    });
+
+    it('prints no text of the setup file and no path in the refusal', async () => {
+      const ran = await ranFor(await makeStart({ text: `Secret words.\u0001\n` }));
+      expect(`${ran.out.join('')}${ran.err.join('')}`).not.toMatch(/Secret|\/h\/factory/);
+    });
+
+    it('prints only the refusal text and one fixed reason when the read throws, and drops the text of the throw', async () => {
+      const deps = await makeStart();
+      const throwing: Deps = {
+        ...deps,
+        fs: {
+          ...deps.fs,
+          lstatInfo: async (path) => {
+            if (path === layoutOf(HOME).setupDir) throw new Error('boom /private/path');
+            return deps.fs.lstatInfo(path);
+          },
+        },
+      };
+      expect(await ranFor(throwing)).toEqual({ code: 0, out: [refusedOutput], err: [reasonLine(roleText.reasons.readFailed)] });
+      expect(lineOf(deps)).toMatchObject({ event: 'SessionStart', session_marker: WORKER_ID });
+    });
+
+    it('prints only the refusal text and one fixed reason when the write of the last-seen line throws', async () => {
+      const deps = await makeStart();
+      const throwing: Deps = {
+        ...deps,
+        now: () => {
+          throw new Error('boom /private/path');
+        },
+      };
+      expect(await ranFor(throwing)).toEqual({ code: 0, out: [refusedOutput], err: [reasonLine(roleText.reasons.readFailed)] });
+    });
+  });
+
+  describe('the read and the write of the last-seen line do not depend on each other', () => {
+    it('writes the last-seen line and the pointer of the worker when a check refuses the text', async () => {
+      const deps = await makeStart({ accepted: null });
+      expect((await ranFor(deps)).out).toEqual([refusedOutput]);
+      expect(lineOf(deps)).toMatchObject({ event: 'SessionStart', session_id: SESSION, session_marker: WORKER_ID });
+      expect(deps.files.get(paths.lastSessionFile)).toBe(`${SESSION}\n`);
+    });
+
+    it('prints the role text and one line for the problem when the write of the last-seen line fails', async () => {
+      const deps = await makeStart({ links: { [FOLDER]: '/elsewhere' } });
+      deps.seedDir(FOLDER);
+      const ran = await ranFor(deps);
+      expect(ran.code).toBe(0);
+      expect(ran.out).toEqual([outputOf(textOf(SETUP))]);
+      expect(ran.err).toHaveLength(1);
+      expect(ran.err[0]).toMatch(/^factory hook: [^\n]+\n$/);
+      expect(ran.err[0]).toContain('is a link');
+      expect(deps.files.has(FILE)).toBe(false);
+    });
+
+    it('prints the refusal text and one line for each of two problems when the check and the write both fail', async () => {
+      const deps = await makeStart({ accepted: null, links: { [FOLDER]: '/elsewhere' } });
+      deps.seedDir(FOLDER);
+      const ran = await ranFor(deps);
+      expect(ran.out).toEqual([refusedOutput]);
+      expect(ran.err).toHaveLength(2);
+      expect(ran.err).toContain(reasonLine(roleText.reasons.notAccepted));
+    });
+
+    it('stops at a failed write of the last-seen line for another event of a worker', async () => {
+      const deps = await makeStart({ stdin: payload('Stop'), links: { [FOLDER]: '/elsewhere' } });
+      deps.seedDir(FOLDER);
+      expect(errorOf(await runHook(deps, ['Stop']))).toContain('is a link');
+      expect((await ranFor(deps, 'Stop')).out).toEqual([]);
+    });
+
+    it('stops at a failed write of the last-seen line for the SessionStart of the coordinator', async () => {
+      const deps = make({ stdin: payload('SessionStart'), links: { [FOLDER]: '/elsewhere' } });
+      deps.seedDir(FOLDER);
+      expect(errorOf(await runHook(deps, ['SessionStart']))).toContain('is a link');
+      expect((await ranFor(deps)).out).toEqual([]);
+    });
   });
 });
 

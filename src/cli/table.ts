@@ -62,7 +62,7 @@ import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import { foundHomeOption } from './home-option.js';
-import type { CommandOutput } from './output.js';
+import type { CommandOutput, OutLine } from './output.js';
 import { recipeHostFor } from './recipe-host.js';
 
 export interface FlagOption {
@@ -113,19 +113,23 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
 };
 
 /**
- * The hook that Claude Code runs. `runCli` routes it before the flags are read. An event prints none of its output, so that
- * it exits 0 with an empty stdout on every path, and the word `statusline` prints the status line (see `runStatusline`). The
- * table holds it for the help.
+ * The hook that Claude Code runs. `runCli` routes it before the flags are read, and prints its output itself: the
+ * `SessionStart` of a worker gives the role text as one JSON object, every other event prints nothing, and the word
+ * `statusline` prints the status line (see `runStatusline`). The table holds it for the help. The run of this entry maps the
+ * outcome of the hook to the lines and the warnings of a command, for a caller that does not use the route.
  */
 export const hookCommandFor = (registry: RecipeRegistry): Command => ({
   name: commands.hook,
-  summary: `Record when a ${places.session} was last seen. Claude Code runs it, not a person.`,
+  summary: `Record when a ${places.session} was last seen, and give a ${roles.worker} its role text. Claude Code runs it, not a person.`,
   usage: `${commandText(commands.hook)} ${[...hookNames.events, hookNames.statusline].join('|')}`,
   options: {},
   positionals: true,
   run: async (given, deps) => {
     const done = await runHook(deps, given.positionals(), registry);
-    return done.ok ? ok({ lines: [], json: { schema: schemaIds.hook }, warnings: [], failed: false }) : done;
+    if (!done.ok) return done;
+    const { context, problems } = done.value;
+    const lines: readonly OutLine[] = context === null ? [] : [{ level: 'text', text: context }];
+    return ok({ lines, json: { schema: schemaIds.hook }, warnings: problems, failed: false });
   },
 });
 
