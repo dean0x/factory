@@ -1992,3 +1992,29 @@ describe('worker stop and resume: a record that is not the record of its worker 
     expect(made.tmux.panes().at(-1)).toMatchObject({ cwd: COPY });
   });
 });
+
+describe('worker resume: the code of a refused role text after the root checks', () => {
+  const SETUP_FILE = layoutOf(HOME).setupWorkerFile;
+
+  it('exits 1 for an accepted text above the cap, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for a setup text that the owner did not accept', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for a link as the setup file', async () => {
+    const made = await withWorkers({ origin: 'own', links: { [SETUP_FILE]: '/elsewhere/worker.md' } });
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+});
