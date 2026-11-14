@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { inspectBlocks } from '../../src/blocks/status.js';
+import { inspectBlocks, recordedBlockNames, type BlockStatus } from '../../src/blocks/status.js';
 import { parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
@@ -11,7 +11,7 @@ import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
-import { boardKeys, commands, env, hookNames, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
+import { boardKeys, commands, env, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -41,6 +41,7 @@ import {
   type RunHandler,
 } from '../helpers/fake-deps.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
+import { composeRoleText } from '../../src/workers/role-text.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
@@ -1395,7 +1396,7 @@ describe('upgrade: managed blocks', () => {
     ]);
 
     const statuses = await inspectBlocks(deps, HOME, withBlock('coordinator', 'New coordinator text.'));
-    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact', 'intact', 'intact']);
+    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact', 'intact', 'intact', 'intact']);
   });
 
   it('copies the config, CLAUDE.md and the state folder into the backup first, and not the old backups', async () => {
@@ -1532,12 +1533,13 @@ describe('upgrade: managed blocks', () => {
     const { deps } = await makeNode();
     deps.files.delete(CLAUDE);
     deps.dirs.delete(`${HOME}/coordinator`);
-    const output = success(await upgrade(deps, currentSpec, { overwrite: ['coordinator', 'safety'] }));
+    const output = success(await upgrade(deps, currentSpec, { overwrite: ['coordinator', 'safety', 'work-rules'] }));
     expect(deps.dirs.has(`${HOME}/coordinator`)).toBe(true);
     const after = text(deps, CLAUDE);
     expect(after).toContain(`<!-- factory:begin coordinator v${versionOf('coordinator')} sha256=`);
     expect(after).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
     expect(after).toContain(`<!-- factory:begin setup v${versionOf('setup')} sha256=`);
+    expect(after).toContain(`<!-- factory:begin work-rules v${versionOf('work-rules')} sha256=`);
     expect(output.warnings).toEqual([]);
     expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
   });
@@ -1547,7 +1549,7 @@ describe('upgrade: managed blocks', () => {
     const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['nope'] }));
     expect(error.kind).toBe('usage');
     expect(error.message).toContain('unknown block nope');
-    expect(error.hint).toBe('The blocks are: coordinator, safety, worker, setup, setup-worker.');
+    expect(error.hint).toBe('The blocks are: coordinator, safety, work-rules, worker, setup, setup-worker.');
   });
 
   it('fails when a block has a newer version than the template', async () => {
@@ -1879,6 +1881,7 @@ describe('upgrade: the blocks of a layer', () => {
     expect(lineTexts(output).filter((line) => line.startsWith('block '))).toEqual([
       `block coordinator: version ${versionOf('coordinator')} is current`,
       `block safety: version ${versionOf('safety')} is current`,
+      `block work-rules: version ${versionOf('work-rules')} is current`,
       `block worker: version ${versionOf('worker')} is current`,
       `block setup: version ${versionOf('setup')} is current`,
       `block setup-worker: version ${versionOf('setup-worker')} is current`,
@@ -1901,6 +1904,7 @@ describe('upgrade: the blocks of a layer', () => {
     expect(blocksOfState(deps)).toEqual({
       manager: managerVersion,
       safety: versionOf('safety'),
+      'work-rules': versionOf('work-rules'),
       worker: versionOf('worker'),
       setup: versionOf('setup'),
       'setup-worker': versionOf('setup-worker'),
@@ -1942,6 +1946,7 @@ describe('upgrade: the blocks of a layer', () => {
     expect(blocksOfState(deps)).toEqual({
       coordinator: versionOf('coordinator'),
       safety: versionOf('safety'),
+      'work-rules': versionOf('work-rules'),
       worker: versionOf('worker'),
       setup: versionOf('setup'),
       'setup-worker': versionOf('setup-worker'),
@@ -2521,6 +2526,7 @@ describe('upgrade: a node of schema 1', () => {
       'intact',
       'intact',
       'intact',
+      'intact',
     ]);
 
     expect(parseConfigTexts(text(deps, CONFIG), text(deps, LOCAL)).ok).toBe(true);
@@ -2547,7 +2553,12 @@ describe('upgrade: a node of schema 1', () => {
     expect(state.ok && state.value).toEqual({
       schema_version: S,
       created_with: '0.1.0',
-      blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
+      blocks: {
+        coordinator: versionOf('coordinator'),
+        safety: versionOf('safety'),
+        'work-rules': versionOf('work-rules'),
+        worker: versionOf('worker'),
+      },
     });
 
     expect(text(deps, `${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\noutbox/\nreviews/\n');
@@ -2689,7 +2700,9 @@ describe('upgrade: a node of schema 1', () => {
       deps.files.set(OLD.claude, `My own rules.\n\n${text(deps, OLD.claude)}\nMore of my rules.\n`);
       success(await upgrade(deps));
       expect(text(deps, CLAUDE).startsWith('My own rules.\n')).toBe(true);
-      expect(text(deps, CLAUDE).endsWith('\nMore of my rules.\n')).toBe(true);
+      // The block that the old file lacked is added at the end, because the file has no setup block.
+      expect(text(deps, CLAUDE)).toContain('\nMore of my rules.\n\n<!-- factory:begin work-rules');
+      expect(text(deps, CLAUDE).endsWith('<!-- factory:end work-rules -->\n')).toBe(true);
     });
 
     it('leaves a CLAUDE.md at the old place that holds no managed block, and does not stop for it', async () => {
@@ -3188,9 +3201,19 @@ describe('upgrade: a node of schema 1', () => {
       blocks: [
         { name: 'coordinator', renamedFrom: null },
         { name: 'safety', renamedFrom: null },
+        { name: 'work-rules', action: 'add', renamedFrom: null },
         { name: 'worker', renamedFrom: 'protocol' },
       ],
     });
+  });
+
+  it('adds the work rules block at the end of the coordinator file, which has no setup block, and records its version', async () => {
+    const { deps } = makeOldNode();
+    success(await upgrade(deps));
+    const parsed = parseBlocks(text(deps, CLAUDE));
+    expect(parsed.ok && parsed.value.map((block) => block.name)).toEqual(['coordinator', 'safety', 'work-rules']);
+    const state = parseJsonText(text(deps, NODE_JSON));
+    expect(state.ok && state.value).toMatchObject({ blocks: { 'work-rules': versionOf('work-rules') } });
   });
 
   it('has nothing to upgrade the second time', async () => {
@@ -4353,7 +4376,7 @@ describe('upgrade: render a changed block again', () => {
   });
 });
 
-describe('upgrade: the role texts of worker version 4 and coordinator version 6', () => {
+describe('upgrade: the role texts of worker version 5 and coordinator version 6', () => {
   /** Put an earlier version of the block `name` into the file, with a text of its own, and record that version. */
   const makeOlder = (deps: FakeDeps, path: string, name: string, version: number): void => {
     const parsed = parseBlocks(text(deps, path));
@@ -4367,32 +4390,335 @@ describe('upgrade: the role texts of worker version 4 and coordinator version 6'
   };
 
   it('writes the new blocks over the earlier versions, and then shows them as current', async () => {
-    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([4, 6]);
+    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([5, 6]);
     const { deps } = await makeNode();
-    makeOlder(deps, WORKER, 'worker', 3);
+    makeOlder(deps, WORKER, 'worker', 4);
     makeOlder(deps, CLAUDE, 'coordinator', 5);
 
     const output = success(await upgrade(deps));
 
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 3 to 4', 'block coordinator: version 5 to 6']));
-    expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v4 sha256=');
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 4 to 5', 'block coordinator: version 5 to 6']));
+    expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v5 sha256=');
     expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v6 sha256=');
     expect(text(deps, CLAUDE)).not.toContain('The coordinator text of an earlier version.');
     expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
     const state = parseJsonText(text(deps, NODE_JSON));
-    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 6, worker: 4 } });
+    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 6, worker: 5 } });
     await deps.fs.remove(`${HOME}/.factory/backups`);
     expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
   });
 
   it('shows the earlier versions as older in a dry run, and changes no file', async () => {
     const { deps } = await makeNode();
-    makeOlder(deps, WORKER, 'worker', 3);
+    makeOlder(deps, WORKER, 'worker', 4);
     makeOlder(deps, CLAUDE, 'coordinator', 5);
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 3 to 4', 'block coordinator: version 5 to 6']));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 4 to 5', 'block coordinator: version 5 to 6']));
     expect(snapshot(deps)).toEqual(before);
+  });
+});
+
+describe('upgrade: a block that the node state never recorded', () => {
+  const WORK_RULES = 'work-rules';
+  const SETUP_WORKER = `${HOME}/setup/roles/worker.md`;
+
+  /** Cut the block `name`, and the blank lines after it, out of the file. */
+  const cutBlock = (deps: FakeDeps, path: string, name: string): void => {
+    const before = text(deps, path);
+    const parsed = parseBlocks(before);
+    const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === name) : undefined;
+    expect(block).toBeDefined();
+    if (block !== undefined) deps.files.set(path, `${before.slice(0, block.start)}${before.slice(block.end).replace(/^\n+/, '')}`);
+  };
+
+  const blockNamesOf = (deps: FakeDeps, path: string): string[] => {
+    const parsed = parseBlocks(text(deps, path));
+    return parsed.ok ? parsed.value.map((block) => block.name) : [];
+  };
+
+  const recordOf = (deps: FakeDeps): Record<string, number> => {
+    const state = parseJsonText(text(deps, NODE_JSON));
+    return state.ok ? (state.value as { blocks: Record<string, number> }).blocks : {};
+  };
+
+  /** Take the name of a block out of the record of the node state. */
+  const forget = (deps: FakeDeps, name: string): void => {
+    const state = JSON.parse(text(deps, NODE_JSON)) as { blocks: Record<string, number> };
+    expect(state.blocks[name]).toBeDefined();
+    delete state.blocks[name];
+    deps.files.set(NODE_JSON, `${JSON.stringify(state, null, 2)}\n`);
+  };
+
+  /** A node that never recorded the work rules block, and whose coordinator file lacks it. */
+  const makeUnrecordedNode = async (): Promise<{ readonly deps: FakeDeps; readonly original: string }> => {
+    const { deps } = await makeNode();
+    const original = text(deps, CLAUDE);
+    cutBlock(deps, CLAUDE, WORK_RULES);
+    forget(deps, WORK_RULES);
+    return { deps, original };
+  };
+
+  describe('the plan of a missing block', () => {
+    const template = (name: string): BlockTemplate => {
+      const found = layer1Blocks.find((candidate) => candidate.name === name);
+      if (found === undefined) throw new Error(`no template ${name}`);
+      return found;
+    };
+    const missing = (name: string, fileAbsent: boolean): BlockStatus => ({
+      kind: 'missing',
+      template: template(name),
+      file: CLAUDE,
+      fileAbsent,
+    });
+
+    it('skips a missing block by default, as a block that the state records', () => {
+      expect(planBlock(missing(WORK_RULES, false), false).action).toBe('skip-missing');
+    });
+
+    it('adds a missing block that the state never recorded, when its file is there', () => {
+      expect(planBlock(missing(WORK_RULES, false), false, false)).toMatchObject({ action: 'add', from: null });
+    });
+
+    it('skips a missing block that the state never recorded, when its file is not there', () => {
+      expect(planBlock(missing(WORK_RULES, true), false, false).action).toBe('skip-missing');
+    });
+
+    it('skips a missing block that the state records, also when its file is there', () => {
+      expect(planBlock(missing(WORK_RULES, false), false, true).action).toBe('skip-missing');
+    });
+
+    it('adds a missing setup block to a file that is there, whether or not the state records it', () => {
+      expect(planBlock(missing('setup', false), false, true).action).toBe('add');
+      expect(planBlock(missing('setup', false), false, false).action).toBe('add');
+    });
+
+    it('skips a missing safety block that the state never recorded, also when its file is there', () => {
+      expect(planBlock(missing('safety', false), false, false).action).toBe('skip-missing');
+    });
+
+    it('adds a missing safety block when the owner names it', () => {
+      expect(planBlock(missing('safety', false), true, false).action).toBe('add');
+      expect(planBlock(missing('safety', true), true, true).action).toBe('add');
+    });
+  });
+
+  describe('the recorded names', () => {
+    const renames = [{ from: 'coordinator', to: 'manager' }];
+
+    it('are the keys of the blocks map of the state', () => {
+      expect(recordedBlockNames({ blocks: { safety: 2, worker: 5 } }, [])).toEqual(new Set(['safety', 'worker']));
+    });
+
+    it('hold the new name of a block when the map holds its old name', () => {
+      expect(recordedBlockNames({ blocks: { coordinator: 6 } }, renames)).toEqual(new Set(['coordinator', 'manager']));
+      expect(recordedBlockNames({ blocks: { safety: 2 } }, renames)).toEqual(new Set(['safety']));
+    });
+
+    it.each([
+      ['a state with no blocks map', { schema_version: 2 }],
+      ['a blocks map that is a list', { blocks: ['safety'] }],
+      ['a blocks map that is text', { blocks: 'safety' }],
+      ['a blocks map that is null', { blocks: null }],
+      ['a state that is not a mapping', 'text'],
+    ])('are unknown for %s', (_name, raw) => {
+      expect(recordedBlockNames(raw, renames)).toBeNull();
+    });
+  });
+
+  it('adds the block before the setup block, records its version, and then has nothing left to do', async () => {
+    const { deps, original } = await makeUnrecordedNode();
+    const output = success(await upgrade(deps));
+    expect(lineTexts(output)).toContain(`block ${WORK_RULES}: add version ${versionOf(WORK_RULES)}`);
+    expect(output.warnings).toEqual([]);
+    expect(blockNamesOf(deps, CLAUDE)).toEqual(['coordinator', 'safety', WORK_RULES, 'setup']);
+    expect(text(deps, CLAUDE)).toBe(original);
+    expect(recordOf(deps)).toMatchObject({ [WORK_RULES]: versionOf(WORK_RULES) });
+    await deps.fs.remove(`${HOME}/.factory/backups`);
+    expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+  });
+
+  it('keeps the text of the owner around the added block', async () => {
+    const { deps } = await makeUnrecordedNode();
+    deps.files.set(CLAUDE, `My own rules.\n\n${text(deps, CLAUDE)}\nMore of mine.\n`);
+    success(await upgrade(deps));
+    const after = text(deps, CLAUDE);
+    expect(after.startsWith('My own rules.\n\n<!-- factory:begin coordinator')).toBe(true);
+    expect(after.endsWith('<!-- factory:end setup -->\n\nMore of mine.\n')).toBe(true);
+    expect(blockNamesOf(deps, CLAUDE)).toEqual(['coordinator', 'safety', WORK_RULES, 'setup']);
+  });
+
+  it('puts the added block before a setup block that the same run adds', async () => {
+    const { deps } = await makeUnrecordedNode();
+    cutBlock(deps, CLAUDE, 'setup');
+    const output = success(await upgrade(deps));
+    expect(lineTexts(output)).toEqual(
+      expect.arrayContaining([`block ${WORK_RULES}: add version ${versionOf(WORK_RULES)}`, `block setup: add version ${versionOf('setup')}`]),
+    );
+    expect(blockNamesOf(deps, CLAUDE)).toEqual(['coordinator', 'safety', WORK_RULES, 'setup']);
+  });
+
+  it('keeps a block that the state records but the file lacks, with a warning', async () => {
+    const { deps } = await makeNode();
+    cutBlock(deps, CLAUDE, WORK_RULES);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps));
+    expect(output.warnings).toEqual([`block ${WORK_RULES} is missing. Run "factory upgrade --overwrite ${WORK_RULES}" to add it.`]);
+    expect(output.json).toMatchObject({
+      changed: false,
+      blocks: expect.arrayContaining([{ name: WORK_RULES, action: 'skip-missing', from: null, to: versionOf(WORK_RULES), renamedFrom: null }]),
+    });
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  describe('a safety block that the file lacks and the state never recorded', () => {
+    const makeUnrecordedSafetyNode = async (): Promise<FakeDeps> => {
+      const { deps } = await makeNode();
+      cutBlock(deps, CLAUDE, 'safety');
+      forget(deps, 'safety');
+      return deps;
+    };
+    const warning = 'block safety is missing. Run "factory upgrade --overwrite safety" to add it.';
+
+    it('stays missing on a plain upgrade, with a warning that names the overwrite command', async () => {
+      const deps = await makeUnrecordedSafetyNode();
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps));
+      expect(output.warnings).toEqual([warning]);
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('stays missing on a plain upgrade in a session', async () => {
+      const deps = await makeUnrecordedSafetyNode();
+      const before = text(deps, CLAUDE);
+      const inSession = { ...deps, env: { ...deps.env, FACTORY_SESSION: 'demo' } };
+      const output = success(await upgrade(inSession));
+      expect(output.warnings).toEqual([warning]);
+      expect(text(deps, CLAUDE)).toBe(before);
+    });
+
+    it('is added when the owner names it', async () => {
+      const deps = await makeUnrecordedSafetyNode();
+      const output = success(await upgrade(deps, currentSpec, { overwrite: ['safety'] }));
+      expect(lineTexts(output)).toContain(`block safety: add version ${versionOf('safety')}`);
+      expect(blockNamesOf(deps, CLAUDE)).toContain('safety');
+    });
+  });
+
+  describe('a block that got a new name', () => {
+    /** The owner changed the layer by hand, so the manager block takes the place of the coordinator block. */
+    const makeLayer2Node = async (): Promise<FakeDeps> => {
+      const { deps } = await makeNode();
+      edit(deps, CONFIG, 'layer: 1', 'layer: 2');
+      return deps;
+    };
+
+    it('stays missing when the owner removed it and the state records its old name', async () => {
+      const deps = await makeLayer2Node();
+      cutBlock(deps, CLAUDE, 'coordinator');
+      const before = text(deps, CLAUDE);
+      const output = success(await upgrade(deps));
+      expect(output.warnings).toEqual(['block manager is missing. Run "factory upgrade --overwrite manager" to add it.']);
+      expect(text(deps, CLAUDE)).toBe(before);
+      expect(recordOf(deps)).not.toHaveProperty('manager');
+    });
+
+    it('is added when the state records neither its name nor its old name', async () => {
+      const deps = await makeLayer2Node();
+      cutBlock(deps, CLAUDE, 'coordinator');
+      forget(deps, 'coordinator');
+      const output = success(await upgrade(deps));
+      expect(lineTexts(output)).toContain(`block manager: add version ${managerVersion}`);
+      expect(blockNamesOf(deps, CLAUDE)).toEqual(['safety', WORK_RULES, 'manager', 'setup']);
+      expect(recordOf(deps)).toMatchObject({ manager: managerVersion });
+    });
+  });
+
+  it('shows the add in a dry run, and writes nothing', async () => {
+    const { deps } = await makeUnrecordedNode();
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain(`block ${WORK_RULES}: add version ${versionOf(WORK_RULES)}`);
+    expect(output.json).toMatchObject({
+      dryRun: true,
+      changed: true,
+      blocks: expect.arrayContaining([{ name: WORK_RULES, action: 'add', from: null, to: versionOf(WORK_RULES), renamedFrom: null }]),
+    });
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  describe('a state with no usable map of the blocks', () => {
+    /** A state of the next schema whose migration leaves the blocks as `blocks` says, or leaves no blocks key. */
+    const stateWithBlocks = (blocks: readonly unknown[]): UpgradeFile => {
+      const schema = z.looseObject({ schema_version: z.literal(S + 1) });
+      const migration: Migration = {
+        from: S,
+        to: S + 1,
+        apply: () => ok({ schema_version: S + 1, created_with: '0.1.0', ...(blocks.length === 0 ? {} : { blocks: blocks[0] }) }),
+      };
+      return {
+        spec: { file: '.factory/node.json', key: 'schema_version', supported: S + 1, schema },
+        parse: parseJsonText,
+        migrations: [migration],
+        finish: finisher(schema, jsonText),
+      };
+    };
+
+    it.each([
+      ['no blocks map', []],
+      ['a blocks map that is a list', [['work-rules']]],
+    ])('counts every block as recorded for %s', async (_name, blocks) => {
+      const { deps } = await makeNode();
+      cutBlock(deps, CLAUDE, WORK_RULES);
+      const before = text(deps, CLAUDE);
+      const output = success(await upgrade(deps, { ...currentSpec, state: stateWithBlocks(blocks) }));
+      expect(output.warnings).toEqual([`block ${WORK_RULES} is missing. Run "factory upgrade --overwrite ${WORK_RULES}" to add it.`]);
+      expect(text(deps, CLAUDE)).toBe(before);
+    });
+  });
+
+  describe('the cap of the role text', () => {
+    const FREE =
+      roleText.maxChars - composeRoleText(layer1Blocks.filter((template) => template.name === 'worker')).length - roleText.joiner.length;
+    const warningFor = (size: number): string =>
+      `${roleText.tooLargeText(size, 'characters')}. ${roleText.remedies.shorten(FREE, 'factory upgrade')}`;
+
+    /** The owner accepts a worker setup text of this many characters. */
+    const acceptWorkerText = async (deps: FakeDeps, length: number): Promise<void> => {
+      deps.files.set(SETUP_WORKER, 'x'.repeat(length));
+      await acceptFiles(deps, HOME, 'demo', ['setup/coordinator.md', 'setup/roles/worker.md']);
+    };
+
+    it('warns when the role text is above the cap, and still writes the files', async () => {
+      const { deps } = await makeNode();
+      await acceptWorkerText(deps, FREE + 100);
+      const output = success(await upgrade(deps));
+      expect(output.warnings).toEqual([warningFor(roleText.maxChars + 100)]);
+      expect(text(deps, WORKER)).toContain('x'.repeat(FREE + 100));
+      expect(output.json).toMatchObject({ changed: true });
+    });
+
+    it('warns in a dry run too, and writes nothing', async () => {
+      const { deps } = await makeNode();
+      await acceptWorkerText(deps, FREE + 1);
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(output.warnings).toEqual([warningFor(roleText.maxChars + 1)]);
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('gives no warning for a role text of exactly the cap', async () => {
+      const { deps } = await makeNode();
+      await acceptWorkerText(deps, FREE);
+      const output = success(await upgrade(deps));
+      expect(output.warnings).toEqual([]);
+      expect(text(deps, WORKER)).toContain('x'.repeat(FREE));
+    });
+
+    it('gives no warning for the setup text of a new node', async () => {
+      const { deps } = await makeNode();
+      expect(success(await upgrade(deps, currentSpec, { dryRun: true })).warnings).toEqual([]);
+    });
   });
 });
 

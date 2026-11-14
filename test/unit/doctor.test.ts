@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { renderBlock } from '../../src/blocks/managed.js';
+import { parseBlocks, renderBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import {
@@ -229,7 +229,7 @@ describe('doctor: blocks', () => {
     expect(checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks))).toMatchObject({
       id: 'blocks',
       level: 'ok',
-      text: '5 managed blocks are intact',
+      text: '6 managed blocks are intact',
     });
   });
 
@@ -249,6 +249,98 @@ describe('doctor: blocks', () => {
     const missing = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
     expect(missing.level).toBe('warn');
     expect(missing.text).toContain('worker (missing');
+  });
+
+  describe('a block that the file lacks', () => {
+    const NODE_JSON = `${HOME}/.factory/node.json`;
+
+    /** Cut the work rules block out of the coordinator file. */
+    const cutWorkRules = (deps: FakeDeps): void => {
+      const text = deps.files.get(CLAUDE_MD) ?? '';
+      const parsed = parseBlocks(text);
+      const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === 'work-rules') : undefined;
+      expect(block).toBeDefined();
+      if (block !== undefined) deps.files.set(CLAUDE_MD, `${text.slice(0, block.start)}${text.slice(block.end)}`);
+    };
+
+    /** Take the name of a block out of the record of the node state. */
+    const forget = (deps: FakeDeps, name: string): void => {
+      const state = JSON.parse(deps.files.get(NODE_JSON) ?? '{}') as { blocks: Record<string, number> };
+      expect(state.blocks[name]).toBeDefined();
+      delete state.blocks[name];
+      deps.files.set(NODE_JSON, `${JSON.stringify(state, null, 2)}\n`);
+    };
+
+    const allNames = layer1Blocks.map((template) => template.name);
+
+    it('names the upgrade command when the state never recorded the block', async () => {
+      const deps = await initialized();
+      cutWorkRules(deps);
+      const result = checkBlocks(
+        await inspectBlocks(deps, HOME, layer1Blocks),
+        new Set(allNames.filter((name) => name !== 'work-rules')),
+      );
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('work-rules (missing');
+      expect(result.text).toContain('Run "factory upgrade".');
+      expect(result.text).not.toContain('--overwrite work-rules');
+    });
+
+    it('names the overwrite command when the state never recorded the block and its file is not there', async () => {
+      const deps = await initialized();
+      deps.files.delete(CLAUDE_MD);
+      const result = checkBlocks(
+        await inspectBlocks(deps, HOME, layer1Blocks),
+        new Set(allNames.filter((name) => name !== 'work-rules')),
+      );
+      expect(result.text).toContain('work-rules (missing');
+      expect(result.text).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+    });
+
+    it('names the overwrite command for a safety block that the state never recorded', async () => {
+      const deps = await initialized();
+      const text = deps.files.get(CLAUDE_MD) ?? '';
+      const parsed = parseBlocks(text);
+      const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === 'safety') : undefined;
+      expect(block).toBeDefined();
+      if (block !== undefined) deps.files.set(CLAUDE_MD, `${text.slice(0, block.start)}${text.slice(block.end)}`);
+      const result = checkBlocks(
+        await inspectBlocks(deps, HOME, layer1Blocks),
+        new Set(allNames.filter((name) => name !== 'safety')),
+      );
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('safety (missing');
+      expect(result.text).toContain('Run "factory upgrade --overwrite safety" to add it.');
+      expect(result.text).not.toContain('Run "factory upgrade".');
+    });
+
+    it('keeps the overwrite command when the state records the block', async () => {
+      const deps = await initialized();
+      cutWorkRules(deps);
+      const result = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks), new Set(allNames));
+      expect(result.text).toContain('work-rules (missing');
+      expect(result.text).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+    });
+
+    it('counts every block as recorded when no record is known', async () => {
+      const deps = await initialized();
+      cutWorkRules(deps);
+      const result = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks), null);
+      expect(result.text).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+    });
+
+    it('reads the record from the state file of the node', async () => {
+      const deps = await initialized();
+      cutWorkRules(deps);
+      const recorded = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+      expect(recorded.text).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+      forget(deps, 'work-rules');
+      const forgotten = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+      expect(forgotten.level).toBe('warn');
+      expect(forgotten.text).toContain('work-rules (missing');
+      expect(forgotten.text).toContain('Run "factory upgrade".');
+      expect(forgotten.text).not.toContain('--overwrite work-rules');
+    });
   });
 
   it('fails when the markers of the file that holds the safety block are broken', async () => {
@@ -340,9 +432,9 @@ describe('doctor: the blocks of a layer', () => {
 
   const nodeBlocks = async (deps: FakeDeps) => checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
 
-  it('checks the coordinator, safety, worker and setup blocks of a node on layer 1', async () => {
+  it('checks the coordinator, safety, work rules, worker and setup blocks of a node on layer 1', async () => {
     const deps = await initialized();
-    expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '5 managed blocks are intact' });
+    expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '6 managed blocks are intact' });
   });
 
   it('warns that the role block does not match when the layer was changed by hand', async () => {
@@ -410,7 +502,7 @@ describe('doctor: the blocks of a layer', () => {
     it('checks the blocks against the owner text when no record backs the value', async () => {
       const deps = await initialized();
       delegateInLocalFile(deps);
-      expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '5 managed blocks are intact' });
+      expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '6 managed blocks are intact' });
     });
 
     it('checks the blocks against the owner text when a record file lies inside the folder only', async () => {

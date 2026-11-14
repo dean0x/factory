@@ -306,7 +306,7 @@ describe('factory upgrade (built binary)', () => {
 
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
-    expect(doctor.stdout).toContain('5 managed blocks are intact');
+    expect(doctor.stdout).toContain('6 managed blocks are intact');
     expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
   });
 
@@ -473,10 +473,85 @@ describe('factory upgrade (built binary)', () => {
       expect(upgraded.stdout).toContain(`block ${name}: version ${older} to ${current}`);
       expect(await box.read(claudePath)).toContain(`<!-- factory:begin ${name} v${current} sha256=`);
       const state = JSON.parse(await box.read(nodePath)) as { blocks: Record<string, number> };
-      expect(state.blocks).toMatchObject({ [name]: current, safety: 2, worker: 4 });
+      expect(state.blocks).toMatchObject({ [name]: current, safety: 2, worker: 5 });
       expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
     },
   );
+
+  describe('the work rules block of a node that lacks it', () => {
+    const claudePath = (): string => join(box.node, ...COORDINATOR_FILE);
+    const nodePath = (): string => join(box.node, '.factory', 'node.json');
+    const blockNamesOf = async (): Promise<string[]> => {
+      const parsed = parseBlocks(await box.read(claudePath()));
+      return parsed.ok ? parsed.value.map((block) => block.name) : [];
+    };
+
+    /** The owner removed the block from the coordinator file. When `forget` is set, the state never recorded the block either. */
+    const removeWorkRules = async (forget: boolean): Promise<number> => {
+      await initNode();
+      const claude = await box.read(claudePath());
+      const parsed = parseBlocks(claude);
+      const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === 'work-rules') : undefined;
+      expect(block).toBeDefined();
+      if (block === undefined) return 0;
+      await writeFile(claudePath(), `${claude.slice(0, block.start)}${claude.slice(block.end).replace(/^\n+/, '')}`);
+      const state = JSON.parse(await box.read(nodePath())) as { blocks: Record<string, number> };
+      const version = state.blocks['work-rules'] ?? 0;
+      if (forget) {
+        delete state.blocks['work-rules'];
+        await writeFile(nodePath(), `${JSON.stringify(state, null, 2)}\n`);
+        const stateDir = join(box.node, '.factory');
+        expect((await box.git(stateDir, ['add', 'node.json'])).code).toBe(0);
+        expect((await box.git(stateDir, ['commit', '-q', '-m', 'forget the work rules block'])).code).toBe(0);
+      }
+      return version;
+    };
+
+    it('adds the block before the setup block, records its version, and then the doctor exits 0', async () => {
+      const version = await removeWorkRules(true);
+      expect(await blockNamesOf()).toEqual(['coordinator', 'safety', 'setup']);
+
+      const upgraded = await box.run(['upgrade', '--home', box.node]);
+
+      expect(upgraded.code, upgraded.stderr).toBe(0);
+      expect(upgraded.stdout).toContain(`block work-rules: add version ${version}`);
+      expect(await blockNamesOf()).toEqual(['coordinator', 'safety', 'work-rules', 'setup']);
+      const state = JSON.parse(await box.read(nodePath())) as { blocks: Record<string, number> };
+      expect(state.blocks['work-rules']).toBe(version);
+      expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+      expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
+    });
+
+    it('shows the add in a dry run and writes nothing', async () => {
+      await removeWorkRules(true);
+      const before = await box.read(claudePath());
+      const result = await box.run(['upgrade', '--home', box.node, '--dry-run']);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('block work-rules: add version');
+      expect(await box.read(claudePath())).toBe(before);
+    });
+
+    it('keeps a block that the state records but the file lacks, and the doctor names the overwrite command', async () => {
+      await removeWorkRules(false);
+      const before = await box.read(claudePath());
+
+      const upgraded = await box.run(['upgrade', '--home', box.node]);
+
+      expect(upgraded.code).toBe(0);
+      expect(upgraded.stderr).toContain('block work-rules is missing');
+      expect(upgraded.stderr).toContain('--overwrite work-rules');
+      expect(await box.read(claudePath())).toBe(before);
+      expect((await box.run(['doctor', '--home', box.node])).stdout).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+    });
+
+    it('names the upgrade command in the doctor report when the state never recorded the block', async () => {
+      await removeWorkRules(true);
+      const doctor = await box.run(['doctor', '--home', box.node]);
+      expect(doctor.stdout).toContain('work-rules (missing');
+      expect(doctor.stdout).toContain('Run "factory upgrade".');
+      expect(doctor.stdout).not.toContain('--overwrite work-rules');
+    });
+  });
 
   it('prints one JSON document with its schema id', async () => {
     await initNode();
@@ -554,7 +629,7 @@ describe('factory upgrade (built binary)', () => {
     const saved = (await readdir(join(box.node, '.factory', 'backups'))).filter((name) => name.endsWith('-block-setup.md'));
     expect(saved).toHaveLength(1);
     expect(await box.read(join(box.node, '.factory', 'backups', saved[0] ?? '?'))).toContain('Changed by hand');
-    expect((await box.run(['doctor', '--home', box.node])).stdout).toContain('5 managed blocks are intact');
+    expect((await box.run(['doctor', '--home', box.node])).stdout).toContain('6 managed blocks are intact');
   });
 
   it('replaces the edited block when it is named, and the doctor finds all blocks intact', async () => {
@@ -565,7 +640,7 @@ describe('factory upgrade (built binary)', () => {
     expect(upgraded.stdout).toContain('Changed 1 file.');
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
-    expect(doctor.stdout).toContain('5 managed blocks are intact');
+    expect(doctor.stdout).toContain('6 managed blocks are intact');
   });
 
   it('keeps the last 5 backups, and leaves the run-time folders out of the new backup', async () => {
@@ -785,7 +860,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(names).toContain('orders');
     expect(await readdir(join(state, 'roles'))).toEqual(['worker.md']);
     const node = JSON.parse(await box.read(join(state, 'node.json'))) as Record<string, unknown>;
-    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 6, safety: 2, worker: 4 } });
+    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 6, safety: 2, worker: 5 } });
 
     const changes = await box.git(state, ['diff', '--name-status', '-M', 'HEAD~1', 'HEAD']);
     expect(changes.stdout).toContain('protocol.md');
@@ -873,7 +948,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     // A node from before the setup folder has no setup text, so only the worker block is the same.
     const workerBlockOf = (text: string): string => text.slice(0, text.indexOf('<!-- factory:end worker -->'));
     const upgradedWorker = workerBlockOf(await box.read(join(state, 'roles', 'worker.md')));
-    expect(upgradedWorker).toContain('<!-- factory:begin worker v4 sha256=');
+    expect(upgradedWorker).toContain('<!-- factory:begin worker v5 sha256=');
     expect(upgradedWorker).toContain('`factory lock run -- <command>`');
     expect(upgradedWorker).not.toContain('wait in a loop');
     expect(upgradedWorker).toBe(workerBlockOf(await box.read(join(fresh, 'roles', 'worker.md'))));
