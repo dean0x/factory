@@ -148,6 +148,17 @@ export const constantsOf = (source: string): readonly Constant[] => {
   return [...declared, ...defaults];
 };
 
+/**
+ * The names that a source text declares at the top level: a function, a constant, a class, an interface, a type or an enum
+ * that starts in the first column. A name inside a function or a block is left out.
+ */
+export const topLevelNamesOf = (source: string): readonly string[] =>
+  [
+    ...stripComments(source).matchAll(
+      /^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function\*?|const|let|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/gm,
+    ),
+  ].map((match) => match[1] ?? '');
+
 /** The module path of every import, re-export and dynamic import of a source text. */
 export const importPathsOf = (source: string): string[] =>
   [...source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]/g)].map((match) => match[1] ?? '');

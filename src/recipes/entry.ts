@@ -2,6 +2,7 @@ import type { z } from 'zod';
 import type { CliResult } from '../cli/errors.js';
 import type { Command } from '../cli/table.js';
 import type { Deps } from '../core/deps.js';
+import type { GuardDefinition, GuardRow } from '../guards/types.js';
 import { boardKeys, keys, values, type CommandName } from '../names.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
@@ -171,6 +172,9 @@ export interface RecipeHost {
  * - `recordCheck` is the check that `item record` runs. A recipe with none makes that command a usage error.
  * - `commands` gives the rows that the recipe adds to the command table, from the host object. A row whose name a core row or an
  *   earlier row already has is dropped, so a recipe can not replace a command.
+ * - `guards` lists the guards that the recipe adds to the guards of the core. Their ids live in the files of the recipe.
+ * - `guardRows` lists the rows of the guard registry that cite a file of the recipe, for a guard of the core or of the recipe. A
+ *   row of the core registry cites no file of a recipe.
  */
 export interface RecipeEntry {
   readonly id: string;
@@ -186,6 +190,8 @@ export interface RecipeEntry {
   readonly board: RecipeBoard;
   readonly recordCheck?: RecordCheck | undefined;
   readonly commands?: ((host: RecipeHost) => readonly Command[]) | undefined;
+  readonly guards: readonly GuardDefinition[];
+  readonly guardRows: readonly GuardRow[];
 }
 
 /** The key of the queue in `board.json`: the key of the recipe, or the default of the core when the recipe gives none. */
