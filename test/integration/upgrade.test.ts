@@ -91,7 +91,7 @@ describe('factory upgrade (built binary)', () => {
     expect(result.stdout).toContain('Nothing to upgrade.');
   });
 
-  describe('the delete guard of the state repo (TP-4, TP-5, TP-53)', () => {
+  describe('the delete guard of the state repo', () => {
     const stateOf = (): string => join(box.node, '.factory');
     const guardOf = async (): Promise<string> => join(await realpath(stateOf()), '.git', 'factory-guard');
     const headOf = async (): Promise<string> => (await box.git(stateOf(), ['rev-parse', 'HEAD'])).stdout.trim();
@@ -239,7 +239,7 @@ describe('factory upgrade (built binary)', () => {
     });
   });
 
-  describe('the git steps of the state commit run no program that the state repo names (TP-17)', () => {
+  describe('the git steps of the state commit run no program that the state repo names', () => {
     const stateOf = (): string => join(box.node, '.factory');
     const markerOf = (name: string): string => join(box.root, 'markers', name);
     const writeProgram = async (path: string, marker: string): Promise<void> => {
@@ -286,7 +286,7 @@ describe('factory upgrade (built binary)', () => {
     });
   });
 
-  it('renders a changed setup text into the setup block, and a changed prefix into the safety block (TP-76, TP-102)', async () => {
+  it('renders a changed setup text into the setup block, and a changed prefix into the safety block', async () => {
     await initNode();
     await writeFile(join(box.node, 'setup', 'coordinator.md'), 'Our team rules.\n');
     await acceptSetupFiles();
@@ -310,7 +310,7 @@ describe('factory upgrade (built binary)', () => {
     expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
   });
 
-  it('exits 4 for a setup text that changed after the acceptance, with no terminal window, and writes nothing (TP-177)', async () => {
+  it('exits 4 for a setup text that changed after the acceptance, with no terminal window, and writes nothing', async () => {
     await initNode();
     await writeFile(join(box.node, 'setup', 'coordinator.md'), 'Our team rules.\n');
     const claude = await box.read(join(box.node, ...COORDINATOR_FILE));
@@ -328,7 +328,7 @@ describe('factory upgrade (built binary)', () => {
     expect(existsSync(join(box.node, '.factory', 'backups'))).toBe(false);
   });
 
-  it('exits 1 for a setup text that holds a marker line, and writes nothing (TP-102)', async () => {
+  it('exits 1 for a setup text that holds a marker line, and writes nothing', async () => {
     await initNode();
     await writeFile(join(box.node, 'setup', 'coordinator.md'), '<!-- factory:begin safety v2 sha256=abc -->\n');
     const claude = await box.read(join(box.node, ...COORDINATOR_FILE));
@@ -346,7 +346,7 @@ describe('factory upgrade (built binary)', () => {
     ['the coordinator CLAUDE.md', ['coordinator', 'CLAUDE.md'], 'coordinator/CLAUDE.md'],
     ['the coordinator folder', ['coordinator'], 'coordinator'],
     ['the setup folder', ['setup'], 'setup'],
-  ])('exits 4 for a real link at %s, writes nothing and makes no backup, also in a dry run (TP-130)', async (_name, parts, shown) => {
+  ])('exits 4 for a real link at %s, writes nothing and makes no backup, also in a dry run', async (_name, parts, shown) => {
     await initNode();
     const path = join(box.node, ...parts);
     const outside = join(box.root, 'outside');
@@ -362,7 +362,7 @@ describe('factory upgrade (built binary)', () => {
     expect(existsSync(join(box.node, '.factory', 'backups'))).toBe(false);
   });
 
-  it('exits 4 for a local file that is a link, before the mode fix (TP-147)', async () => {
+  it('exits 4 for a local file that is a link, before the mode fix', async () => {
     await initNode();
     const path = join(box.node, 'factory.local.yaml');
     const outside = join(box.root, 'outside.yaml');
@@ -375,7 +375,7 @@ describe('factory upgrade (built binary)', () => {
     expect((await stat(outside)).mode & 0o777).toBe(0o644);
   });
 
-  it('works for a node home under a linked parent folder, and stops only for a link below the home (TP-149)', async () => {
+  it('works for a node home under a linked parent folder, and stops only for a link below the home', async () => {
     const real = join(box.root, 'real-parent');
     const linked = join(box.root, 'linked-parent');
     await mkdir(real, { recursive: true });
@@ -448,7 +448,7 @@ describe('factory upgrade (built binary)', () => {
     [1, 'coordinator', 5, 6],
     [2, 'manager', 2, 3],
   ])(
-    'TP-22 on layer %i it writes the block %s of version %i again as version %i, and leaves the worker and safety labels as they are',
+    'on layer %i it writes the block %s of version %i again as version %i, and leaves the worker and safety labels as they are',
     async (layer, name, older, current) => {
       const init = await box.run(['init', '--yes', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner', '--layer', String(layer)]);
       expect(init.code).toBe(0);
@@ -512,7 +512,7 @@ describe('factory upgrade (built binary)', () => {
     expect(await box.read(path)).toBe(edited);
   });
 
-  it('exits 4 for the safety block with FACTORY_SESSION set, also with yes, and writes nothing (TP-132)', async () => {
+  it('exits 4 for the safety block with FACTORY_SESSION set, also with yes, and writes nothing', async () => {
     await initNode();
     const path = join(box.node, ...COORDINATOR_FILE);
     const text = await box.read(path);
@@ -535,7 +535,7 @@ describe('factory upgrade (built binary)', () => {
     expect(existsSync(backups) ? (await readdir(backups)).sort() : []).toEqual(before);
   });
 
-  it('puts back an edited setup block with no flag, and keeps the old text in a backup file (TP-142)', async () => {
+  it('puts back an edited setup block with no flag, and keeps the old text in a backup file', async () => {
     await initNode();
     const path = join(box.node, ...COORDINATOR_FILE);
     const text = await box.read(path);
@@ -608,7 +608,7 @@ describe('factory upgrade (built binary)', () => {
   });
 });
 
-describe('factory upgrade of the queue key of the board (built binary, TP-30, TP-100, TP-101)', () => {
+describe('factory upgrade of the queue key of the board (built binary)', () => {
   const stateOf = (): string => join(box.node, '.factory');
   const boardFile = (): string => join(stateOf(), 'board.json');
   const lockFile = (): string => join(stateOf(), 'locks', `${stateLock.name}${stateLock.lock.suffix}`);
@@ -627,7 +627,7 @@ describe('factory upgrade of the queue key of the board (built binary, TP-30, TP
 
   const subjects = async (): Promise<string[]> => (await box.git(stateOf(), ['log', '--format=%s'])).stdout.trim().split('\n');
 
-  it('M5-1b TP-30 renames the key in the one upgrade commit, and then the board commands work', async () => {
+  it('renames the key in the one upgrade commit, and then the board commands work', async () => {
     await leaveOldBoard(['B-1', 'B-2']);
     const blocked = await box.run(['item', 'list', '--home', box.node]);
     expect(blocked.code).toBe(1);
@@ -644,7 +644,7 @@ describe('factory upgrade of the queue key of the board (built binary, TP-30, TP
     expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
   });
 
-  it('M5-1b TP-30 exits 1, names board.json and changes nothing when the board has both keys', async () => {
+  it('exits 1, names board.json and changes nothing when the board has both keys', async () => {
     await initNode();
     const both = `{\n  "${boardKeys.defaultQueue}": [],\n  "${softwareQueueKey}": [],\n  "items": []\n}\n`;
     await writeFile(boardFile(), both);
@@ -655,7 +655,7 @@ describe('factory upgrade of the queue key of the board (built binary, TP-30, TP
     expect(await readdir(stateOf())).not.toContain('backups');
   });
 
-  it('M5-1b TP-101 exits 4 and changes no file when the new board text drops an item id that the last commit holds', async () => {
+  it('exits 4 and changes no file when the new board text drops an item id that the last commit holds', async () => {
     await leaveOldBoard(['B-1', 'B-2']);
     // The work tree board lost an item, and git does not report it. Only the check against the last commit finds the loss.
     expect((await box.git(stateOf(), ['update-index', '--assume-unchanged', 'board.json'])).code).toBe(0);
@@ -698,7 +698,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
 
   /**
    * Copy the fixture and start the state repository with a first commit. A node that lists a project is not upgraded
-   * (decision D-3 B), so the copy lists none, unless the test asks for the project of the fixture.
+   * (its project sits outside the new folder and has no clone URL), so the copy lists none, unless the test asks for the project of the fixture.
    */
   const prepareOldNode = async (options: { withProject?: boolean } = {}): Promise<string> => {
     await cp(FIXTURE, box.node, { recursive: true });
@@ -806,7 +806,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
   });
 
-  it('gives the node the root repo and the .gitignore of a new node, writes no setup file, and registers the root (TP-23)', async () => {
+  it('gives the node the root repo and the .gitignore of a new node, writes no setup file, and registers the root', async () => {
     await prepareOldNode();
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
@@ -836,7 +836,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
   });
 
-  it('keeps the lines of the person in the root .gitignore, and renders the factory part again (TP-117)', async () => {
+  it('keeps the lines of the person in the root .gitignore, and renders the factory part again', async () => {
     await prepareOldNode();
     const path = join(box.node, '.gitignore');
     const mine = '# my lines\ndist/\n';
@@ -992,7 +992,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(await box.read(join(state, 'roles', 'worker.md'))).toContain('A note of the owner, outside the block.');
   });
 
-  it('stops with exit 1 on a node that lists a project, names the init command, and changes no file (TP-62)', async () => {
+  it('stops with exit 1 on a node that lists a project, names the init command, and changes no file', async () => {
     const state = await prepareOldNode({ withProject: true });
     const config = await box.read(join(box.node, 'factory.yaml'));
     const marker = await box.read(join(state, 'node.json'));
@@ -1031,7 +1031,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await readdir(state)).sort()).toContain('protocol.md');
   });
 
-  it('does not register the folder without a yes: exit 2 with no terminal, and nothing changes (TP-88)', async () => {
+  it('does not register the folder without a yes: exit 2 with no terminal, and nothing changes', async () => {
     const state = await prepareOldNode();
     const config = await box.read(join(box.node, 'factory.yaml'));
     const marker = await box.read(join(state, 'node.json'));
@@ -1047,7 +1047,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
   });
 
-  it('exits 4 in a factory session, also with --yes, and writes nothing (TP-89)', async () => {
+  it('exits 4 in a factory session, also with --yes, and writes nothing', async () => {
     const state = await prepareOldNode();
     const config = await box.read(join(box.node, 'factory.yaml'));
     const marker = await box.read(join(state, 'node.json'));
@@ -1062,7 +1062,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await readdir(state)).sort()).toContain('protocol.md');
   });
 
-  it('counts the folder only when --home names it: the walk from inside it exits 4 (TP-72)', async () => {
+  it('counts the folder only when --home names it: the walk from inside it exits 4', async () => {
     await prepareOldNode();
     const result = await box.run(['upgrade', '--yes'], { cwd: box.node });
     expect(result.code).toBe(4);
@@ -1104,7 +1104,7 @@ describe('factory upgrade of the hook settings (built binary)', () => {
     await writeFile(join(folder, 'worker.json'), jsonText(record));
   };
 
-  it('TP-8: with --yes, a work copy settings file and the coordinator settings file get the two new events, and a second run has nothing to do', async () => {
+  it('with --yes, a work copy settings file and the coordinator settings file get the two new events, and a second run has nothing to do', async () => {
     await initNode();
     const coordinatorFile = join(box.node, 'coordinator', '.claude', 'settings.local.json');
     const current = JSON.parse(await box.read(coordinatorFile)) as Record<string, unknown>;
@@ -1134,7 +1134,7 @@ describe('factory upgrade of the hook settings (built binary)', () => {
     expect(again.stdout).toContain('Nothing to upgrade.');
   });
 
-  it('TP-6: with no terminal and no --yes, it writes no hook settings, warns with the remedy and exits 0', async () => {
+  it('with no terminal and no --yes, it writes no hook settings, warns with the remedy and exits 0', async () => {
     await initNode();
     const coordinatorFile = join(box.node, 'coordinator', '.claude', 'settings.local.json');
     const older = jsonText(withFourEvents(JSON.parse(await box.read(coordinatorFile)) as Record<string, unknown>));

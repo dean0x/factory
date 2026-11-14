@@ -186,7 +186,7 @@ describe('the double dash rule of parseFlags', () => {
   const options = { ...globalOptions, wait: { type: 'boolean', description: 'x' } } as const;
   const withRule = (args: readonly string[]) => parseFlags(args, options, true, 'required');
 
-  it('keeps every word after the double dash as a child word, also a word that looks like a flag (TP-3)', () => {
+  it('keeps every word after the double dash as a child word, also a word that looks like a flag', () => {
     const parsed = withRule(['run', '--wait', '--', 'npm', 'test', '--json', '--help', '--wait', '-h', '--', 'x']);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -210,14 +210,14 @@ describe('the double dash rule of parseFlags', () => {
     [['run', 'x']],
     [['run', 'x', '--help']],
     [['x', 'y', '-h']],
-  ])('returns a usage error for a second word before the double dash: %j (TP-1, TP-2)', (args) => {
+  ])('returns a usage error for a second word before the double dash: %j', (args) => {
     const parsed = withRule(args);
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.error.kind).toBe('usage');
   });
 
   it.each([[['--help']], [['run', '--help']], [['run', '-h']]])(
-    'reads the help flag when no double dash and no other word follows: %j (TP-2)',
+    'reads the help flag when no double dash and no other word follows: %j',
     (args) => {
       const parsed = withRule(args);
       expect(parsed.ok).toBe(true);
@@ -230,7 +230,7 @@ describe('the double dash rule of parseFlags', () => {
     [['run', '--help', '--']],
     [['--help', '--']],
     [['run', '-h', '--', 'npm']],
-  ])('returns a usage error for the help flag with a double dash: %j (TP-2)', (args) => {
+  ])('returns a usage error for the help flag with a double dash: %j', (args) => {
     const parsed = withRule(args);
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.error.kind).toBe('usage');
@@ -259,7 +259,7 @@ describe('the lock command in the command line', () => {
   });
 
   it.each([[['lock', '--help']], [['lock', 'run', '--help']], [['help', 'lock']]])(
-    'prints the help and exits 0 for %j, and runs nothing (TP-2)',
+    'prints the help and exits 0 for %j, and runs nothing',
     async (argv) => {
       const result = await lockLine(argv);
       expect(result.code).toBe(0);
@@ -273,7 +273,7 @@ describe('the lock command in the command line', () => {
     [['lock', 'run', 'npm', 'test', '--help']],
     [['lock', 'run', '--help', '--', 'npm']],
     [['lock', 'run', '--help', '--']],
-  ])('exits 2 with the usage line, prints no help and runs nothing for %j (TP-1, TP-2)', async (argv) => {
+  ])('exits 2 with the usage line, prints no help and runs nothing for %j', async (argv) => {
     const result = await lockLine(argv);
     expect(result.code).toBe(2);
     expect(result.out).toBe('');
@@ -281,7 +281,7 @@ describe('the lock command in the command line', () => {
     expect(result.deps.attached).toEqual([]);
   });
 
-  it('gives every word after the double dash to the child, also a word that looks like a flag (TP-3)', async () => {
+  it('gives every word after the double dash to the child, also a word that looks like a flag', async () => {
     const words = ['test', '--json', '--help', '-h', '--priority', '--', 'x'];
     const result = await lockLine(['lock', 'run', '--', 'npm', ...words]);
     expect(result.code).toBe(0);
@@ -343,7 +343,7 @@ describe('the node command in the command line', () => {
   });
 });
 
-describe('the folder of a factory in the help text (TP-138)', () => {
+describe('the folder of a factory in the help text', () => {
   const NAMES_WITH_FOLDER = commandTable.map((command) => [command.name]);
 
   it.each(NAMES_WITH_FOLDER)('says factory folder, and not node folder, in the help of %s', async (name) => {
@@ -366,7 +366,7 @@ describe('the folder of a factory in the help text (TP-138)', () => {
   });
 });
 
-describe('the approval flag of init in the command line (TP-37, TP-38, TP-81)', () => {
+describe('the approval flag of init in the command line', () => {
   const init = commandTable.find((command) => command.name === 'init');
   const STATE_ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
 
@@ -501,7 +501,7 @@ describe('control characters in text output', () => {
     expect(renderWarnings(['bad \u001b[31m value\u0085'])).toBe('warning: bad ?[31m value?\n');
   });
 
-  it('M5-1b TP-105 removes hidden characters from the string values of the JSON document', () => {
+  it('removes hidden characters from the string values of the JSON document', () => {
     const doc = { schema: 'x/v1', path: 'a\u001bb', note: 'c‮d' };
     expect(JSON.parse(renderJson(doc))).toEqual({ schema: 'x/v1', path: 'ab', note: 'cd' });
     expect(renderJson(doc)).not.toContain('\u001b');
@@ -565,7 +565,7 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(names).toEqual(Object.values(commands).filter((name) => name !== commands.help).sort());
   });
 
-  it('TP-14: shows report with its flag --since in the help, and exits 2 with a remedy that names the command for a use of the flag', async () => {
+  it('shows report with its flag --since in the help, and exits 2 with a remedy that names the command for a use of the flag', async () => {
     const { deps } = made();
     const list = await runOn(deps, ['--help']);
     expect(list.out).toMatch(/^ {2}report {4}\S/m);
@@ -589,7 +589,7 @@ describe('the reset, watch and self commands in the command line', () => {
     }
   });
 
-  it('TP-22: shows the usage of worker reset and worker watch, and the two flags of reset, in the help of worker', async () => {
+  it('shows the usage of worker reset and worker watch, and the two flags of reset, in the help of worker', async () => {
     const result = await run(['worker', '--help']);
     expect(result.code).toBe(0);
     expect(result.out).toContain('factory worker reset ID --clear|--compact [--home DIR]');
@@ -599,7 +599,7 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(result.out).toMatch(/--compact\s+With reset: compact the session of the worker/);
   });
 
-  it('TP-32: shows the assignment flag in the usage of worker new and in the flag list of worker', async () => {
+  it('shows the assignment flag in the usage of worker new and in the flag list of worker', async () => {
     const result = await run(['worker', '--help']);
     expect(result.code).toBe(0);
     expect(result.out).toContain('factory worker new ID --project PROJECT [--assignment FILE] [--home DIR] [--yes]');
@@ -607,7 +607,7 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(result.out).toContain('.factory/orders/');
   });
 
-  it('TP-27: lists self in the help, and shows the usage of self reset', async () => {
+  it('lists self in the help, and shows the usage of self reset', async () => {
     const listed = await run(['help']);
     expect(listed.out).toMatch(/\n {2}self {6}\S/);
     const result = await run(['self', '--help']);
@@ -630,7 +630,7 @@ describe('the reset, watch and self commands in the command line', () => {
     ['self with no subcommand', ['self'], 'needs a subcommand: reset'],
     ['self with an unknown subcommand', ['self', 'nope'], 'unknown subcommand "nope"'],
     ['self reset with a word', ['self', 'reset', 'now'], 'takes no argument'],
-  ])('TP-22, TP-27: exits 2 for %s, and runs no program', async (_name, argv, message) => {
+  ])('exits 2 for %s, and runs no program', async (_name, argv, message) => {
     const { deps } = made();
     const result = await runOn(deps, [...argv, '--home', HOME]);
     expect(result.code).toBe(2);
@@ -689,7 +689,7 @@ describe('the reset, watch and self commands in the command line', () => {
     ['worker new', ['worker', 'new', 'alpha', '--project', 'web']],
     ['worker stop', ['worker', 'stop', 'alpha']],
     ['worker list', ['worker', 'list']],
-  ])('TP-26: exits 2 for %s with --since, names watch, and runs no program', async (_name, argv) => {
+  ])('exits 2 for %s with --since, names watch, and runs no program', async (_name, argv) => {
     const { deps } = made();
     const result = await runOn(deps, [...argv, '--since', '2030-01-02T03:04:05.678Z', '--home', HOME]);
     expect(result.code).toBe(2);
@@ -697,14 +697,14 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(deps.calls).toEqual([]);
   });
 
-  it('TP-26: names both flags when --ready and --since go to a command that is not watch', async () => {
+  it('names both flags when --ready and --since go to a command that is not watch', async () => {
     const result = await runOn(made().deps, ['worker', 'list', '--ready', 'alpha', '--since', '2030-01-02T03:04:05.678Z', '--home', HOME]);
     expect(result.code).toBe(2);
     expect(result.err).toContain('--ready and --since belong to watch only');
   });
 
   it.each([['text that is no time', 'yesterday'], ['a time with an offset', '2030-01-02T03:04:05+02:00'], ['a date with no time', '2030-01-02'], ['empty text', '']])(
-    'TP-26: exits 2 for worker watch --since with %s, before any tmux call and with no run marker',
+    'exits 2 for worker watch --since with %s, before any tmux call and with no run marker',
     async (_name, since) => {
       const { deps, log } = made();
       const result = await runOn(deps, ['worker', 'watch', '--since', since, '--home', HOME]);
@@ -715,7 +715,7 @@ describe('the reset, watch and self commands in the command line', () => {
     },
   );
 
-  it('TP-26: takes a time in UTC for worker watch --since, and the watch runs', async () => {
+  it('takes a time in UTC for worker watch --since, and the watch runs', async () => {
     const result = await runOn(made().deps, ['worker', 'watch', '--since', '2030-01-02T03:04:05.678Z', '--home', HOME]);
     expect(result.code).toBe(0);
     expect(result.out).toContain('NO WORKER');
@@ -731,7 +731,7 @@ describe('the reset, watch and self commands in the command line', () => {
     ['worker reset with --clear', ['worker', 'reset', 'alpha', '--clear']],
     ['worker reset with --compact', ['worker', 'reset', 'alpha', '--compact']],
     ['self reset', ['self', 'reset']],
-  ])('TP-22, TP-27: reads the config, then exits 2 for %s outside the pane of the coordinator, with no tmux call', async (_name, argv) => {
+  ])('reads the config, then exits 2 for %s outside the pane of the coordinator, with no tmux call', async (_name, argv) => {
     const { deps, log } = made();
     const result = await runOn(deps, [...argv, '--home', HOME]);
     expect(result.code).toBe(2);
@@ -740,25 +740,25 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(log.calls).toEqual([]);
   });
 
-  it('TP-31: exits 3 for worker watch when no session of the node runs, and names factory start', async () => {
+  it('exits 3 for worker watch when no session of the node runs, and names factory start', async () => {
     const result = await runOn(made(false).deps, ['worker', 'watch', '--home', HOME]);
     expect(result.code).toBe(3);
     expect(result.err).toContain('"factory start"');
   });
 
-  it('TP-31: exits 2 for worker watch with an id that has no record', async () => {
+  it('exits 2 for worker watch with an id that has no record', async () => {
     const result = await runOn(made().deps, ['worker', 'watch', 'ghost', '--home', HOME]);
     expect(result.code).toBe(2);
     expect(result.err).toContain('ghost');
   });
 
-  it('TP-31: exits 2 for worker watch --ready with an id that has no record, and names the id', async () => {
+  it('exits 2 for worker watch --ready with an id that has no record, and names the id', async () => {
     const result = await runOn(made().deps, ['worker', 'watch', '--ready', 'ghost', '--home', HOME]);
     expect(result.code).toBe(2);
     expect(result.err).toContain('ghost');
   });
 
-  it('TP-31: exits 0 for worker watch when no worker has a pane, in one line, and in JSON with the schema of the watch', async () => {
+  it('exits 0 for worker watch when no worker has a pane, in one line, and in JSON with the schema of the watch', async () => {
     const text = await runOn(made().deps, ['worker', 'watch', '--home', HOME]);
     expect(text.code).toBe(0);
     expect(text.out).toContain('NO WORKER');
@@ -827,7 +827,7 @@ describe('the item and track commands in the command line', () => {
     }
   });
 
-  it('M5-1b TP-22 lists item and track in the help, and shows the flags of item in its help', async () => {
+  it('lists item and track in the help, and shows the flags of item in its help', async () => {
     const listed = await run(['help']);
     expect(listed.out).toMatch(/\n {2}item {2,}\S/);
     expect(listed.out).toMatch(/\n {2}track {2,}\S/);
@@ -839,19 +839,19 @@ describe('the item and track commands in the command line', () => {
     expect(result.out).toMatch(/--field NAME=VALUE\s+With add and update: set a field of the owner on the item/);
   });
 
-  it('M5-1b TP-22 names no decide command in the help of item or of track', async () => {
+  it('names no decide command in the help of item or of track', async () => {
     for (const argv of [['item', '--help'], ['track', '--help']]) {
       expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');
     }
   });
 
-  it('M5-1b TP-47 exits 2 for item list with the JSON flag, because item list has no JSON output', async () => {
+  it('exits 2 for item list with the JSON flag, because item list has no JSON output', async () => {
     const result = await run(['item', 'list', '--json']);
     expect(result.code).toBe(2);
     expect(result.err).toContain('has no --json output');
   });
 
-  it('M5-1b TP-22 runs item add, item move, item list and track add from the command line, with the flags in any place', async () => {
+  it('runs item add, item move, item list and track add from the command line, with the flags in any place', async () => {
     const repo = await boardNode({ board: boardText([], []) });
     const runBoard = async (argv: readonly string[]) => {
       const sink = captureSink();
@@ -868,7 +868,7 @@ describe('the item and track commands in the command line', () => {
     expect(repo.commits).toHaveLength(3);
   });
 
-  it('M5-1b TP-56 runs item list --follow from the command line: a stdout that is not a terminal gets one frame, and the loop ends', async () => {
+  it('runs item list --follow from the command line: a stdout that is not a terminal gets one frame, and the loop ends', async () => {
     const repo = await boardNode({ board: boardText([itemRecord('B-1', { track: 'core', stage: 'ticket' })], [{ id: 'core', name: 'Core', roadmap: true }]) });
     const sink = captureSink();
     const code = await runCli(['item', 'list', '--follow', '--home', BOARD_HOME], repo.deps, sink);
@@ -879,7 +879,7 @@ describe('the item and track commands in the command line', () => {
     expect(sink.out.join('')).toBe('');
   });
 
-  it('M5-1b TP-56 exits 2 for the flag --follow with a subcommand that does not list', async () => {
+  it('exits 2 for the flag --follow with a subcommand that does not list', async () => {
     const result = await run(['item', 'close', 'B-1', '--follow']);
     expect(result.code).toBe(2);
     expect(result.err).toContain('--follow is not for');
@@ -926,7 +926,7 @@ describe('the item and track commands in the command line', () => {
     }
   });
 
-  it('M5-1b TP-22 lists request and queue in the help, and shows their usage and flags in their own help', async () => {
+  it('lists request and queue in the help, and shows their usage and flags in their own help', async () => {
     const listed = await run(['help']);
     expect(listed.out).toMatch(/\n {2}request {2,}\S/);
     expect(listed.out).toMatch(/\n {2}queue {2,}\S/);
@@ -941,13 +941,13 @@ describe('the item and track commands in the command line', () => {
     expect(queue.out).toMatch(/--position N\s+With set: the place of the row in the queue/);
   });
 
-  it('M5-1b TP-22 names no decide command in the help of request or of queue', async () => {
+  it('names no decide command in the help of request or of queue', async () => {
     for (const argv of [['request', '--help'], ['queue', '--help']]) {
       expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');
     }
   });
 
-  it('M5-1b TP-188 lists decide in the help and shows its usage and its two flags in its own help', async () => {
+  it('lists decide in the help and shows its usage and its two flags in its own help', async () => {
     expect((await run(['help'])).out).toMatch(/\n {2}decide {2,}\S/);
     const asked = await run(['decide', '--help']);
     expect(asked.code).toBe(0);
@@ -955,12 +955,12 @@ describe('the item and track commands in the command line', () => {
     expect(asked.out).toMatch(/--note TEXT\s+The reason for the answer/);
   });
 
-  it('M5-1b TP-188 gives the decide command no flag that skips the question: only home and note, and the flags of every command', () => {
+  it('gives the decide command no flag that skips the question: only home and note, and the flags of every command', () => {
     const decide = commandTable.find((command) => command.name === commands.decide);
     expect(Object.keys(decide?.options ?? {}).sort()).toEqual([flags.home, flags.note].sort());
   });
 
-  it('M5-1b TP-187 routes decide read and the json flag to exit 2, and a run with no terminal window to exit 4', async () => {
+  it('routes decide read and the json flag to exit 2, and a run with no terminal window to exit 4', async () => {
     const repo = await boardNode({ board: boardText([], []) });
     const runBoard = async (argv: readonly string[]) => {
       const sink = captureSink();
@@ -977,7 +977,7 @@ describe('the item and track commands in the command line', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-22 runs request add, request list, request close, queue set and queue show from the command line, with the flags in any place', async () => {
+  it('runs request add, request list, request close, queue set and queue show from the command line, with the flags in any place', async () => {
     const repo = await boardNode({ board: boardText([itemRecord('B-1')], []) });
     const runBoard = async (argv: readonly string[]) => {
       const sink = captureSink();
@@ -993,7 +993,7 @@ describe('the item and track commands in the command line', () => {
     expect(repo.commits).toHaveLength(3);
   });
 
-  it('M5-1b TP-22 closes a request with --made-by and --decision from the command line, and the output line names the decider', async () => {
+  it('closes a request with --made-by and --decision from the command line, and the output line names the decider', async () => {
     const repo = await boardNode({ board: boardText([], []) });
     const runBoard = async (argv: readonly string[]) => {
       const sink = captureSink();
@@ -1034,7 +1034,7 @@ describe('the item and track commands in the command line', () => {
     expect(repo.commits).toHaveLength(2);
   });
 
-  it('M5-1b TP-22 prints the document of request add and of queue set for the JSON flag', async () => {
+  it('prints the document of request add and of queue set for the JSON flag', async () => {
     const repo = await boardNode({ board: boardText([itemRecord('B-1')], []) });
     const sink = captureSink();
     const code = await runCli(['request', 'add', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Yes', '--json', '--home', BOARD_HOME], repo.deps, sink);
@@ -1049,7 +1049,7 @@ describe('the item and track commands in the command line', () => {
     });
   });
 
-  it('M5-1b TP-22 prints the document of item add for the JSON flag', async () => {
+  it('prints the document of item add for the JSON flag', async () => {
     const repo = await boardNode({ board: boardText([], []) });
     const sink = captureSink();
     const code = await runCli(['item', 'add', '--title', 'New', '--field', 'priority=P1', '--json', '--home', BOARD_HOME], repo.deps, sink);

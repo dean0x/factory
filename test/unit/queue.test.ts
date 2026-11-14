@@ -47,21 +47,21 @@ const ROWS = [
 
 const configWith = (board: BoardConfig): ReturnType<typeof sampleConfigWithBoard> => sampleConfigWithBoard(board);
 
-describe('queue set (TP-22, TP-28)', () => {
-  it('M5-1b TP-22 adds a row at the end with its name, items and note, prints one line, and makes one commit that holds only the board file', async () => {
+describe('queue set', () => {
+  it('adds a row at the end with its name, items and note, prints one line, and makes one commit that holds only the board file', async () => {
     const repo = await nodeWith(ROWS);
     expect(linesOf(await run(repo, { words: ['set', 'Release'], items: ['B-2', 'B-1'], note: 'Last one' }))).toEqual(['Added row 3 to the queue: Release']);
     expect(rowsOf(repo)[2]).toEqual({ name: 'Release', items: ['B-2', 'B-1'], note: 'Last one' });
     expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
   });
 
-  it('M5-1b TP-22 adds the first row to an empty queue, with no items', async () => {
+  it('adds the first row to an empty queue, with no items', async () => {
     const repo = await nodeWith([]);
     expect(linesOf(await run(repo, { words: ['set', 'First'] }))).toEqual(['Added row 1 to the queue: First']);
     expect(rowsOf(repo)).toEqual([{ name: 'First', items: [] }]);
   });
 
-  it('M5-1b TP-28 keeps the release flag and every other key of a row through queue set', async () => {
+  it('keeps the release flag and every other key of a row through queue set', async () => {
     const repo = await nodeWith(ROWS);
     expect(linesOf(await run(repo, { words: ['set', 'Board connector'], note: 'New note', items: ['B-1', 'B-2'] }))).toEqual([
       'Saved row 1 of the queue: Board connector',
@@ -71,7 +71,7 @@ describe('queue set (TP-22, TP-28)', () => {
     expect(rowsOf(repo)[1]).toEqual(ROWS[1]);
   });
 
-  it('M5-1b TP-28 keeps the release flag of a row through an item update', async () => {
+  it('keeps the release flag of a row through an item update', async () => {
     const repo = await nodeWith(ROWS);
     const options: ItemOptions = {
       home: HOME,
@@ -93,7 +93,7 @@ describe('queue set (TP-22, TP-28)', () => {
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-28 sets the release flag of a row with the field flag, and a later set of the note keeps it', async () => {
+  it('sets the release flag of a row with the field flag, and a later set of the note keeps it', async () => {
     const repo = await nodeWith([row('Docs')]);
     valueOf(await run(repo, { words: ['set', 'Docs'], fields: ['release=true'] }));
     expect(rowsOf(repo)[0]).toEqual({ name: 'Docs', items: [], release: true });
@@ -103,7 +103,7 @@ describe('queue set (TP-22, TP-28)', () => {
     expect(rowsOf(repo)[0]?.['release']).toBe(false);
   });
 
-  it('M5-1b TP-22 changes nothing and makes no commit for a set that holds the values of the row already', async () => {
+  it('changes nothing and makes no commit for a set that holds the values of the row already', async () => {
     const repo = await nodeWith(ROWS);
     const before = repo.textOf(fileNames.board);
     expect(linesOf(await run(repo, { words: ['set', 'Board connector'], note: 'Merge after the review', items: ['B-1'], fields: ['release=true'] }))).toEqual([
@@ -113,7 +113,7 @@ describe('queue set (TP-22, TP-28)', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-22 prints the JSON document of a set', async () => {
+  it('prints the JSON document of a set', async () => {
     const repo = await nodeWith(ROWS);
     expect(valueOf(await run(repo, { words: ['set', 'Docs'], items: ['B-3'] })).json).toEqual({
       schema: 'factory.queue/v1',
@@ -122,7 +122,7 @@ describe('queue set (TP-22, TP-28)', () => {
     });
   });
 
-  it('M5-1b TP-22 keeps the old form of the file: 2-space indent, non-ASCII escaped, and a line break at the end', async () => {
+  it('keeps the old form of the file: 2-space indent, non-ASCII escaped, and a line break at the end', async () => {
     const repo = await nodeWith(ROWS);
     valueOf(await run(repo, { words: ['set', 'Café 日本語'] }));
     const text = repo.textOf(fileNames.board) ?? '';
@@ -164,7 +164,7 @@ describe('queue set: the position of a row', () => {
   });
 });
 
-describe('queue set: the rules of the input (TP-28)', () => {
+describe('queue set: the rules of the input', () => {
   const REFUSED: readonly (readonly [string, Partial<QueueOptions>, string])[] = [
     ['an item that the board does not hold', { items: ['B-9'] }, 'B-9'],
     ['an item id of a bad form', { items: ['x-1'] }, 'item id'],
@@ -178,7 +178,7 @@ describe('queue set: the rules of the input (TP-28)', () => {
     ['a field that is given twice', { fields: ['release=true', 'release=false'] }, 'twice'],
   ];
 
-  it.each(REFUSED)('M5-1b TP-28 refuses %s with exit 2, names the cause, and writes nothing', async (_name, overrides, message) => {
+  it.each(REFUSED)('refuses %s with exit 2, names the cause, and writes nothing', async (_name, overrides, message) => {
     const repo = await nodeWith(ROWS);
     const before = repo.textOf(fileNames.board);
     const error = errorOf(await run(repo, { words: ['set', 'Docs'], ...overrides }));
@@ -192,7 +192,7 @@ describe('queue set: the rules of the input (TP-28)', () => {
     ['an empty name', ' '],
     ['a name with a line break', 'Two\nlines'],
     ['a name of more than the most characters', 'x'.repeat(101)],
-  ])('M5-1b TP-28 refuses %s with exit 2 and writes nothing', async (_name, name) => {
+  ])('refuses %s with exit 2 and writes nothing', async (_name, name) => {
     const repo = await nodeWith(ROWS);
     const before = repo.textOf(fileNames.board);
     expect(exitCodeOf[errorOf(await run(repo, { words: ['set', name] })).kind]).toBe(2);
@@ -255,7 +255,7 @@ describe('the words and the flags of queue', () => {
     ['show with the position flag', { words: ['show'], position: '1' }, '--position is not for'],
   ];
 
-  it.each(BAD)('M5-1b TP-22 %s exits 2 and touches no file', async (_name, overrides, message) => {
+  it.each(BAD)('%s exits 2 and touches no file', async (_name, overrides, message) => {
     const repo = await nodeWith(ROWS);
     const touched: string[] = [];
     const error = errorOf(await runQueue(withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)), { ...BASE, ...overrides }, recipes));
@@ -271,8 +271,8 @@ describe('the words and the flags of queue', () => {
   });
 });
 
-describe('queue show (TP-25, TP-91)', () => {
-  it('M5-1b TP-25 shows the rows with their places, names, items, owner fields and notes, and makes no commit', async () => {
+describe('queue show', () => {
+  it('shows the rows with their places, names, items, owner fields and notes, and makes no commit', async () => {
     const repo = await nodeWith(ROWS);
     const lines = linesOf(await run(repo, { words: ['show'] }));
     expect(lines[0]).toBe('2 rows in the queue.');
@@ -284,12 +284,12 @@ describe('queue show (TP-25, TP-91)', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-25 says that the queue is empty for a board with no row', async () => {
+  it('says that the queue is empty for a board with no row', async () => {
     const repo = await nodeWith([]);
     expect(linesOf(await run(repo, { words: ['show'] }))).toEqual(['0 rows in the queue.']);
   });
 
-  it('M5-1b TP-91 prints a name with a bidi mark and a line break as one clean line', async () => {
+  it('prints a name with a bidi mark and a line break as one clean line', async () => {
     const bidi = String.fromCodePoint(0x202e);
     const repo = await nodeWith([row(`Doc${bidi}\ns`, { note: `A${bidi}\tnote` })]);
     const text = plainText(valueOf(await run(repo, { words: ['show'] })));
@@ -300,12 +300,12 @@ describe('queue show (TP-25, TP-91)', () => {
     expect(lines[2]).toContain('A note');
   });
 
-  it('M5-1b TP-91 shows a row with no name, no note and a bad item list as a dash', async () => {
+  it('shows a row with no name, no note and a bad item list as a dash', async () => {
     const repo = await nodeWith([{ items: 'B-1' }]);
     expect(linesOf(await run(repo, { words: ['show'] })).slice(2).map((line) => line.split(/ {2,}/))).toEqual([['1', '-', '-', '-', '-']]);
   });
 
-  it('M5-1b TP-91 prints at most 20 lines for a long queue, and a last line that says how many rows are not shown', async () => {
+  it('prints at most 20 lines for a long queue, and a last line that says how many rows are not shown', async () => {
     const repo = await nodeWith(Array.from({ length: 25 }, (_, at) => row(`Row ${at + 1}`)));
     const lines = linesOf(await run(repo, { words: ['show'] }));
     expect(lines).toHaveLength(20);
@@ -313,7 +313,7 @@ describe('queue show (TP-25, TP-91)', () => {
     expect(lines[19]).toBe('8 more rows.');
   });
 
-  it('M5-1b TP-91 prints the JSON document with each row as it is stored', async () => {
+  it('prints the JSON document with each row as it is stored', async () => {
     const repo = await nodeWith(ROWS);
     const json = valueOf(await run(repo, { words: ['show'] })).json;
     expect(json['schema']).toBe('factory.queue-show/v1');
@@ -324,8 +324,8 @@ describe('queue show (TP-25, TP-91)', () => {
   });
 });
 
-describe('queue: an old queue key and a hosted tracker kind (TP-57, TP-67)', () => {
-  it('M5-1b TP-57 exits 1 with the remedy to upgrade for a board that has the old queue key, and writes nothing', async () => {
+describe('queue: an old queue key and a hosted tracker kind', () => {
+  it('exits 1 with the remedy to upgrade for a board that has the old queue key, and writes nothing', async () => {
     const repo = await boardNode({ board: `${JSON.stringify({ queue: [], items: [] }, null, 2)}\n` });
     const before = repo.textOf(fileNames.board);
     for (const overrides of [{ words: ['set', 'Docs'] }, { words: ['show'] }]) {
@@ -337,7 +337,7 @@ describe('queue: an old queue key and a hosted tracker kind (TP-57, TP-67)', () 
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-67 refuses queue set with exit 4 and writes nothing, and queue show still works', async () => {
+  it('refuses queue set with exit 4 and writes nothing, and queue show still works', async () => {
     const base = sampleConfigWithBoard();
     const config = { ...base, core: { ...base.core, tracker: { kind: 'jira' as const, items: 'ACME', decisions: 'ACME-DEC', watch_interval: '5m' } } };
     const repo = await boardNode({ config, board: boardText(ITEMS, [], ROWS) });

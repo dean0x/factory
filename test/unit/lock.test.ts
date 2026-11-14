@@ -76,7 +76,7 @@ const onSleep = (deps: FakeDeps, calls: number, action: () => void): FakeDeps =>
 
 const handlerCount = (deps: FakeDeps): number => SIGNALS.reduce((sum, name) => sum + deps.signals.listenerCount(name), 0);
 
-describe('lock run: the command line (TP-1)', () => {
+describe('lock run: the command line', () => {
   it.each([
     ['no subcommand', ['lock']],
     ['no double dash', ['lock', 'run']],
@@ -108,13 +108,13 @@ describe('lock run: an empty word in the command', () => {
   });
 });
 
-describe('lock run: the files of the lock (TP-4, TP-5, TP-6, TP-7, TP-8)', () => {
+describe('lock run: the files of the lock', () => {
   it.each([
     ['the home folder', { HOME: '/h' }, STATE],
     ['the state home', { HOME: '/h', XDG_STATE_HOME: '/x/state' }, '/x/state/factory'],
     ['an absolute state home only', { XDG_STATE_HOME: '/x/state' }, '/x/state/factory'],
     ['no variable for a state folder: the folder node variable is no path', { HOME: '/h', FACTORY_HOME: '/elsewhere', XDG_STATE_HOME: 'relative' }, STATE],
-  ])('keeps the lock file in the state folder with mode 0700 and 0600, from %s (TP-4)', async (_name, variables, folder) => {
+  ])('keeps the lock file in the state folder with mode 0700 and 0600, from %s', async (_name, variables, folder) => {
     const seen: { lock?: number | undefined; folder?: number | undefined; paths: string[] } = { paths: [] };
     const deps: FakeDeps = fake({
       env: variables,
@@ -133,7 +133,7 @@ describe('lock run: the files of the lock (TP-4, TP-5, TP-6, TP-7, TP-8)', () =>
     ['the lock path', LOCK, ['run', '--', 'npm']],
     ['the priority path of a waiter', PRIORITY, ['run', '--', 'npm']],
     ['the priority path of a priority run', PRIORITY, ['run', '--priority', '--', 'npm']],
-  ])('exits 4 and follows no link at %s (TP-5)', async (_name, linked, argv) => {
+  ])('exits 4 and follows no link at %s', async (_name, linked, argv) => {
     const deps = fake({ links: { [linked]: '/outside/target' } });
     deps.seed('/outside/target', 'untouched\n');
     deps.seedDir(STATE);
@@ -156,7 +156,7 @@ describe('lock run: the files of the lock (TP-4, TP-5, TP-6, TP-7, TP-8)', () =>
     ['a lock file that others can write', { path: LOCK, mode: 0o666, text: LIVE_HOLDER }],
     ['a priority file of another user', { path: PRIORITY, other: true, text: LIVE_HOLDER }],
     ['a priority file that a group can write', { path: PRIORITY, mode: 0o620, text: LIVE_HOLDER }],
-  ])('exits 4 for %s and starts no child (TP-6)', async (_name, { path, other, mode, text }) => {
+  ])('exits 4 for %s and starts no child', async (_name, { path, other, mode, text }) => {
     for (const argv of [['run', '--', 'npm'], ['run', '--priority', '--', 'npm']]) {
       const deps = fake();
       deps.seedDir(STATE);
@@ -169,7 +169,7 @@ describe('lock run: the files of the lock (TP-4, TP-5, TP-6, TP-7, TP-8)', () =>
     }
   });
 
-  it('exits 1 with the NOT STARTED line and a remedy line when no folder is known (TP-7)', async () => {
+  it('exits 1 with the NOT STARTED line and a remedy line when no folder is known', async () => {
     const deps = fake({ env: {} });
     const result = await lock(deps);
     expectOutcome(result, 1, lockWords.notStarted);
@@ -178,7 +178,7 @@ describe('lock run: the files of the lock (TP-4, TP-5, TP-6, TP-7, TP-8)', () =>
     expect(deps.attached).toEqual([]);
   });
 
-  it('chooses the exit code by the typed reason, not by the text (TP-8)', async () => {
+  it('chooses the exit code by the typed reason, not by the text', async () => {
     const base = fake();
     const sameWords = (message: string) => async () => failure(message);
     const cases: readonly [string, FakeDeps][] = [
@@ -193,8 +193,8 @@ describe('lock run: the files of the lock (TP-4, TP-5, TP-6, TP-7, TP-8)', () =>
   });
 });
 
-describe('lock run: the wait (TP-15, TP-16)', () => {
-  it('tries 1,080 times 5 s apart, prints one wait line, then exits 3 with the WAIT ENDED line (TP-15)', async () => {
+describe('lock run: the wait', () => {
+  it('tries 1,080 times 5 s apart, prints one wait line, then exits 3 with the WAIT ENDED line', async () => {
     const deps = withHeldLock();
     const result = await lock(deps);
     expectOutcome(result, 3, lockWords.waitEnded);
@@ -225,7 +225,7 @@ describe('lock run: the wait (TP-15, TP-16)', () => {
     ['a file system error', (deps: FakeDeps): FakeDeps => ({ ...deps, fs: { ...deps.fs, writeTextExclusive: async () => failure('cannot write: EIO') } })],
     ['no random text', (deps: FakeDeps): FakeDeps => ({ ...deps, randomHex: () => failure('no random text') })],
     ['a ps that fails for the own start', (deps: FakeDeps): FakeDeps => ({ ...deps, run: async () => exited(1) })],
-  ])('exits 1 with the NOT STARTED line and starts no child for %s (TP-16)', async (_name, damage) => {
+  ])('exits 1 with the NOT STARTED line and starts no child for %s', async (_name, damage) => {
     const deps = damage(fake());
     expectOutcome(await lock(deps), 1, lockWords.notStarted);
     expect(deps.attached).toEqual([]);
@@ -247,8 +247,8 @@ describe('lock run: the wait (TP-15, TP-16)', () => {
   });
 });
 
-describe('lock run: the child (TP-17, TP-18, TP-19, TP-20, TP-24)', () => {
-  it('runs the words after the double dash with no shell, in a held run that gets only the token as an extra variable (TP-17, TP-36)', async () => {
+describe('lock run: the child', () => {
+  it('runs the words after the double dash with no shell, in a held run that gets only the token as an extra variable', async () => {
     const seen: { text?: string | undefined; handlers?: number | undefined } = {};
     const deps: FakeDeps = fake({
       runAttached: () => {
@@ -282,7 +282,7 @@ describe('lock run: the child (TP-17, TP-18, TP-19, TP-20, TP-24)', () => {
     [4, { kind: 'code', code: 4 }],
     [7, { kind: 'code', code: 7 }],
     [143, { kind: 'signal', signal: 'SIGTERM', number: 15 }],
-  ] as const)('passes the exit code %i of the child through and writes no line of its own (TP-18)', async (code, end) => {
+  ] as const)('passes the exit code %i of the child through and writes no line of its own', async (code, end) => {
     const deps = fake({ runAttached: () => end });
     const result = await lock(deps);
     expect(result).toEqual({ code, out: '', err: '' });
@@ -294,14 +294,14 @@ describe('lock run: the child (TP-17, TP-18, TP-19, TP-20, TP-24)', () => {
     ['a program that is not found', { kind: 'spawn', code: 'ENOENT' }, 1, lockWords.notFound],
     ['a program that cannot start', { kind: 'spawn', code: 'EACCES' }, 1, lockWords.notStarted],
     ['a child that runs past the max hold time', { kind: 'limit' }, 3, lockWords.holdEnded],
-  ] as const)('exits with the line of the program for %s, and frees the lock (TP-18, TP-19, TP-24)', async (_name, end, code, word) => {
+  ] as const)('exits with the line of the program for %s, and frees the lock', async (_name, end, code, word) => {
     const deps = fake({ runAttached: () => end });
     expectOutcome(await lock(deps), code, word);
     expect(deps.files.size).toBe(0);
     expect(deps.attached[0]?.options).toMatchObject({ held: true, maxMs: 10_800_000, killGraceMs: 10_000 });
   });
 
-  it('leaves a lock that another run holds now, and keeps the exit code (TP-19)', async () => {
+  it('leaves a lock that another run holds now, and keeps the exit code', async () => {
     const other = holderText(OTHER_PID, HOLDER_START);
     const deps: FakeDeps = fake({
       runAttached: () => {
@@ -313,21 +313,21 @@ describe('lock run: the child (TP-17, TP-18, TP-19, TP-20, TP-24)', () => {
     expect(deps.files.get(LOCK)).toBe(other);
   });
 
-  it('adds one warning for a lock that cannot be removed, and keeps the exit code of the child (TP-20)', async () => {
+  it('adds one warning for a lock that cannot be removed, and keeps the exit code of the child', async () => {
     const deps = withFailingRemoves(fake({ runAttached: () => ({ kind: 'code', code: 7 }) }), (path) => path === LOCK, 'EBUSY');
     expect(await lock(deps)).toEqual({ code: 7, out: '', err: '' });
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain('Cannot remove');
   });
 
-  it('adds one warning for a priority file that cannot be removed, and keeps the exit code of the child (TP-20)', async () => {
+  it('adds one warning for a priority file that cannot be removed, and keeps the exit code of the child', async () => {
     const deps = withFailingRemoves(fake({ runAttached: () => ({ kind: 'code', code: 7 }) }), (path) => path === PRIORITY, 'EBUSY');
     expect(await lock(deps, ['run', '--priority', '--', 'npm'])).toEqual({ code: 7, out: '', err: '' });
     expect(deps.warned).toHaveLength(1);
   });
 });
 
-describe('lock run: a stop during the wait (TP-23)', () => {
+describe('lock run: a stop during the wait', () => {
   it.each([
     ['SIGINT', 130],
     ['SIGTERM', 143],
@@ -385,7 +385,7 @@ describe('lock run: a stop during the take', () => {
   });
 });
 
-describe('lock run: the program itself as the child (TP-27)', () => {
+describe('lock run: the program itself as the child', () => {
   const [NODE, SCRIPT] = FAKE_PROGRAM_ARGV as readonly [string, string];
 
   it.each([
@@ -421,10 +421,10 @@ describe('lock run: the program itself as the child (TP-27)', () => {
   });
 });
 
-describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () => {
+describe('lock run: the priority file', () => {
   const LIVE_PRIORITY = holderText(OTHER_PID, HOLDER_START);
 
-  it('takes no free lock for a waiter while a live priority file of another run exists (TP-28)', async () => {
+  it('takes no free lock for a waiter while a live priority file of another run exists', async () => {
     const deps = fake();
     deps.seed(PRIORITY, LIVE_PRIORITY);
     expectOutcome(await lock(deps), 3, lockWords.waitEnded);
@@ -433,7 +433,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
     expect(deps.files.get(PRIORITY)).toBe(LIVE_PRIORITY);
   });
 
-  it('lets the priority run take the lock first, and the waiter after it (TP-28)', async () => {
+  it('lets the priority run take the lock first, and the waiter after it', async () => {
     const base = withHeldLock({
       runAttached: (call) => {
         order.push(call.args[0] ?? '');
@@ -457,7 +457,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
     expect([...base.files.keys()]).toEqual([]);
   });
 
-  it('exits 3 with the PRIORITY HELD line for a second live priority run, and starts no child (TP-29)', async () => {
+  it('exits 3 with the PRIORITY HELD line for a second live priority run, and starts no child', async () => {
     const deps = fake();
     deps.seed(PRIORITY, LIVE_PRIORITY);
     expectOutcome(await lock(deps, ['run', '--priority', '--', 'npm']), 3, lockWords.priorityHeld);
@@ -478,7 +478,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
         return deps;
       },
     ],
-  ])('counts a priority file with %s as no priority, with one warning, and signals no process (TP-30)', async (_name, damage) => {
+  ])('counts a priority file with %s as no priority, with one warning, and signals no process', async (_name, damage) => {
     const base = withHeldLock();
     base.seed(PRIORITY, LIVE_PRIORITY);
     const deps = damage(onSleep(base, 3, () => void base.files.delete(LOCK)));
@@ -488,7 +488,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
     expect(base.files.get(PRIORITY)).toBe(LIVE_PRIORITY);
   });
 
-  it('runs a priority run over a priority file of a run that ended, with one warning and no wait (TP-30)', async () => {
+  it('runs a priority run over a priority file of a run that ended, with one warning and no wait', async () => {
     const base = fake();
     base.seed(PRIORITY, LIVE_PRIORITY);
     const deps: FakeDeps = { ...base, isRunning: (pid) => (pid === OTHER_PID ? ok(false) : base.isRunning(pid)) };
@@ -519,7 +519,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
         return { ...deps, fs: { ...deps.fs, readTextLimited: blind } };
       },
     ],
-  ])('counts %s as no priority, with one warning, and keeps waiting for the lock (TP-31)', async (_name, damage) => {
+  ])('counts %s as no priority, with one warning, and keeps waiting for the lock', async (_name, damage) => {
     const base = withHeldLock();
     const deps = damage(onSleep(base, 3, () => void base.files.delete(LOCK)));
     expect((await lock(deps)).code).toBe(0);
@@ -527,7 +527,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
     expect(base.warned.filter((line) => line.includes('priority file'))).toHaveLength(1);
   });
 
-  it('writes the priority file for a priority run only, and frees it when the lock is taken (TP-32)', async () => {
+  it('writes the priority file for a priority run only, and frees it when the lock is taken', async () => {
     const seen: { priority?: boolean | undefined; waiter?: boolean | undefined } = {};
     const base = withHeldLock({
       runAttached: () => {
@@ -553,7 +553,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
     expect(seen.waiter).toBe(false);
   });
 
-  it('never removes a priority file that another run took over (TP-32)', async () => {
+  it('never removes a priority file that another run took over', async () => {
     const base = withHeldLock();
     const deps = onSleep(base, 2, () => {
       base.files.set(PRIORITY, LIVE_PRIORITY);
@@ -565,7 +565,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
   });
 });
 
-describe('lock run: inside a lock (TP-33, TP-34)', () => {
+describe('lock run: inside a lock', () => {
   const OUTER = holderText(OWN_PID, OWN_START).trim();
 
   it('runs the child at once when the token matches the lock file: no take, no priority file, no group, no time limit', async () => {

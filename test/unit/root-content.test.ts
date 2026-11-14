@@ -141,7 +141,7 @@ describe('a clean root', () => {
   });
 });
 
-describe('root repo: tracked paths that must stay on this machine (TP-20, TP-123)', () => {
+describe('root repo: tracked paths that must stay on this machine', () => {
   it.each(['own', 'received'] as const)('fails on a %s root when git tracks the local file', async (origin) => {
     const found = await scan(make({ origin, tracked: ['factory.local.yaml', 'factory.yaml'] }));
     expect(levelsOf(found, checkIds.rootRepo)).toContain('fail');
@@ -177,7 +177,7 @@ describe('root repo: tracked paths that must stay on this machine (TP-20, TP-123
   });
 });
 
-describe('root repo: the project folders and the work copies folder (TP-20, TP-166)', () => {
+describe('root repo: the project folders and the work copies folder', () => {
   it('warns on an own root when git tracks a path under a project folder, and names the path', async () => {
     const found = await scan(make({ origin: 'own', tracked: ['web/src/a.ts'] }));
     expect(levelsOf(found, checkIds.rootRepo)).toEqual(['warn']);
@@ -208,7 +208,7 @@ describe('root repo: the project folders and the work copies folder (TP-20, TP-1
   });
 });
 
-describe('root repo: the ignore rules (TP-61)', () => {
+describe('root repo: the ignore rules', () => {
   const ALL = ['factory.local.yaml', '.factory/node.json', 'coordinator/CLAUDE.md', 'work-copies/probe', 'web/CLAUDE.md'];
   const withoutRule = (...missing: readonly string[]): readonly string[] => ALL.filter((path) => !missing.includes(path));
 
@@ -281,7 +281,7 @@ describe('root repo: the ignore rules (TP-61)', () => {
   });
 });
 
-describe('root repo: an instruction file or a settings path in the repo (TP-155)', () => {
+describe('root repo: an instruction file or a settings path in the repo', () => {
   it.each(['CLAUDE.md', 'AGENTS.md', '.claude/CLAUDE.md', '.claude/rules/a.md', 'docs/CLAUDE.md', '.claude/settings.json'])(
     'warns on an own root for the tracked path %s, names it and says that it goes to every receiver',
     async (path) => {
@@ -310,7 +310,7 @@ describe('root repo: an instruction file or a settings path in the repo (TP-155)
   });
 });
 
-describe('root repo: the files of a received root (TP-45, TP-166)', () => {
+describe('root repo: the files of a received root', () => {
   it('fails for a tracked file that no acceptance covers, and names the file and the command', async () => {
     const found = await scan(make({ origin: 'received', tracked: ['setup/coordinator.md', 'scripts/run.sh'] }));
     expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
@@ -433,7 +433,7 @@ describe('root repo: the files of a received root (TP-45, TP-166)', () => {
   });
 });
 
-describe('root repo: the setup text of an own root (TP-128, TP-173)', () => {
+describe('root repo: the setup text of an own root', () => {
   const SETUP_PATH = 'setup/coordinator.md';
   const SETUP_FILE = `${HOME}/${SETUP_PATH}`;
   const INIT_COMMAND = 'Run "factory init" in a terminal window and accept the files.';
@@ -552,7 +552,7 @@ describe('root repo: the setup text of an own root (TP-128, TP-173)', () => {
   });
 });
 
-describe('root repo: git can not list the files (TP-61)', () => {
+describe('root repo: git can not list the files', () => {
   it('warns on an own root that it did not check, and does not fail', async () => {
     const found = await scan(make({ origin: 'own', noRepo: true }));
     expect(levelsOf(found, checkIds.rootRepo)).toEqual(['warn']);
@@ -603,7 +603,7 @@ describe('root repo: git can not list the files (TP-61)', () => {
   });
 });
 
-describe('root files: tokens (TP-45, TP-134)', () => {
+describe('root files: tokens', () => {
   it.each(['own', 'received'] as const)('fails on a %s root for a tracked text file with a token, and never shows the value', async (origin) => {
     const deps = make({ origin, tracked: ['docs/notes.md'] });
     deps.seed(`${HOME}/docs/notes.md`, `The key is ${FAKE_GITHUB_TOKEN} for now.\n`);
@@ -669,7 +669,7 @@ describe('root files: tokens (TP-45, TP-134)', () => {
   });
 });
 
-describe('root files: the caps of the token scan (TP-93)', () => {
+describe('root files: the caps of the token scan', () => {
   const CAPS = { maxCount: 2, maxFileBytes: 40 };
 
   it('stops at its cap of tracked files and names the files that it did not scan', async () => {
@@ -721,7 +721,7 @@ describe('root files: the caps of the token scan (TP-93)', () => {
   });
 });
 
-describe('root files: file URLs and user folder paths (TP-136)', () => {
+describe('root files: file URLs and user folder paths', () => {
   it.each([
     ['a file URL', 'url: file:///srv/repos/web.git\n'],
     ['a folder of a user on macOS', 'path: /Users/example/Sandbox/web\n'],
@@ -754,7 +754,7 @@ describe('root files: file URLs and user folder paths (TP-136)', () => {
   });
 });
 
-describe('project paths (TP-63)', () => {
+describe('project paths', () => {
   const REAL = '/elsewhere/web';
 
   it('is ok for a project folder inside the root, and for a folder that does not exist', async () => {
@@ -838,7 +838,7 @@ describe('project paths (TP-63)', () => {
   });
 });
 
-describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () => {
+describe('settings files', () => {
   const SETTINGS = '/.claude/settings.local.json';
   const PLACES = [
     ['the coordinator folder', 'coordinator', 'coordinator/.claude/settings.local.json'],
@@ -871,7 +871,7 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
     });
 
     it.each([env.session, env.home, 'FACTORY_ANYTHING'])(
-      'fails for a file that sets or clears %s, names the prefix and gives one remedy line (TP-23)',
+      'fails for a file that sets or clears %s, names the prefix and gives one remedy line',
       async (name) => {
         const deps = make();
         put(deps, folder, JSON.stringify({ env: { [name]: '' } }));
@@ -917,7 +917,7 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
     expect(of(await scan(deps), checkIds.permissionMode)).toEqual([]);
   });
 
-  describe('the settings file that the program writes (AC-11, TP-133, TP-134)', () => {
+  describe('the settings file that the program writes', () => {
     const OWN = ownSettingsEntries;
     const ownText = JSON.stringify(OWN, null, 2);
     const withHooks = (hooks: unknown): string => JSON.stringify({ ...OWN, hooks });
@@ -978,7 +978,7 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
         'a hook with another program',
         { ...OWN, hooks: { ...OWN.hooks, [firstEvent]: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] } },
       ],
-    ])('warns for an own key with %s (TP-134)', async (_name, value) => {
+    ])('warns for an own key with %s', async (_name, value) => {
       const deps = make();
       put(deps, 'coordinator', JSON.stringify(value));
       const found = await scan(deps);
@@ -1217,7 +1217,7 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       expect(requireRootClean(found).ok).toBe(true);
     });
 
-    describe('the settings that hold or refuse the input of other sessions (TP-36)', () => {
+    describe('the settings that hold or refuse the input of other sessions', () => {
       const SEEN = 'project and local settings only';
 
       it.each([['hold'], ['refuse']])('warns for crossSessionInbound %s, names the file and the value, and does not stop', async (value) => {
@@ -1375,7 +1375,7 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
     });
   });
 
-  describe('the tracked settings paths of the root, at any depth (TP-168)', () => {
+  describe('the tracked settings paths of the root, at any depth', () => {
     const bypass = JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } });
 
     it.each(['.claude/settings.json', 'tools/deep/.claude/settings.local.json', 'a/b/.claude/settings.team.json'])(
@@ -1659,7 +1659,7 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
   });
 });
 
-describe('delegations (TP-78)', () => {
+describe('delegations', () => {
   const record = (point: string, mode: string, at: string) => ({ kind: 'delegation', node: 'demo', root: HOME, point, mode, at });
   const store = (deps: FakeDeps, records: readonly object[]): void =>
     deps.seed(OWNER_RECORDS, JSON.stringify({ schema: 1, records }));

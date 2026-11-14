@@ -174,7 +174,7 @@ const initNode = async ({ hookSettings = true }: { hookSettings?: boolean } = {}
 const treeOf = async (folder: string): Promise<string[]> => (await readdir(folder, { recursive: true })).sort();
 
 describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', () => {
-  it('prints the warning about an instruction file above the root on stderr, and still exits 0 (TP-33)', async () => {
+  it('prints the warning about an instruction file above the root on stderr, and still exits 0', async () => {
     await initNode();
     const above = join(box.root, 'GEMINI.md');
     await writeFile(above, 'x\n');
@@ -224,7 +224,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(await readFile(join(outDir, 'config-dir'), 'utf8')).toBe(FAKE_CONFIG_DIR);
   });
 
-  it('warns for a project folder that is missing and adds no --add-dir for it (TP-120)', async () => {
+  it('warns for a project folder that is missing and adds no --add-dir for it', async () => {
     await initNode();
     const web = join(box.node, 'web');
     const api = join(box.node, 'api');
@@ -238,7 +238,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', join(box.node, '.factory'), '--add-dir', web]);
   });
 
-  it('starts the coordinator in the coordinator folder, and keeps the top of the factory folder as the home (TP-46)', async () => {
+  it('starts the coordinator in the coordinator folder, and keeps the top of the factory folder as the home', async () => {
     await initNode();
     expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
@@ -249,7 +249,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(paths.stdout.trim().split('\n')).toEqual([folder, folder, folder]);
   });
 
-  it('exits 4 and starts no session when the coordinator folder is missing, because the safety block is missing (TP-43)', async () => {
+  it('exits 4 and starts no session when the coordinator folder is missing, because the safety block is missing', async () => {
     await initNode();
     await rm(join(box.node, 'coordinator'), { recursive: true });
     const result = await startFactory();
@@ -260,7 +260,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(existsSync(socket)).toBe(false);
   });
 
-  it('exits 4 for an edited safety block, and goes on after upgrade --overwrite safety kept the old text in a backup file (TP-43, TP-107)', async () => {
+  it('exits 4 for an edited safety block, and goes on after upgrade --overwrite safety kept the old text in a backup file', async () => {
     await initNode();
     const path = join(box.node, 'coordinator', 'CLAUDE.md');
     const text = await readFile(path, 'utf8');
@@ -289,7 +289,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(await waitForLaunch()).toEqual(['launched']);
   });
 
-  it('renders an intact safety block again with a notice on stderr when the prefix changed, and goes on (TP-125)', async () => {
+  it('renders an intact safety block again with a notice on stderr when the prefix changed, and goes on', async () => {
     await initNode();
     const local = join(box.node, 'factory.local.yaml');
     const before = await readFile(local, 'utf8');
@@ -302,7 +302,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(await waitForLaunch()).toEqual(['launched']);
   });
 
-  it('exits 4 for a link at coordinator/CLAUDE.md, and starts no session (TP-131)', async () => {
+  it('exits 4 for a link at coordinator/CLAUDE.md, and starts no session', async () => {
     await initNode();
     const path = join(box.node, 'coordinator', 'CLAUDE.md');
     const text = await readFile(path, 'utf8');
@@ -391,7 +391,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect((await waitForFile('window-proxy')).trim()).toBe('no');
   });
 
-  it('puts the session marker in the environment of the session, so a later window carries it (TP-80)', async () => {
+  it('puts the session marker in the environment of the session, so a later window carries it', async () => {
     await initNode();
     expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
@@ -444,7 +444,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(sessions.stdout.trim().split('\n')).toEqual(['demo']);
   });
 
-  it('refuses a session of another home with exit code 4, and the remedy names factory shutdown (TP-132)', async () => {
+  it('refuses a session of another home with exit code 4, and the remedy names factory shutdown', async () => {
     await initNode();
     expect((await tmux(['new-session', '-d', '-s', 'demo', 'sleep', '300'])).code).toBe(0);
     const result = await startFactory();
@@ -453,7 +453,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(result.stderr).toContain('factory shutdown');
   });
 
-  it('exits 4 in a project clone that holds its own config with a proxy entry, and starts nothing (TP-16)', async () => {
+  it('exits 4 in a project clone that holds its own config with a proxy entry, and starts nothing', async () => {
     const [web] = await initNode();
     const clone = web ?? '';
     await writeFile(join(clone, 'factory.yaml'), await box.read(join(box.node, 'factory.yaml')));
@@ -475,7 +475,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(existsSync(socket)).toBe(false);
   });
 
-  it('runs --dry-run with exit 0 from the root, the coordinator folder and a project clone (TP-14)', async () => {
+  it('runs --dry-run with exit 0 from the root, the coordinator folder and a project clone', async () => {
     const [web] = await initNode();
     for (const cwd of [box.node, join(box.node, 'coordinator'), web ?? '']) {
       const result = await box.run(['start', '--dry-run'], { cwd, env: tmuxEnv });
@@ -497,7 +497,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(existsSync(socket)).toBe(false);
   });
 
-  it('works for a node home under a linked parent folder, and stops only for a link below the home (TP-149)', async () => {
+  it('works for a node home under a linked parent folder, and stops only for a link below the home', async () => {
     const real = join(box.root, 'real-parent');
     const linked = join(box.root, 'linked-parent');
     await mkdir(real, { recursive: true });
@@ -524,13 +524,13 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
   });
 });
 
-describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (built binary, AC-6, TP-16, TP-17, TP-18, TP-19)', () => {
+describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (built binary)', () => {
   const noSession = async (): Promise<void> => {
     expect((await tmux(['-S', socket, 'has-session', '-t', '=demo'])).code).not.toBe(0);
     expect(existsSync(socket)).toBe(false);
   };
 
-  it('exits 2 with no terminal and no --yes, names the change and the target, and writes and starts nothing (TP-16)', async () => {
+  it('exits 2 with no terminal and no --yes, names the change and the target, and writes and starts nothing', async () => {
     await initNode({ hookSettings: false });
     const before = await treeOf(box.node);
     const result = await startFactory();
@@ -543,7 +543,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     await noSession();
   });
 
-  it('writes only the settings file of the coordinator with --yes, and leaves the Claude folder of the test home as it was (TP-17)', async () => {
+  it('writes only the settings file of the coordinator with --yes, and leaves the Claude folder of the test home as it was', async () => {
     await initNode({ hookSettings: false });
     const userClaude = join(box.env['HOME'] ?? '', '.claude');
     await mkdir(userClaude, { recursive: true });
@@ -569,7 +569,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(await readFile(join(userClaude, 'settings.json'), 'utf8')).toBe('{"model":"sonnet"}\n');
   });
 
-  it('keeps the other keys of the settings file with --yes (TP-17)', async () => {
+  it('keeps the other keys of the settings file with --yes', async () => {
     await initNode({ hookSettings: false });
     await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
     await writeFile(settingsFileOf(), '{"model":"opus"}\n');
@@ -579,7 +579,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     await waitForLaunch();
   });
 
-  it('asks nothing, writes nothing and shows no presence warning on the second start (TP-18, AC-11)', async () => {
+  it('asks nothing, writes nothing and shows no presence warning on the second start', async () => {
     await initNode({ hookSettings: false });
     expect((await startFactory('--yes')).code).toBe(0);
     await waitForLaunch();
@@ -592,7 +592,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(await treeOf(box.node)).toEqual(before);
   });
 
-  it('exits 2 with --yes inside a factory session, and writes and starts nothing (TP-19)', async () => {
+  it('exits 2 with --yes inside a factory session, and writes and starts nothing', async () => {
     await initNode({ hookSettings: false });
     const before = await treeOf(box.node);
     const result = await box.run(['start', '--home', box.node, '--yes'], { env: { ...tmuxEnv, FACTORY_SESSION: 'demo' } });
@@ -623,7 +623,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     await writeFile(path, text.replace('statusline: null', () => `statusline: ${JSON.stringify(command)}`));
   };
 
-  it('writes only the own entries with --yes when the owner names a status line command, and the wrapper then prints its output (AC-2)', async () => {
+  it('writes only the own entries with --yes when the owner names a status line command, and the wrapper then prints its output', async () => {
     await initNode({ hookSettings: false });
     await setOwnerStatusline('echo owner-line');
 
@@ -643,7 +643,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(printed).toEqual({ code: 0, stdout: 'owner-line\n', stderr: '' });
   });
 
-  it('stops with exit 4 for a status line that the program did not write, names the key that keeps it, and changes nothing (AC-1)', async () => {
+  it('stops with exit 4 for a status line that the program did not write, names the key that keeps it, and changes nothing', async () => {
     await initNode({ hookSettings: false });
     await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
     const foreign = '{"statusLine":{"type":"command","command":"echo kept"}}\n';
@@ -787,9 +787,9 @@ const killedServer = async ({ coordinator = true }: { coordinator?: boolean } = 
 };
 
 describe.skipIf(!hasTmux)(
-  'factory start: the recovery after a kill of the tmux server (built binary, AC-16, AC-17, TP-17, TP-34, TP-35, TP-36, TP-37, TP-134)',
+  'factory start: the recovery after a kill of the tmux server (built binary)',
   () => {
-    it('resumes the coordinator and each worker with its own session id, and exits 0 with no warning (TP-34, TP-37)', async () => {
+    it('resumes the coordinator and each worker with its own session id, and exits 0 with no warning', async () => {
       await killedServer();
       const again = await startFactory();
       expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
@@ -804,7 +804,7 @@ describe.skipIf(!hasTmux)(
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     }, RECOVERY_CASE_MS);
 
-    it('starts a new conversation for the coordinator, with no warning, when it has no pointer (TP-37)', async () => {
+    it('starts a new conversation for the coordinator, with no warning, when it has no pointer', async () => {
       await killedServer({ coordinator: false });
       const again = await startFactory();
       expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
@@ -816,7 +816,7 @@ describe.skipIf(!hasTmux)(
       for (const marker of ['demo', 'alpha']) await expectRule(marker);
     }, RECOVERY_CASE_MS);
 
-    it('starts a new conversation for the coordinator, with one warning that names the pointer file, for a pointer that holds no session id (TP-37)', async () => {
+    it('starts a new conversation for the coordinator, with one warning that names the pointer file, for a pointer that holds no session id', async () => {
       await killedServer({ coordinator: false });
       const pointer = join(stateOf(), 'state', 'coordinator-last-session');
       await writeFile(pointer, 'junk\n', { mode: 0o600 });
@@ -834,7 +834,7 @@ describe.skipIf(!hasTmux)(
 
     it.each([
       [
-        'a worker that has no pointer (TP-35)',
+        'a worker that has no pointer',
         async (): Promise<void> => {
           await unlink(pointerOf('beta'));
         },
@@ -846,7 +846,7 @@ describe.skipIf(!hasTmux)(
         },
       ],
       [
-        'a worker whose last-seen line has no session marker, as an old hook wrote it (TP-134)',
+        'a worker whose last-seen line has no session marker, as an old hook wrote it',
         async (): Promise<void> => {
           const file = join(stateOf(), 'state', 'heartbeat', SESSIONS.beta);
           const line = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
@@ -875,7 +875,7 @@ describe.skipIf(!hasTmux)(
     it.each([
       ['a session that can not be loaded', 'no-transcript-beta'],
       ['a session that writes no line', 'silent-beta'],
-    ])('warns with the worker, does not try again, goes on, keeps the session and exits 0, for %s (TP-36)', async (_name, flag) => {
+    ])('warns with the worker, does not try again, goes on, keeps the session and exits 0, for %s', async (_name, flag) => {
       await killedServer();
       await writeFile(join(outDir, flag), '');
       const again = await startFactory();
@@ -888,7 +888,7 @@ describe.skipIf(!hasTmux)(
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     }, RECOVERY_CASE_MS);
 
-    it('starts no pane for a work copy with a wrong settings file, warns with the file, resumes the other worker and exits 0 (TP-17)', async () => {
+    it('starts no pane for a work copy with a wrong settings file, warns with the file, resumes the other worker and exits 0', async () => {
       await killedServer();
       const settings = join(box.node, 'work-copies', 'web', 'beta', '.claude', 'settings.local.json');
       await writeFile(settings, JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://other.example' } }));
@@ -904,8 +904,8 @@ describe.skipIf(!hasTmux)(
   },
 );
 
-describe.skipIf(!hasTmux)('factory start: the mark of the active machine (built binary, AC-16, TP-38, TP-39)', () => {
-  it('writes the machine id once and commits the mark with the first start, and the same machine does not warn after a kill of the server (TP-39)', async () => {
+describe.skipIf(!hasTmux)('factory start: the mark of the active machine (built binary)', () => {
+  it('writes the machine id once and commits the mark with the first start, and the same machine does not warn after a kill of the server', async () => {
     await initNode();
     const started = await startFactory();
     expect({ code: started.code, stderr: started.stderr }).toEqual({ code: 0, stderr: '' });
@@ -930,7 +930,7 @@ describe.skipIf(!hasTmux)('factory start: the mark of the active machine (built 
     expect(JSON.parse(await readFile(markFile, 'utf8'))).toMatchObject({ machine: id });
   }, RECOVERY_CASE_MS);
 
-  it('warns once when the mark names another machine, resumes the workers, exits 0 and marks this machine (TP-38)', async () => {
+  it('warns once when the mark names another machine, resumes the workers, exits 0 and marks this machine', async () => {
     await killedServer();
     await writeFile(join(stateOf(), 'active-machine.json'), markText(OTHER_MACHINE));
     expect((await box.git(stateOf(), ['add', 'active-machine.json'])).code).toBe(0);

@@ -259,7 +259,7 @@ describe('doctor: blocks', () => {
     expect(broken.text).toContain('safety (malformed');
   });
 
-  describe('the safety block (TP-43, TP-125)', () => {
+  describe('the safety block', () => {
     const editSafety = (deps: FakeDeps): void => {
       const claude = deps.files.get(CLAUDE_MD) ?? '';
       const at = claude.indexOf('<!-- factory:begin safety');
@@ -393,7 +393,7 @@ describe('doctor: the blocks of a layer', () => {
     expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'warn', text: 'not checked: factory.yaml is not valid' });
   });
 
-  describe('with a delegated value in the local file (TP-40, TP-67)', () => {
+  describe('with a delegated value in the local file', () => {
     const STORE = '/state/factory/owner-records.json';
 
     const delegateInLocalFile = (deps: FakeDeps): void => {
@@ -560,7 +560,7 @@ describe('doctor: root checks and the settings of the session folders', () => {
     expect(textOfCheck(results, 'permission-mode')).toContain('coordinator/.claude/settings.local.json');
   });
 
-  it('checks a Claude settings path that the root repo tracks, at any depth (TP-168)', async () => {
+  it('checks a Claude settings path that the root repo tracks, at any depth', async () => {
     const tracked = 'tools/deep/.claude/settings.json';
     const deps = await initialized({ git: { tracked: { [HOME]: [tracked] } } });
     deps.seed(`${HOME}/${tracked}`, BYPASS);
@@ -596,7 +596,7 @@ describe('doctor: root checks and the settings of the session folders', () => {
     expect(output.failed).toBe(true);
   });
 
-  it('fails when the root repo tracks the local file (TP-20)', async () => {
+  it('fails when the root repo tracks the local file', async () => {
     const deps = await initialized({ git: { tracked: { [HOME]: ['factory.local.yaml', 'factory.yaml'] } } });
     const output = await doctor(deps);
     const results = output.json['checks'] as CheckResult[];
@@ -605,7 +605,7 @@ describe('doctor: root checks and the settings of the session folders', () => {
     expect(output.failed).toBe(true);
   });
 
-  it('fails when the tracked files of a received root have no setup acceptance at all, and names init (TP-173)', async () => {
+  it('fails when the tracked files of a received root have no setup acceptance at all, and names init', async () => {
     const deps = await initialized({ git: { tracked: { [HOME]: ['scripts/run.sh', 'factory.yaml'] } } });
     registerRoot(deps, HOME, 'demo', [], 'received');
     deps.seed(`${HOME}/scripts/run.sh`, 'echo hi\n');
@@ -630,8 +630,8 @@ describe('doctor: root checks and the settings of the session folders', () => {
 
   it.each([
     ['a changed tracked file', 'scripts/run.sh', 'echo one\n', 'echo two\n'],
-    ['a changed tracked MCP config file (TP-165)', '.mcp.json', '{"mcpServers":{}}\n', '{"mcpServers":{"a":{}}}\n'],
-  ])('fails for %s on a received root and never accepts it, also on a terminal window (TP-158)', async (_name, path, before, after) => {
+    ['a changed tracked MCP config file', '.mcp.json', '{"mcpServers":{}}\n', '{"mcpServers":{"a":{}}}\n'],
+  ])('fails for %s on a received root and never accepts it, also on a terminal window', async (_name, path, before, after) => {
     const deps = await initialized({ git: { tracked: { [HOME]: [path, 'factory.yaml'] } } });
     registerRoot(deps, HOME, 'demo', [], 'received');
     deps.seed(`${HOME}/${path}`, before);
@@ -1052,7 +1052,7 @@ describe('doctor: tools', () => {
   });
 });
 
-describe('doctor: the version of the agent (TP-35)', () => {
+describe('doctor: the version of the agent', () => {
   const agentCheck = async (setup: Setup = {}) => {
     const deps = await initialized(setup);
     return { deps, result: await checkAgentVersion(deps, await inspectConfig(deps, HOME)) };
@@ -1164,7 +1164,7 @@ describe('doctor: the root', () => {
   });
 });
 
-describe('doctor: the temp folders of a stopped init (TP-73)', () => {
+describe('doctor: the temp folders of a stopped init', () => {
   it('is ok when the root holds no temp folder', async () => {
     expect(await checkTempFolders(await initialized(), HOME)).toEqual({
       id: 'temp-folder',
@@ -1493,7 +1493,7 @@ describe('doctor: the children', () => {
     expect((await probe(deps)).level).toBe('warn');
   });
 
-  describe('one id space for workers and children (AC-2)', () => {
+  describe('one id space for workers and children', () => {
     const webChild = [{ id: 'web', address: 'file:///w/web-factory' }];
 
     it('fails for a child with the id of a worker that has a record, and names the id', async () => {
@@ -1572,7 +1572,7 @@ describe('doctor: state repository', () => {
   });
 });
 
-describe('doctor: the delete guard of the state repository (TP-14)', () => {
+describe('doctor: the delete guard of the state repository', () => {
   const HOOK = `${HOME}/.factory/.git/factory-guard/pre-commit`;
 
   it('is ok when init left the guard on', async () => {
@@ -1639,7 +1639,7 @@ describe('doctor: the delete guard of the state repository (TP-14)', () => {
   });
 });
 
-describe('doctor: the size of the board files (TP-48, TP-87)', () => {
+describe('doctor: the size of the board files', () => {
   const STATE = `${HOME}/.factory`;
   const PATHS = {
     board: `${STATE}/${files.board}`,
@@ -1650,18 +1650,18 @@ describe('doctor: the size of the board files (TP-48, TP-87)', () => {
   const WARN_AT = Math.ceil((maxFileBytes * boardWarnPercent) / 100);
   const bytes = (size: number): string => 'x'.repeat(size);
 
-  it('M5-1b TP-48 passes with the board files that init made', async () => {
+  it('passes with the board files that init made', async () => {
     const deps = await initialized();
     expect(await checkBoardSize(deps, HOME)).toMatchObject({ id: 'board-size', level: 'ok' });
   });
 
-  it('M5-1b TP-48 passes for a board file one byte below 80 percent of the cap', async () => {
+  it('passes for a board file one byte below 80 percent of the cap', async () => {
     const deps = await initialized();
     deps.files.set(PATHS.board, bytes(WARN_AT - 1));
     expect(await checkBoardSize(deps, HOME)).toMatchObject({ level: 'ok' });
   });
 
-  it('M5-1b TP-48 warns for a board file at 80 percent of the cap, and names it', async () => {
+  it('warns for a board file at 80 percent of the cap, and names it', async () => {
     const deps = await initialized();
     deps.files.set(PATHS.board, bytes(WARN_AT));
     const result = await checkBoardSize(deps, HOME);
@@ -1674,7 +1674,7 @@ describe('doctor: the size of the board files (TP-48, TP-87)', () => {
   it.each([
     ['the waiting file', 'waiting', files.waiting],
     ['the decision log', 'decisionLog', files.decisionLog],
-  ] as const)('M5-1b TP-87 warns for %s at 80 percent of the cap, and names only that file', async (_label, key, name) => {
+  ] as const)('warns for %s at 80 percent of the cap, and names only that file', async (_label, key, name) => {
     const deps = await initialized();
     deps.files.set(PATHS[key], bytes(WARN_AT));
     const result = await checkBoardSize(deps, HOME);
@@ -1683,7 +1683,7 @@ describe('doctor: the size of the board files (TP-48, TP-87)', () => {
     expect(result.text.match(/\.json/g)).toHaveLength(1);
   });
 
-  it('M5-1b TP-87 names each of the three files that reach 80 percent of the cap', async () => {
+  it('names each of the three files that reach 80 percent of the cap', async () => {
     const deps = await initialized();
     for (const path of Object.values(PATHS)) deps.files.set(path, bytes(WARN_AT));
     const result = await checkBoardSize(deps, HOME);
@@ -1691,7 +1691,7 @@ describe('doctor: the size of the board files (TP-48, TP-87)', () => {
     for (const name of [files.board, files.waiting, files.decisionLog]) expect(result.text).toContain(name);
   });
 
-  it('M5-1b TP-87 warns for a board file above the cap, which no command can read', async () => {
+  it('warns for a board file above the cap, which no command can read', async () => {
     const deps = await initialized();
     deps.files.set(PATHS.board, bytes(maxFileBytes + 1));
     const result = await checkBoardSize(deps, HOME);
@@ -1699,13 +1699,13 @@ describe('doctor: the size of the board files (TP-48, TP-87)', () => {
     expect(result.text).toContain(`${files.board} is ${maxFileBytes + 1} bytes`);
   });
 
-  it('M5-1b TP-87 passes for a factory with no board files', async () => {
+  it('passes for a factory with no board files', async () => {
     const deps = await initialized();
     for (const path of Object.values(PATHS)) expect((await deps.fs.remove(path)).ok).toBe(true);
     expect(await checkBoardSize(deps, HOME)).toMatchObject({ level: 'ok' });
   });
 
-  it('M5-1b TP-87 warns that it did not check, and does not fail, when the size of a file cannot be read', async () => {
+  it('warns that it did not check, and does not fail, when the size of a file cannot be read', async () => {
     const deps = await initialized();
     const broken: Deps = { ...deps, fs: { ...deps.fs, statInfo: async () => failure('cannot read the size: EACCES') } };
     const result = await checkBoardSize(broken, HOME);
@@ -1714,7 +1714,7 @@ describe('doctor: the size of the board files (TP-48, TP-87)', () => {
     expect(result.text).toContain('EACCES');
   });
 
-  it('M5-1b TP-87 shows as a warning in the command, and the command is not failed', async () => {
+  it('shows as a warning in the command, and the command is not failed', async () => {
     const deps = await initialized();
     deps.files.set(PATHS.board, bytes(WARN_AT));
     const output = await doctor(deps);
@@ -1838,7 +1838,7 @@ describe('doctor: projects', () => {
   });
 });
 
-describe('doctor: projects that the factory can not share (F-17c)', () => {
+describe('doctor: projects that the factory can not share', () => {
   const WEB = sampleConfig().recipe.projects[0]!;
   const configWith = (projects: readonly Record<string, unknown>[], sources: Record<string, string> = {}): FactoryConfig => {
     const sample = sampleConfig();
@@ -1870,7 +1870,7 @@ describe('doctor: projects that the factory can not share (F-17c)', () => {
     expect(checkProjectUrls(state)).toEqual([{ id: 'project-urls', level: 'ok', text: 'no project is configured' }]);
   });
 
-  it('warns once per project with no URL, and names the project and the fix (TP-109)', async () => {
+  it('warns once per project with no URL, and names the project and the fix', async () => {
     const { state } = await stateOf(configWith([noUrl('lib', 'lib'), WEB, noUrl('tool', 'tool')]));
     const results = checkProjectUrls(state);
     expect(results.map((result) => [result.id, result.level])).toEqual([
@@ -1919,7 +1919,7 @@ describe('doctor: projects that the factory can not share (F-17c)', () => {
     expect(output.exitCode).toBeUndefined();
   });
 
-  it('fails the config check for a URL with a token, and prints no part of the token (TP-24)', async () => {
+  it('fails the config check for a URL with a token, and prints no part of the token', async () => {
     const deps = makeDeps();
     writeConfig(deps, sampleConfig());
     const path = `${HOME}/factory.yaml`;
@@ -1979,7 +1979,7 @@ describe('doctor: a pulled change in the shared file of a registered root (S-S1)
   });
 });
 
-describe('doctor: instruction files at the root and above it (TP-32, TP-34)', () => {
+describe('doctor: instruction files at the root and above it', () => {
   /** The user home is another folder, so that the names in `.claude` count at every level above the root. */
   const withFiles = (...paths: readonly string[]): FakeDeps => {
     const deps = makeDeps({ env: { HOME: '/elsewhere/u' } });
@@ -2058,7 +2058,7 @@ describe('doctor: instruction files at the root and above it (TP-32, TP-34)', ()
     expect(output.json['summary']).toMatchObject({ fail: 0 });
   });
 
-  it('gives the same text as the warning that start and init print (TP-33)', async () => {
+  it('gives the same text as the warning that start and init print', async () => {
     const deps = withFiles('/w/CLAUDE.md');
     const result = await checkInstructionFiles(deps, HOME);
     const lines = instructionFileWarnings(await scanInstructionFiles(deps, HOME));
@@ -2256,7 +2256,7 @@ describe('doctor: the local file', () => {
     expect(result.text).not.toContain('ghp_');
   });
 
-  describe('when the local file is a link (TP-147)', () => {
+  describe('when the local file is a link', () => {
     const linkedLocal = async (): Promise<FakeDeps> => {
       const links: Record<string, string> = {};
       const deps = await initialized({ links });
@@ -2303,7 +2303,7 @@ describe('doctor: the local file', () => {
   });
 });
 
-describe('doctor: the setup text and the rendered blocks (TP-104, TP-76)', () => {
+describe('doctor: the setup text and the rendered blocks', () => {
   const SETUP = `${HOME}/setup/coordinator.md`;
   const SETUP_WORKER = `${HOME}/setup/roles/worker.md`;
   const WORKER_MD = `${HOME}/.factory/roles/worker.md`;
@@ -2428,7 +2428,7 @@ describe('doctor: the setup text and the rendered blocks (TP-104, TP-76)', () =>
     expect(result.text).not.toContain('--overwrite');
   });
 
-  it('warns that an edited setup block is put back by upgrade, and names the setup file (TP-142)', async () => {
+  it('warns that an edited setup block is put back by upgrade, and names the setup file', async () => {
     const deps = await initialized();
     deps.files.set(CLAUDE_MD, (deps.files.get(CLAUDE_MD) ?? '').replace('Write your own text', 'Changed by hand'));
     const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));

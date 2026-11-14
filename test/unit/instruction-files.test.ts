@@ -70,7 +70,7 @@ describe('instruction files: the list', () => {
   });
 });
 
-describe('instruction files: the walk (TP-32)', () => {
+describe('instruction files: the walk', () => {
   it.each(instructionFiles)('finds %s at the root', async (name) => {
     const deps = make();
     const path = put(deps, ROOT, name);
@@ -152,7 +152,7 @@ describe('instruction files: the walk (TP-32)', () => {
   });
 });
 
-describe('instruction files: the user Claude folder (TP-34)', () => {
+describe('instruction files: the user Claude folder', () => {
   const seedUserFiles = (deps: FakeDeps): string => {
     for (const name of ['CLAUDE.md', ...claudeNames]) put(deps, USER_CLAUDE, name);
     for (const name of claudeNames) put(deps, USER_HOME, name);
@@ -237,7 +237,7 @@ describe('instruction files: the user Claude folder (TP-34)', () => {
   });
 });
 
-describe('instruction files: a folder that can not be read (TP-34)', () => {
+describe('instruction files: a folder that can not be read', () => {
   const lstatFails = (deps: FakeDeps, folder: string): Deps => ({
     ...deps,
     fs: {
@@ -295,7 +295,7 @@ describe('instruction files: a folder that can not be read (TP-34)', () => {
   });
 });
 
-describe('instruction files: the bound of the walk (TP-34)', () => {
+describe('instruction files: the bound of the walk', () => {
   it('looks at 64 folders: the root and 63 folders above it, and says it stopped', async () => {
     const root = deepPath(70);
     const deps = createFakeDeps({ env: { [env.userHome]: '/elsewhere/u' } });
@@ -323,7 +323,7 @@ describe('instruction files: the bound of the walk (TP-34)', () => {
   });
 });
 
-describe('instruction files: the warning (TP-32, TP-33)', () => {
+describe('instruction files: the warning', () => {
   it('is empty for a clean scan', () => {
     expect(instructionFileWarnings(CLEAN)).toEqual([]);
   });
@@ -360,7 +360,7 @@ describe('instruction files: the warning (TP-32, TP-33)', () => {
   });
 });
 
-describe('instruction files: the warning before a command acts (TP-33)', () => {
+describe('instruction files: the warning before a command acts', () => {
   it('prints each line of the warning with the deps, and nothing for a clean tree', async () => {
     const clean = make();
     await warnInstructionFiles(clean, ROOT);

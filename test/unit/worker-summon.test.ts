@@ -140,7 +140,7 @@ describe('worker summon: a pane that the launch of the worker did not make', () 
   });
 });
 
-describe('worker summon: the pane goes into the slot of the view window (TP-31)', () => {
+describe('worker summon: the pane goes into the slot of the view window', () => {
   it('swaps the pane of the worker with the board pane, and keeps the other panes where they are', async () => {
     const made = await makeSlot(ALPHA_ONLY);
     await summoned(made);
@@ -244,7 +244,7 @@ describe('worker summon: the pane goes into the slot of the view window (TP-31)'
   });
 });
 
-describe('worker summon: the timer and the token (TP-32)', () => {
+describe('worker summon: the timer and the token', () => {
   it('holds only digits, a hex token and pane ids, besides the fixed words of the restore', async () => {
     const made = await makeSlot(ALPHA_ONLY);
     await summoned(made);
@@ -359,7 +359,7 @@ describe('worker summon: a timer that fires when a pane is gone', () => {
   });
 });
 
-describe('worker summon: the session of the node (TP-127)', () => {
+describe('worker summon: the session of the node', () => {
   it('exits 3 and names factory start when no tmux session of the node runs', async () => {
     const made = await makeSlot({ ...ALPHA_ONLY, tmux: { sessions: {} } });
     const error = await failedWith(made);

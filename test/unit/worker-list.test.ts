@@ -199,7 +199,7 @@ describe('worker list: the table', () => {
   });
 });
 
-describe('worker list: the mark of the context percent (TP-22)', () => {
+describe('worker list: the mark of the context percent', () => {
   it.each([
     [29, ''],
     [30, 'PREPARE'],
@@ -248,12 +248,12 @@ describe('worker list: the state from the last event', () => {
     ['PreCompact', 'busy'],
     ['PreToolUse', 'busy'],
     ['Notification', 'waits'],
-  ] as const)('TP-5: shows %s as %s', async (event, state) => {
+  ] as const)('shows %s as %s', async (event, state) => {
     const made = await make({ workers: [{ id: 'alpha', line: { event, percent: 10 } }] });
     expect(rowsOf(await listed(made))[0]?.state).toBe(state);
   });
 
-  it('TP-5: puts the state waits in the JSON for a worker that waits at a dialog', async () => {
+  it('puts the state waits in the JSON for a worker that waits at a dialog', async () => {
     const made = await make({ workers: [{ id: 'alpha', line: { event: 'Notification', percent: 10 } }] });
     expect(jsonOf(await listed(made)).workers[0]).toMatchObject({ id: 'alpha', state: 'waits' });
   });
@@ -603,7 +603,7 @@ describe('worker list: the command line', () => {
   });
 });
 
-describe('worker list: the board port (TP-44, TP-64)', () => {
+describe('worker list: the board port', () => {
   const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
   const WORKERS = [
     { id: 'alpha', line: { event: 'Stop', percent: 5 } },
@@ -618,13 +618,13 @@ describe('worker list: the board port (TP-44, TP-64)', () => {
     return made;
   };
 
-  it('M5-1b TP-44 lists the workers with no warning when the board is whole', async () => {
+  it('lists the workers with no warning when the board is whole', async () => {
     const output = await listed(await withBoard(BOARD));
     expect(rowsOf(output).map((row) => row.id)).toEqual(['alpha', 'beta']);
     expect(output.warnings).toEqual([]);
   });
 
-  it('M5-1b TP-44 lists the workers with no warning when the setup has no board block', async () => {
+  it('lists the workers with no warning when the setup has no board block', async () => {
     const output = await listed(await withBoard(BOARD, sampleConfig()));
     expect(rowsOf(output).map((row) => row.id)).toEqual(['alpha', 'beta']);
     expect(output.warnings).toEqual([]);
@@ -633,7 +633,7 @@ describe('worker list: the board port (TP-44, TP-64)', () => {
   it.each([
     ['a board file that is not there', undefined],
     ['a board file that is not JSON', 'not json'],
-  ])('M5-1b TP-44 lists the workers, with one warning that names the board file, for %s', async (_name, text) => {
+  ])('lists the workers, with one warning that names the board file, for %s', async (_name, text) => {
     const output = await listed(await withBoard(text));
     expect(rowsOf(output).map((row) => row.id)).toEqual(['alpha', 'beta']);
     expect(output.warnings).toHaveLength(1);
@@ -641,7 +641,7 @@ describe('worker list: the board port (TP-44, TP-64)', () => {
     expect(output.failed).toBe(false);
   });
 
-  it('M5-1b TP-64 reads the board file once, and changes no file', async () => {
+  it('reads the board file once, and changes no file', async () => {
     const made = await withBoard(BOARD);
     const before = snapshot(made.deps);
     const counted = countReadsOf(made.deps, BOARD_FILE);
@@ -652,11 +652,11 @@ describe('worker list: the board port (TP-44, TP-64)', () => {
   });
 });
 
-describe('worker list: the name of a folder prints clean (TP-91, TP-105)', () => {
+describe('worker list: the name of a folder prints clean', () => {
   const BIDI = String.fromCodePoint(0x202e);
   const NAME = `bad${BIDI}na\nme`;
 
-  it('M5-1b TP-91 shows the name of a folder with a bidi mark and a line break as one clean text in the warning', async () => {
+  it('shows the name of a folder with a bidi mark and a line break as one clean text in the warning', async () => {
     const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop', percent: 5 } }] });
     made.deps.seed(`/w/node/.factory/workers/${NAME}/worker.json`, '{}');
     const output = await listed(made);
@@ -666,7 +666,7 @@ describe('worker list: the name of a folder prints clean (TP-91, TP-105)', () =>
     expect(output.warnings[0]).not.toContain(BIDI);
   });
 
-  it('M5-1b TP-105 prints no hidden character in the JSON, for the name of a folder that has some', async () => {
+  it('prints no hidden character in the JSON, for the name of a folder that has some', async () => {
     const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop', percent: 5 } }] });
     made.deps.seed(`/w/node/.factory/workers/${NAME}/worker.json`, '{}');
     const sink = captureSink();

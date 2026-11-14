@@ -31,7 +31,7 @@ import { HOME, HOOK } from '../helpers/guard-fixture.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
 
-// The decide command (M5-1b, phase B5c): the parse, the owner check, the request block, the question and the record.
+// The decide command: the parse, the owner check, the request block, the question and the record.
 
 const LAYOUT = layoutOf(HOME);
 const LOCK_FILE = join(LAYOUT.locksDir, `${stateLock.name}${stateLock.lock.suffix}`);
@@ -166,8 +166,8 @@ const expectNothingDone = (repo: BoardRepo, before: ReadonlyMap<string, string>,
   expect(repo.deps.written).toEqual([]);
 };
 
-describe('decide: the words and the flags are checked first, with exit 2 (TP-184, TP-187)', () => {
-  it('M5-1b TP-187 says that decide read is not in this version, with exit 2, before the owner check', async () => {
+describe('decide: the words and the flags are checked first, with exit 2', () => {
+  it('says that decide read is not in this version, with exit 2, before the owner check', async () => {
     const repo = await nodeOf();
     const error = errorOf(await decide(repo.deps, { words: ['read', 'D-1'] }));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -175,17 +175,17 @@ describe('decide: the words and the flags are checked first, with exit 2 (TP-184
     expect(error.message).toContain('decide read');
   });
 
-  it('M5-1b TP-187 says the same for decide read with no more words', async () => {
+  it('says the same for decide read with no more words', async () => {
     const repo = await nodeOf();
     expect(errorOf(await decide(repo.deps, { words: ['read'] })).message).toContain('not in this version');
   });
 
-  it.each([[[]], [['D-1']], [['D-1', 'a', 'b']]] as const)('M5-1b TP-187 exits 2 for %j: decide takes two words', async (words) => {
+  it.each([[[]], [['D-1']], [['D-1', 'a', 'b']]] as const)('exits 2 for %j: decide takes two words', async (words) => {
     const repo = await nodeOf();
     expect(exitOf(await decide(repo.deps, { words }))).toBe(2);
   });
 
-  it('M5-1b TP-187 exits 2 for the json flag and names the text output', async () => {
+  it('exits 2 for the json flag and names the text output', async () => {
     const repo = await nodeOf();
     const error = errorOf(await decide(repo.deps, { json: true }));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -193,17 +193,17 @@ describe('decide: the words and the flags are checked first, with exit 2 (TP-184
     expect(error.hint).toContain('factory decide');
   });
 
-  it.each([['D-05'], ['D-0'], ['B-1'], ['d-1'], ['D-1000000000']])('M5-1b TP-187 exits 2 for the id %s, which is not canonical', async (id) => {
+  it.each([['D-05'], ['D-0'], ['B-1'], ['d-1'], ['D-1000000000']])('exits 2 for the id %s, which is not canonical', async (id) => {
     const repo = await nodeOf();
     expect(exitOf(await decide(repo.deps, { words: [id, 'a'] }))).toBe(2);
   });
 
-  it.each([['-a'], ['a/b'], ['a b'], ['x'.repeat(41)]])('M5-1b TP-187 exits 2 for the option key %s, which is not in the token form', async (key) => {
+  it.each([['-a'], ['a/b'], ['a b'], ['x'.repeat(41)]])('exits 2 for the option key %s, which is not in the token form', async (key) => {
     const repo = await nodeOf();
     expect(exitOf(await decide(repo.deps, { words: ['D-1', key] }))).toBe(2);
   });
 
-  it('M5-1b TP-148 shows a typed option that has an escape sequence and a long text clean and cut', async () => {
+  it('shows a typed option that has an escape sequence and a long text clean and cut', async () => {
     const repo = await nodeOf();
     const error = errorOf(await decide(repo.deps, { words: ['D-1', `${'x'.repeat(100)}\u001b[31m`] }));
     expect(error.message).not.toContain('\u001b');
@@ -219,7 +219,7 @@ describe('decide: the words and the flags are checked first, with exit 2 (TP-184
     ['a control character', 'bell\u0007'],
     ['a bidi character', 'bidi ‮ text'],
     ['a hidden character', 'zero​width'],
-  ])('M5-1b TP-184 exits 2 for a note with %s, before the owner check, the question and any file', async (_name, note) => {
+  ])('exits 2 for a note with %s, before the owner check, the question and any file', async (_name, note) => {
     const repo = await nodeOf();
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo, () => ok('y'), { stdinIsTTY: false });
@@ -228,7 +228,7 @@ describe('decide: the words and the flags are checked first, with exit 2 (TP-184
   });
 });
 
-describe('decide: the owner check, the hosted kind and the guard come before the read and the question (TP-141, TP-143, TP-164)', () => {
+describe('decide: the owner check, the hosted kind and the guard come before the read and the question', () => {
   const CASES: readonly (readonly [string, Partial<Deps>])[] = [
     ['FACTORY_SESSION is set', { env: { PATH: '/bin', XDG_STATE_HOME: '/state', [env.session]: 'demo' } }],
     ['CLAUDECODE is set', { env: { PATH: '/bin', XDG_STATE_HOME: '/state', [env.claudeCode]: '1' } }],
@@ -236,7 +236,7 @@ describe('decide: the owner check, the hosted kind and the guard come before the
     ['stdout is not a terminal', { stdoutIsTTY: false }],
   ];
 
-  it.each(CASES)('M5-1b TP-143 exits 4 when %s, names decide, and writes and asks nothing', async (_name, changes) => {
+  it.each(CASES)('exits 4 when %s, names decide, and writes and asks nothing', async (_name, changes) => {
     const repo = await nodeOf();
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo, () => ok('y'), changes);
@@ -247,7 +247,7 @@ describe('decide: the owner check, the hosted kind and the guard come before the
     expect(repo.deps.files.has(STORE_PATH)).toBe(false);
   });
 
-  it('M5-1b TP-141 exits 4 with the guard off, shows no request block, asks nothing and writes nothing', async () => {
+  it('exits 4 with the guard off, shows no request block, asks nothing and writes nothing', async () => {
     const repo = await nodeOf();
     repo.deps.files.set(HOOK, '#!/bin/sh\nexit 0\n');
     const before = new Map(repo.deps.files);
@@ -256,7 +256,7 @@ describe('decide: the owner check, the hosted kind and the guard come before the
     expectNothingDone(repo, before, terminal);
   });
 
-  it('M5-1b TP-164 exits 4 for a hosted tracker kind, with the message, no question, no commit and no store file', async () => {
+  it('exits 4 for a hosted tracker kind, with the message, no question, no commit and no store file', async () => {
     const repo = await nodeOf({ hosted: true });
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo);
@@ -268,7 +268,7 @@ describe('decide: the owner check, the hosted kind and the guard come before the
   });
 });
 
-describe('decide: the state of the number comes before the question (TP-145, TP-148, TP-152, TP-193)', () => {
+describe('decide: the state of the number comes before the question', () => {
   const refused = async (setup: Setup, overrides: Partial<DecideOptions> = {}): Promise<{ error: CliError; repo: BoardRepo }> => {
     const repo = await nodeOf(setup);
     const before = new Map(repo.deps.files);
@@ -278,24 +278,24 @@ describe('decide: the state of the number comes before the question (TP-145, TP-
     return { error, repo };
   };
 
-  it('M5-1b TP-145 exits 2 for a number that no file holds', async () => {
+  it('exits 2 for a number that no file holds', async () => {
     const { error } = await refused({}, { words: ['D-9', 'a'] });
     expect(exitCodeOf[error.kind]).toBe(2);
   });
 
-  it('M5-1b TP-145 exits 2 for an option that the request does not have, and lists the keys', async () => {
+  it('exits 2 for an option that the request does not have, and lists the keys', async () => {
     const { error } = await refused({}, { words: ['D-1', 'z'] });
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain('a, b');
   });
 
-  it('M5-1b TP-145 exits 1 for a closed number', async () => {
+  it('exits 1 for a closed number', async () => {
     const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(closedRow()) });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('2030-01-02');
   });
 
-  it('M5-1b TP-145 exits 1 for a number that the coordinator closed with a decision, and names the decider', async () => {
+  it('exits 1 for a number that the coordinator closed with a decision, and names the decider', async () => {
     const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(closedRow({ decider: 'coordinator' })) });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('decided by the "coordinator"');
@@ -312,21 +312,21 @@ describe('decide: the state of the number comes before the question (TP-145, TP-
     expect(error.hint).toContain(addNewRemedy);
   });
 
-  it('M5-1b TP-145 does not print a decider of a closed row that is no value of the deciders', async () => {
+  it('does not print a decider of a closed row that is no value of the deciders', async () => {
     const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(closedRow({ decider: 'EVIL-PEER' })) });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).not.toContain('EVIL-PEER');
     expect(error.message).not.toContain('decided by');
   });
 
-  it('M5-1b TP-148 shows the date of a closed row clean and cut', async () => {
+  it('shows the date of a closed row clean and cut', async () => {
     const date = `2030\u001b[31m${'9'.repeat(100)}`;
     const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(closedRow({ date })) });
     expect(error.message).not.toContain('\u001b');
     expect(error.message).not.toContain('9'.repeat(maxEchoChars + 1));
   });
 
-  it('M5-1b TP-145 exits 1 for a row with by and a matching record, and names the date of the answer', async () => {
+  it('exits 1 for a row with by and a matching record, and names the date of the answer', async () => {
     const { error } = await refused({
       waiting: waitingOf(),
       decisionLog: logOf(answerRow({ date: '2030-02-03' })),
@@ -336,14 +336,14 @@ describe('decide: the state of the number comes before the question (TP-145, TP-
     expect(error.message).toContain('2030-01-05');
   });
 
-  it('M5-1b TP-193 exits 1 for a row with by and no record: the row is not an owner answer, and a new request is the remedy', async () => {
+  it('exits 1 for a row with by and no record: the row is not an owner answer, and a new request is the remedy', async () => {
     const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(answerRow()) });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('not an owner answer');
     expect(error.hint).toContain('factory request add');
   });
 
-  it('M5-1b TP-193 exits 1 for a row with by and a record of another request text', async () => {
+  it('exits 1 for a row with by and a record of another request text', async () => {
     const { error } = await refused({
       waiting: waitingOf(),
       decisionLog: logOf(answerRow({ request: textOf(CHANGED_ENTRY) })),
@@ -353,33 +353,33 @@ describe('decide: the state of the number comes before the question (TP-145, TP-
     expect(error.message).toContain('not an owner answer');
   });
 
-  it('M5-1b TP-145 exits 1 for a number that only the decision file holds, and names the stored time', async () => {
+  it('exits 1 for a number that only the decision file holds, and names the stored time', async () => {
     const { error } = await refused({ waiting: waitingOf(), store: storeOf(storedRecord({ at: '2030-01-05T10:00:00.000Z' })) });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('2030-01-05T10:00:00.000Z');
   });
 
-  it('M5-1b TP-193 exits 1 and names the decision file when it cannot be read', async () => {
+  it('exits 1 and names the decision file when it cannot be read', async () => {
     const { error } = await refused({ store: '{"schema":1,' });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(STORE_PATH);
   });
 
-  it('M5-1b TP-152 exits 1 before the question and writes nothing when the decision file is not valid', async () => {
+  it('exits 1 before the question and writes nothing when the decision file is not valid', async () => {
     const { error } = await refused({ store: storeOf({ ...storedRecord(), extra: 'x' }) });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(STORE_PATH);
   });
 
-  it('M5-1b TP-168 exits 1, names waiting.json and writes nothing for an entry that fails the strict read', async () => {
+  it('exits 1, names waiting.json and writes nothing for an entry that fails the strict read', async () => {
     const { error } = await refused({ waiting: waitingOf({ ...ENTRY, extra: 'x' }) });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.waiting);
   });
 });
 
-describe('decide: the record of the store for an open request (TP-153, TP-177, TP-178)', () => {
-  it('M5-1b TP-178 exits 1 for a record with another request hash, names the stored option and time, and gives the two remedies', async () => {
+describe('decide: the record of the store for an open request', () => {
+  it('exits 1 for a record with another request hash, names the stored option and time, and gives the two remedies', async () => {
     const repo = await nodeOf({ store: storeOf(storedRecord({ hash: 'f'.repeat(64), option: 'b', at: '2030-01-01T00:00:00.000Z' })) });
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo);
@@ -392,7 +392,7 @@ describe('decide: the record of the store for an open request (TP-153, TP-177, T
     expectNothingDone(repo, before, terminal);
   });
 
-  it('M5-1b TP-153 exits 1 for a record with another option, names the stored option and time, and changes nothing', async () => {
+  it('exits 1 for a record with another option, names the stored option and time, and changes nothing', async () => {
     const repo = await nodeOf({ store: storeOf(storedRecord({ option: 'b', at: '2030-01-01T00:00:00.000Z' })) });
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo);
@@ -403,7 +403,7 @@ describe('decide: the record of the store for an open request (TP-153, TP-177, T
     expectNothingDone(repo, before, terminal);
   });
 
-  it('M5-1b TP-177 finishes the copies of an orphan record with exit 0, with the stored time and no new store text', async () => {
+  it('finishes the copies of an orphan record with exit 0, with the stored time and no new store text', async () => {
     const stored = storeOf(storedRecord({ at: '2029-12-30T10:00:00.000Z' }));
     const repo = await nodeOf({ store: stored });
     const terminal = atTerminal(repo);
@@ -416,7 +416,7 @@ describe('decide: the record of the store for an open request (TP-153, TP-177, T
     expect(plainText(output)).toContain('Finished the board copy');
   });
 
-  it('M5-1b TP-177 exits 1 and commits no board copy when another run stored the same answer with another time during the question', async () => {
+  it('exits 1 and commits no board copy when another run stored the same answer with another time during the question', async () => {
     const repo = await nodeOf();
     const otherAt = '2029-12-30T10:00:00.000Z';
     const terminal = atTerminal(repo, () => {
@@ -434,7 +434,7 @@ describe('decide: the record of the store for an open request (TP-153, TP-177, T
     expect(repo.deps.files.has(LOCK_FILE)).toBe(false);
   });
 
-  it('M5-1b TP-177 finishes the board copy with the stored time when the same command runs again after that stop', async () => {
+  it('finishes the board copy with the stored time when the same command runs again after that stop', async () => {
     const repo = await nodeOf();
     const otherAt = '2029-12-30T10:00:00.000Z';
     errorOf(
@@ -452,8 +452,8 @@ describe('decide: the record of the store for an open request (TP-153, TP-177, T
   });
 });
 
-describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () => {
-  it('M5-1b TP-150 asks once, writes the store record outside the factory folder with no note, and shows what was recorded', async () => {
+describe('decide: a yes answer records the answer', () => {
+  it('asks once, writes the store record outside the factory folder with no note, and shows what was recorded', async () => {
     const repo = await nodeOf();
     const terminal = atTerminal(repo);
     const output = valueOf(await decide(terminal.deps));
@@ -471,7 +471,7 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     expect(output.warnings).toEqual([]);
   });
 
-  it('M5-1b TP-154 makes one commit with the two board files, the profile record and log.md, and a row with by and the request text', async () => {
+  it('makes one commit with the two board files, the profile record and log.md, and a row with by and the request text', async () => {
     const repo = await nodeOf({ waiting: waitingOf(ENTRY, { ...ENTRY, id: 'D-2' }) });
     valueOf(await decide(atTerminal(repo).deps));
     expect(repo.commits).toHaveLength(1);
@@ -482,7 +482,7 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     expect(requestHashOf(String(row?.['request']))).toBe(HASH);
   });
 
-  it('M5-1b TP-150 puts the note in the profile record only, and shows it in the request block', async () => {
+  it('puts the note in the profile record only, and shows it in the request block', async () => {
     const repo = await nodeOf();
     valueOf(await decide(atTerminal(repo).deps, { note: 'cheaper to run' }));
     expect(repo.textOf(RECORD_PATH)).toContain('cheaper to run');
@@ -490,7 +490,7 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     expect(shownOf(repo)).toContain('> Note:     cheaper to run');
   });
 
-  it('M5-1b TP-181 writes the request block to stdout before the question: the title, the question, every option, the marks', async () => {
+  it('writes the request block to stdout before the question: the title, the question, every option, the marks', async () => {
     const repo = await nodeOf();
     const seen: string[][] = [];
     const terminal = atTerminal(repo, () => {
@@ -508,7 +508,7 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     ]);
   });
 
-  it('M5-1b TP-181 shows a question of 500 characters in full and wrapped', async () => {
+  it('shows a question of 500 characters in full and wrapped', async () => {
     const question = Array.from({ length: 100 }, (_, index) => `w${String(index).padStart(3, '0')}`).join(' ').slice(0, boardTextLimits.maxQuestionChars);
     const repo = await nodeOf({ waiting: waitingOf({ ...ENTRY, question }) });
     valueOf(await decide(atTerminal(repo).deps));
@@ -521,7 +521,7 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(120);
   });
 
-  it('M5-1b TP-194 gives the record, the row and the file name the date of the answer when the clock passes midnight during the question', async () => {
+  it('gives the record, the row and the file name the date of the answer when the clock passes midnight during the question', async () => {
     const repo = await nodeOf();
     let now = new Date('2030-01-02T23:59:59.000Z');
     const terminal = atTerminal(
@@ -538,15 +538,15 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     expect(repo.textOf(fileNames.decisionLog)).toContain('"date": "2030-01-03"');
   });
 
-  it.each([['y'], ['Y'], ['yes'], ['YES'], [' y ']])('M5-1b TP-150 takes the answer %j as yes', async (answer) => {
+  it.each([['y'], ['Y'], ['yes'], ['YES'], [' y ']])('takes the answer %j as yes', async (answer) => {
     const repo = await nodeOf();
     valueOf(await decide(atTerminal(repo, () => ok(answer)).deps));
     expect(storedRecords(repo)).toHaveLength(1);
   });
 });
 
-describe('decide: a no answer, the lock during the question, and a request that changes (TP-146, TP-147)', () => {
-  it.each([['n'], ['N'], [''], ['maybe'], ['yy']])('M5-1b TP-146 exits 2 for the answer %j, with the request block shown and nothing written', async (answer) => {
+describe('decide: a no answer, the lock during the question, and a request that changes', () => {
+  it.each([['n'], ['N'], [''], ['maybe'], ['yy']])('exits 2 for the answer %j, with the request block shown and nothing written', async (answer) => {
     const repo = await nodeOf();
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo, () => ok(answer));
@@ -558,7 +558,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
     expect(shownOf(repo)[0]).toBe('> Decision D-1');
   });
 
-  it('M5-1b TP-146 returns the error of a question that cannot be answered, and writes nothing', async () => {
+  it('returns the error of a question that cannot be answered, and writes nothing', async () => {
     const repo = await nodeOf();
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo, () => failure('the input has ended'));
@@ -567,7 +567,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-146 holds no lock during the question, so a parallel write of the board works', async () => {
+  it('holds no lock during the question, so a parallel write of the board works', async () => {
     const repo = await nodeOf();
     const during: { lock: boolean; added: CliResult<CommandOutput> | undefined } = { lock: true, added: undefined };
     const terminal = atTerminal(repo, async () => {
@@ -586,7 +586,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
     expect(storedRecords(repo)).toHaveLength(1);
   });
 
-  it('M5-1b TP-147 exits 1 for a request that changed during the question, and writes nothing to the store or the board', async () => {
+  it('exits 1 for a request that changed during the question, and writes nothing to the store or the board', async () => {
     const repo = await nodeOf();
     const terminal = atTerminal(repo, () => {
       repo.deps.seed(WAITING_PATH, waitingOf(CHANGED_ENTRY));
@@ -600,7 +600,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
     expect(repo.textOf(fileNames.waiting)).toBe(waitingOf(CHANGED_ENTRY));
   });
 
-  it('M5-1b TP-147 exits 1 for a request that was closed during the question, and writes nothing to the store', async () => {
+  it('exits 1 for a request that was closed during the question, and writes nothing to the store', async () => {
     const repo = await nodeOf();
     const terminal = atTerminal(repo, () => {
       repo.deps.seed(WAITING_PATH, waitingOf());
@@ -613,7 +613,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
   });
 });
 
-describe('decide: a failure after the store write says what is saved (TP-177, TP-180, TP-190, TP-191)', () => {
+describe('decide: a failure after the store write says what is saved', () => {
   /** The deps in which the commit of the helper ends as `how` says. */
   const committing = (terminal: Terminal, repo: BoardRepo, how: 'fails' | 'lands' | 'lost-head'): Deps => {
     let attempted = false;
@@ -634,7 +634,7 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     };
   };
 
-  it('M5-1b TP-177 says that the answer is saved in the owner store, and the same command finishes the board copy with exit 0', async () => {
+  it('says that the answer is saved in the owner store, and the same command finishes the board copy with exit 0', async () => {
     const repo = await nodeOf();
     const error = errorOf(await decide(committing(atTerminal(repo), repo, 'fails')));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -648,7 +648,7 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-190 says that the answer is recorded and the commit is made, with no retry line, and the next decide says answered on the date', async () => {
+  it('says that the answer is recorded and the commit is made, with no retry line, and the next decide says answered on the date', async () => {
     const repo = await nodeOf();
     const error = errorOf(await decide(committing(atTerminal(repo), repo, 'lands')));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -659,7 +659,7 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     expect(next.message).toContain('answered by the owner on "2030-01-02"');
   });
 
-  it('M5-1b TP-191 says that the answer is saved, prints the git check line and no retry line when the state of the commit is not known', async () => {
+  it('says that the answer is saved, prints the git check line and no retry line when the state of the commit is not known', async () => {
     const repo = await nodeOf();
     const error = errorOf(await decide(committing(atTerminal(repo), repo, 'lost-head')));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -670,7 +670,7 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     expect(storedRecords(repo)).toEqual([storedRecord()]);
   });
 
-  it('M5-1b TP-180 counts a saved store change with a left lock file as saved: the board copy is written, and a warning names the lock file', async () => {
+  it('counts a saved store change with a left lock file as saved: the board copy is written, and a warning names the lock file', async () => {
     const repo = await nodeOf();
     const terminal = atTerminal(repo);
     const stuck: Deps = {
@@ -685,7 +685,7 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     expect(waitingIds(repo)).toEqual([]);
   });
 
-  it('M5-1b TP-166 names the cap and says to run decide again when the new text of log.md is over the cap, and writes no store record', async () => {
+  it('names the cap and says to run decide again when the new text of log.md is over the cap, and writes no store record', async () => {
     const repo = await nodeOf();
     repo.deps.seed(join(LAYOUT.stateDir, stateRel.profileLog), `# Decision log\n\n${'x'.repeat(maxFileBytes - 20)}`);
     const error = errorOf(await decide(atTerminal(repo).deps));
@@ -696,7 +696,7 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-174 exits 1 and names the decision file when it is full, and changes no board file', async () => {
+  it('exits 1 and names the decision file when it is full, and changes no board file', async () => {
     const full = Array.from({ length: 1000 }, (_, index) => storedRecord({ id: `D-${index + 2}` }));
     const repo = await nodeOf({ store: storeOf(...full) });
     const before = new Map(repo.deps.files);
@@ -709,26 +709,26 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
   });
 });
 
-describe('decide: static checks of the source (TP-165, TP-188)', () => {
+describe('decide: static checks of the source', () => {
   const source = readFileSync(join(__dirname, '..', '..', 'src', 'commands', 'decide.ts'), 'utf8');
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-  it('M5-1b TP-165 never reads the stage key', () => {
+  it('never reads the stage key', () => {
     expect(code).not.toMatch(/\bstage\b/i);
     expect(code).not.toMatch(/\bboardKeys\b/);
   });
 
-  it('M5-1b TP-188 names no flag but the json flag, which it refuses, so no flag skips the question', () => {
+  it('names no flag but the json flag, which it refuses, so no flag skips the question', () => {
     const named = [...code.matchAll(/\bflags\.(\w+)/g)].map((match) => match[1]);
     expect(named.every((name) => name === 'json')).toBe(true);
   });
 
-  it('M5-1b TP-188 asks the question with the prompt of the deps and the accept rule, in one place', () => {
+  it('asks the question with the prompt of the deps and the accept rule, in one place', () => {
     expect([...code.matchAll(/\bdeps\.prompt\(/g)]).toHaveLength(1);
     expect(code).toMatch(/\bACCEPT_ANSWER\b/);
   });
 
-  it('M5-1b TP-188 calls the writer of the owner record only inside the closure that it gives to the connector', () => {
+  it('calls the writer of the owner record only inside the closure that it gives to the connector', () => {
     expect([...code.matchAll(/\bputDecision\(/g)]).toHaveLength(1);
     expect([...code.matchAll(/\brecordDecision\(/g)]).toHaveLength(1);
   });

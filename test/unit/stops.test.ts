@@ -34,7 +34,7 @@ const errorOf = (result: CliResult<unknown>): CliError => {
 };
 
 /**
- * The checks of one error with a remedy line (AC-37): the exit code, one reason line and one remedy line. The text that
+ * The checks of one error with a remedy line: the exit code, one reason line and one remedy line. The text that
  * the command prints holds exactly these two lines.
  */
 const expectRemedyLine = (error: CliError, exitCode: number): void => {
@@ -299,7 +299,7 @@ describe('the remedy line of every stop in the source', () => {
     'migrate/inspect.ts: state.hint',
   ];
 
-  it('names a command in the remedy line of each of the stops of src (TP-106)', () => {
+  it('names a command in the remedy line of each of the stops of src', () => {
     const sweep = sweepOf(sourcesOfSrc());
     expect(sweep.calls).toBeGreaterThanOrEqual(45);
     expect(sweep.missing).toEqual([]);
@@ -529,7 +529,7 @@ describe('stops of init (exit 4)', () => {
     expectRemedy(errorOf(result), 2);
   });
 
-  it('prints one remedy line that names a command for a project folder that exists and is not a clone of the repo (exit 1, TP-106)', async () => {
+  it('prints one remedy line that names a command for a project folder that exists and is not a clone of the repo (exit 1)', async () => {
     const deps = initDeps();
     deps.seedDir('/w/fresh/web');
     const result = await runInit(deps, options({ projects: ['https://example.com/acme/web.git'] }));
@@ -538,7 +538,7 @@ describe('stops of init (exit 4)', () => {
     expect(error.message).toContain('/w/fresh/web');
   });
 
-  it('prints one remedy line that names the flag for a root inside a root of the factory list (exit 1, TP-106)', async () => {
+  it('prints one remedy line that names the flag for a root inside a root of the factory list (exit 1)', async () => {
     const deps = initDeps();
     deps.seed('/w/factory.yaml', 'schema: 2\n');
     registerRoot(deps, '/w', 'listed');
@@ -548,7 +548,7 @@ describe('stops of init (exit 4)', () => {
     expect(error.hint).toContain('--home DIR');
   });
 
-  it('prints one remedy line that names a command for a project path that is not the top folder of a work tree (exit 2, TP-106)', async () => {
+  it('prints one remedy line that names a command for a project path that is not the top folder of a work tree (exit 2)', async () => {
     const result = await runInit(initDeps(), options({ projects: ['/w/not-a-tree'] }));
     const error = errorOf(result);
     expect(error.message).toBe('/w/not-a-tree is not the top folder of a git work tree');
@@ -556,7 +556,7 @@ describe('stops of init (exit 4)', () => {
     expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
   });
 
-  it('prints one remedy line that names a command for two projects that take one folder (exit 2, TP-106)', async () => {
+  it('prints one remedy line that names a command for two projects that take one folder (exit 2)', async () => {
     const projects = ['https://example.com/acme/web.git', 'https://example.com/other/web.git'];
     const error = errorOf(await runInit(initDeps(), options({ projects })));
     expect(error.message).toBe('two projects take the folder web');
@@ -564,7 +564,7 @@ describe('stops of init (exit 4)', () => {
     expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
   });
 
-  it('prints one remedy line that names a command for more projects than the limit (exit 2, TP-106)', async () => {
+  it('prints one remedy line that names a command for more projects than the limit (exit 2)', async () => {
     const projects = Array.from({ length: MAX_PROJECTS + 1 }, (_, i) => `https://example.com/acme/p${i}.git`);
     const error = errorOf(await runInit(initDeps(), options({ projects })));
     expect(error.message).toBe(`at most ${MAX_PROJECTS} projects are allowed`);
@@ -572,7 +572,7 @@ describe('stops of init (exit 4)', () => {
     expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
   });
 
-  it('prints one remedy line that names a command for a folder that holds a local file already (exit 1, TP-106)', async () => {
+  it('prints one remedy line that names a command for a folder that holds a local file already (exit 1)', async () => {
     const deps = initDeps();
     deps.seed('/w/fresh/factory.local.yaml', 'schema: 1\n');
     const error = errorOf(await runInit(deps, options({})));
@@ -581,7 +581,7 @@ describe('stops of init (exit 4)', () => {
     expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
   });
 
-  it('prints one remedy line that names a command for a folder that holds a state folder already (exit 1, TP-106)', async () => {
+  it('prints one remedy line that names a command for a folder that holds a state folder already (exit 1)', async () => {
     const deps = initDeps();
     deps.seedDir('/w/fresh/.factory');
     const error = errorOf(await runInit(deps, options({})));
@@ -590,7 +590,7 @@ describe('stops of init (exit 4)', () => {
     expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
   });
 
-  it('prints one remedy line that names a command for a home that is a file (exit 1, TP-106)', async () => {
+  it('prints one remedy line that names a command for a home that is a file (exit 1)', async () => {
     const deps = initDeps();
     deps.seed('/w/fresh', 'x');
     const error = errorOf(await runInit(deps, options({})));
@@ -599,14 +599,14 @@ describe('stops of init (exit 4)', () => {
     expect(error.hint).toBe(`Run "${program} ${commands.init}" again with --home DIR to choose a folder.`);
   });
 
-  it('prints one remedy line that names a command for the origin of a repo that is not a URL (exit 1, TP-106)', () => {
+  it('prints one remedy line that names a command for the origin of a repo that is not a URL (exit 1)', () => {
     const error = errorOf(nameOfOrigin({ kind: 'shareable', url: '/w/web', credentialsRemoved: false }, commands.init));
     expect(error.message).toBe('the origin of a repo is not a URL');
     expectRemedy(error, 1);
     expect(error.hint).toBe(`Set the origin of the repo to a repo URL. Then run "${program} ${commands.init}" again.`);
   });
 
-  it('prints one remedy line that names a command for a folder name that makes no project id (exit 2, TP-106)', async () => {
+  it('prints one remedy line that names a command for a folder name that makes no project id (exit 2)', async () => {
     const { handler } = gitHandler({ gh: 'some-login', repos: { '/w/_': {} } });
     const deps = createFakeDeps({ cwd: '/w', env: { XDG_STATE_HOME: '/state', HOME: '/users/me' }, run: handler });
     const error = errorOf(await runInit(deps, options({ projects: ['/w/_'] })));
@@ -622,7 +622,7 @@ describe('the home that a command locates (exit 1)', () => {
   it.each([
     ['doctor', commands.doctor, (deps: FakeDeps, home: string) => runDoctor(deps, { home })],
     ['node', commands.node, (deps: FakeDeps, home: string) => runNode(deps, { home, words: ['children'] })],
-  ])('prints one remedy line that names %s for a home that is a file, and for a home that is not there (TP-106)', async (_name, command, run) => {
+  ])('prints one remedy line that names %s for a home that is a file, and for a home that is not there', async (_name, command, run) => {
     const deps = await makeNode();
     deps.seed('/w/file', 'x');
     for (const home of ['/w/file', '/w/none']) {

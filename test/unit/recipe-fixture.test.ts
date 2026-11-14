@@ -87,7 +87,7 @@ const fileOf = (deps: FakeDeps, rel: string): string => deps.files.get(`${HOME}/
 const wordsOfAllFiles = (deps: FakeDeps): string[] =>
   [...deps.files.entries()].flatMap(([path, text]) => softwareWordsIn(text).map((word) => `${path}: ${word}`));
 
-describe('the fixture recipe: init (TP-98)', () => {
+describe('the fixture recipe: init', () => {
   it('asks the two approval points of the recipe, in order, and the output holds no software word', async () => {
     const { deps, output } = await initialized();
     const questions = approvalQuestions(deps);
@@ -108,7 +108,7 @@ describe('the fixture recipe: init (TP-98)', () => {
     expect(config.value.entry).toBe(publishRecipe);
   });
 
-  it('M5-1b TP-29 seeds the board with the queue key of the recipe, and no software word', async () => {
+  it('seeds the board with the queue key of the recipe, and no software word', async () => {
     const { deps } = await initialized();
     expect(JSON.parse(fileOf(deps, '.factory/board.json'))).toEqual({ proofs: [], items: [], tracks: [] });
     expect(wordsOfAllFiles(deps)).toEqual([]);
@@ -132,7 +132,7 @@ describe('the fixture recipe: init (TP-98)', () => {
   });
 });
 
-describe('the fixture recipe: the blocks (TP-98)', () => {
+describe('the fixture recipe: the blocks', () => {
   it('renders the role text of the recipe and the safety block with the lines of the recipe, and no software word', async () => {
     const { deps } = await initialized();
     const claude = fileOf(deps, 'coordinator/CLAUDE.md');
@@ -171,7 +171,7 @@ describe('the fixture recipe: the blocks (TP-98)', () => {
   });
 });
 
-describe('the fixture recipe: doctor, upgrade and start (TP-98, TP-137)', () => {
+describe('the fixture recipe: doctor, upgrade and start', () => {
   it('doctor reads the config with the recipe, fails no check, and prints no software word', async () => {
     const { deps } = await initialized();
     const output = succeeded(await runDoctor(deps, { home: HOME }, publishRegistry));
@@ -278,7 +278,7 @@ describe('the fixture recipe: init with a project', () => {
   });
 });
 
-describe('factory help words with the fixture recipe (TP-100)', () => {
+describe('factory help words with the fixture recipe', () => {
   const run = async (deps: FakeDeps, registry: typeof publishRegistry) => {
     const sink = captureSink();
     const code = await runCli(['help', 'words'], deps, sink, registry);

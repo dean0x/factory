@@ -32,8 +32,8 @@ const track = (id: string, name = id, roadmap = false): Record<string, unknown> 
 
 const ADD = { words: ['add', 'core'], name: 'Core', roadmap: true };
 
-describe('track add and track list (TP-79)', () => {
-  it('M5-1b TP-79 stores the id, the name and the roadmap flag, and track list shows them', async () => {
+describe('track add and track list', () => {
+  it('stores the id, the name and the roadmap flag, and track list shows them', async () => {
     const repo = await boardNode();
     expect(linesOf(await run(repo, ADD))).toEqual(['Added the track core: Core (roadmap)']);
     valueOf(await run(repo, { words: ['add', 'docs'], name: 'Docs' }));
@@ -46,12 +46,12 @@ describe('track add and track list (TP-79)', () => {
     ]);
   });
 
-  it('M5-1b TP-79 says that there is no track yet for a board with no track', async () => {
+  it('says that there is no track yet for a board with no track', async () => {
     const repo = await boardNode();
     expect(linesOf(await run(repo, { words: ['list'] }))).toEqual(['No tracks yet.']);
   });
 
-  it('M5-1b TP-22 makes one commit that holds only the board file for a track add, and none for a list', async () => {
+  it('makes one commit that holds only the board file for a track add, and none for a list', async () => {
     const repo = await boardNode();
     valueOf(await run(repo, { words: ['list'] }));
     expect(repo.commits).toEqual([]);
@@ -60,8 +60,8 @@ describe('track add and track list (TP-79)', () => {
   });
 });
 
-describe('the tracks key of the board file (TP-70)', () => {
-  it('M5-1b TP-70 reads an old board with no tracks key as an empty track list, and the first track add creates the key', async () => {
+describe('the tracks key of the board file', () => {
+  it('reads an old board with no tracks key as an empty track list, and the first track add creates the key', async () => {
     const repo = await boardNode({ board: boardText([itemRecord('B-1')]) });
     expect(repo.textOf(fileNames.board)).not.toContain('"tracks"');
     expect(linesOf(await run(repo, { words: ['list'] }))).toEqual(['No tracks yet.']);
@@ -72,7 +72,7 @@ describe('the tracks key of the board file (TP-70)', () => {
   });
 });
 
-describe('the rules of a track id and a track name (TP-80, TP-89)', () => {
+describe('the rules of a track id and a track name', () => {
   const BAD: readonly (readonly [string, Partial<TrackOptions>])[] = [
     ['an id with a capital letter', { words: ['add', 'Core'], name: 'Core' }],
     ['an id with a bad first character', { words: ['add', '1core'], name: 'Core' }],
@@ -86,7 +86,7 @@ describe('the rules of a track id and a track name (TP-80, TP-89)', () => {
     ['an empty name', { words: ['add', 'core'], name: ' ' }],
   ];
 
-  it.each(BAD)('M5-1b TP-80 refuses %s with exit 2 and changes no file', async (_name, overrides) => {
+  it.each(BAD)('refuses %s with exit 2 and changes no file', async (_name, overrides) => {
     const repo = await boardNode();
     const before = repo.textOf(fileNames.board);
     expect(exitCodeOf[errorOf(await run(repo, overrides)).kind]).toBe(2);
@@ -94,20 +94,20 @@ describe('the rules of a track id and a track name (TP-80, TP-89)', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-80 accepts a track id of exactly the most characters, and a name of exactly the most characters', async () => {
+  it('accepts a track id of exactly the most characters, and a name of exactly the most characters', async () => {
     const repo = await boardNode();
     valueOf(await run(repo, { words: ['add', `a${'b'.repeat(trackLimits.maxIdChars - 1)}`], name: 'x'.repeat(trackLimits.maxNameChars) }));
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-80 accepts a name with an emoji sequence that holds zero-width joiners', async () => {
+  it('accepts a name with an emoji sequence that holds zero-width joiners', async () => {
     const family = [0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467].map((code) => String.fromCodePoint(code)).join('');
     const repo = await boardNode();
     valueOf(await run(repo, { words: ['add', 'core'], name: `Team ${family}` }));
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-80 refuses the 31st track with exit 2 and changes no file', async () => {
+  it('refuses the 31st track with exit 2 and changes no file', async () => {
     const tracks = Array.from({ length: trackLimits.maxTracks }, (_, at) => track(`track${at + 1}`));
     const board = boardText([], tracks);
     const repo = await boardNode({ board });
@@ -118,7 +118,7 @@ describe('the rules of a track id and a track name (TP-80, TP-89)', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-89 refuses an id that exists with exit 2, and writes nothing', async () => {
+  it('refuses an id that exists with exit 2, and writes nothing', async () => {
     const board = boardText([], [track('core', 'Core', true)]);
     const repo = await boardNode({ board });
     const error = errorOf(await run(repo, ADD));
@@ -129,8 +129,8 @@ describe('the rules of a track id and a track name (TP-80, TP-89)', () => {
   });
 });
 
-describe('the words and the flags of track (TP-81)', () => {
-  it('M5-1b TP-81 has no remove subcommand: it exits 2 and lists add and list', async () => {
+describe('the words and the flags of track', () => {
+  it('has no remove subcommand: it exits 2 and lists add and list', async () => {
     const repo = await boardNode({ board: boardText([], [track('core')]) });
     const error = errorOf(await run(repo, { words: ['remove', 'core'] }));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -148,7 +148,7 @@ describe('the words and the flags of track (TP-81)', () => {
     ['list with the roadmap flag', { words: ['list'], roadmap: true }, '--roadmap is not for'],
   ];
 
-  it.each(BAD)('M5-1b TP-81 %s exits 2 and touches no file', async (_name, overrides, message) => {
+  it.each(BAD)('%s exits 2 and touches no file', async (_name, overrides, message) => {
     const repo = await boardNode();
     const touched: string[] = [];
     const error = errorOf(await runTrack(withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)), { ...BASE, ...overrides }, recipes));
@@ -159,11 +159,11 @@ describe('the words and the flags of track (TP-81)', () => {
   });
 });
 
-describe('track: a track name from the board file is one line (TP-91)', () => {
+describe('track: a track name from the board file is one line', () => {
   it.each([
     ['a bidi mark', 0x202e],
     ['a line separator', 0x2028],
-  ])('M5-1b TP-91 stops the read of a track name that holds %s, with exit 1, and names the file', async (_name, code) => {
+  ])('stops the read of a track name that holds %s, with exit 1, and names the file', async (_name, code) => {
     const mark = String.fromCodePoint(code);
     const repo = await boardNode({ board: boardText([], [track('core', `Co${mark}re`)]) });
     const error = errorOf(await run(repo, { words: ['list'] }));
@@ -172,8 +172,8 @@ describe('track: a track name from the board file is one line (TP-91)', () => {
   });
 });
 
-describe('track with a hosted tracker kind (TP-67)', () => {
-  it('M5-1b TP-67 refuses a track add with exit 4 and writes nothing, and track list still works', async () => {
+describe('track with a hosted tracker kind', () => {
+  it('refuses a track add with exit 4 and writes nothing, and track list still works', async () => {
     const base = sampleConfigWithBoard();
     const config = { ...base, core: { ...base.core, tracker: { kind: 'jira' as const, items: 'ACME', decisions: 'ACME-DEC', watch_interval: '5m' } } };
     const repo = await boardNode({ config });

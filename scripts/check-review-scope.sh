@@ -4,12 +4,12 @@
 #
 # Usage: sh scripts/check-review-scope.sh SUMMARY
 # SUMMARY is the review summary, for example docs/reviews/fac-m2-review-summary.md.
-# It must hold the section "Setup and upgrade code (D-51 A)", and the section must list the six paths below.
+# It must hold the section "Setup and upgrade code", and the section must list the six paths below.
 #
 # Exit code 0: the section lists every path. Exit code 1: the summary or the section is missing, or a path is not
 # listed. The output names each path that is not listed. Exit code 2: no summary was given.
 
-heading='Setup and upgrade code (D-51 A)'
+heading='Setup and upgrade code'
 paths='src/commands/init.ts src/commands/upgrade.ts src/commands/doctor.ts src/upgrade/apply.ts src/upgrade/plan.ts src/upgrade/spec.ts'
 
 if [ $# -ne 1 ]; then

@@ -260,7 +260,7 @@ describe('node add-child', () => {
     expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
-  describe('one id space for workers and children (AC-2)', () => {
+  describe('one id space for workers and children', () => {
     const workerOf = (id: string) => ({
       id,
       project: 'web',
@@ -778,7 +778,7 @@ describe('node: the local file', () => {
     expect(deps.atomicWrites).toEqual([]);
   });
 
-  it('refuses each subcommand for a local file that is a link with one remedy line, before the owner check, and changes nothing (TP-147)', async () => {
+  it('refuses each subcommand for a local file that is a link with one remedy line, before the owner check, and changes nothing', async () => {
     const deps = make({
       children: [{ id: 'web', address: 'file:///w/web-factory' }],
       homes: { ...webHome, '/w/api-factory': configOf('api', 1) },
@@ -920,7 +920,7 @@ describe('node send', () => {
 
   const inboxFiles = (deps: FakeDeps): string[] => [...deps.files.keys()].filter((path) => path.startsWith(`${INBOX}/`));
 
-  it('TP-3: writes the task as a new file with mode 600, the fixed header and a name that the program made', async () => {
+  it('writes the task as a new file with mode 600, the fixed header and a name that the program made', async () => {
     const deps = sendable();
     const output = await sent(deps);
     expect(deps.files.get(SENT)).toBe(`${HEADER.join('\n')}\n\nBuild the page.\n`);
@@ -929,7 +929,7 @@ describe('node send', () => {
     expect(output.failed).toBe(false);
   });
 
-  it('TP-3: prints the file, the name of the session, the ListAgents check line and the SendMessage line', async () => {
+  it('prints the file, the name of the session, the ListAgents check line and the SendMessage line', async () => {
     const output = await sent(sendable());
     const text = plainText(output);
     expectShortOutput(text);
@@ -942,7 +942,7 @@ describe('node send', () => {
     expect(output.json['steps']).toEqual([expect.stringContaining('ListAgents'), expect.stringContaining('SendMessage')]);
   });
 
-  it('TP-3: never replaces a file that has the name, and exits 1', async () => {
+  it('never replaces a file that has the name, and exits 1', async () => {
     const deps = sendable();
     deps.seed(SENT, 'old\n');
     const error = await refused(deps);
@@ -950,13 +950,13 @@ describe('node send', () => {
     expect(deps.files.get(SENT)).toBe('old\n');
   });
 
-  it('TP-26: works inside a session of the program, where the session marker is set', async () => {
+  it('works inside a session of the program, where the session marker is set', async () => {
     const deps = sendable({ env: { [env.session]: 'mgr' } });
     await sent(deps);
     expect(deps.files.has(SENT)).toBe(true);
   });
 
-  it('TP-26: exits 3 and names factory upgrade when the state repo of the child does not ignore the inbox yet', async () => {
+  it('exits 3 and names factory upgrade when the state repo of the child does not ignore the inbox yet', async () => {
     const deps = sendable({ stateGitignore: GITIGNORE_WITHOUT_INBOX });
     expect(deps.files.get(`${CHILD}/.factory/.gitignore`)).toBe(GITIGNORE_WITHOUT_INBOX);
     const error = await refused(deps);
@@ -966,7 +966,7 @@ describe('node send', () => {
     expect(deps.dirs.has(INBOX)).toBe(false);
   });
 
-  it('TP-26: exits 3 and names factory upgrade when the child has no state folder, and does not make one', async () => {
+  it('exits 3 and names factory upgrade when the child has no state folder, and does not make one', async () => {
     const deps = sendable({ stateGitignore: null });
     const error = await refused(deps);
     expect(exitCodeOf[error.kind]).toBe(3);
@@ -992,7 +992,7 @@ describe('node send', () => {
     ['a zero width space', 'a​b'],
     ['a line separator', 'a b'],
     ['a byte order mark', '﻿a'],
-  ])('TP-6: exits 2 for %s in the task, and writes nothing', async (_name, task) => {
+  ])('exits 2 for %s in the task, and writes nothing', async (_name, task) => {
     const deps = sendable({ task });
     const error = await refused(deps);
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -1000,7 +1000,7 @@ describe('node send', () => {
     expect(deps.dirs.has(INBOX)).toBe(false);
   });
 
-  it('TP-6: exits 4 for token-shaped text, and no output repeats the value', async () => {
+  it('exits 4 for token-shaped text, and no output repeats the value', async () => {
     const deps = sendable({ task: `Push with ${FAKE_GITHUB_TOKEN} now.\n` });
     const error = await refused(deps);
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -1009,7 +1009,7 @@ describe('node send', () => {
     expect(deps.dirs.has(INBOX)).toBe(false);
   });
 
-  it('TP-6: exits 3 when the inbox of the child holds the most files', async () => {
+  it('exits 3 when the inbox of the child holds the most files', async () => {
     const deps = sendable();
     for (let index = 0; index < nodeInbox.maxFiles; index += 1) deps.seed(`${INBOX}/old-${index}.md`, 'x');
     const error = await refused(deps);
@@ -1018,7 +1018,7 @@ describe('node send', () => {
     expect(inboxFiles(deps)).toHaveLength(nodeInbox.maxFiles);
   });
 
-  it('TP-23: exits 3 with a fixed reason for a child whose config does not parse, and shows no text of the parse', async () => {
+  it('exits 3 with a fixed reason for a child whose config does not parse, and shows no text of the parse', async () => {
     const deps = sendable({ homes: { [CHILD]: 'key: [unclosed\n' } });
     const ping = await fileTransport(deps).ping(`file://${CHILD}`);
     if (ping.kind !== 'unknown') throw new Error('the config must not parse');
@@ -1045,7 +1045,7 @@ describe('node send', () => {
     expect(deps.dirs.has(INBOX)).toBe(false);
   });
 
-  it('TP-5: removes the file and exits 4 when the child shows another id after the write', async () => {
+  it('removes the file and exits 4 when the child shows another id after the write', async () => {
     const deps = sendable();
     const racing: Deps = {
       ...deps,
@@ -1064,7 +1064,7 @@ describe('node send', () => {
     expect(inboxFiles(deps)).toEqual([]);
   });
 
-  it('TP-5: exits 4 and names the file and the delete step when the removal fails', async () => {
+  it('exits 4 and names the file and the delete step when the removal fails', async () => {
     const deps = sendable();
     const racing: Deps = {
       ...deps,
@@ -1117,7 +1117,7 @@ describe('node send', () => {
     ['a token in the task', 4, nodeSendReasons.token, () => ({ deps: sendable({ task: `${FAKE_GITHUB_TOKEN}\n` }) })],
   ];
 
-  it.each(CASES)('TP-7: exits with the right code for %s, and the remedy names a command', async (_name, code, reason, build) => {
+  it.each(CASES)('exits with the right code for %s, and the remedy names a command', async (_name, code, reason, build) => {
     const { deps, words, file } = build();
     const error = await refused(deps, words, file);
     expect(exitCodeOf[error.kind]).toBe(code);
@@ -1125,7 +1125,7 @@ describe('node send', () => {
     if (reason !== null) expect(error.message).toContain(reason);
   });
 
-  it('TP-7: exits 2 for a missing id, a missing --file and an extra word', async () => {
+  it('exits 2 for a missing id, a missing --file and an extra word', async () => {
     const deps = sendable();
     const options: readonly NodeOptions[] = [
       { home: HOME, words: ['send'], file: TASK },

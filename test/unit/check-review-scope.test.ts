@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const SCRIPT = join(__dirname, '..', '..', 'scripts', 'check-review-scope.sh');
-const HEADING = 'Setup and upgrade code (D-51 A)';
+const HEADING = 'Setup and upgrade code';
 const PATHS = [
   'src/commands/init.ts',
   'src/commands/upgrade.ts',

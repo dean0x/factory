@@ -44,7 +44,7 @@ describe('parseConfigTexts', () => {
     expect(parsed.ok && parsed.value).toEqual(sampleConfig());
   });
 
-  it('M5-1b TP-27 writes the board block in the shared file only, and reads it back', () => {
+  it('writes the board block in the shared file only, and reads it back', () => {
     const texts = renderConfig(sampleConfigWithBoard());
     expect(texts.shared).toMatch(/^board:$/m);
     expect(texts.local).not.toContain('board:');
@@ -52,11 +52,11 @@ describe('parseConfigTexts', () => {
     expect(parsed.ok && parsed.value).toEqual(sampleConfigWithBoard());
   });
 
-  it('M5-1b TP-27 writes no board block for a config with none', () => {
+  it('writes no board block for a config with none', () => {
     expect(sample().shared).not.toContain('board:');
   });
 
-  it('M5-1b TP-27 writes an empty board block, and reads it back as a block that declares nothing', () => {
+  it('writes an empty board block, and reads it back as a block that declares nothing', () => {
     const config = sampleConfigWithBoard({});
     const texts = renderConfig(config);
     expect(texts.shared).toMatch(/^board: \{\}$/m);
@@ -64,7 +64,7 @@ describe('parseConfigTexts', () => {
     expect(parsed.ok && parsed.value).toEqual(config);
   });
 
-  it('M5-1b TP-27 reads back a token that a YAML reader takes for a boolean, a null or a number', () => {
+  it('reads back a token that a YAML reader takes for a boolean, a null or a number', () => {
     const tricky = ['true', 'False', 'null', 'yes', 'No', 'on', 'off', 'y', 'n', '1.5', '0', '0x1f', '1e3', '12', 'P0'];
     const board = {
       states: tricky,
@@ -77,7 +77,7 @@ describe('parseConfigTexts', () => {
     expect(parsed.ok && parsed.value.core.board).toEqual(board);
   });
 
-  it('M5-1b TP-27 keeps the sample board block through a second write', () => {
+  it('keeps the sample board block through a second write', () => {
     const texts = renderConfig(sampleConfigWithBoard());
     const first = parseConfigTexts(texts.shared, texts.local);
     expect(first.ok).toBe(true);

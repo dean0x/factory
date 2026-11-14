@@ -76,7 +76,7 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
-describe('the guard that the install writes (TP-1)', () => {
+describe('the guard that the install writes', () => {
   it('holds the package text as each hook file with mode 755 in the guard folder of the git folder, and git tracks no guard file', async () => {
     const gitDir = join(await realpath(stateDir), '.git');
     const text = guardHookText(deps.programArgv);
@@ -129,7 +129,7 @@ describe('the guard that the install writes (TP-1)', () => {
   });
 });
 
-describe('the guard folder is a link (TP-53)', () => {
+describe('the guard folder is a link', () => {
   it('stops the install with exit 4 and leaves the target folder as it was', async () => {
     const gitDir = join(await realpath(stateDir), '.git');
     const folder = join(gitDir, stateGuard.folder);
@@ -149,7 +149,7 @@ describe('the guard folder is a link (TP-53)', () => {
   });
 });
 
-describe('the text of the hook, run by a shell (TP-1)', () => {
+describe('the text of the hook, run by a shell', () => {
   it('starts the program with the words state guard, and keeps a path with a space and a command substitution as one word each', async () => {
     const programFolder = join(box.root, 'my node');
     const scriptFolder = join(box.root, '$(touch injected)');
@@ -234,7 +234,7 @@ describe('the text of the hook, run by a shell (TP-1)', () => {
   });
 });
 
-describe('a manual commit that removes an item id (TP-7)', () => {
+describe('a manual commit that removes an item id', () => {
   it('fails and names the id, and the last commit stays', async () => {
     const before = await headId();
     await writeInState(BOARD, board(['B-1']));
@@ -262,7 +262,7 @@ describe('a manual commit that removes an item id (TP-7)', () => {
   });
 });
 
-describe('a commit that the guard reads as a loss or cannot read (TP-8)', () => {
+describe('a commit that the guard reads as a loss or cannot read', () => {
   it('counts an id that stays only in the text of another item as removed', async () => {
     const before = await headId();
     await writeInState(BOARD, `${JSON.stringify({ queue: [], items: [{ id: 'B-1', title: '{"id": "B-2"}' }] })}\n`);
@@ -385,7 +385,7 @@ describe('a commit that the guard reads as a loss or cannot read (TP-8)', () => 
   });
 });
 
-describe('a merge commit and a mailed patch that remove an item id (TP-7)', () => {
+describe('a merge commit and a mailed patch that remove an item id', () => {
   /** A branch that forks from the last commit and holds the board `ids`. The hook would stop the removal, so `--no-verify` plants it. */
   const plantBranch = async (name: string, ids: readonly string[]): Promise<void> => {
     await mustGit(['checkout', '-q', '-b', name]);
@@ -452,7 +452,7 @@ describe('a merge commit and a mailed patch that remove an item id (TP-7)', () =
   });
 });
 
-describe('the index that git gives the hook (TP-9)', () => {
+describe('the index that git gives the hook', () => {
   it('reads the files of a commit of all files (-a), also when the removal is not staged', async () => {
     const before = await headId();
     await writeInState(BOARD, board(['B-1']));

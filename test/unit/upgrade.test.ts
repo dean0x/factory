@@ -244,7 +244,7 @@ describe('upgrade: when nothing changes', () => {
   });
 });
 
-describe('upgrade: the root .gitignore (TP-117)', () => {
+describe('upgrade: the root .gitignore', () => {
   const OLD_PART = `${SHARE_LIST_BEGIN}\n/*\n!/.gitignore\n${SHARE_LIST_END}\n`;
   const MINE = '# mine\n!/notes.md\nnode_modules/\n';
   const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
@@ -345,7 +345,7 @@ describe('upgrade: the root .gitignore (TP-117)', () => {
   });
 });
 
-describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)', () => {
+describe('upgrade: the delete guard of the state repo', () => {
   const GUARD = `${HOME}/.factory/.git/${stateGuard.folder}`;
   const HOOK = `${GUARD}/${stateGuard.hookFiles[0]}`;
   const HOOKS = stateGuard.hookFiles.map((name) => `${GUARD}/${name}`);
@@ -374,7 +374,7 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     expect(lineTexts(output).join('\n')).not.toContain('delete guard');
   });
 
-  it('plans the install for a factory with no guard: the dry run names it, changes nothing and the JSON holds stateGuard (TP-4)', async () => {
+  it('plans the install for a factory with no guard: the dry run names it, changes nothing and the JSON holds stateGuard', async () => {
     const { deps, gitSince } = await unguarded();
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
@@ -399,7 +399,7 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     }
   });
 
-  it('writes the guard and makes no backup and no commit when the guard is the only change (TP-5)', async () => {
+  it('writes the guard and makes no backup and no commit when the guard is the only change', async () => {
     const { deps, gitSince } = await unguarded();
     const output = success(await upgrade(deps));
     expect(output.json).toMatchObject({ changed: true, stateGuard: 'install', backup: null, committed: false, blockBackups: [] });
@@ -413,7 +413,7 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     expect(lineTexts(output)).toContain('Wrote the delete guard in .factory/.git/factory-guard.');
   });
 
-  it('finds nothing to upgrade the second time (TP-5)', async () => {
+  it('finds nothing to upgrade the second time', async () => {
     const { deps } = await unguarded();
     success(await upgrade(deps));
     const again = success(await upgrade(deps));
@@ -421,7 +421,7 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     expect(again.json).toMatchObject({ changed: false, stateGuard: 'current' });
   });
 
-  it('writes the guard after the ready check and before the commit of the state files, and the commit holds no guard path (TP-5)', async () => {
+  it('writes the guard after the ready check and before the commit of the state files, and the commit holds no guard path', async () => {
     const { deps, gitSince } = await unguarded();
     const output = success(await upgrade(deps, newer));
     const git = gitSince();
@@ -501,7 +501,7 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     for (const hook of HOOKS) expect(text(deps, hook)).toBe(hookText());
   });
 
-  it('keeps working in a factory whose guard is off: the upgrade of the state files runs and commits (TP-6)', async () => {
+  it('keeps working in a factory whose guard is off: the upgrade of the state files runs and commits', async () => {
     const { deps } = await unguarded();
     const output = success(await upgrade(deps, newer));
     expect(output.json).toMatchObject({ changed: true, committed: true });
@@ -581,7 +581,7 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     const GIT_DIR = `${HOME}/.factory/.git`;
     const unsupportedWarnings = (output: CommandOutput): string[] => output.warnings.filter((line) => line.includes('can not write it'));
 
-    it('goes on with a warning that names the link, and writes nothing into the folder of the link, when the guard folder is a link (TP-53)', async () => {
+    it('goes on with a warning that names the link, and writes nothing into the folder of the link, when the guard folder is a link', async () => {
       const links: Record<string, string> = {};
       const { deps } = await makeNode({ links });
       links[GUARD] = '/elsewhere/folder';
@@ -636,7 +636,7 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     });
   });
 
-  it('stops with exit 4 before it writes the guard when the local git config names a program, and names the key (AC-7)', async () => {
+  it('stops with exit 4 before it writes the guard when the local git config names a program, and names the key', async () => {
     const withKey = (inner: RunHandler): RunHandler => (call) =>
       call.args.includes('--show-scope') ? exited(0, 'local\0filter.lfs.clean\ngit-lfs clean\0') : inner(call);
     const { deps, gitSince } = await unguarded({ run: withKey });
@@ -651,7 +651,7 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
 
 });
 
-describe('upgrade: the state lock (TP-19)', () => {
+describe('upgrade: the state lock', () => {
   const LOCK_FILE = `${HOME}/.factory/locks/${stateLock.name}${stateLock.lock.suffix}`;
   const WAITS = Array.from({ length: stateLock.lock.attempts - 1 }, () => stateLock.lock.waitMs);
   const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
@@ -745,7 +745,7 @@ describe('upgrade: the state lock (TP-19)', () => {
   });
 });
 
-describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
+describe('upgrade: the .gitignore of the state repo', () => {
   const STATE_DIR = `${HOME}/.factory`;
   const STATE_IGNORE = `${STATE_DIR}/.gitignore`;
   /** The lines that a state repo from before the registry of the workers holds. */
@@ -1046,7 +1046,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
   });
 });
 
-describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
+describe('upgrade: the queue key of the board', () => {
   const BOARD = `${HOME}/.factory/board.json`;
   const BOARD_BACKUP = `${BACKUP}/.factory/board.json`;
   const LOCK_FILE = `${HOME}/.factory/locks/${stateLock.name}${stateLock.lock.suffix}`;
@@ -1090,7 +1090,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
 
   const stagesAndCommits = (git: readonly string[]): string[] => git.filter((command) => command.startsWith('add') || command.includes('commit'));
 
-  it('M5-1b TP-30 renames the old queue key and keeps the key order and every other byte', async () => {
+  it('renames the old queue key and keeps the key order and every other byte', async () => {
     const { deps } = await makeNode();
     deps.files.set(BOARD, handmade('queue'));
     const output = success(await upgrade(deps));
@@ -1100,7 +1100,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(text(deps, BOARD_BACKUP)).toBe(handmade('queue'));
   });
 
-  it.each([false, true])('M5-1b TP-30 stops with exit 1 and names the file when the board has both keys (dry run: %s)', async (dryRun) => {
+  it.each([false, true])('stops with exit 1 and names the file when the board has both keys (dry run: %s)', async (dryRun) => {
     const { deps, gitSince } = await makeNode();
     deps.files.set(BOARD, `{ "queue": [], "${softwareQueueKey}": [], "items": [] }\n`);
     const before = wholeState(deps);
@@ -1112,7 +1112,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(gitWrites(gitSince())).toEqual([]);
   });
 
-  it('M5-1b TP-30 names the rename in a dry run and writes nothing', async () => {
+  it('names the rename in a dry run and writes nothing', async () => {
     const { deps, gitSince } = await makeNode();
     deps.files.set(BOARD, handmade('queue'));
     const before = wholeState(deps);
@@ -1123,7 +1123,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(gitWrites(gitSince())).toEqual([]);
   });
 
-  it('M5-1b TP-30 has nothing to upgrade for a board with the key of the recipe, and for a factory with no board file', async () => {
+  it('has nothing to upgrade for a board with the key of the recipe, and for a factory with no board file', async () => {
     const { deps } = await makeNode();
     const current = success(await upgrade(deps));
     expect(current.lines.at(-1)?.text).toBe('Nothing to upgrade.');
@@ -1135,7 +1135,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(deps.files.has(BOARD)).toBe(false);
   });
 
-  it('M5-1b TP-30 reads nothing and plans no rename when the key of the recipe is the default of the core', async () => {
+  it('reads nothing and plans no rename when the key of the recipe is the default of the core', async () => {
     const { deps } = await makeNode();
     deps.files.set(BOARD, 'not json{');
     const plan = await planBoardQueueKey(deps, layoutOf(HOME), boardKeys.defaultQueue);
@@ -1146,7 +1146,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     ['is not JSON', (deps: FakeDeps) => deps.files.set(BOARD, 'not json{')],
     ['is not a JSON object', (deps: FakeDeps) => deps.files.set(BOARD, '[1, 2]\n')],
     ['is not UTF-8', (deps: FakeDeps) => deps.invalidUtf8.add(BOARD)],
-  ])('M5-1b TP-30 stops with exit 1 before any change when the board %s', async (_name, spoil) => {
+  ])('stops with exit 1 before any change when the board %s', async (_name, spoil) => {
     const { deps, gitSince } = await makeNode();
     spoil(deps);
     const before = wholeState(deps);
@@ -1157,7 +1157,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(gitWrites(gitSince())).toEqual([]);
   });
 
-  it('M5-1b TP-100 renames the key in the one commit of the other upgrade files, and does not wait for its own lock', async () => {
+  it('renames the key in the one commit of the other upgrade files, and does not wait for its own lock', async () => {
     const { deps, gitSince } = await makeNode({ run: withHeadBoard(boardWith('queue', ['B-1', 'B-2'])) });
     deps.files.set(BOARD, boardWith('queue', ['B-1', 'B-2']));
     const slept = deps.sleeps.length;
@@ -1173,7 +1173,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(deps.files.has(LOCK_FILE)).toBe(false);
   });
 
-  it('M5-1b TP-100 builds the new board text from a read inside the state lock', async () => {
+  it('builds the new board text from a read inside the state lock', async () => {
     const { deps } = await makeNode();
     deps.files.set(BOARD, boardWith('queue', ['B-1']));
     const lockHeld: boolean[] = [];
@@ -1197,7 +1197,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(text(deps, BOARD)).toBe(boardWith(softwareQueueKey, ['B-1', 'B-2']));
   });
 
-  it('M5-1b TP-100 puts the old board back when the commit fails, and keeps it in the backup', async () => {
+  it('puts the old board back when the commit fails, and keeps it in the backup', async () => {
     const { deps } = await makeNode({ run: (inner) => (call) => (call.args.includes('commit') ? exited(1) : inner(call)) });
     deps.files.set(BOARD, handmade('queue'));
     const error = refusal(await upgrade(deps));
@@ -1207,7 +1207,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(deps.files.has(LOCK_FILE)).toBe(false);
   });
 
-  it('M5-1b TP-101 stops with exit 4 and changes no file when the new board text drops an item id that the last commit holds', async () => {
+  it('stops with exit 4 and changes no file when the new board text drops an item id that the last commit holds', async () => {
     const { deps, gitSince } = await makeNode({ run: withHeadBoard(boardWith('queue', ['B-1', 'B-2'])) });
     deps.files.set(BOARD, boardWith('queue', ['B-1']));
     const before = wholeState(deps);
@@ -1220,7 +1220,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
     expect(deps.files.has(LOCK_FILE)).toBe(false);
   });
 
-  it('M5-1b TP-101 stops with exit 1 when the board of the last commit cannot be read, and changes no file', async () => {
+  it('stops with exit 1 when the board of the last commit cannot be read, and changes no file', async () => {
     const { deps, gitSince } = await makeNode({ run: withHeadBoard('not json{') });
     deps.files.set(BOARD, boardWith('queue', ['B-1']));
     const before = wholeState(deps);
@@ -1232,7 +1232,7 @@ describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
   });
 });
 
-describe('upgrade: the root repo (TP-23)', () => {
+describe('upgrade: the root repo', () => {
   const noIdentity = (inner: RunHandler): RunHandler => (call) =>
     call.args.includes('user.name') ? exited(1) : inner(call);
 
@@ -1573,7 +1573,7 @@ describe('upgrade: managed blocks', () => {
   });
 });
 
-describe('upgrade: a replaced block keeps its old text in a backup file (TP-107, TP-131, TP-132, TP-142)', () => {
+describe('upgrade: a replaced block keeps its old text in a backup file', () => {
   const BACKUPS = `${HOME}/.factory/backups`;
   const STAMP = '2030-01-02T03-04-05-678Z';
   const SAFETY_BACKUP = `${BACKUPS}/${STAMP}-block-safety.md`;
@@ -1625,7 +1625,7 @@ describe('upgrade: a replaced block keeps its old text in a backup file (TP-107,
   it.each([
     ['coordinator/CLAUDE.md', 'setup', CLAUDE, 'setup/coordinator.md'],
     ['.factory/roles/worker.md', 'setup-worker', WORKER, 'setup/roles/worker.md'],
-  ])('puts back the text of an edited setup block in %s with no flag, and keeps the old text in a backup file (TP-142)', async (_file, name, path, setupFile) => {
+  ])('puts back the text of an edited setup block in %s with no flag, and keeps the old text in a backup file', async (_file, name, path, setupFile) => {
     const { deps } = await makeNode();
     edit(deps, path, 'Write your own text', 'Changed by hand');
     const dry = success(await upgrade(deps, currentSpec, { dryRun: true }));
@@ -1686,7 +1686,7 @@ describe('upgrade: a replaced block keeps its old text in a backup file (TP-107,
     expect(blockBackups(deps).filter((path) => path.includes('2029-'))).toHaveLength(10);
   });
 
-  it('stops with exit 4 and writes nothing when a link stands at the backup file (TP-131)', async () => {
+  it('stops with exit 4 and writes nothing when a link stands at the backup file', async () => {
     const links = { [SAFETY_BACKUP]: '/outside/stolen.md' };
     const { deps } = await makeNode({ links });
     editSafety(deps);
@@ -1698,7 +1698,7 @@ describe('upgrade: a replaced block keeps its old text in a backup file (TP-107,
     expect(text(deps, CLAUDE)).toBe(before.get(CLAUDE));
   });
 
-  it('stops with exit 4 and writes nothing when the backups folder is a link (TP-131)', async () => {
+  it('stops with exit 4 and writes nothing when the backups folder is a link', async () => {
     const { deps } = await makeNode({ links: { [BACKUPS]: '/outside/backups' } });
     editSafety(deps);
     const before = snapshot(deps);
@@ -2575,7 +2575,7 @@ describe('upgrade: a node of schema 1', () => {
     expect(gitSince().some((command) => command.includes('board.json'))).toBe(false);
   });
 
-  describe('the root repo and the root .gitignore (TP-23, TP-117)', () => {
+  describe('the root repo and the root .gitignore', () => {
     /** The paths of the factory folder that are under the setup folder, files and folders. */
     const underSetup = (deps: FakeDeps): string[] =>
       [...deps.files.keys(), ...deps.dirs].filter((path) => path === `${HOME}/setup` || path.startsWith(`${HOME}/setup/`));
@@ -2841,7 +2841,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(output.warnings).toEqual([]);
     });
 
-    describe('the origin of the root (TP-172)', () => {
+    describe('the origin of the root', () => {
       it('writes own for a FAC-M1 node whose folder held no git repo before the run', async () => {
         const { deps } = makeOldNode();
         success(await upgrade(deps));
@@ -2963,7 +2963,7 @@ describe('upgrade: a node of schema 1', () => {
       );
     };
 
-    it('exits 4 for a folder of the current schema that the factory list does not list, and writes nothing (TP-88)', async () => {
+    it('exits 4 for a folder of the current schema that the factory list does not list, and writes nothing', async () => {
       const { deps } = await makeNode();
       deps.files.delete(INDEX);
       const before = snapshot(deps);
@@ -2973,7 +2973,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(snapshot(deps)).toEqual(before);
     });
 
-    it('exits 4 for an unregistered folder of schema 1 that the home flag does not name (TP-88)', async () => {
+    it('exits 4 for an unregistered folder of schema 1 that the home flag does not name', async () => {
       const { deps } = makeOldNode();
       const before = snapshot(deps);
       const inFolder = { ...deps, cwd: HOME };
@@ -2985,7 +2985,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(snapshot(deps)).toEqual(before);
     });
 
-    it('exits 4 and writes nothing with FACTORY_SESSION set, also with the yes flag and in a dry run (TP-89)', async () => {
+    it('exits 4 and writes nothing with FACTORY_SESSION set, also with the yes flag and in a dry run', async () => {
       const { deps } = makeOldNode();
       const before = snapshot(deps);
       const inSession = { ...deps, env: { ...deps.env, FACTORY_SESSION: 'demo' } };
@@ -2998,7 +2998,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(deps.prompts).toEqual([]);
     });
 
-    it('exits 4 inside a factory session that has a terminal window, also with a yes answer, and asks nothing (TP-89)', async () => {
+    it('exits 4 inside a factory session that has a terminal window, also with a yes answer, and asks nothing', async () => {
       const { deps } = makeOldNode();
       const before = snapshot(deps);
       const inSession = { ...deps, env: { ...deps.env, FACTORY_SESSION: 'demo' } };
@@ -3011,7 +3011,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(deps.prompts).toEqual([]);
     });
 
-    it('runs with the yes flag and the home flag, and registers the folder (TP-89)', async () => {
+    it('runs with the yes flag and the home flag, and registers the folder', async () => {
       const { deps } = makeOldNode();
       const output = success(await upgradeAsOwner(deps, { yes: true }));
       expect(output.json).toMatchObject({ changed: true });
@@ -3122,7 +3122,7 @@ describe('upgrade: a node of schema 1', () => {
     expect(live(deps)).toEqual(before);
   });
 
-  it('stops a node that lists a project with a failure, names the init command, and changes no file (TP-62)', async () => {
+  it('stops a node that lists a project with a failure, names the init command, and changes no file', async () => {
     const { deps, gitSince } = makeOldNode({ doc: schema1DocWithProject() });
     const before = live(deps);
     for (const dryRun of [false, true]) {
@@ -3755,7 +3755,7 @@ describe('upgrade: the two config files', () => {
       expect(gitSince().filter(notAGuardRead)).toEqual([]);
     });
 
-    it('stops with exit 4 and one remedy line for a local file that is a link, before the mode fix, and changes nothing (TP-147)', async () => {
+    it('stops with exit 4 and one remedy line for a local file that is a link, before the mode fix, and changes nothing', async () => {
       const links: Record<string, string> = {};
       const { deps, gitSince } = await makeNode({ links });
       links[LOCAL] = '/outside/factory.local.yaml';
@@ -3788,7 +3788,7 @@ const wholeState = (deps: FakeDeps): { readonly files: Map<string, string>; read
   };
 };
 
-describe('upgrade: the link rule (TP-130)', () => {
+describe('upgrade: the link rule', () => {
   it.each([
     ['the setup folder', `${HOME}/setup`, 'setup'],
     ['the setup text of the coordinator', `${HOME}/setup/coordinator.md`, 'setup/coordinator.md'],
@@ -3915,7 +3915,7 @@ describe('upgrade: a factory folder that breaks the folder rule (exit 4, before 
   });
 });
 
-describe('upgrade: the setup text (TP-102)', () => {
+describe('upgrade: the setup text', () => {
   const SETUP = `${HOME}/setup/coordinator.md`;
   const SETUP_WORKER = `${HOME}/setup/roles/worker.md`;
   const blockBody = (file: string, name: string): string => {
@@ -4028,7 +4028,7 @@ describe('upgrade: the setup text (TP-102)', () => {
     );
   });
 
-  it('puts back an edited setup block with no flag and no warning, and keeps the edit in a backup file (TP-142)', async () => {
+  it('puts back an edited setup block with no flag and no warning, and keeps the edit in a backup file', async () => {
     const { deps } = await makeNode();
     deps.files.set(CLAUDE, text(deps, CLAUDE).replace('Write your own text', 'Changed by hand'));
     const output = success(await upgrade(deps));
@@ -4049,7 +4049,7 @@ describe('upgrade: the setup text (TP-102)', () => {
   });
 });
 
-describe('upgrade: the setup text needs the owner (TP-128, TP-129, TP-173, TP-176, TP-177, TP-178)', () => {
+describe('upgrade: the setup text needs the owner', () => {
   const SETUP = `${HOME}/setup/coordinator.md`;
   const ACCEPT_COMMAND = 'Run "factory start" or "factory upgrade" in a terminal window outside a factory session.';
   const INIT_COMMAND = 'Run "factory init" in a terminal window and accept the files.';
@@ -4100,7 +4100,7 @@ describe('upgrade: the setup text needs the owner (TP-128, TP-129, TP-173, TP-17
   };
 
   describe('a change after an older acceptance', () => {
-    it('shows the old and the new hash and the change on a terminal window, records the new hash after a yes and renders the text (TP-128)', async () => {
+    it('shows the old and the new hash and the change on a terminal window, records the new hash after a yes and renders the text', async () => {
       const { deps } = await changedNode();
       const [oldHash] = hashesOf(deps);
       const output = success(await upgrade(asking(deps, 'y')));
@@ -4159,18 +4159,18 @@ describe('upgrade: the setup text needs the owner (TP-128, TP-129, TP-173, TP-17
       expect(wholeState(deps)).toEqual(before);
     });
 
-    it('asks nothing in a factory session, also with yes, and writes no record (TP-129)', async () => {
+    it('asks nothing in a factory session, also with yes, and writes no record', async () => {
       const { deps } = await changedNode();
       const run = asking(deps, 'y', { env: { ...deps.env, [env.session]: 'demo' } });
       for (const yes of [true, false]) await stoppedBeforeAnyWrite(deps, run, ACCEPT_COMMAND, { yes });
     });
 
-    it('asks nothing in a dry run, writes no record and names the accept command (TP-176)', async () => {
+    it('asks nothing in a dry run, writes no record and names the accept command', async () => {
       const { deps } = await changedNode();
       await stoppedBeforeAnyWrite(deps, asking(deps, 'y'), ACCEPT_COMMAND, { dryRun: true });
     });
 
-    it('stops before any write with no terminal window, also with yes (TP-177, TP-128)', async () => {
+    it('stops before any write with no terminal window, also with yes', async () => {
       const { deps } = await changedNode();
       for (const yes of [true, false]) await stoppedBeforeAnyWrite(deps, deps, ACCEPT_COMMAND, { yes });
     });
@@ -4178,7 +4178,7 @@ describe('upgrade: the setup text needs the owner (TP-128, TP-129, TP-173, TP-17
     it.each([
       ['a terminal window for input and none for output', { stdoutIsTTY: false }],
       ['a terminal window for output and none for input', { stdinIsTTY: false }],
-    ])('shows no prompt with %s and writes no record (TP-178)', async (_name, window) => {
+    ])('shows no prompt with %s and writes no record', async (_name, window) => {
       const { deps } = await changedNode();
       await stoppedBeforeAnyWrite(deps, asking(deps, 'y', window), ACCEPT_COMMAND);
     });
@@ -4190,7 +4190,7 @@ describe('upgrade: the setup text needs the owner (TP-128, TP-129, TP-173, TP-17
     });
   });
 
-  describe('no acceptance at all (TP-173)', () => {
+  describe('no acceptance at all', () => {
     it.each([
       ['no terminal window', (deps: FakeDeps) => deps, {}],
       ['no terminal window and yes', (deps: FakeDeps) => deps, { yes: true }],
@@ -4286,7 +4286,7 @@ describe('upgrade: the setup text needs the owner (TP-128, TP-129, TP-173, TP-17
   });
 });
 
-describe('upgrade: render a changed block again (TP-76)', () => {
+describe('upgrade: render a changed block again', () => {
   const prefixLine = (claude: string): string => claude.split('\n').find((line) => line.startsWith('- The owner prefix is')) ?? '';
 
   it('renders the intact safety block again after a change of the prefix in the local file, and keeps the block version', async () => {
@@ -4353,7 +4353,7 @@ describe('upgrade: render a changed block again (TP-76)', () => {
   });
 });
 
-describe('upgrade: the role texts of worker version 4 and coordinator version 6 (TP-38, TP-40)', () => {
+describe('upgrade: the role texts of worker version 4 and coordinator version 6', () => {
   /** Put an earlier version of the block `name` into the file, with a text of its own, and record that version. */
   const makeOlder = (deps: FakeDeps, path: string, name: string, version: number): void => {
     const parsed = parseBlocks(text(deps, path));
@@ -4396,7 +4396,7 @@ describe('upgrade: the role texts of worker version 4 and coordinator version 6 
   });
 });
 
-describe('upgrade: the blocks follow the effective modes (TP-40, TP-67)', () => {
+describe('upgrade: the blocks follow the effective modes', () => {
   const STORE = '/state/factory/owner-records.json';
   const DELEGATED_TEXT = 'delegated this point';
 
@@ -4455,7 +4455,7 @@ describe('upgrade: the blocks follow the effective modes (TP-40, TP-67)', () => 
   });
 });
 
-describe('upgrade: the hook settings of the work copies and of the coordinator (TP-6, TP-7)', () => {
+describe('upgrade: the hook settings of the work copies and of the coordinator', () => {
   const COORDINATOR_SETTINGS = `${HOME}/coordinator/.claude/settings.local.json`;
   const COPIES = `${HOME}/work-copies/web`;
   const copySettings = (id: string): string => `${COPIES}/${id}/.claude/settings.local.json`;
@@ -4509,7 +4509,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(Object.keys(FOUR_EVENTS.hooks)).toEqual(hookNames.events.slice(0, 4));
   });
 
-  it('TP-6: a dry run lists the two new events for the coordinator settings and each work copy, and writes nothing', async () => {
+  it('a dry run lists the two new events for the coordinator settings and each work copy, and writes nothing', async () => {
     const { deps } = await olderFactory();
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true, yes: false }));
@@ -4522,7 +4522,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(snapshot(deps)).toEqual(before);
   });
 
-  it('TP-6: with the yes flag it adds the events to the coordinator settings and each work copy, and a second run has nothing to do', async () => {
+  it('with the yes flag it adds the events to the coordinator settings and each work copy, and a second run has nothing to do', async () => {
     const { deps } = await olderFactory();
     const output = success(await upgrade(deps, currentSpec, { yes: true }));
     for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
@@ -4533,7 +4533,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(again.json).toMatchObject({ changed: false, hookSettings: [] });
   });
 
-  it('TP-6: keeps every other key of a settings file', async () => {
+  it('keeps every other key of a settings file', async () => {
     const { deps } = await olderFactory();
     const permissions = { allow: ['Bash(ls)'] };
     deps.seed(copySettings('alpha'), settingsText({ ...FOUR_EVENTS, permissions }));
@@ -4541,7 +4541,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(settingsAt(deps, copySettings('alpha'))).toEqual({ ...ownSettingsEntries, permissions });
   });
 
-  it('TP-6: adds the hook settings in the same run as a change of the state, after the state is written', async () => {
+  it('adds the hook settings in the same run as a change of the state, after the state is written', async () => {
     const { deps } = await olderFactory();
     const output = success(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
     expect(text(deps, CLAUDE)).toContain('New coordinator text.');
@@ -4550,7 +4550,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(output.json['backup']).not.toBeNull();
   });
 
-  it('TP-6: with no terminal and no yes flag it writes no hook settings, and warns with the remedy', async () => {
+  it('with no terminal and no yes flag it writes no hook settings, and warns with the remedy', async () => {
     const { deps } = await olderFactory();
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { yes: false }));
@@ -4563,7 +4563,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(success(await upgrade(deps, currentSpec, { yes: false })).lines.at(-1)?.text).not.toBe('Nothing to upgrade.');
   });
 
-  it('TP-6: inside a factory session the yes flag gives no consent: nothing is written, and the warning names the rule', async () => {
+  it('inside a factory session the yes flag gives no consent: nothing is written, and the warning names the rule', async () => {
     const { deps } = await olderFactory();
     const before = snapshot(deps);
     const inSession: FakeDeps = { ...deps, env: { ...deps.env, [env.session]: 'demo' } };
@@ -4573,7 +4573,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(output.warnings.join('\n')).toContain('gives no consent inside a');
   });
 
-  it('TP-6: on a terminal, a yes writes the file, and a no leaves the file and warns with the remedy', async () => {
+  it('on a terminal, a yes writes the file, and a no leaves the file and warns with the remedy', async () => {
     const { deps } = await olderFactory();
     const terminal = onTerminal(deps, ['y', 'n', 'y']);
     const output = success(await upgrade(terminal.deps, currentSpec, { yes: false }));
@@ -4588,7 +4588,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(warning).toContain('Run "factory upgrade" again');
   });
 
-  it('TP-6: skips a settings file with no factory hook entry, a work copy with no settings file and a work copy that is gone', async () => {
+  it('skips a settings file with no factory hook entry, a work copy with no settings file and a work copy that is gone', async () => {
     const { deps } = await makeNode();
     await seedWorker(deps, 'alpha', settingsText({ model: 'opus', hooks: { Stop: [{ hooks: [{ type: 'command', command: 'other-tool' }] }] } }));
     await seedWorker(deps, 'beta', null);
@@ -4601,7 +4601,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(snapshot(deps)).toEqual(before);
   });
 
-  it('TP-6: skips the coordinator when it has no settings file', async () => {
+  it('skips the coordinator when it has no settings file', async () => {
     const { deps } = await makeNode();
     deps.files.delete(COORDINATOR_SETTINGS);
     const output = success(await upgrade(deps, currentSpec, { yes: true }));
@@ -4609,7 +4609,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(deps.files.has(COORDINATOR_SETTINGS)).toBe(false);
   });
 
-  it('TP-6: touches no folder that a record does not own: a record with another work copy path is not followed', async () => {
+  it('touches no folder that a record does not own: a record with another work copy path is not followed', async () => {
     const { deps } = await makeNode();
     await seedWorker(deps, 'alpha', OLD_TEXT, '/elsewhere/alpha');
     const outside = '/elsewhere/alpha/.claude/settings.local.json';
@@ -4618,7 +4618,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(output.json).toMatchObject({ hookSettings: [] });
   });
 
-  it('TP-6: stops with exit 4 for a settings file that is a link, before any write', async () => {
+  it('stops with exit 4 for a settings file that is a link, before any write', async () => {
     const links: Record<string, string> = {};
     const { deps } = await olderFactory({ links });
     links[copySettings('beta')] = '/outside/settings.json';
@@ -4629,7 +4629,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(snapshot(deps)).toEqual(before);
   });
 
-  it('TP-6: stops with exit 1 for a settings file that is not a JSON object, before any write', async () => {
+  it('stops with exit 1 for a settings file that is not a JSON object, before any write', async () => {
     const { deps } = await olderFactory();
     deps.seed(copySettings('beta'), '["not", "an", "object"]\n');
     const before = snapshot(deps);
@@ -4639,7 +4639,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(snapshot(deps)).toEqual(before);
   });
 
-  it('TP-6: stops with exit 1 for a settings file with an event that is not a list, before any write', async () => {
+  it('stops with exit 1 for a settings file with an event that is not a list, before any write', async () => {
     const { deps } = await olderFactory();
     deps.seed(copySettings('beta'), settingsText({ hooks: { SessionStart: ownSettingsEntries.hooks['SessionStart'], Stop: 'x' } }));
     const before = snapshot(deps);
@@ -4656,7 +4656,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     fs: { ...deps.fs, rename: async (from, to) => (to === target ? failure('disk full') : deps.fs.rename(from, to)) },
   });
 
-  it('TP-7: a write failure is exit 1 and names the files that changed', async () => {
+  it('a write failure is exit 1 and names the files that changed', async () => {
     const { deps } = await olderFactory();
     const error = refusal(await upgrade(renameFailing(deps, copySettings('alpha')), currentSpec, { yes: true }));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -4669,7 +4669,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(settingsAt(deps, copySettings('beta'))).toEqual(FOUR_EVENTS);
   });
 
-  it('TP-7: a write failure at the first file says that no file changed', async () => {
+  it('a write failure at the first file says that no file changed', async () => {
     const { deps } = await olderFactory();
     const error = refusal(await upgrade(renameFailing(deps, COORDINATOR_SETTINGS), currentSpec, { yes: true }));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -4678,7 +4678,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
 
   const STATE_BACKUP = '.factory/backups/2030-01-02T03-04-05-678Z';
 
-  it('TP-7: a write failure after the state upgrade names the backup, the kept block text and the commit', async () => {
+  it('a write failure after the state upgrade names the backup, the kept block text and the commit', async () => {
     const { deps } = await olderFactory();
     edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
     const spec = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
@@ -4691,7 +4691,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(text(deps, CLAUDE)).toContain('New coordinator text.');
   });
 
-  it('TP-7: a write failure after a state upgrade with no commit does not say that a commit was made', async () => {
+  it('a write failure after a state upgrade with no commit does not say that a commit was made', async () => {
     const { deps } = await olderFactory();
     edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
     const error = refusal(
@@ -4701,7 +4701,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(error.message).not.toContain('committed');
   });
 
-  it('TP-7: a write failure after the state upgrade names the delete guard that the run wrote', async () => {
+  it('a write failure after the state upgrade names the delete guard that the run wrote', async () => {
     const { deps } = await olderFactory();
     expect(deps.files.delete(`${HOME}/.factory/.git/${stateGuard.folder}/${stateGuard.hookFiles[0]}`)).toBe(true);
     edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
@@ -4715,7 +4715,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(error.message).toContain('Wrote the delete guard in .factory/.git/factory-guard.');
   });
 
-  it('TP-7: a stop for safety after the state upgrade is still exit 4, and names the backup', async () => {
+  it('a stop for safety after the state upgrade is still exit 4, and names the backup', async () => {
     const { deps } = await olderFactory();
     const linkedAfterBackup: FakeDeps = {
       ...deps,

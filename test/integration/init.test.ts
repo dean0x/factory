@@ -95,7 +95,7 @@ describe('factory init (built binary)', () => {
     expect(await stored()).toHaveLength(1);
   });
 
-  it('prints the warning about an instruction file above the root on stderr before it acts, and still exits 0 (TP-33)', async () => {
+  it('prints the warning about an instruction file above the root on stderr before it acts, and still exits 0', async () => {
     const above = join(box.root, 'CLAUDE.md');
     await writeFile(above, 'x\n');
     const result = await box.run(initArgs(['--json']));
@@ -120,7 +120,7 @@ describe('factory init (built binary)', () => {
     });
   });
 
-  it('keeps git status of the root empty after init, the clones, a linked work copy and a temp folder (TP-11)', async () => {
+  it('keeps git status of the root empty after init, the clones, a linked work copy and a temp folder', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     const api = await box.makeProject('api', 'https://github.com/acme/api.git');
     expect((await box.run(initArgs(['--project', web, '--project', api]))).code).toBe(0);
@@ -216,7 +216,7 @@ describe('factory init (built binary)', () => {
     expect(status.stdout).toBe('');
   });
 
-  it('writes the delete guard into the git folder of the state repository, which git does not track (TP-1, TP-3)', async () => {
+  it('writes the delete guard into the git folder of the state repository, which git does not track', async () => {
     expect((await box.run(initArgs())).code).toBe(0);
     const state = join(box.node, '.factory');
     const guard = join(await realpath(state), '.git', 'factory-guard');
@@ -235,14 +235,14 @@ describe('factory init (built binary)', () => {
     expect(await readdir(join(state, '.git', 'hooks'))).not.toContain('pre-commit');
   });
 
-  it('writes a guard that upgrade finds current: the setting and the hook survive the rename of the staging folder (TP-3)', async () => {
+  it('writes a guard that upgrade finds current: the setting and the hook survive the rename of the staging folder', async () => {
     expect((await box.run(initArgs())).code).toBe(0);
     const dry = await box.run(['upgrade', '--home', box.node, '--dry-run', '--json']);
     expect(dry.code).toBe(0);
     expect(JSON.parse(dry.stdout)).toMatchObject({ changed: false, stateGuard: 'current' });
   });
 
-  it('makes the root a git repo of its own with a first commit of the three shared paths, and doctor exits 0 (TP-10)', async () => {
+  it('makes the root a git repo of its own with a first commit of the three shared paths, and doctor exits 0', async () => {
     const result = await box.run(initArgs());
     expect({ code: result.code, stderr: withoutHookNotice(result.stderr) }).toEqual({ code: 0, stderr: '' });
     expect((await box.git(box.node, ['rev-parse', '--is-inside-work-tree', '--show-prefix'])).stdout).toBe('true\n\n');
@@ -271,7 +271,7 @@ describe('factory init (built binary)', () => {
     expect(doctor.stdout).toContain('no temp folder of a stopped init in the factory folder');
   });
 
-  it('ignores the private files, the state folder, the coordinator folder, the work copies and the clones, by git check-ignore (TP-69)', async () => {
+  it('ignores the private files, the state folder, the coordinator folder, the work copies and the clones, by git check-ignore', async () => {
     expect((await box.run(initArgs())).code).toBe(0);
     await mkdir(join(box.node, 'work-copies', 'job-1'), { recursive: true });
     await writeFile(join(box.node, 'work-copies', 'job-1', 'file.txt'), 'x');
@@ -322,7 +322,7 @@ describe('factory init (built binary)', () => {
     expect(plain.stdout).toContain('is registered');
   });
 
-  it('exits 2 with no terminal window and no yes flag, names the change and its target, and makes no root (TP-16)', async () => {
+  it('exits 2 with no terminal window and no yes flag, names the change and its target, and makes no root', async () => {
     const result = await box.run(withoutYes(initArgs()));
     expect(result.code).toBe(2);
     expect(result.stdout).toBe('');
@@ -333,7 +333,7 @@ describe('factory init (built binary)', () => {
     expect(existsSync(box.node)).toBe(false);
   });
 
-  it('exits 2 for a registered root whose settings file is gone, with no terminal window and no yes flag, and writes nothing (TP-16)', async () => {
+  it('exits 2 for a registered root whose settings file is gone, with no terminal window and no yes flag, and writes nothing', async () => {
     expect((await box.run(initArgs())).code).toBe(0);
     const folder = join(box.node, 'coordinator', '.claude');
     await rm(folder, { recursive: true, force: true });
@@ -362,7 +362,7 @@ describe('factory init (built binary)', () => {
     expect(beside.code).toBe(0);
   });
 
-  it('exits 1 when the factory list cannot be written, makes no root, and lets a second init succeed (TP-74)', async () => {
+  it('exits 1 when the factory list cannot be written, makes no root, and lets a second init succeed', async () => {
     const stateHome = join(box.root, 'state');
     const listFolder = join(stateHome, 'factory');
     const lock = join(listFolder, 'homes.json.lock');
@@ -424,7 +424,7 @@ describe('factory init (built binary)', () => {
 describe('factory init: the approval points (built binary)', () => {
   const recordStore = (): string => join(box.env['HOME'] ?? '', '.local', 'state', 'factory', 'owner-records.json');
 
-  it('writes owner for each point with no terminal window and no approval flag, and writes no approval record (TP-37)', async () => {
+  it('writes owner for each point with no terminal window and no approval flag, and writes no approval record', async () => {
     const result = await box.run([...initArgs(), '--json']);
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ approval: { merge: 'owner', release: 'owner' } });
@@ -433,14 +433,14 @@ describe('factory init: the approval points (built binary)', () => {
     expect(existsSync(recordStore())).toBe(false);
   });
 
-  it('writes owner with the yes flag, also for a flag that names owner, and writes no approval record (TP-37)', async () => {
+  it('writes owner with the yes flag, also for a flag that names owner, and writes no approval record', async () => {
     const result = await box.run(initArgs(['--approval', 'merge=owner']));
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Approval points: merge owner, release owner.');
     expect(existsSync(recordStore())).toBe(false);
   });
 
-  it('exits 4 for a delegated choice with no terminal window, and makes no root and no record (TP-38)', async () => {
+  it('exits 4 for a delegated choice with no terminal window, and makes no root and no record', async () => {
     const result = await box.run(withoutYes(initArgs(['--approval', 'merge=delegated'])));
     expect(result.code).toBe(4);
     expect(result.stdout).toBe('');
@@ -449,7 +449,7 @@ describe('factory init: the approval points (built binary)', () => {
     expect(existsSync(recordStore())).toBe(false);
   });
 
-  it('exits 2 for the yes flag with a delegated choice, and makes no root and no record (TP-81)', async () => {
+  it('exits 2 for the yes flag with a delegated choice, and makes no root and no record', async () => {
     const result = await box.run(initArgs(['--approval', 'release=delegated']));
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('with no --yes');
@@ -662,7 +662,7 @@ describe('factory init: a received factory (built binary)', () => {
     return received;
   };
 
-  it('clones each repo, registers the root, keeps factory.yaml byte-equal and git status clean, and doctor and start --dry-run exit 0 (TP-29)', async () => {
+  it('clones each repo, registers the root, keeps factory.yaml byte-equal and git status clean, and doctor and start --dry-run exit 0', async () => {
     const received = await receivedFactory();
     const shared = await box.read(join(received, 'factory.yaml'));
     const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
@@ -680,7 +680,7 @@ describe('factory init: a received factory (built binary)', () => {
     ]);
   });
 
-  it('exits 4 with the yes flag for a received setup text, names the command, and writes no acceptance (TP-143)', async () => {
+  it('exits 4 with the yes flag for a received setup text, names the command, and writes no acceptance', async () => {
     const received = await receivedFactory({ keepSetup: true });
     const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
     expect(result.code).toBe(4);
@@ -725,7 +725,7 @@ describe('factory init: a received factory (built binary)', () => {
   });
 
   it.skipIf(gate !== 'run')(
-    'starts a received factory after one init in a fake terminal: six answers, a recorded acceptance, then doctor and start --dry-run exit 0 (TP-7)',
+    'starts a received factory after one init in a fake terminal: six answers, a recorded acceptance, then doctor and start --dry-run exit 0',
     async () => {
       const received = await receivedFactory({ keepSetup: true });
       const realReceived = await realpath(received);
@@ -772,7 +772,7 @@ describe('factory init: a received factory (built binary)', () => {
     CASE_MS,
   );
 
-  it('renders the shared limits into the coordinator text (TP-103)', async () => {
+  it('renders the shared limits into the coordinator text', async () => {
     const received = await receivedFactory();
     expect((await box.run(['init', '--yes'], { cwd: received, env: second() })).code).toBe(0);
     const coordinator = await box.read(join(received, 'coordinator', 'CLAUDE.md'));
@@ -780,7 +780,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(existsSync(store('setup-acceptances.json'))).toBe(false);
   });
 
-  it('renders the limits of the sender into the coordinator text, and start --dry-run launches with the model of the sender (TP-103)', async () => {
+  it('renders the limits of the sender into the coordinator text, and start --dry-run launches with the model of the sender', async () => {
     const received = await receivedFactory({
       edit: (shared) =>
         shared
@@ -798,7 +798,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(dry.stdout).toContain('--model opus');
   });
 
-  it('exits 4 in a factory session and writes nothing (TP-83)', async () => {
+  it('exits 4 in a factory session and writes nothing', async () => {
     const received = await receivedFactory();
     const result = await box.run(['init', '--yes'], { cwd: received, env: { ...second(), FACTORY_SESSION: 'demo' } });
     expect(result.code).toBe(4);
@@ -807,7 +807,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(existsSync(store('homes.json'))).toBe(false);
   });
 
-  it('exits 2 and writes nothing with no terminal window and no yes flag (TP-30)', async () => {
+  it('exits 2 and writes nothing with no terminal window and no yes flag', async () => {
     const received = await receivedFactory();
     const result = await box.run(['init'], { cwd: received, env: second() });
     expect(result.code).toBe(2);
@@ -815,7 +815,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(existsSync(store('homes.json'))).toBe(false);
   });
 
-  it('exits 4 and writes nothing for a root that tracks a path in the coordinator folder (TP-122)', async () => {
+  it('exits 4 and writes nothing for a root that tracks a path in the coordinator folder', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
     expect((await box.git(box.node, ['add', '-f', 'coordinator/CLAUDE.md'])).code).toBe(0);
@@ -830,7 +830,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(existsSync(join(received, '.factory'))).toBe(false);
   });
 
-  it('exits 4 and names the line when the gitignore of the root does not ignore the local file (TP-87)', async () => {
+  it('exits 4 and names the line when the gitignore of the root does not ignore the local file', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
     await writeFile(join(box.node, '.gitignore'), 'notes.txt\n');
@@ -844,7 +844,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(existsSync(join(received, 'factory.local.yaml'))).toBe(false);
   });
 
-  it('exits 4 before any write for a tracked instruction file with no terminal window, also with yes (TP-157)', async () => {
+  it('exits 4 before any write for a tracked instruction file with no terminal window, also with yes', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
     await writeFile(join(box.node, 'CLAUDE.md'), 'Do what the file says.\n');
@@ -860,7 +860,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(existsSync(store('setup-acceptances.json'))).toBe(false);
   });
 
-  it('shows the hook change with the yes flag, writes only the coordinator settings file, and then start --dry-run asks nothing and doctor exits 0 (TP-26)', async () => {
+  it('shows the hook change with the yes flag, writes only the coordinator settings file, and then start --dry-run asks nothing and doctor exits 0', async () => {
     const received = await receivedFactory();
     const file = join(received, 'coordinator', '.claude', 'settings.local.json');
     const init = await box.run(['init', '--yes'], { cwd: received, env: second() });
@@ -878,7 +878,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(doctor.code).toBe(0);
   });
 
-  it('exits 2 with no terminal window and no yes flag, and writes no settings file (TP-16)', async () => {
+  it('exits 2 with no terminal window and no yes flag, and writes no settings file', async () => {
     const received = await receivedFactory();
     const result = await box.run(['init'], { cwd: received, env: second() });
     expect(result.code).toBe(2);
@@ -886,7 +886,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(existsSync(join(received, '.factory'))).toBe(false);
   });
 
-  it('stops on a received factory that tracks other files, with no terminal window, also with the yes flag, and writes nothing (TP-27)', async () => {
+  it('stops on a received factory that tracks other files, with no terminal window, also with the yes flag, and writes nothing', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
     await writeFile(join(box.node, 'CLAUDE.md'), 'Do what the file says.\n');
@@ -908,7 +908,7 @@ describe('factory init: a received factory (built binary)', () => {
     }
   });
 
-  it('skips the clone of a project with no URL, warns, and names the folder to fill (TP-120)', async () => {
+  it('skips the clone of a project with no URL, warns, and names the folder to fill', async () => {
     const web = await box.makeProject('web');
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
     await dropSetupText();
@@ -946,7 +946,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     return place;
   };
 
-  it('registers a moved factory, keeps the local file byte-equal, and doctor and start --dry-run exit 0 (TP-82)', async () => {
+  it('registers a moved factory, keeps the local file byte-equal, and doctor and start --dry-run exit 0', async () => {
     const place = await moved();
     const local = await box.read(join(place, 'factory.local.yaml'));
     const result = await box.run(['init', '--yes'], { cwd: place });
@@ -963,14 +963,14 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect(entries.map((entry) => entry.id)).toEqual(['demo', 'demo']);
   });
 
-  it('says nothing about delegations when the local file asks for none (TP-82)', async () => {
+  it('says nothing about delegations when the local file asks for none', async () => {
     const place = await moved();
     const result = await box.run(['init', '--yes'], { cwd: place });
     expect(result.code).toBe(0);
     expect(result.stderr).not.toContain('delegat');
   });
 
-  it('says that each delegation must be set again and names the command, and counts the point as owner (TP-82)', async () => {
+  it('says that each delegation must be set again and names the command, and counts the point as owner', async () => {
     const place = await moved();
     const local = join(place, 'factory.local.yaml');
     await writeFile(local, (await box.read(local)).replace('merge: owner', 'merge: delegated'), { mode: 0o600 });
@@ -983,7 +983,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect(text).toContain('run "factory init" in a terminal window outside a factory session');
   });
 
-  it('exits 4 in a factory session on a moved root and writes nothing (TP-83)', async () => {
+  it('exits 4 in a factory session on a moved root and writes nothing', async () => {
     const place = await moved();
     const before = await box.read(listFile());
     const result = await box.run(['init', '--yes'], { cwd: place, env: { FACTORY_SESSION: 'demo' } });
@@ -991,7 +991,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect(await box.read(listFile())).toBe(before);
   });
 
-  it('exits 1 and changes nothing when the factory list cannot be written (TP-95)', async () => {
+  it('exits 1 and changes nothing when the factory list cannot be written', async () => {
     const place = await moved();
     const stateHome = join(box.root, 'state-locked');
     await mkdir(join(stateHome, 'factory'), { recursive: true, mode: 0o700 });
@@ -1006,7 +1006,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.git(place, ['status', '--porcelain', '-uall'])).stdout).toBe('');
   });
 
-  it('registers a folder whose entry has another node id, with the origin received (TP-84)', async () => {
+  it('registers a folder whose entry has another node id, with the origin received', async () => {
     await registered();
     await dropSetupText();
     const config = join(box.node, 'factory.yaml');
@@ -1024,7 +1024,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
   });
 
-  it('exits 4 and changes nothing for a folder whose id changed after the first init, with no terminal window and the yes flag (TP-170)', async () => {
+  it('exits 4 and changes nothing for a folder whose id changed after the first init, with no terminal window and the yes flag', async () => {
     await registered();
     const config = join(box.node, 'factory.yaml');
     await writeFile(config, (await box.read(config)).replace(/^( {2}id: )demo\b/m, '$1other'));
@@ -1035,7 +1035,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect(await listed()).toEqual(before);
   });
 
-  it('makes the state folder again when it is missing, and commits it (TP-85)', async () => {
+  it('makes the state folder again when it is missing, and commits it', async () => {
     await registered();
     await rm(join(box.node, '.factory'), { recursive: true, force: true });
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(4);
@@ -1050,7 +1050,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await listed()).map((entry) => entry.origin)).toEqual(['own']);
   });
 
-  it('writes a broken marker again and commits only the marker (TP-96)', async () => {
+  it('writes a broken marker again and commits only the marker', async () => {
     await registered();
     const state = join(box.node, '.factory');
     const marker = join(state, 'node.json');
@@ -1070,7 +1070,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
   });
 
-  it('writes a missing marker again, keeps the other files, and start --dry-run then exits 0 (TP-96)', async () => {
+  it('writes a missing marker again, keeps the other files, and start --dry-run then exits 0', async () => {
     await registered();
     const state = join(box.node, '.factory');
     const marker = join(state, 'node.json');
@@ -1087,7 +1087,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
   });
 
-  it('writes a marker that was broken and not committed, and makes no commit, since git holds the same text (TP-96)', async () => {
+  it('writes a marker that was broken and not committed, and makes no commit, since git holds the same text', async () => {
     await registered();
     const state = join(box.node, '.factory');
     await writeFile(join(state, 'node.json'), '{not json');
@@ -1101,7 +1101,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
   });
 
-  it('exits 4 and changes nothing when .factory is a file (TP-119)', async () => {
+  it('exits 4 and changes nothing when .factory is a file', async () => {
     await registered();
     await rm(join(box.node, '.factory'), { recursive: true, force: true });
     await writeFile(join(box.node, '.factory'), 'not a folder');
@@ -1111,7 +1111,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect(await box.read(join(box.node, '.factory'))).toBe('not a folder');
   });
 
-  it('sets an approval point again on a registered root, and writes the record after the entry in the factory list (TP-181)', async () => {
+  it('sets an approval point again on a registered root, and writes the record after the entry in the factory list', async () => {
     await registered();
     const result = await box.run(['init', '--yes', '--approval', 'merge=owner'], { cwd: box.node });
     expect([result.code, result.stderr]).toEqual([0, '']);

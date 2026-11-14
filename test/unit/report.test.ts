@@ -227,7 +227,7 @@ const errorOf = <T>(result: CliResult<T>): CliError => {
 const reportOf = async (fixture: Fixture, parts: Parameters<typeof factsOf>[1] = {}): Promise<NodeReport> =>
   valueOf(reportDocOf(await factsOf(fixture, parts)));
 
-describe('report builder: the document (TP-10)', () => {
+describe('report builder: the document', () => {
   const items = [
     itemRecord('B-1', { status: 'doing', lane: 'alpha', priority: 'P1', title: 'Build the page', track: 'web', stage: 'build' }),
     itemRecord('B-2', { status: 'doing', lane: 'beta', priority: 'P0', title: 'Fix the cart' }),
@@ -707,7 +707,7 @@ describe('report builder: faults', () => {
   });
 });
 
-describe('report builder: nothing private reaches the report (TP-11)', () => {
+describe('report builder: nothing private reaches the report', () => {
   it('holds no owner prefix, no proxy, no session value and no approval value', async () => {
     const base = sampleConfigWithBoard(sampleBoard());
     const approval = Object.fromEntries(Object.keys(base.core.approval).map((point) => [point, values.approvalModes[1]]));
@@ -768,7 +768,7 @@ describe('report builder: where it sits', () => {
   });
 });
 
-describe('report file writer: with the fake file system (TP-25)', () => {
+describe('report file writer: with the fake file system', () => {
   const reportOfNode = async (): Promise<NodeReport> => reportOf(await fixtureOf());
   const nodeWithState = (options: Parameters<typeof createFakeDeps>[0] = {}): FakeDeps => {
     const deps = createFakeDeps(options);
@@ -854,7 +854,7 @@ describe('report file writer: with the fake file system (TP-25)', () => {
   });
 });
 
-describe('report file writer: with the real file system (TP-25)', () => {
+describe('report file writer: with the real file system', () => {
   const deps = createNodeDeps();
   let dir = '';
   let counter = 0;
@@ -915,7 +915,7 @@ describe('report file writer: with the real file system (TP-25)', () => {
   });
 });
 
-describe('report: the command (TP-12, TP-13, TP-14)', () => {
+describe('report: the command', () => {
   const nodeConfig = (children: FactoryConfig['core']['children'] = []): FactoryConfig => {
     const config = sampleConfigWithBoard();
     return { ...config, core: { ...config.core, node: { id: 'mgr', layer: 2 }, children } };
@@ -1070,7 +1070,7 @@ describe('report: the command (TP-12, TP-13, TP-14)', () => {
   });
 });
 
-describe('report: one builder for status and report (TP-12)', () => {
+describe('report: one builder for status and report', () => {
   const sourceOf = (name: string): string => stripComments(readFileSync(join(SRC, 'commands', name), 'utf8'));
 
   it.each(['status.ts', 'report.ts'])('%s reads the facts with the one builder, and never calls readStatus itself', (name) => {

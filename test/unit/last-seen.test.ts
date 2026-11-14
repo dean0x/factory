@@ -110,7 +110,7 @@ describe('writeLastSeen', () => {
     expect(result).toEqual({ ok: true, value: line({ event: 'Stop', event_at: T0 }) });
   });
 
-  it('keeps the stored percent and its time when a hook event comes (TP-7)', async () => {
+  it('keeps the stored percent and its time when a hook event comes', async () => {
     const deps = createFakeDeps();
     await writeLastSeen(deps, HOME, ID, percent(42));
     deps.advance(MINUTE);
@@ -118,7 +118,7 @@ describe('writeLastSeen', () => {
     expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T1, context_pct: 42, pct_at: T0 }));
   });
 
-  it('keeps the stored event and its time when a status line percent comes (TP-7)', async () => {
+  it('keeps the stored event and its time when a status line percent comes', async () => {
     const deps = createFakeDeps();
     await writeLastSeen(deps, HOME, ID, event('Stop'));
     deps.advance(MINUTE);
@@ -151,7 +151,7 @@ describe('writeLastSeen', () => {
     expect(storedLine(deps)).toEqual(line({ context_pct: value, pct_at: T0 }));
   });
 
-  it.each([101, -1, Number.NaN, Number.POSITIVE_INFINITY])('writes nothing for the percent %j (TP-8)', async (value) => {
+  it.each([101, -1, Number.NaN, Number.POSITIVE_INFINITY])('writes nothing for the percent %j', async (value) => {
     const deps = createFakeDeps();
     expect(errorOf(await writeLastSeen(deps, HOME, ID, percent(value))).kind).toBe('failure');
     expect(deps.files.size).toBe(0);
@@ -217,7 +217,7 @@ describe('writeLastSeen', () => {
     expect(snapshot(deps)).toBe(before);
   });
 
-  describe('a link (TP-11)', () => {
+  describe('a link', () => {
     it('refuses a heartbeat folder that is a link, and keeps the folder behind it', async () => {
       const deps = createFakeDeps({ links: { [FOLDER]: '/outside' } });
       deps.seed(`/outside/${ID}`, 'victim');
@@ -502,7 +502,7 @@ describe('readLastSeen', () => {
     });
   });
 
-  it.each(['Notification', 'PreToolUse'] as const)('TP-5: gives the line of a %s event as valid', async (name) => {
+  it.each(['Notification', 'PreToolUse'] as const)('gives the line of a %s event as valid', async (name) => {
     const deps = createFakeDeps();
     await writeLastSeen(deps, HOME, ID, event(name));
     expect(await readValue(deps)).toEqual({ state: 'valid', line: line({ event: name, event_at: T0 }) });
@@ -682,7 +682,7 @@ describe('promptStateOf', () => {
     ['PreCompact', 'busy'],
     ['PreToolUse', 'busy'],
     ['Notification', 'waits'],
-  ] as const)('TP-5: reads %s as %s', (name, state) => {
+  ] as const)('reads %s as %s', (name, state) => {
     expect(promptStateOf(typedLine(name))).toBe(state);
   });
 

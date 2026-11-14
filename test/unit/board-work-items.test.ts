@@ -37,8 +37,8 @@ const ask = async (deps: Deps, ids: readonly string[]): Promise<ReadonlyMap<stri
 
 const answersOf = async (repo: BoardRepo, ids: readonly string[]): Promise<[string, WorkItem][]> => [...(await ask(repo.deps, ids))];
 
-describe('the work item port of the board (TP-43)', () => {
-  it('M5-1b TP-43 gives a worker the item in progress that its worker field names, and no item to a worker with no open work', async () => {
+describe('the work item port of the board', () => {
+  it('gives a worker the item in progress that its worker field names, and no item to a worker with no open work', async () => {
     const repo = await nodeWith([
       owned('B-1', 'alpha', 'doing'),
       owned('B-2', 'beta', 'done'),
@@ -51,7 +51,7 @@ describe('the work item port of the board (TP-43)', () => {
     ]);
   });
 
-  it('M5-1b TP-43 names the item in progress before another open item, and keeps a worker with only an open item busy', async () => {
+  it('names the item in progress before another open item, and keeps a worker with only an open item busy', async () => {
     const repo = await nodeWith([
       owned('B-1', 'alpha', 'open'),
       owned('B-2', 'alpha', 'doing'),
@@ -66,17 +66,17 @@ describe('the work item port of the board (TP-43)', () => {
     ]);
   });
 
-  it('M5-1b TP-43 counts a state that the setup does not declare as open work', async () => {
+  it('counts a state that the setup does not declare as open work', async () => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'archived')]);
     expect(await answersOf(repo, ['alpha'])).toEqual([['alpha', busyWith('B-1')]]);
   });
 
-  it('M5-1b TP-43 answers for each id that it is asked about, in the order of the ids', async () => {
+  it('answers for each id that it is asked about, in the order of the ids', async () => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'doing')]);
     expect((await answersOf(repo, ['zed', 'alpha'])).map(([id]) => id)).toEqual(['zed', 'alpha']);
   });
 
-  it('M5-1b TP-43 matches the whole worker id and ignores a worker field that is not text', async () => {
+  it('matches the whole worker id and ignores a worker field that is not text', async () => {
     const repo = await nodeWith([
       owned('B-1', 'alpha-2', 'doing'),
       itemRecord('B-2', { status: 'doing', lane: 7 }),
@@ -89,12 +89,12 @@ describe('the work item port of the board (TP-43)', () => {
   });
 });
 
-describe('the work item port of the board: no declaration, a missing board or a corrupt board (TP-44)', () => {
+describe('the work item port of the board: no declaration, a missing board or a corrupt board', () => {
   /** The sample block without one key. */
   const without = (key: keyof BoardConfig): BoardConfig =>
     Object.fromEntries(Object.entries(sampleBoard()).filter(([name]) => name !== key)) as BoardConfig;
 
-  it('M5-1b TP-44 gives every worker an unknown item when the setup has no board block', async () => {
+  it('gives every worker an unknown item when the setup has no board block', async () => {
     const repo = await boardNode({ board: boardText([owned('B-1', 'alpha', 'doing')], []), config: sampleConfig() });
     expect(await answersOf(repo, ['alpha', 'beta'])).toEqual([
       ['alpha', UNKNOWN],
@@ -111,7 +111,7 @@ describe('the work item port of the board: no declaration, a missing board or a 
     ['no closed state', without('closed')],
     ['no worker field', without('worker_field')],
     ['an empty block', {}],
-  ] as const)('M5-1b TP-44 gives every worker an unknown item for %s', async (_name, board) => {
+  ] as const)('gives every worker an unknown item for %s', async (_name, board) => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'doing'), owned('B-2', 'beta', 'done')], board);
     expect(await answersOf(repo, ['alpha', 'beta', 'gamma'])).toEqual([
       ['alpha', UNKNOWN],
@@ -124,7 +124,7 @@ describe('the work item port of the board: no declaration, a missing board or a 
     ['a board file that is not there', undefined],
     ['a board file that is not JSON', 'not json'],
     ['a board file with an item that has no status', boardText([{ id: 'B-1', title: 'No status', lane: 'alpha' }], [])],
-  ])('M5-1b TP-44 fails the read for %s, so the caller makes every worker unknown', async (_name, text) => {
+  ])('fails the read for %s, so the caller makes every worker unknown', async (_name, text) => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'doing')]);
     if (text === undefined) repo.deps.files.delete(BOARD_PATH);
     else repo.deps.seed(BOARD_PATH, text);
@@ -136,21 +136,21 @@ describe('the work item port of the board: no declaration, a missing board or a 
     }
   });
 
-  it('M5-1b TP-44 fails the read for a board file that is a link, with a security stop', async () => {
+  it('fails the read for a board file that is a link, with a security stop', async () => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'doing')]);
     const result = await boardWorkItems(recipes).itemsOf(linkAt(repo.deps, BOARD_PATH), HOME, ['alpha']);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(exitCodeOf[result.error.kind]).toBe(4);
   });
 
-  it('M5-1b TP-44 fails the read when the config is not there', async () => {
+  it('fails the read when the config is not there', async () => {
     const repo = await nodeWith([]);
     const result = await boardWorkItems(recipes).itemsOf(repo.deps, '/w/nothing', ['alpha']);
     expect(result.ok).toBe(false);
   });
 });
 
-describe('the work item port of the board: a stage is display data and never proof (TP-78)', () => {
+describe('the work item port of the board: a stage is display data and never proof', () => {
   const STAGES = ['ticket', 'building', 'review', 'merged', 'released', 'not-in-the-list'];
 
   const BOARD = (extra: Record<string, unknown>): Record<string, unknown>[] => [
@@ -159,7 +159,7 @@ describe('the work item port of the board: a stage is display data and never pro
     owned('B-3', 'waits', 'open', extra),
   ];
 
-  it.each(STAGES)('M5-1b TP-78 leaves a busy worker busy and an idle worker idle for the stage %s', async (stage) => {
+  it.each(STAGES)('leaves a busy worker busy and an idle worker idle for the stage %s', async (stage) => {
     const plain = await answersOf(await nodeWith(BOARD({})), ['busy', 'quiet', 'waits']);
     const staged = await answersOf(await nodeWith(BOARD({ stage })), ['busy', 'quiet', 'waits']);
     expect(staged).toEqual(plain);
@@ -170,13 +170,13 @@ describe('the work item port of the board: a stage is display data and never pro
     ]);
   });
 
-  it('M5-1b TP-78 does not read the track of an item either', async () => {
+  it('does not read the track of an item either', async () => {
     const plain = await answersOf(await nodeWith(BOARD({})), ['busy', 'quiet', 'waits']);
     const tracked = await answersOf(await nodeWith(BOARD({ track: 'core' })), ['busy', 'quiet', 'waits']);
     expect(tracked).toEqual(plain);
   });
 
-  it('M5-1b TP-78 holds no read of the stage key or the track key in the source of the port', () => {
+  it('holds no read of the stage key or the track key in the source of the port', () => {
     const source = stripComments(readFileSync(join(__dirname, '..', '..', 'src', 'board', 'work-items.ts'), 'utf8'));
     expect(source).not.toMatch(/\bstage\b/i);
     expect(source).not.toMatch(/\btrack\b/i);
@@ -184,7 +184,7 @@ describe('the work item port of the board: a stage is display data and never pro
   });
 });
 
-describe('the work item port of the board: the evidence of closed and parked work (AC-12)', () => {
+describe('the work item port of the board: the evidence of closed and parked work', () => {
   const HEAD_A = 'a'.repeat(40);
   const HEAD_B = 'b'.repeat(40);
 
@@ -248,8 +248,8 @@ describe('the work item port of the board: the evidence of closed and parked wor
   });
 });
 
-describe('the work item port of the board: it reads with no lock (TP-93)', () => {
-  it('M5-1b TP-93 answers while another process holds the state lock, does not wait, and leaves the lock file as it was', async () => {
+describe('the work item port of the board: it reads with no lock', () => {
+  it('answers while another process holds the state lock, does not wait, and leaves the lock file as it was', async () => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'doing')]);
     repo.deps.seed(LOCK_FILE, '4242\n');
     expect(await answersOf(repo, ['alpha'])).toEqual([['alpha', busyWith('B-1')]]);
@@ -258,7 +258,7 @@ describe('the work item port of the board: it reads with no lock (TP-93)', () =>
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-93 changes no file and makes no commit', async () => {
+  it('changes no file and makes no commit', async () => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'doing')]);
     const before = JSON.stringify([...repo.deps.files.entries()].sort());
     await ask(repo.deps, ['alpha']);
@@ -267,7 +267,7 @@ describe('the work item port of the board: it reads with no lock (TP-93)', () =>
   });
 });
 
-describe('the work item port of the board: a worker id of 40 characters (TP-139)', () => {
+describe('the work item port of the board: a worker id of 40 characters', () => {
   const BASE: ItemOptions = {
     home: HOME,
     words: [],
@@ -290,13 +290,13 @@ describe('the work item port of the board: a worker id of 40 characters (TP-139)
   /** The longest worker id: a slug of 40 characters. */
   const LONGEST = `w${'0'.repeat(39)}`;
 
-  it('M5-1b TP-139 uses an id that is the longest slug', () => {
+  it('uses an id that is the longest slug', () => {
     expect(LONGEST).toHaveLength(40);
     expect(isSlug(LONGEST)).toBe(true);
     expect(isSlug(`${LONGEST}0`)).toBe(false);
   });
 
-  it('M5-1b TP-139 stores the id in the worker field, and the port shows the item in progress, not unknown', async () => {
+  it('stores the id in the worker field, and the port shows the item in progress, not unknown', async () => {
     const repo = await boardNode({ board: boardText([], []) });
     valueOf(await run(repo, { words: ['add'], title: 'Long id', fields: ['priority=P1', `lane=${LONGEST}`] }));
     valueOf(await run(repo, { words: ['move', 'B-1'], state: 'doing' }));
@@ -304,7 +304,7 @@ describe('the work item port of the board: a worker id of 40 characters (TP-139)
     expect(await answersOf(repo, [LONGEST])).toEqual([[LONGEST, busyWith('B-1')]]);
   });
 
-  it('M5-1b TP-139 refuses a worker field value of 41 characters with exit 2 and writes nothing', async () => {
+  it('refuses a worker field value of 41 characters with exit 2 and writes nothing', async () => {
     const repo = await boardNode({ board: boardText([], []) });
     const result = await run(repo, { words: ['add'], title: 'Too long', fields: ['priority=P1', `lane=${LONGEST}0`] });
     expect(result.ok).toBe(false);

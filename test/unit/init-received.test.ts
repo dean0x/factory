@@ -132,7 +132,7 @@ const SETUP_HASH = manifestHash(Object.entries(SETUP_FILES).map(([path, text]) =
 
 const coordinatorText = (deps: FakeDeps): string => deps.files.get(`${ROOT}/coordinator/CLAUDE.md`) ?? '';
 
-describe('init: a received factory (TP-29, TP-30)', () => {
+describe('init: a received factory', () => {
   it('registers the root without the check for a new home, and writes only the files of this machine', async () => {
     const { deps, log } = received({}, terminal);
     const before = new Map(deps.files);
@@ -149,14 +149,14 @@ describe('init: a received factory (TP-29, TP-30)', () => {
     expect(log.calls.filter((call) => call.args[1] === ROOT && ['init', 'add', 'commit'].includes(call.args[2] ?? ''))).toEqual([]);
   });
 
-  it('M5-1b TP-29 seeds the board of a received factory with the queue key of its recipe', async () => {
+  it('seeds the board of a received factory with the queue key of its recipe', async () => {
     const { deps } = received({}, terminal);
     expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
     const board = JSON.parse(deps.files.get(`${ROOT}/.factory/board.json`) ?? 'null') as Record<string, unknown>;
     expect(board).toEqual({ merge: [], items: [], tracks: [] });
   });
 
-  it('writes the delete guard into the state repo that it makes, with the setting for the final path (TP-2)', async () => {
+  it('writes the delete guard into the state repo that it makes, with the setting for the final path', async () => {
     const { deps, log } = received({}, terminal);
     expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
     const guard = `${ROOT}/.factory/.git/${stateGuard.folder}`;
@@ -168,7 +168,7 @@ describe('init: a received factory (TP-29, TP-30)', () => {
     expect(log.commands()).toContain(`config -- core.hooksPath ${guard}`);
   });
 
-  it('makes the state folder without a guard, and warns with the cause, when the guard can not be written (TP-2)', async () => {
+  it('makes the state folder without a guard, and warns with the cause, when the guard can not be written', async () => {
     const { deps } = received({}, { ...terminal, programArgv: [] });
     const result = await runInit(deps, options({ yes: true }));
     expect(result.ok).toBe(true);
@@ -252,7 +252,7 @@ describe('init: a received factory (TP-29, TP-30)', () => {
   });
 });
 
-describe('init: a received factory in a factory session (TP-83)', () => {
+describe('init: a received factory in a factory session', () => {
   it.each([[true], [false]])('asks nothing, exits 4 and writes nothing, with the yes flag %s', async (yes) => {
     const { deps } = received({}, { ...terminal, env: { ...ENV, [env.session]: 'demo' }, prompt: () => ok('y') });
     const before = snapshot(deps);
@@ -263,7 +263,7 @@ describe('init: a received factory in a factory session (TP-83)', () => {
   });
 });
 
-describe('init: what a received factory shows before the first clone (TP-140)', () => {
+describe('init: what a received factory shows before the first clone', () => {
   it('lists each repo with its URL, the node id and the shared model, effort and limits, also with the yes flag', async () => {
     const { deps } = received({}, terminal);
     const result = await runInit(deps, options({ yes: true }));
@@ -290,7 +290,7 @@ describe('init: what a received factory shows before the first clone (TP-140)', 
   });
 });
 
-describe('init: the files that a received root tracks (TP-86, TP-122, TP-124)', () => {
+describe('init: the files that a received root tracks', () => {
   it.each([
     ['the local file', 'factory.local.yaml'],
     ['a path in the state folder', '.factory/node.json'],
@@ -367,7 +367,7 @@ describe('init: the files that a received root tracks (TP-86, TP-122, TP-124)', 
   });
 });
 
-describe('init: the ignore rules of a received root (TP-87)', () => {
+describe('init: the ignore rules of a received root', () => {
   const ignoring = (ignored: readonly string[]) => ({ fixture: { ignored: { [ROOT]: ignored } } });
   const ALL = ['factory.local.yaml', '.factory/node.json', 'coordinator/CLAUDE.md', 'web/CLAUDE.md'];
 
@@ -410,7 +410,7 @@ describe('init: the ignore rules of a received root (TP-87)', () => {
   });
 });
 
-describe('init: links and caps in the tracked set of a received root (TP-164, TP-167)', () => {
+describe('init: links and caps in the tracked set of a received root', () => {
   it.each([
     ['a tracked link named CLAUDE.md', 'CLAUDE.md', { [`${ROOT}/CLAUDE.md`]: '/elsewhere/file' }],
     ['a tracked link in place of a folder', 'docs/a.md', { [`${ROOT}/docs`]: '/elsewhere' }],
@@ -462,7 +462,7 @@ describe('init: links and caps in the tracked set of a received root (TP-164, TP
 });
 
 describe('init: the setup acceptance of a received root', () => {
-  describe('the files of the set, listed before any write (TP-126, TP-156, TP-163, TP-182, TP-183)', () => {
+  describe('the files of the set, listed before any write', () => {
     it('shows the setup text and its hash and asks, and with yes it renders the setup block and records the hash', async () => {
       const asked: string[] = [];
       const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y', asked) });
@@ -530,7 +530,7 @@ describe('init: the setup acceptance of a received root', () => {
       expect(coordinatorText(deps)).not.toContain(COORDINATOR_TEXT.trim());
     });
 
-    it('asks for the listed files when the setup text is empty (TP-182)', async () => {
+    it('asks for the listed files when the setup text is empty', async () => {
       const asked: string[] = [];
       const { deps } = received(
         { tracked: [...TRACKED_SETUP, 'CLAUDE.md'], texts: { 'setup/coordinator.md': '', 'setup/roles/worker.md': '\n' }, unaccepted: true },
@@ -569,7 +569,7 @@ describe('init: the setup acceptance of a received root', () => {
     });
   });
 
-  describe('a received setup text needs the owner at the prompt (TP-127, TP-143, TP-157, TP-170)', () => {
+  describe('a received setup text needs the owner at the prompt', () => {
     it('accepts the setup text when a person answers yes at the prompt in a terminal window, and the prompt shows the text', async () => {
       const asked: string[] = [];
       const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y', asked) });
@@ -612,7 +612,7 @@ describe('init: the setup acceptance of a received root', () => {
       expect(deps.files.has(RECORDS)).toBe(false);
     });
 
-    it('exits 4 with no terminal window, writes no acceptance, and leaves an approval store that holds a record as it was (TP-143)', async () => {
+    it('exits 4 with no terminal window, writes no acceptance, and leaves an approval store that holds a record as it was', async () => {
       const { deps } = received({ unaccepted: true });
       deps.seedDir('/w/other');
       // An approval record is written in a terminal window only. The run of the test has none.
@@ -641,7 +641,7 @@ describe('init: the setup acceptance of a received root', () => {
       expect(snapshot(deps)).toBe(before);
     });
 
-    it('exits 4 before any write after a change of the node id on a root with an older acceptance (TP-170)', async () => {
+    it('exits 4 before any write after a change of the node id on a root with an older acceptance', async () => {
       const first = received();
       expect((await runInit(first.deps, options({ yes: true }))).ok).toBe(true);
       const older = first.deps.files.get(ACCEPTANCES) ?? '';
@@ -672,7 +672,7 @@ describe('init: the setup acceptance of a received root', () => {
     });
   });
 
-  describe('listed files on a received root, on a terminal window (TP-183)', () => {
+  describe('listed files on a received root, on a terminal window', () => {
     const LISTED = [...TRACKED_SETUP, 'CLAUDE.md', 'scripts/run.sh'];
 
     it('asks with plain init, writes no acceptance after a no, names init in a terminal window, and then start exits 4', async () => {
@@ -711,7 +711,7 @@ describe('init: the setup acceptance of a received root', () => {
     });
   });
 
-  describe('a received factory that a person accepts at the prompt (TP-103)', () => {
+  describe('a received factory that a person accepts at the prompt', () => {
     const SENDER_MODEL = 'opus';
 
     it('puts the accepted setup text and the limits of the sender into the coordinator text, and start --dry-run launches with the model of the sender', async () => {
@@ -772,10 +772,10 @@ describe('init: the setup acceptance of a received root', () => {
   });
 });
 
-describe('init: the hook settings of a received factory (TP-16, TP-26, TP-27)', () => {
+describe('init: the hook settings of a received factory', () => {
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(HOOK_FILE) ?? 'null');
 
-  it('TP-26: shows the hook change after the question about the files, and the person accepts it; then start --dry-run asks and shows nothing', async () => {
+  it('shows the hook change after the question about the files, and the person accepts it; then start --dry-run asks and shows nothing', async () => {
     const asked: string[] = [];
     const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y', asked, 'y'), env: { ...ENV, PATH: '/bin' } });
     deps.seed('/bin/tmux', '');
@@ -810,7 +810,7 @@ describe('init: the hook settings of a received factory (TP-16, TP-26, TP-27)', 
     expect(checked.filter((line) => /settings/i.test(line) && line.startsWith('warn'))).toEqual([]);
   });
 
-  it('TP-27: stops with exit 4 on a received factory that tracks other files, with no terminal window and the yes flag, and writes nothing', async () => {
+  it('stops with exit 4 on a received factory that tracks other files, with no terminal window and the yes flag, and writes nothing', async () => {
     const { deps } = received({ unaccepted: true });
     const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
@@ -819,7 +819,7 @@ describe('init: the hook settings of a received factory (TP-16, TP-26, TP-27)', 
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('TP-27: stops with exit 2 on a received factory that tracks other files, with no terminal window and no yes flag, and writes nothing', async () => {
+  it('stops with exit 2 on a received factory that tracks other files, with no terminal window and no yes flag, and writes nothing', async () => {
     const { deps } = received({ unaccepted: true });
     const before = snapshot(deps);
     const result = await runInit(deps, options());
@@ -828,7 +828,7 @@ describe('init: the hook settings of a received factory (TP-16, TP-26, TP-27)', 
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('TP-16: with no terminal window and no yes flag, writes nothing and exits 2', async () => {
+  it('with no terminal window and no yes flag, writes nothing and exits 2', async () => {
     const { deps } = received();
     const before = snapshot(deps);
     expect(await runInit(deps, options())).toMatchObject({ ok: false, error: { kind: 'usage' } });
@@ -936,7 +936,7 @@ describe('init: the hook settings of a received factory (TP-16, TP-26, TP-27)', 
   });
 });
 
-describe('init: the projects of a received factory (TP-120)', () => {
+describe('init: the projects of a received factory', () => {
   const withProjects = (...urls: (string | undefined)[]): FactoryConfig => {
     const config = sampleConfig();
     const base = config.recipe.projects[0]!;

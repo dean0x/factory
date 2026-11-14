@@ -10,8 +10,8 @@ const lab = useLab();
 const MARK_FILE = 'active-machine.json';
 const CLEAR_COMMIT = 'chore: clear the mark of the active machine';
 
-describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server, AC-18, TP-39, TP-40, TP-41, TP-42, TP-135)', () => {
-  it('stops each worker, also one whose session works, clears the mark, ends the session by its name, and leaves a session of another user and its program running (TP-39, TP-135)', async () => {
+describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server)', () => {
+  it('stops each worker, also one whose session works, clears the mark, ends the session by its name, and leaves a session of another user and its program running', async () => {
     await lab.node();
     expect((await lab.event('alpha', 'UserPromptSubmit')).code).toBe(0);
     const bystander = await lab.bystander();
@@ -33,7 +33,7 @@ describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server,
     expect((await lab.box.git(lab.stateOf(), ['log', '-1', '--format=%s'])).stdout.trim()).toBe(CLEAR_COMMIT);
   }, LIFECYCLE_CASE_MS);
 
-  it('ends the program of the coordinator pane with TERM before it ends the session (F-7)', async () => {
+  it('ends the program of the coordinator pane with TERM before it ends the session', async () => {
     await writeFile(join(lab.outDir, 'record-term-demo'), '');
     await lab.node();
 
@@ -44,7 +44,7 @@ describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server,
     expect(await readFile(join(lab.outDir, 'termed-demo'), 'utf8')).toBe('termed\n');
   }, LIFECYCLE_CASE_MS);
 
-  it('says that nothing runs and exits 0 when no session runs, also on a second run (TP-41)', async () => {
+  it('says that nothing runs and exits 0 when no session runs, also on a second run', async () => {
     await lab.node();
     expect((await lab.factory('shutdown')).code).toBe(0);
     const again = await lab.factory('shutdown');
@@ -52,7 +52,7 @@ describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server,
     expect(again.stdout).toContain('Nothing runs: the tmux session demo does not run.');
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 3 and stops nothing when one worker is in an unknown state (TP-42)', async () => {
+  it('exits 3 and stops nothing when one worker is in an unknown state', async () => {
     await lab.node({ sessions: ['beta', 'demo'] });
     const before = await lab.workerPanes();
     expect(before).toHaveLength(2);
@@ -66,7 +66,7 @@ describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server,
     expect((await lab.box.git(lab.stateOf(), ['ls-files', '--', MARK_FILE])).stdout.trim()).toBe(MARK_FILE);
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 and keeps a session of the same name that has no home option (TP-40)', async () => {
+  it('exits 4 and keeps a session of the same name that has no home option', async () => {
     await lab.init();
     const made = await lab.tmux(['new-session', '-d', '-s', 'demo', '-P', '-F', '#{pane_pid}', 'sleep 300']);
     expect(made.code, made.stderr).toBe(0);

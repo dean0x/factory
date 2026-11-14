@@ -25,7 +25,7 @@ const added = async (deps: FakeDeps) => {
   return result.value;
 };
 
-describe('the exclude entry of a clone (TP-14)', () => {
+describe('the exclude entry of a clone', () => {
   it('names the settings file of a work copy, anchored at the top of the work tree', () => {
     expect(cloneExclude.entry).toBe(ENTRY);
   });

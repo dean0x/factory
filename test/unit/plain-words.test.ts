@@ -71,7 +71,7 @@ describe('the plain-words table', () => {
   });
 });
 
-describe('the glossary and the plain words (TP-110)', () => {
+describe('the glossary and the plain words', () => {
   /** Plain words that are no glossary entry: a phrase for one place, a command name, or the record of another owner. */
   const WITHOUT_ENTRY = new Set([
     'a setting that skips permission prompts',
@@ -411,7 +411,7 @@ describe('the CHANGELOG part of one version', () => {
   });
 });
 
-describe('the README and the CHANGELOG part (TP-139)', () => {
+describe('the README and the CHANGELOG part', () => {
   const readTop = (name: (typeof SCANNED_TOP_FILES)[number]): string => readFileSync(join(__dirname, '..', '..', name), 'utf8');
 
   it('reads the README and the CHANGELOG', () => {

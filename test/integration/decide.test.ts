@@ -92,7 +92,7 @@ afterAll(removeOpenSandboxes);
 
 describe.skipIf(gate !== 'run')('decide in a fake terminal (built binary)', () => {
   it(
-    'M5-1b TP-157 records the first answer after init: one decisions folder, a first log.md, one owner record and one state commit',
+    'records the first answer after init: one decisions folder, a first log.md, one owner record and one state commit',
     async () => {
       expect(existsSync(decisionsFolder())).toBe(false);
       expect(existsSync(profileLog())).toBe(false);
@@ -143,7 +143,7 @@ describe.skipIf(gate !== 'run')('decide in a fake terminal (built binary)', () =
   );
 
   it(
-    'M5-1b TP-142 exits 4 with the delete guard off, before the question, and writes nothing',
+    'exits 4 with the delete guard off, before the question, and writes nothing',
     async () => {
       expect((await stateGit(['config', stateGuard.hooksPathKey, '/somewhere/else'])).code).toBe(0);
       const before = await stateNow();
@@ -162,7 +162,7 @@ describe.skipIf(gate !== 'run')('decide in a fake terminal (built binary)', () =
     ['FACTORY_SESSION', 'demo'],
     ['CLAUDECODE', '1'],
   ])(
-    'M5-1b TP-149 exits 4 with %s set, before the question, and writes nothing',
+    'exits 4 with %s set, before the question, and writes nothing',
     async (name, value) => {
       const before = await stateNow();
 
@@ -179,7 +179,7 @@ describe.skipIf(gate !== 'run')('decide in a fake terminal (built binary)', () =
 
 describe('decide with no terminal window (built binary)', () => {
   it(
-    'M5-1b TP-149 exits 4 when input and output are pipes, even with a yes on the input, and writes nothing',
+    'exits 4 when input and output are pipes, even with a yes on the input, and writes nothing',
     async () => {
       const before = await stateNow();
 

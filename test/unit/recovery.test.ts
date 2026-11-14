@@ -162,7 +162,7 @@ const resumesOf = (made: Made): Record<string, string | undefined> =>
 
 const splits = (made: Made): number => made.tmux.commands().filter((command) => command.startsWith('split-window')).length;
 
-describe('the session that the coordinator resumes after a kill of the server (TP-37)', () => {
+describe('the session that the coordinator resumes after a kill of the server', () => {
   const POINTER = layoutOf(HOME).coordinatorLastSessionFile;
 
   const bare = (): FakeDeps => createFakeDeps({ env: { PATH: '/bin' } });
@@ -225,7 +225,7 @@ describe('the session that the coordinator resumes after a kill of the server (T
   });
 });
 
-describe('the recovery of the workers: each worker with a usable id (TP-34)', () => {
+describe('the recovery of the workers: each worker with a usable id', () => {
   it('resumes each recorded worker with its own session id, and reports them in the order of the ids', async () => {
     const made = await make();
     expect(await recovered(made)).toEqual({ resumed: ['alpha', 'beta', 'gamma'], skipped: [], failed: [] });
@@ -265,7 +265,7 @@ describe('the recovery of the workers: each worker with a usable id (TP-34)', ()
   });
 });
 
-describe('the recovery of the workers: a worker with no usable id is skipped (TP-35, TP-134)', () => {
+describe('the recovery of the workers: a worker with no usable id is skipped', () => {
   const POINTER = workerPathsOf(HOME, 'beta').lastSessionFile;
 
   it.each([
@@ -321,7 +321,7 @@ describe('the recovery of the workers: a worker with no usable id is skipped (TP
   });
 });
 
-describe('the recovery of the workers: a launch that fails does not stop the run (TP-36)', () => {
+describe('the recovery of the workers: a launch that fails does not stop the run', () => {
   it('reports the failed worker by name, resumes the next ones, and does not try again', async () => {
     const made = await make({ program: endsPaneFor(SESSION['alpha'] ?? '') });
     expect(await recovered(made)).toEqual({ resumed: ['beta', 'gamma'], skipped: [], failed: ['alpha'] });
@@ -352,7 +352,7 @@ describe('the recovery of the workers: a launch that fails does not stop the run
   });
 });
 
-describe('the recovery of the workers: the settings of the work copy (TP-17, AC-7)', () => {
+describe('the recovery of the workers: the settings of the work copy', () => {
   it('starts no pane for a work copy with a wrong settings file, warns with the file and the remedy, and goes on', async () => {
     const bad = JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://other.example' } });
     const made = await make({ settings: { beta: bad } });
@@ -430,7 +430,7 @@ describe('the recovery of the workers: the role text of each worker', () => {
   });
 });
 
-describe('the recovery of the workers: the proxy is asked once for each run (TP-62, AC-25)', () => {
+describe('the recovery of the workers: the proxy is asked once for each run', () => {
   it('sends one health check for three workers on one proxy', async () => {
     const made = await make();
     await recovered(made, configWith({ session: 'local' }));

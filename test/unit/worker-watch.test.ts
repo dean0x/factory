@@ -294,14 +294,14 @@ const runTokens = (world: World, before: number): readonly string[] => world.dep
 /** The time of the fake clock after `count` waits of the watch, when the watch started at `start`. */
 const checkTime = (start: Date, count: number): string => new Date(start.getTime() + count * watchPoll.intervalMs).toISOString();
 
-describe('TP-23: the cap of the watch', () => {
-  it('TP-23: the cap is 24 hours, and the checks are the cap divided by the interval', () => {
+describe('the cap of the watch', () => {
+  it('the cap is 24 hours, and the checks are the cap divided by the interval', () => {
     expect(watchPoll.capMs).toBe(DAY);
     expect(watchPoll.attempts).toBe(2_880);
     expect(watchPoll.attempts * watchPoll.intervalMs).toBe(watchPoll.capMs);
   });
 
-  it('TP-23: with no change it waits 2880 times 30000 ms, and then says NO CHANGE with the time of the last check', async () => {
+  it('with no change it waits 2880 times 30000 ms, and then says NO CHANGE with the time of the last check', async () => {
     const world = await make();
     const start = world.deps.now();
     const outcome = valueOf(await world.watch());
@@ -311,7 +311,7 @@ describe('TP-23: the cap of the watch', () => {
   });
 });
 
-describe('TP-29: the checks of the watch', () => {
+describe('the checks of the watch', () => {
 
   it.each<[string, WatchKind, (world: World) => void | Promise<void>]>([
     ['the pane ended', 'ended', (world) => world.end(PANE_OF[ALPHA] ?? '')],
@@ -320,7 +320,7 @@ describe('TP-29: the checks of the watch', () => {
     ['the line is not valid', 'lineNotValid', (world) => void world.deps.seed(lineFile(SESSION_OF[ALPHA] ?? ''), 'not json')],
     ['the line belongs to another session', 'lineNotOwned', (world) => void world.deps.seed(lineFile(SESSION_OF[ALPHA] ?? ''), foreignLineText(world.deps))],
     ['a dialog waits', 'waits', (world) => writesEvent(world.deps, ALPHA, 'Notification')],
-  ])('TP-29: %s, and the watch ends at that check with the kind %s', async (_name, kind, change) => {
+  ])('%s, and the watch ends at that check with the kind %s', async (_name, kind, change) => {
     const world = await make();
     const outcome = changedOf(valueOf(await world.watch([], atWait(3, () => change(world)))));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind }]);
@@ -328,7 +328,7 @@ describe('TP-29: the checks of the watch', () => {
     expect(world.deps.sleeps).toHaveLength(3);
   });
 
-  it('TP-29: a session that works for more than 15 minutes with no event and no percent is stalled at the first check past 15 minutes', async () => {
+  it('a session that works for more than 15 minutes with no event and no percent is stalled at the first check past 15 minutes', async () => {
     const world = await make({ events: { [ALPHA]: 'PreToolUse' } });
     const outcome = changedOf(valueOf(await world.watch()));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'stalled' }]);
@@ -336,7 +336,7 @@ describe('TP-29: the checks of the watch', () => {
     expect(outcome.checks).toBe((15 * MINUTE) / watchPoll.intervalMs + 1);
   });
 
-  it('TP-29: a context percent that is newer than the event keeps a working session from being stalled until 15 minutes after the percent', async () => {
+  it('a context percent that is newer than the event keeps a working session from being stalled until 15 minutes after the percent', async () => {
     const world = await make({ events: { [ALPHA]: 'UserPromptSubmit' } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(20, () => writesPercent(world.deps, ALPHA)))));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'stalled' }]);
@@ -344,12 +344,12 @@ describe('TP-29: the checks of the watch', () => {
     expect(outcome.checks).toBe(20 + (15 * MINUTE) / watchPoll.intervalMs + 1);
   });
 
-  it('TP-29: a session at its prompt is never stalled', async () => {
+  it('a session at its prompt is never stalled', async () => {
     const world = await make({ events: { [ALPHA]: 'Stop' } });
     expect(valueOf(await world.watch()).kind).toBe('no-change');
   });
 
-  it('TP-29: no tmux call types or signals and no file but the run marker is written, in a watch with no change and in a watch with a change', async () => {
+  it('no tmux call types or signals and no file but the run marker is written, in a watch with no change and in a watch with a change', async () => {
     const quiet = await make({ caller: 'coordinator' });
     const quietBefore = snapshotOf(quiet);
     valueOf(await quiet.watch());
@@ -361,19 +361,19 @@ describe('TP-29: the checks of the watch', () => {
     expectReadOnly(changed, changedBefore);
   });
 
-  it('TP-29: the watch never reads the screen of a pane', async () => {
+  it('the watch never reads the screen of a pane', async () => {
     const world = await make();
     valueOf(await world.watch());
     expect(world.tmux.commands().filter((command) => command.startsWith('capture-pane'))).toEqual([]);
   });
 });
 
-describe('TP-30: the baseline of the watch', () => {
+describe('the baseline of the watch', () => {
   it.each<[string, Setup, WatchKind]>([
     ['a dialog waits', { events: { [ALPHA]: 'Notification' } }, 'waits'],
     ['the pane ended', { dead: [ALPHA] }, 'ended'],
     ['the pane runs another program', { commands: { [ALPHA]: ['zsh'] } }, 'other'],
-  ])('TP-30: when %s at the baseline, the watch ends with 0 sleeps', async (_name, setup, kind) => {
+  ])('when %s at the baseline, the watch ends with 0 sleeps', async (_name, setup, kind) => {
     const world = await make(setup);
     const outcome = changedOf(valueOf(await world.watch()));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind }]);
@@ -381,7 +381,7 @@ describe('TP-30: the baseline of the watch', () => {
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-30: a line of another session at the baseline is a change at once, with no grace', async () => {
+  it('a line of another session at the baseline is a change at once, with no grace', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION_OF[ALPHA] ?? ''), foreignLineText(world.deps));
     const outcome = changedOf(valueOf(await world.watch()));
@@ -390,7 +390,7 @@ describe('TP-30: the baseline of the watch', () => {
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-30: a worker with no line yet is not a change at the baseline, and it is a change at check 2 when no line comes', async () => {
+  it('a worker with no line yet is not a change at the baseline, and it is a change at check 2 when no line comes', async () => {
     const world = await make({ events: { [ALPHA]: null } });
     const outcome = changedOf(valueOf(await world.watch()));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'lineNotValid' }]);
@@ -399,14 +399,14 @@ describe('TP-30: the baseline of the watch', () => {
     expect(watchPoll.lineGraceChecks).toBe(2);
   });
 
-  it('TP-30: a worker with no line at the baseline and a line from check 1 that is not a finish stays quiet for all the checks', async () => {
+  it('a worker with no line at the baseline and a line from check 1 that is not a finish stays quiet for all the checks', async () => {
     const world = await make({ events: { [ALPHA]: null } });
     const outcome = valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, ALPHA, 'SessionStart'))));
     expect(outcome).toMatchObject({ kind: 'no-change', workerIds: [ALPHA], checks: watchPoll.attempts });
     expect(world.deps.sleeps).toHaveLength(watchPoll.attempts);
   });
 
-  it.each([1, 3])('TP-30: a line that was valid at the baseline and is missing at check %i is a change at that check', async (count) => {
+  it.each([1, 3])('a line that was valid at the baseline and is missing at check %i is a change at that check', async (count) => {
     const world = await make();
     const outcome = changedOf(valueOf(await world.watch([], atWait(count, () => void world.deps.files.delete(lineFile(SESSION_OF[ALPHA] ?? ''))))));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'lineNotValid' }]);
@@ -414,20 +414,20 @@ describe('TP-30: the baseline of the watch', () => {
     expect(world.deps.sleeps).toHaveLength(count);
   });
 
-  it('TP-30: a worker with no pane at the baseline is not checked, and it does not end the watch', async () => {
+  it('a worker with no pane at the baseline is not checked, and it does not end the watch', async () => {
     const world = await make({ workers: [ALPHA, BETA], noPane: [BETA], events: { [BETA]: 'Notification' } });
     const outcome = valueOf(await world.watch());
     expect(outcome).toMatchObject({ kind: 'no-change', workerIds: [ALPHA], checks: watchPoll.attempts });
     expect(world.deps.sleeps).toHaveLength(watchPoll.attempts);
   });
 
-  it('TP-30: when no recorded worker has a pane, the watch ends with 0 sleeps and says NO WORKER', async () => {
+  it('when no recorded worker has a pane, the watch ends with 0 sleeps and says NO WORKER', async () => {
     const world = await make({ noPane: [ALPHA] });
     expect(valueOf(await world.watch())).toEqual({ kind: 'no-worker' });
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-30: every worker that changed at the same check is in the report, in the order of the ids', async () => {
+  it('every worker that changed at the same check is in the report, in the order of the ids', async () => {
     const world = await make({ workers: [ALPHA, BETA], events: { [ALPHA]: 'Notification', [BETA]: 'Notification' } });
     const outcome = changedOf(valueOf(await world.watch([BETA, ALPHA])));
     expect(outcome.changes).toEqual([
@@ -436,19 +436,19 @@ describe('TP-30: the baseline of the watch', () => {
     ]);
   });
 
-  it('TP-30: the workers of the command line are the only ones that the watch checks', async () => {
+  it('the workers of the command line are the only ones that the watch checks', async () => {
     const world = await make({ workers: [ALPHA, BETA], events: { [BETA]: 'Notification' } });
     expect(valueOf(await world.watch([ALPHA]))).toMatchObject({ kind: 'no-change', workerIds: [ALPHA], checks: watchPoll.attempts });
   });
 
-  it('TP-30: an id that stands twice on the command line is checked once', async () => {
+  it('an id that stands twice on the command line is checked once', async () => {
     const world = await make();
     expect(valueOf(await world.watch([ALPHA, ALPHA]))).toMatchObject({ kind: 'no-change', workerIds: [ALPHA], checks: watchPoll.attempts });
   });
 });
 
-describe('TP-30: a worker of --ready waits out its block', () => {
-  it('TP-30: a worker with no line that gets a line at its prompt at check 3 is ready at that check', async () => {
+describe('a worker of --ready waits out its block', () => {
+  it('a worker with no line that gets a line at its prompt at check 3 is ready at that check', async () => {
     const world = await make({ events: { [ALPHA]: null } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(3, () => writesEvent(world.deps, ALPHA, 'SessionStart')), [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
@@ -456,59 +456,59 @@ describe('TP-30: a worker of --ready waits out its block', () => {
     expect(world.deps.sleeps).toHaveLength(3);
   });
 
-  it('TP-30: a worker at a dialog that turns busy is ready, and the dialog is no change for it', async () => {
+  it('a worker at a dialog that turns busy is ready, and the dialog is no change for it', async () => {
     const world = await make({ events: { [ALPHA]: 'Notification' } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, ALPHA, 'UserPromptSubmit')), [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
     expect(outcome.checks).toBe(2);
   });
 
-  it('TP-30: a worker that stays blocked gives no change after all the checks, also past the grace of a missing line', async () => {
+  it('a worker that stays blocked gives no change after all the checks, also past the grace of a missing line', async () => {
     const world = await make({ events: { [ALPHA]: null } });
     expect(valueOf(await world.watch([], undefined, [ALPHA]))).toMatchObject({ kind: 'no-change', workerIds: [ALPHA], checks: watchPoll.attempts });
     expect(world.deps.sleeps).toHaveLength(watchPoll.attempts);
   });
 
-  it('TP-30: a worker that is already at its prompt is ready at the baseline, with no sleep', async () => {
+  it('a worker that is already at its prompt is ready at the baseline, with no sleep', async () => {
     const world = await make();
     const outcome = changedOf(valueOf(await world.watch([], undefined, [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-30: the end of the pane of a blocked worker stays a change', async () => {
+  it('the end of the pane of a blocked worker stays a change', async () => {
     const world = await make({ events: { [ALPHA]: null } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => world.end(PANE_OF[ALPHA] ?? '')), [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'ended' }]);
   });
 
-  it('TP-30: a line of another session stays a change for a worker of --ready', async () => {
+  it('a line of another session stays a change for a worker of --ready', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION_OF[ALPHA] ?? ''), foreignLineText(world.deps));
     const outcome = changedOf(valueOf(await world.watch([], undefined, [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'lineNotOwned' }]);
   });
 
-  it('TP-30: the other workers keep their rules while one worker waits to be ready', async () => {
+  it('the other workers keep their rules while one worker waits to be ready', async () => {
     const world = await make({ workers: [ALPHA, BETA], events: { [ALPHA]: null } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, BETA, 'Notification')), [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: BETA, kind: 'waits' }]);
   });
 
-  it('TP-30: a worker of --ready is watched also when the command line names other workers only', async () => {
+  it('a worker of --ready is watched also when the command line names other workers only', async () => {
     const world = await make({ workers: [ALPHA, BETA], events: { [ALPHA]: null } });
     const outcome = changedOf(valueOf(await world.watch([BETA], atWait(1, () => writesEvent(world.deps, ALPHA, 'Stop')), [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
   });
 
-  it('TP-30: an id of --ready with no record is refused before any wait', async () => {
+  it('an id of --ready with no record is refused before any wait', async () => {
     const world = await make();
     const error = errorOf(await world.watch([], undefined, ['ghost']));
     expect(codeOf(error)).toBe(2);
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-30: the report of a ready worker is one line with fixed words and the id, and the JSON names the kind', () => {
+  it('the report of a ready worker is one line with fixed words and the id, and the JSON names the kind', () => {
     const output = watchOutput({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'readyAfterBlock' }], checks: 3, checkedAt: '2030-01-02T03:04:05.678Z' });
     expect(output.lines).toEqual([{ level: 'warn', text: 'CHANGED: alpha ready last check 2030-01-02T03:04:05.678Z' }]);
     expect(output.json).toEqual({
@@ -520,17 +520,17 @@ describe('TP-30: a worker of --ready waits out its block', () => {
     });
   });
 
-  it('TP-30: a line that is not valid is no change for a worker of --ready, as an absent line is', async () => {
+  it('a line that is not valid is no change for a worker of --ready, as an absent line is', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION_OF[ALPHA] ?? ''), 'not json');
     expect(valueOf(await world.watch([], undefined, [ALPHA]))).toMatchObject({ kind: 'no-change', workerIds: [ALPHA], checks: watchPoll.attempts });
   });
 });
 
-describe('TP-30: a worker of --ready is ready only for a line of the session that runs now', () => {
+describe('a worker of --ready is ready only for a line of the session that runs now', () => {
   const psCalls = (world: World) => world.deps.calls.filter((call) => call.command === 'ps');
 
-  it('TP-30: a line at the prompt from before the start of the pane is no change, also after all the checks', async () => {
+  it('a line at the prompt from before the start of the pane is no change, also after all the checks', async () => {
     // A resume or a restart started the pane process after the line, and the new session has written no line yet.
     const world = await make({ paneStartsAfterLineMs: 30_000 });
     world.deps.advance(MINUTE);
@@ -540,7 +540,7 @@ describe('TP-30: a worker of --ready is ready only for a line of the session tha
   it.each<[string, HookEvent]>([
     ['at its prompt', 'Stop'],
     ['busy', 'UserPromptSubmit'],
-  ])('TP-30: a line %s from before the start of the pane is no change, and the first line of the new session is ready', async (_name, event) => {
+  ])('a line %s from before the start of the pane is no change, and the first line of the new session is ready', async (_name, event) => {
     const world = await make({ events: { [ALPHA]: event }, paneStartsAfterLineMs: 30_000 });
     world.deps.advance(MINUTE);
     const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, ALPHA, 'SessionStart')), [ALPHA])));
@@ -548,12 +548,12 @@ describe('TP-30: a worker of --ready is ready only for a line of the session tha
     expect(outcome.checks).toBe(2);
   });
 
-  it('TP-30: a line that is not later than the start of the pane is no change', async () => {
+  it('a line that is not later than the start of the pane is no change', async () => {
     const world = await make({ paneStartsAfterLineMs: 0 });
     expect(valueOf(await world.watch([], undefined, [ALPHA])).kind).toBe('no-change');
   });
 
-  it('TP-30: the start of the pane is read with ps for the pid of the pane', async () => {
+  it('the start of the pane is read with ps for the pid of the pane', async () => {
     const world = await make();
     changedOf(valueOf(await world.watch([], undefined, [ALPHA])));
     const pid = world.tmux.panes().find((pane) => pane.id === PANE_OF[ALPHA])?.pid;
@@ -562,34 +562,34 @@ describe('TP-30: a worker of --ready is ready only for a line of the session tha
     expect(psCalls(world)[0]).toMatchObject({ args: ['-o', 'etime=', '-p', String(pid)] });
   });
 
-  it('TP-30: a start of the pane that can not be read is no change, and the next check reads it again', async () => {
+  it('a start of the pane that can not be read is no change, and the next check reads it again', async () => {
     const world = await make({ psFails: true });
     const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => world.fixPs()), [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
     expect(outcome.checks).toBe(2);
   });
 
-  it('TP-30: a start of the pane that is never readable gives no change, with one ps call for each check', async () => {
+  it('a start of the pane that is never readable gives no change, with one ps call for each check', async () => {
     const world = await make({ psFails: true });
     expect(valueOf(await world.watch([], undefined, [ALPHA]))).toMatchObject({ kind: 'no-change', workerIds: [ALPHA], checks: watchPoll.attempts });
     expect(psCalls(world)).toHaveLength(watchPoll.attempts + 1);
   });
 
-  it('TP-30: the pane of a worker that is not of --ready is never read with ps', async () => {
+  it('the pane of a worker that is not of --ready is never read with ps', async () => {
     const world = await make();
     valueOf(await world.watch());
     expect(psCalls(world)).toEqual([]);
   });
 
-  it('TP-30: a worker of --ready that is not ready, for example at a dialog, needs no ps call', async () => {
+  it('a worker of --ready that is not ready, for example at a dialog, needs no ps call', async () => {
     const world = await make({ events: { [ALPHA]: 'Notification' } });
     valueOf(await world.watch([], undefined, [ALPHA]));
     expect(psCalls(world)).toEqual([]);
   });
 });
 
-describe('TP-22: a finish of a worker ends the watch', () => {
-  it('TP-22: a Stop line newer than the baseline ends the watch with the kind finished, after fake sleeps', async () => {
+describe('a finish of a worker ends the watch', () => {
+  it('a Stop line newer than the baseline ends the watch with the kind finished, after fake sleeps', async () => {
     const world = await make({ events: { [ALPHA]: 'UserPromptSubmit' } });
     const start = world.deps.now();
     const outcome = valueOf(await world.watch([], atWait(3, () => writesEvent(world.deps, ALPHA, 'Stop'))));
@@ -597,20 +597,20 @@ describe('TP-22: a finish of a worker ends the watch', () => {
     expect(world.deps.sleeps).toEqual([30_000, 30_000, 30_000]);
   });
 
-  it('TP-22: a SessionStart line newer than the baseline is no finish, and the watch goes on to the cap', async () => {
+  it('a SessionStart line newer than the baseline is no finish, and the watch goes on to the cap', async () => {
     const world = await make({ events: { [ALPHA]: null } });
     const outcome = valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, ALPHA, 'SessionStart'))));
     expect(outcome).toMatchObject({ kind: 'no-change', workerIds: [ALPHA], checks: watchPoll.attempts });
   });
 
-  it('TP-22: a Stop line of a worker with no line at the baseline is a finish', async () => {
+  it('a Stop line of a worker with no line at the baseline is a finish', async () => {
     const world = await make({ events: { [ALPHA]: null } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, ALPHA, 'Stop')))));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'finished' }]);
     expect(outcome.checks).toBe(2);
   });
 
-  it('TP-22: a second Stop, newer than the Stop of the baseline, is a finish', async () => {
+  it('a second Stop, newer than the Stop of the baseline, is a finish', async () => {
     const world = await make();
     const program: Program = async ({ count, deps }) => {
       if (count === 2) await writesEvent(deps, ALPHA, 'UserPromptSubmit');
@@ -621,21 +621,21 @@ describe('TP-22: a finish of a worker ends the watch', () => {
     expect(outcome.checks).toBe(4);
   });
 
-  it('TP-22: the report names each worker that finished at the check, and no other', async () => {
+  it('the report names each worker that finished at the check, and no other', async () => {
     const world = await make({ workers: [ALPHA, BETA], events: { [ALPHA]: 'PreToolUse', [BETA]: 'PreToolUse' } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, BETA, 'Stop')))));
     expect(outcome.changes).toEqual([{ workerId: BETA, kind: 'finished' }]);
   });
 
-  it('TP-22: a worker of --ready is not reported as finished: its change is ready', async () => {
+  it('a worker of --ready is not reported as finished: its change is ready', async () => {
     const world = await make({ events: { [ALPHA]: 'Notification' } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, ALPHA, 'Stop')), [ALPHA])));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
   });
 });
 
-describe('TP-24: the parent process of the watch', () => {
-  it('TP-24: a parent process that changes ends the watch at the next wait, with the time of the last check', async () => {
+describe('the parent process of the watch', () => {
+  it('a parent process that changes ends the watch at the next wait, with the time of the last check', async () => {
     const world = await make();
     const start = world.deps.now();
     const outcome = valueOf(await world.watch([], atWait(2, () => world.deps.setParentPid(1))));
@@ -647,7 +647,7 @@ describe('TP-24: the parent process of the watch', () => {
     });
   });
 
-  it('TP-24: an output that is not a terminal does not end the watch', async () => {
+  it('an output that is not a terminal does not end the watch', async () => {
     const world = await make({ events: { [ALPHA]: 'UserPromptSubmit' } });
     world.deps.setStdoutTerminal(false);
     const outcome = changedOf(valueOf(await world.watch([], atWait(3, () => writesEvent(world.deps, ALPHA, 'Stop')))));
@@ -656,8 +656,8 @@ describe('TP-24: the parent process of the watch', () => {
   });
 });
 
-describe('TP-25: one watch runs for each node', () => {
-  it('TP-25: a run writes a fresh token to the run marker, with the private file mode, before the baseline', async () => {
+describe('one watch runs for each node', () => {
+  it('a run writes a fresh token to the run marker, with the private file mode, before the baseline', async () => {
     const world = await make({ caller: 'coordinator', events: { [ALPHA]: 'Notification' } });
     const before = world.deps.randomTexts.length;
     changedOf(valueOf(await world.watch()));
@@ -667,7 +667,7 @@ describe('TP-25: one watch runs for each node', () => {
     expect(world.deps.modes.get(MARKER_FILE)).toBe(0o600);
   });
 
-  it('TP-25: a second run writes a new marker, and the first run ends at its next check with the line REPLACED', async () => {
+  it('a second run writes a new marker, and the first run ends at its next check with the line REPLACED', async () => {
     const world = await make({ caller: 'coordinator', workers: [ALPHA, BETA], events: { [BETA]: 'Notification' } });
     const start = world.deps.now();
     const before = world.deps.randomTexts.length;
@@ -685,7 +685,7 @@ describe('TP-25: one watch runs for each node', () => {
     });
   });
 
-  it('TP-25: a marker with another token ends the run at the next check, also when the run has no change', async () => {
+  it('a marker with another token ends the run at the next check, also when the run has no change', async () => {
     const world = await make({ caller: 'coordinator' });
     const outcome = valueOf(await world.watch([], atWait(5, () => void world.deps.seed(MARKER_FILE, `${NEWER_TOKEN}\n`))));
     expect(outcome.kind).toBe('replaced');
@@ -697,7 +697,7 @@ describe('TP-25: one watch runs for each node', () => {
     ['can not be read', (world) => world.breakMarkerReads()],
     ['holds no token', (world) => void world.deps.seed(MARKER_FILE, 'not a token\n')],
     ['is too large', (world) => void world.deps.seed(MARKER_FILE, `${NEWER_TOKEN}\n`.repeat(watchRun.maxBytes))],
-  ])('TP-25: a marker that %s ends the run with exit 1 and the line "watch marker lost", never with REPLACED', async (_name, spoil) => {
+  ])('a marker that %s ends the run with exit 1 and the line "watch marker lost", never with REPLACED', async (_name, spoil) => {
     const world = await make({ caller: 'coordinator' });
     const error = errorOf(await world.watch([], atWait(2, () => spoil(world))));
     expect(codeOf(error)).toBe(1);
@@ -705,7 +705,7 @@ describe('TP-25: one watch runs for each node', () => {
     expect(world.deps.sleeps).toHaveLength(2);
   });
 
-  it('TP-25: a write fault of the marker is exit 1 before the baseline, with no read of the pane of a worker', async () => {
+  it('a write fault of the marker is exit 1 before the baseline, with no read of the pane of a worker', async () => {
     const world = await make({ caller: 'coordinator', markerWriteFails: true });
     const error = errorOf(await world.watch());
     expect(codeOf(error)).toBe(1);
@@ -719,7 +719,7 @@ describe('TP-25: one watch runs for each node', () => {
     ['an id that is not a slug', {}, ['../alpha'], 2],
     ['a record that the program did not write', { foreignRecords: [ALPHA] }, [ALPHA], 4],
     ['no tmux session', { sessionHome: null }, [], 3],
-  ])('TP-25: %s ends the watch before the marker is written', async (_name, setup, ids, code) => {
+  ])('%s ends the watch before the marker is written', async (_name, setup, ids, code) => {
     const world = await make({ ...setup, caller: 'coordinator' });
     const before = world.deps.randomTexts.length;
     expect(codeOf(errorOf(await world.watch(ids)))).toBe(code);
@@ -727,7 +727,7 @@ describe('TP-25: one watch runs for each node', () => {
     expect(runTokens(world, before)).toEqual([]);
   });
 
-  it('TP-25: a watch with no worker that has a pane ends at once and leaves the marker of a run that goes on', async () => {
+  it('a watch with no worker that has a pane ends at once and leaves the marker of a run that goes on', async () => {
     const world = await make({ caller: 'coordinator', noPane: [ALPHA] });
     world.deps.seed(MARKER_FILE, `${NEWER_TOKEN}\n`);
     expect(valueOf(await world.watch())).toEqual({ kind: 'no-worker' });
@@ -735,14 +735,14 @@ describe('TP-25: one watch runs for each node', () => {
   });
 });
 
-describe('TP-25: inside a factory session only the coordinator pane runs the watch', () => {
-  it('TP-25: the coordinator pane takes the marker', async () => {
+describe('inside a factory session only the coordinator pane runs the watch', () => {
+  it('the coordinator pane takes the marker', async () => {
     const world = await make({ caller: 'coordinator', events: { [ALPHA]: 'Notification' } });
     changedOf(valueOf(await world.watch()));
     expect(world.deps.files.has(MARKER_FILE)).toBe(true);
   });
 
-  it('TP-25: a worker pane is exit 2 before the marker is written', async () => {
+  it('a worker pane is exit 2 before the marker is written', async () => {
     const world = await make({ caller: 'worker' });
     const error = errorOf(await world.watch());
     expect(codeOf(error)).toBe(2);
@@ -751,7 +751,7 @@ describe('TP-25: inside a factory session only the coordinator pane runs the wat
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-25: a shell outside the factory sessions writes no marker and takes no token', async () => {
+  it('a shell outside the factory sessions writes no marker and takes no token', async () => {
     const world = await make({ events: { [ALPHA]: 'Notification' } });
     const before = world.deps.randomTexts.length;
     changedOf(valueOf(await world.watchOutside()));
@@ -759,7 +759,7 @@ describe('TP-25: inside a factory session only the coordinator pane runs the wat
     expect(runTokens(world, before)).toEqual([]);
   });
 
-  it('TP-25: a run in a shell outside the factory sessions does not end the run of the coordinator pane, and it leaves the marker as it is', async () => {
+  it('a run in a shell outside the factory sessions does not end the run of the coordinator pane, and it leaves the marker as it is', async () => {
     const world = await make({ caller: 'coordinator', workers: [ALPHA, BETA], events: { [BETA]: 'Notification' } });
     const before = world.deps.randomTexts.length;
     let outside: WatchOutcome | null = null;
@@ -782,7 +782,7 @@ describe('TP-25: inside a factory session only the coordinator pane runs the wat
     ['holds the token of another run', (world) => void world.deps.seed(MARKER_FILE, `${NEWER_TOKEN}\n`)],
     ['is missing', (world) => void world.deps.files.delete(MARKER_FILE)],
     ['can not be read', (world) => world.breakMarkerReads()],
-  ])('TP-25: a run in a shell outside the factory sessions goes on to its own report when the run marker %s', async (_name, spoil) => {
+  ])('a run in a shell outside the factory sessions goes on to its own report when the run marker %s', async (_name, spoil) => {
     const world = await make();
     const program: Program = async (wait) => {
       await atWait(2, () => spoil(world))(wait);
@@ -794,10 +794,10 @@ describe('TP-25: inside a factory session only the coordinator pane runs the wat
   });
 });
 
-describe('TP-26: the time that the watch starts from', () => {
+describe('the time that the watch starts from', () => {
   
 
-  it('TP-26: with since, a Stop between two runs is a finish at the baseline, with no wait', async () => {
+  it('with since, a Stop between two runs is a finish at the baseline, with no wait', async () => {
     const world = await make({ events: { [ALPHA]: 'UserPromptSubmit' } });
     const lastCheck = world.deps.now().toISOString();
     world.deps.advance(MINUTE);
@@ -807,14 +807,14 @@ describe('TP-26: the time that the watch starts from', () => {
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-26: a Stop that is not newer than since is no finish', async () => {
+  it('a Stop that is not newer than since is no finish', async () => {
     const world = await make();
     const since = world.deps.now().toISOString();
     const outcome = changedOf(valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, ALPHA, 'UserPromptSubmit')), [], since)));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'stalled' }]);
   });
 
-  it('TP-26: with since, a worker with no line at the baseline finishes with a Stop newer than since', async () => {
+  it('with since, a worker with no line at the baseline finishes with a Stop newer than since', async () => {
     const world = await make({ events: { [ALPHA]: null } });
     const since = world.deps.now().toISOString();
     const outcome = changedOf(valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, ALPHA, 'Stop')), [], since)));
@@ -822,15 +822,15 @@ describe('TP-26: the time that the watch starts from', () => {
     expect(outcome.checks).toBe(1);
   });
 
-  it('TP-26: the time that the watch prints is a time that since accepts', async () => {
+  it('the time that the watch prints is a time that since accepts', async () => {
     const world = await make({ events: { [ALPHA]: 'Notification' } });
     const outcome = changedOf(valueOf(await world.watch()));
     expect(isUtcTime(outcome.checkedAt)).toBe(true);
   });
 });
 
-describe('TP-31: the exits of the watch', () => {
-  it('TP-31: no tmux session is exit 3, and the remedy is start', async () => {
+describe('the exits of the watch', () => {
+  it('no tmux session is exit 3, and the remedy is start', async () => {
     const world = await make({ sessionHome: null });
     const error = errorOf(await world.watch());
     expect(codeOf(error)).toBe(3);
@@ -838,26 +838,26 @@ describe('TP-31: the exits of the watch', () => {
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-31: a tmux session of another factory folder is exit 4', async () => {
+  it('a tmux session of another factory folder is exit 4', async () => {
     const world = await make({ sessionHome: '/w/other' });
     expect(codeOf(errorOf(await world.watch()))).toBe(4);
   });
 
-  it('TP-31: a list of panes that tmux does not give is exit 1', async () => {
+  it('a list of panes that tmux does not give is exit 1', async () => {
     const world = await make({ listFails: true });
     const error = errorOf(await world.watch());
     expect(codeOf(error)).toBe(1);
     expect(textOf(error)).toContain('list-panes');
   });
 
-  it('TP-31: a read of a pane that fails in a check is exit 1', async () => {
+  it('a read of a pane that fails in a check is exit 1', async () => {
     const world = await make();
     const error = errorOf(await world.watch([], atWait(2, () => world.breakReads())));
     expect(codeOf(error)).toBe(1);
     expect(world.deps.sleeps).toHaveLength(2);
   });
 
-  it('TP-31: a read of the line file that fails in a check is exit 1, and the watch makes no more waits', async () => {
+  it('a read of the line file that fails in a check is exit 1, and the watch makes no more waits', async () => {
     const world = await make();
     const error = errorOf(await world.watch([], atWait(1, () => world.breakLineReads())));
     expect(codeOf(error)).toBe(1);
@@ -865,7 +865,7 @@ describe('TP-31: the exits of the watch', () => {
     expect(world.deps.sleeps).toEqual([30_000]);
   });
 
-  it.each([['a worker with no record', 'ghost'], ['an id that is not a slug', '../alpha']])('TP-31: %s is exit 2 and names the worker list', async (_name, id) => {
+  it.each([['a worker with no record', 'ghost'], ['an id that is not a slug', '../alpha']])('%s is exit 2 and names the worker list', async (_name, id) => {
     const world = await make();
     const error = errorOf(await world.watch([ALPHA, id]));
     expect(codeOf(error)).toBe(2);
@@ -873,14 +873,14 @@ describe('TP-31: the exits of the watch', () => {
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-31: a record that the program did not write is exit 4', async () => {
+  it('a record that the program did not write is exit 4', async () => {
     const world = await make({ foreignRecords: [ALPHA] });
     const error = errorOf(await world.watch([ALPHA]));
     expect(codeOf(error)).toBe(4);
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-31: with no recorded worker the watch exits 0 with the one line NO WORKER', async () => {
+  it('with no recorded worker the watch exits 0 with the one line NO WORKER', async () => {
     const world = await make({ workers: [] });
     const outcome = valueOf(await world.watch());
     expect(outcome).toEqual({ kind: 'no-worker' });
@@ -892,11 +892,11 @@ describe('TP-31: the exits of the watch', () => {
   });
 });
 
-describe('TP-31: the output of the watch', () => {
+describe('the output of the watch', () => {
   const AT = '2030-01-02T03:04:05.678Z';
   const LAST = `last check ${AT}`;
 
-  it('TP-31: a change is one line for each worker with fixed words, the id and the time of the last check, and the JSON object is the worker-watch object, version 1', () => {
+  it('a change is one line for each worker with fixed words, the id and the time of the last check, and the JSON object is the worker-watch object, version 1', () => {
     const output = watchOutput({
       kind: 'changed',
       checks: 3,
@@ -924,34 +924,34 @@ describe('TP-31: the output of the watch', () => {
     expect(schemaIds.workerWatch).toBe('factory.worker-watch/v1');
   });
 
-  it('TP-31: no change is one line with the ids of the workers that were watched and the time of the last check', () => {
+  it('no change is one line with the ids of the workers that were watched and the time of the last check', () => {
     const output = watchOutput({ kind: 'no-change', workerIds: [ALPHA, BETA], checks: 2_880, checkedAt: AT });
     expect(output.lines).toEqual([{ level: 'ok', text: `NO CHANGE: alpha beta ${LAST}` }]);
     expect(output.json).toEqual({ schema: schemaIds.workerWatch, result: 'no-change', checks: 2_880, checkedAt: AT, workers: [ALPHA, BETA] });
     expect(output.failed).toBe(false);
   });
 
-  it('TP-31: a replaced watch is one line and a JSON object with the time of the last check', () => {
+  it('a replaced watch is one line and a JSON object with the time of the last check', () => {
     const output = watchOutput({ kind: 'replaced', checkedAt: AT });
     expect(output.lines).toEqual([{ level: 'warn', text: `REPLACED: a newer watch runs ${LAST}` }]);
     expect(output.json).toEqual({ schema: schemaIds.workerWatch, result: 'replaced', checkedAt: AT });
     expect(output.failed).toBe(false);
   });
 
-  it('TP-31: no worker is one line and a JSON object with no worker', () => {
+  it('no worker is one line and a JSON object with no worker', () => {
     const output = watchOutput({ kind: 'no-worker' });
     expect(output.lines).toEqual([{ level: 'ok', text: 'NO WORKER: no worker has a pane to watch' }]);
     expect(output.json).toEqual({ schema: schemaIds.workerWatch, result: 'no-worker' });
     expect(output.failed).toBe(false);
   });
 
-  it.each(Object.entries(watchWords.kinds))('TP-31: the kind %s has its own fixed words', (kind, words) => {
+  it.each(Object.entries(watchWords.kinds))('the kind %s has its own fixed words', (kind, words) => {
     const output = watchOutput({ kind: 'changed', checks: 1, checkedAt: AT, changes: [{ workerId: ALPHA, kind: kind as WatchKind }] });
     expect(output.lines).toEqual([{ level: 'warn', text: `CHANGED: ${ALPHA} ${words} ${LAST}` }]);
   });
 });
 
-describe('TP-39: the output of the watch is short, and its size is in the token budget (row 14)', () => {
+describe('the output of the watch is short, and its size is in the token budget (row 14)', () => {
   const changed: WatchOutcome = {
     kind: 'changed',
     checks: 3,
@@ -968,11 +968,11 @@ describe('TP-39: the output of the watch is short, and its size is in the token 
     ['no worker', { kind: 'no-worker' }],
     ['a replaced watch', { kind: 'replaced', checkedAt: '2030-01-02T03:04:05.678Z' }],
     ['a parent that changed', { kind: 'parent-gone', checkedAt: '2030-01-02T03:04:05.678Z' }],
-  ])('TP-39: the output of %s passes the short-output check', (_name, outcome) => {
+  ])('the output of %s passes the short-output check', (_name, outcome) => {
     expectShortOutput(plainText(watchOutput(outcome)));
   });
 
-  it('TP-39: the size of the output of two changes on this fixture is the value of the row 14', () => {
+  it('the size of the output of two changes on this fixture is the value of the row 14', () => {
     const text = plainText(watchOutput(changed));
     const row = budgetRow(14);
     expect(row.command).toContain('`factory worker watch`');

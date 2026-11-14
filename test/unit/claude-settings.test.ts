@@ -125,7 +125,7 @@ describe('the own entries', () => {
     expect(ownSettingsEntries).toEqual(EXPECTED_ENTRIES);
   });
 
-  it('TP-1: hold 6 events, and only the Notification group has a matcher: the two dialog types, never idle_prompt', () => {
+  it('hold 6 events, and only the Notification group has a matcher: the two dialog types, never idle_prompt', () => {
     expect(Object.keys(ownSettingsEntries.hooks).sort()).toEqual([...hookNames.events].sort());
     expect(hookNames.events).toHaveLength(6);
     const matchers = Object.entries(ownSettingsEntries.hooks).flatMap(([event, groups]) => groups.map((group) => [event, group.matcher] as const));
@@ -143,28 +143,28 @@ describe('the own entries', () => {
   });
 });
 
-describe('the events that a settings object lacks (TP-2)', () => {
+describe('the events that a settings object lacks', () => {
   const withNotification = (group: unknown): unknown => ({ ...EXPECTED_ENTRIES, hooks: { ...EXPECTED_ENTRIES.hooks, Notification: [group] } });
   const ownNotification = { matcher: 'permission_prompt|elicitation_dialog', hooks: [{ type: 'command', command: 'factory hook Notification' }] };
 
-  it('TP-2: names the 2 new events for a file with the 4 first events', () => {
+  it('names the 2 new events for a file with the 4 first events', () => {
     expect(missingHookEvents(FOUR_EVENT_ENTRIES)).toEqual(NEW_EVENTS);
   });
 
-  it('TP-2: names no event for a current file, also when it holds other keys and other groups', () => {
+  it('names no event for a current file, also when it holds other keys and other groups', () => {
     expect(missingHookEvents(EXPECTED_ENTRIES)).toEqual([]);
     const other = { model: 'opus', hooks: { ...EXPECTED_ENTRIES.hooks, Stop: [{ hooks: [{ type: 'command', command: 'echo a' }] }, ...EXPECTED_ENTRIES.hooks.Stop] } };
     expect(missingHookEvents(other)).toEqual([]);
   });
 
-  it('TP-2: counts a Notification group with another matcher, or with no matcher, as missing', () => {
+  it('counts a Notification group with another matcher, or with no matcher, as missing', () => {
     expect(missingHookEvents(withNotification(ownNotification))).toEqual([]);
     expect(missingHookEvents(withNotification({ ...ownNotification, matcher: 'idle_prompt' }))).toEqual(['Notification']);
     expect(missingHookEvents(withNotification({ ...ownNotification, matcher: 'permission_prompt|elicitation_dialog|idle_prompt' }))).toEqual(['Notification']);
     expect(missingHookEvents(withNotification({ hooks: ownNotification.hooks }))).toEqual(['Notification']);
   });
 
-  it('TP-2: a matcher on another own event does not make it missing', () => {
+  it('a matcher on another own event does not make it missing', () => {
     const stop = { matcher: 'x', hooks: EXPECTED_ENTRIES.hooks.Stop[0]?.hooks };
     expect(missingHookEvents({ ...EXPECTED_ENTRIES, hooks: { ...EXPECTED_ENTRIES.hooks, Stop: [stop] } })).toEqual([]);
   });
@@ -181,18 +181,18 @@ describe('the events that a settings object lacks (TP-2)', () => {
     ['PreToolUse', 'Bash'],
     ['SessionStart', 'startup'],
     ['PreCompact', 'manual'],
-  ])('TP-2: a %s group with the matcher %j is missing, because Claude Code calls it for some notices only', (event, matcher) => {
+  ])('a %s group with the matcher %j is missing, because Claude Code calls it for some notices only', (event, matcher) => {
     expect(missingHookEvents(withOwnGroup(event, matcher))).toEqual([event]);
   });
 
   it.each(['PreToolUse', 'SessionStart', 'PreCompact'].flatMap((event) => [[event, ''], [event, '*']] as const))(
-    'TP-2: a %s group with the matcher %j covers every notice, so the event is not missing',
+    'a %s group with the matcher %j covers every notice, so the event is not missing',
     (event, matcher) => {
       expect(missingHookEvents(withOwnGroup(event, matcher))).toEqual([]);
     },
   );
 
-  it('TP-2: a matcher on UserPromptSubmit, which Claude Code does not filter by matcher, does not make it missing', () => {
+  it('a matcher on UserPromptSubmit, which Claude Code does not filter by matcher, does not make it missing', () => {
     expect(missingHookEvents(withOwnGroup('UserPromptSubmit', 'x'))).toEqual([]);
   });
 
@@ -204,13 +204,13 @@ describe('the events that a settings object lacks (TP-2)', () => {
     ['an object with no hooks', { statusLine: EXPECTED_ENTRIES.statusLine }],
     ['hooks that is not an object', { hooks: [] }],
     ['an event whose value is not a list', { hooks: { ...EXPECTED_ENTRIES.hooks, Stop: 'x' } }],
-  ])('TP-2: fails closed for %s: every event is missing', (_name, settings) => {
+  ])('fails closed for %s: every event is missing', (_name, settings) => {
     expect(missingHookEvents(settings)).toEqual(hookNames.events);
   });
 });
 
 describe('hook settings: the change and the consent', () => {
-  it('shows the exact change and the target before the write, and writes after a yes (TP-15)', async () => {
+  it('shows the exact change and the target before the write, and writes after a yes', async () => {
     const log: string[] = [];
     const deps = makeDeps({ tty: true, log });
     const outcome = outcomeOf(await ensureHookSettings(logged(deps, log), request()));
@@ -297,7 +297,7 @@ describe('hook settings: the change and the consent', () => {
     expect(question).not.toContain('x'.repeat(200));
   });
 
-  it('TP-1: a file with the 4 first events gets exactly 2 new lines, for Notification with its matcher and for PreToolUse', async () => {
+  it('a file with the 4 first events gets exactly 2 new lines, for Notification with its matcher and for PreToolUse', async () => {
     const deps = makeDeps();
     deps.seed(FILE, JSON.stringify(FOUR_EVENT_ENTRIES));
     const outcome = outcomeOf(await ensureHookSettings(deps, request({ dryRun: true })));
@@ -308,14 +308,14 @@ describe('hook settings: the change and the consent', () => {
     ]);
   });
 
-  it('TP-1: writes the 2 new groups after the 4 that are in place, and changes no other byte of the groups', async () => {
+  it('writes the 2 new groups after the 4 that are in place, and changes no other byte of the groups', async () => {
     const deps = makeDeps({ tty: true });
     deps.seed(FILE, JSON.stringify({ model: 'opus', ...FOUR_EVENT_ENTRIES }));
     expect(outcomeOf(await ensureHookSettings(deps, request())).kind).toBe('written');
     expect(stored(deps)).toEqual({ model: 'opus', ...EXPECTED_ENTRIES });
   });
 
-  it('lists only the entries that are missing, and keeps the groups that hold an own command (TP-18)', async () => {
+  it('lists only the entries that are missing, and keeps the groups that hold an own command', async () => {
     const deps = makeDeps({ tty: true });
     const stop = { matcher: 'x', hooks: [{ type: 'command', command: 'echo a' }, { type: 'command', command: 'factory hook Stop' }] };
     deps.seed(
@@ -372,7 +372,7 @@ describe('hook settings: the file holds a hook of the program (holdsOwnHook)', (
   });
 });
 
-describe('hook settings: entries in place (TP-18)', () => {
+describe('hook settings: entries in place', () => {
   const inPlace = JSON.stringify({ model: 'opus', ...EXPECTED_ENTRIES });
 
   it.each([
@@ -403,7 +403,7 @@ describe('hook settings: entries in place (TP-18)', () => {
   });
 });
 
-describe('hook settings: consent without a terminal or with the yes flag (TP-19)', () => {
+describe('hook settings: consent without a terminal or with the yes flag', () => {
   it('with no terminal and no yes flag: exit 2, the change and the target in the message, nothing written', async () => {
     const log: string[] = [];
     const deps = makeDeps({ log });
@@ -574,7 +574,7 @@ describe('hook settings: the dry run', () => {
   });
 });
 
-describe('hook settings: the check before the first write of a command (TP-16)', () => {
+describe('hook settings: the check before the first write of a command', () => {
   const asked = (overrides: Partial<HookSettingsRequest> = {}): Omit<HookSettingsRequest, 'dryRun'> => {
     const { dryRun: _dryRun, ...rest } = request({ command: commands.init, ...overrides });
     return rest;
@@ -735,7 +735,7 @@ describe('hook settings: the file that the writer makes is the own file', () => 
   });
 });
 
-describe('hook settings: the target (TP-21)', () => {
+describe('hook settings: the target', () => {
   it.each([
     { name: 'the .claude folder is a link', links: { [CLAUDE]: '/outside' }, seed: (d: FakeDeps) => d.seed('/outside/settings.local.json', 'victim') },
     { name: 'the file is a link', links: { [FILE]: '/outside/file' }, seed: (d: FakeDeps) => { d.seedDir(CLAUDE); d.seed('/outside/file', 'victim'); } },
@@ -806,7 +806,7 @@ describe('hook settings: the target (TP-21)', () => {
   });
 });
 
-describe('hook settings: no file system call on the user Claude folder (TP-20)', () => {
+describe('hook settings: no file system call on the user Claude folder', () => {
   interface Call {
     readonly method: string;
     readonly path: string;
@@ -880,7 +880,7 @@ describe('hook settings: no file system call on the user Claude folder (TP-20)',
   });
 });
 
-describe('hook settings: the file that is there (TP-22)', () => {
+describe('hook settings: the file that is there', () => {
   it.each([
     ['an array', '[]'],
     ['null', 'null'],
@@ -1093,7 +1093,7 @@ describe('hook settings: with the real file system', () => {
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ model: 'opus', ...EXPECTED_ENTRIES });
   });
 
-  it('writes once, and a second call finds the entries in place (TP-18)', async () => {
+  it('writes once, and a second call finds the entries in place', async () => {
     const { session, deps } = await fresh();
     await ensureHookSettings(deps, request({ folder: session, yes: true }));
     const file = join(session, '.claude', 'settings.local.json');
@@ -1104,7 +1104,7 @@ describe('hook settings: with the real file system', () => {
     expect((await lstat(file)).mtimeMs).toBe(mtime);
   });
 
-  it('refuses a .claude folder that is a link to the Claude folder of the test home, and leaves that folder as it was (TP-20)', async () => {
+  it('refuses a .claude folder that is a link to the Claude folder of the test home, and leaves that folder as it was', async () => {
     const { session, userClaude, deps } = await fresh();
     await symlink(userClaude, join(session, '.claude'));
     const before = await userFolderState(userClaude);
@@ -1135,7 +1135,7 @@ describe('hook settings: with the real file system', () => {
     expect(await readdir(real)).toEqual([]);
   });
 
-  it('refuses a file that is a link, and keeps the target of the link (TP-21)', async () => {
+  it('refuses a file that is a link, and keeps the target of the link', async () => {
     const { session, home, deps } = await fresh();
     const folder = join(session, '.claude');
     await mkdir(folder);
@@ -1148,7 +1148,7 @@ describe('hook settings: with the real file system', () => {
     expect((await lstat(join(folder, 'settings.local.json'))).isSymbolicLink()).toBe(true);
   });
 
-  it('keeps the bytes of a file that is not a JSON object (TP-22)', async () => {
+  it('keeps the bytes of a file that is not a JSON object', async () => {
     const { session, deps } = await fresh();
     const folder = join(session, '.claude');
     await mkdir(folder);

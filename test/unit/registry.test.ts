@@ -89,7 +89,7 @@ describe('the paths of a worker', () => {
   });
 });
 
-describe('writeWorkerRecord (TP-9)', () => {
+describe('writeWorkerRecord', () => {
   it('writes the record of one worker to its own file, with the time of the clock, and returns it', async () => {
     const deps = make();
     const result = valueOf(await writeWorkerRecord(deps, HOME, worker()));
@@ -508,7 +508,7 @@ describe('removeWorkerRecord (the free of a worker)', () => {
   });
 });
 
-describe('readCheckedFile: the cause of a file that is not valid (TP-21)', () => {
+describe('readCheckedFile: the cause of a file that is not valid', () => {
   const FOLDER = '/h/node/.factory/resume';
   const FILE = `${FOLDER}/demo.md`;
   const folders = [{ path: FOLDER, what: 'the resume folder' }];
@@ -523,51 +523,51 @@ describe('readCheckedFile: the cause of a file that is not valid (TP-21)', () =>
     fs: { ...deps.fs, lstat: async (asked: string) => (asked === path ? ok(kind) : deps.fs.lstat(asked)) },
   });
 
-  it('TP-21: gives the text of a regular file inside the limit, and no cause', async () => {
+  it('gives the text of a regular file inside the limit, and no cause', async () => {
     const deps = make();
     deps.seed(FILE, 'resume');
     expect(await readOfDeps(deps)).toEqual({ state: 'text', text: 'resume' });
   });
 
-  it('TP-21: gives absent for a file that does not exist and for a folder that does not exist', async () => {
+  it('gives absent for a file that does not exist and for a folder that does not exist', async () => {
     const noFile = make();
     noFile.seedDir(FOLDER);
     expect(await readOfDeps(noFile)).toEqual({ state: 'absent' });
     expect(await readOfDeps(make())).toEqual({ state: 'absent' });
   });
 
-  it('TP-21: gives the cause link for a file that is a link', async () => {
+  it('gives the cause link for a file that is a link', async () => {
     const deps = make({ links: { [FILE]: '/elsewhere/demo.md' } });
     deps.seedDir(FOLDER);
     deps.seed('/elsewhere/demo.md', 'resume');
     expect(await readOfDeps(deps)).toMatchObject({ state: 'invalid', cause: 'link', reason: 'the resume file is a link' });
   });
 
-  it('TP-21: gives the cause link for a folder of the chain that is a link, and reads no file below it', async () => {
+  it('gives the cause link for a folder of the chain that is a link, and reads no file below it', async () => {
     const deps = make({ links: { [FOLDER]: '/elsewhere' } });
     deps.seed(FILE, 'resume');
     expect(await readOfDeps(deps)).toMatchObject({ state: 'invalid', cause: 'link', reason: 'the resume folder is a link' });
   });
 
-  it('TP-21: gives the cause wrong-kind for a file that is a folder', async () => {
+  it('gives the cause wrong-kind for a file that is a folder', async () => {
     const deps = make();
     deps.seedDir(FILE);
     expect(await readOfDeps(deps)).toMatchObject({ state: 'invalid', cause: 'wrong-kind', reason: 'the resume file is not a file' });
   });
 
-  it('TP-21: gives the cause wrong-kind for a folder of the chain that is a file', async () => {
+  it('gives the cause wrong-kind for a folder of the chain that is a file', async () => {
     const deps = make();
     deps.seed(FOLDER, 'not a folder');
     expect(await readOfDeps(deps)).toMatchObject({ state: 'invalid', cause: 'wrong-kind', reason: 'the resume folder is not a folder' });
   });
 
-  it('TP-21: gives the cause wrong-kind for a file that is neither a regular file nor a folder (a FIFO or a device)', async () => {
+  it('gives the cause wrong-kind for a file that is neither a regular file nor a folder (a FIFO or a device)', async () => {
     const deps = make();
     deps.seedDir(FOLDER);
     expect(await readOfDeps(withKind(deps, FILE, 'other'))).toMatchObject({ state: 'invalid', cause: 'wrong-kind' });
   });
 
-  it('TP-21: gives the cause size for a file above the limit, and reads none of its text', async () => {
+  it('gives the cause size for a file above the limit, and reads none of its text', async () => {
     const deps = make();
     deps.seed(FILE, 'x'.repeat(MAX + 1));
     const read = await readOfDeps(deps);
@@ -575,13 +575,13 @@ describe('readCheckedFile: the cause of a file that is not valid (TP-21)', () =>
     expect(read).not.toHaveProperty('text');
   });
 
-  it('TP-21: a file of exactly the limit is valid', async () => {
+  it('a file of exactly the limit is valid', async () => {
     const deps = make();
     deps.seed(FILE, 'x'.repeat(MAX));
     expect(await readOfDeps(deps)).toMatchObject({ state: 'text' });
   });
 
-  it('M5-1b TP-51 reads a file that is not UTF-8 as a failure that names the file, when the read is strict', async () => {
+  it('reads a file that is not UTF-8 as a failure that names the file, when the read is strict', async () => {
     const deps = make();
     deps.seed(FILE, 'a�b');
     deps.invalidUtf8.add(FILE);
@@ -591,20 +591,20 @@ describe('readCheckedFile: the cause of a file that is not valid (TP-21)', () =>
     expect(error.message).toContain(FILE);
   });
 
-  it('M5-1b TP-98 reads a file that is not UTF-8 with the lenient decode, when the read names no decode', async () => {
+  it('reads a file that is not UTF-8 with the lenient decode, when the read names no decode', async () => {
     const deps = make();
     deps.seed(FILE, 'a�b');
     deps.invalidUtf8.add(FILE);
     expect(await readOfDeps(deps)).toEqual({ state: 'text', text: 'a�b' });
   });
 
-  it('M5-1b TP-51 gives the text of a valid file when the read is strict', async () => {
+  it('gives the text of a valid file when the read is strict', async () => {
     const deps = make();
     deps.seed(FILE, 'resume');
     expect(valueOf(await readCheckedFile(deps, folders, file, MAX, 'fatal'))).toEqual({ state: 'text', text: 'resume' });
   });
 
-  it('TP-21: the read of a worker file with an id that is not a slug keeps its reason and has no cause', async () => {
+  it('the read of a worker file with an id that is not a slug keeps its reason and has no cause', async () => {
     const read = valueOf(
       await readWorkerFile(make(), HOME, '../escape', { of: 'recordFile', what: 'the record', maxBytes: MAX }),
     );
@@ -630,7 +630,7 @@ describe('listWorkerRecords', () => {
     expect(list.invalid).toEqual([]);
   });
 
-  it('lists the two records that two writes made (TP-9)', async () => {
+  it('lists the two records that two writes made', async () => {
     const deps = make();
     await writeWorkerRecord(deps, HOME, worker());
     await writeWorkerRecord(deps, HOME, worker({ id: 'api-fix', project: 'api', workCopy: '/h/node/work-copies/api/api-fix', branch: 'worker/api-fix' }));

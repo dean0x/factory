@@ -147,7 +147,7 @@ const failed = async (made: Made): Promise<CliError> => {
 
 const killed = (made: Made): string[] => made.tmux.commands().filter((command) => command.startsWith('kill-pane'));
 
-describe('the way to stop a session in the code and in the table of docs/session-stop.md (TP-27)', () => {
+describe('the way to stop a session in the code and in the table of docs/session-stop.md', () => {
   const doc = readFileSync(join(__dirname, '..', '..', 'docs', 'session-stop.md'), 'utf8');
   const sectionOf = (heading: string): string => {
     const start = doc.indexOf(`## ${heading}`);
@@ -225,7 +225,7 @@ describe('stopCaseOf', () => {
     ['PreCompact', 'busy'],
     ['PreToolUse', 'busy'],
     ['Notification', 'busy'],
-  ] as const)('TP-5: reads %s as the case %s', (event, expected) => {
+  ] as const)('reads %s as the case %s', (event, expected) => {
     expect(stopCaseOf({ state: 'valid', line: line(event) })).toBe(expected);
   });
 
@@ -239,7 +239,7 @@ describe('stopCaseOf', () => {
   });
 });
 
-describe('worker stop: a session at the prompt (TP-26)', () => {
+describe('worker stop: a session at the prompt', () => {
   it('sends TERM to the pane pid, and closes the pane by its id after the process ends', async () => {
     const made = make();
     await seed(made.deps);
@@ -291,7 +291,7 @@ describe('worker stop: a session at the prompt (TP-26)', () => {
     expect(made.deps.terminated).toEqual([PID]);
   });
 
-  it.each(['Notification', 'PreToolUse'] as const)('TP-5: sends TERM to a session as the busy case (the last event is %s)', async (event) => {
+  it.each(['Notification', 'PreToolUse'] as const)('sends TERM to a session as the busy case (the last event is %s)', async (event) => {
     const made = make();
     await seed(made.deps, { event });
     expect(await succeeded(made)).toMatchObject({ kind: 'stopped', way: stopWay.term, state: 'busy' });
@@ -337,7 +337,7 @@ describe('worker stop: a session at the prompt (TP-26)', () => {
   });
 });
 
-describe('worker stop: a state that is not known (TP-28)', () => {
+describe('worker stop: a state that is not known', () => {
   it.each<[string, Seed]>([
     ['no pointer', { pointer: false }],
     ['a pointer to a session with no line', { text: null }],
@@ -385,7 +385,7 @@ describe('worker stop: only the cases that the caller allows', () => {
     },
   );
 
-  it('TP-5: refuses a session that waits at a dialog when only the idle case is allowed: exit 1, and nothing is sent or closed', async () => {
+  it('refuses a session that waits at a dialog when only the idle case is allowed: exit 1, and nothing is sent or closed', async () => {
     const made = make();
     await seed(made.deps, { event: 'Notification' });
     const result = await runOnly(made, ['idle']);
@@ -420,7 +420,7 @@ describe('worker stop: only the cases that the caller allows', () => {
   });
 });
 
-describe('worker stop: the wait for the end of the process (TP-29)', () => {
+describe('worker stop: the wait for the end of the process', () => {
   it('exits 1 with the pid when the process does not end in the bound, sends TERM once and never KILL', async () => {
     const made = make({ termEndsAfterChecks: Number.POSITIVE_INFINITY });
     await seed(made.deps);

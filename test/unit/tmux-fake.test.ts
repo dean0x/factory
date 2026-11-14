@@ -434,7 +434,7 @@ describe('the tmux fake: typed input and the screen of a pane', () => {
     ...extra,
   });
 
-  it('TP-17: records the keys and the text of send-keys for each pane, in the order of the chain', () => {
+  it('records the keys and the text of send-keys for each pane, in the order of the chain', () => {
     const { run, log } = fakeTmux(twoPanes());
     const result = run(['send-keys', '-t', '%7', 'C-u', ';', 'send-keys', '-t', '%8', '-l', '--', 'hi there', ';', 'send-keys', '-t', '%7', 'Enter']);
     expect(result.exitCode).toBe(0);
@@ -446,24 +446,24 @@ describe('the tmux fake: typed input and the screen of a pane', () => {
     expect(log.typed().filter((item) => item.pane === '%8').map((item) => item.text)).toEqual(['hi there']);
   });
 
-  it('TP-17: reads the words after -- as text, also a word with a leading hyphen', () => {
+  it('reads the words after -- as text, also a word with a leading hyphen', () => {
     const { run, log } = fakeTmux(twoPanes());
     expect(run(['send-keys', '-t', '%7', '-l', '--', '-t']).exitCode).toBe(0);
     expect(log.typed()).toEqual([{ pane: '%7', literal: true, text: '-t' }]);
   });
 
-  it('TP-17: returns the screen text of the fixture for capture-pane, with a final new line', () => {
+  it('returns the screen text of the fixture for capture-pane, with a final new line', () => {
     const { run } = fakeTmux(twoPanes());
     expect(run(['capture-pane', '-p', '-t', '%7']).stdout).toBe('first\nsecond\n');
     expect(run(['capture-pane', '-p', '-t', '%8']).stdout).toBe('');
   });
 
-  it('TP-17: keeps a screen that ends with a new line as it is', () => {
+  it('keeps a screen that ends with a new line as it is', () => {
     const { run } = fakeTmux({ sessions: { demo: null }, panes: [{ id: '%7', session: 'demo', screen: 'a\n' }] });
     expect(run(['capture-pane', '-p', '-t', '%7']).stdout).toBe('a\n');
   });
 
-  it('TP-17: fails send-keys and capture-pane for a pane that does not exist, names the pane and types nothing', () => {
+  it('fails send-keys and capture-pane for a pane that does not exist, names the pane and types nothing', () => {
     const { run, log } = fakeTmux(twoPanes());
     for (const args of [['send-keys', '-t', '%99', 'Enter'], ['capture-pane', '-p', '-t', '%99']]) {
       const result = run(args);
@@ -473,19 +473,19 @@ describe('the tmux fake: typed input and the screen of a pane', () => {
     expect(log.typed()).toEqual([]);
   });
 
-  it('TP-17: stops a chain at the first failed command, and keeps what the earlier commands typed', () => {
+  it('stops a chain at the first failed command, and keeps what the earlier commands typed', () => {
     const { run, log } = fakeTmux(twoPanes());
     expect(run(['send-keys', '-t', '%7', 'C-u', ';', 'send-keys', '-t', '%99', 'Enter']).exitCode).toBe(1);
     expect(log.typed()).toEqual([{ pane: '%7', literal: false, text: 'C-u' }]);
   });
 
-  it('TP-17: types nothing when the fixture fails send-keys', () => {
+  it('types nothing when the fixture fails send-keys', () => {
     const { run, log } = fakeTmux(twoPanes({ failing: 'send-keys' }));
     expect(run(['send-keys', '-t', '%7', 'Enter']).exitCode).toBe(1);
     expect(log.typed()).toEqual([]);
   });
 
-  it('TP-17: refuses a capture that does not print, and a flag that it does not know, without typing', () => {
+  it('refuses a capture that does not print, and a flag that it does not know, without typing', () => {
     const { run, log } = fakeTmux(twoPanes());
     expect(run(['capture-pane', '-t', '%7']).exitCode).toBe(1);
     expect(run(['send-keys', '-X', '-t', '%7', 'Enter']).exitCode).toBe(1);

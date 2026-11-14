@@ -7,7 +7,7 @@ import { boardIds, boardLimits, requestWords, roles } from '../names.js';
 import { stateRel } from '../state/layout.js';
 
 /**
- * The profile record of an owner decision (design 4.10, AC-16, AC-43): the text of one record file of the decision profile, its path,
+ * The profile record of an owner decision (design 4.10): the text of one record file of the decision profile, its path,
  * and the new text of the log of the profile. The builder is pure: it writes no file and reads no clock, and the caller commits the
  * texts with the board files. The profile record is a display copy. The proof of an owner answer is only the record in the owner store.
  *

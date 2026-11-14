@@ -65,7 +65,7 @@ const migrateNode = (root: YAMLMap): CliResult<void> => {
 };
 
 /**
- * Decision D-3 B: a project of the older layout sits outside the new folder and has no clone URL. So a node that lists
+ * A project of the older layout sits outside the new folder and has no clone URL. So a node that lists
  * one is not upgraded. The message never repeats a path or an id of a project.
  */
 const refuseProjects = (): CliResult<never> =>
@@ -86,7 +86,7 @@ const checkProjects = (root: YAMLMap): CliResult<YAMLSeq | undefined> => {
 
 /**
  * The children of a node on layer 1 are workers, and a worker is not a node link. So the list must be empty.
- * F-13: the address of a child must be a file address. The error names the child and never repeats the address.
+ * The address of a child must be a file address. The error names the child and never repeats the address.
  */
 const checkChildren = (root: YAMLMap): CliResult<void> => {
   const children = root.get(keys.root.children, true);

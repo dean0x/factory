@@ -89,7 +89,7 @@ describe('status: the builder', () => {
     return { entry, warnings: built.warnings };
   };
 
-  describe('idle (TP-27, TP-48, TP-49)', () => {
+  describe('idle', () => {
     const idleOf = (change: Partial<StatusInput>): boolean => firstOf(inputOf(change)).entry.idle;
     const lineMap = (read: LineRead): ReadonlyMap<string, LineRead> => new Map([['alpha', read]]);
 
@@ -143,7 +143,7 @@ describe('status: the builder', () => {
     });
   });
 
-  describe('no open work (TP-28)', () => {
+  describe('no open work', () => {
     const noOpenWorkOf = (workItems: StatusInput['workItems']): boolean => firstOf(inputOf({ workItems })).entry.noOpenWork;
 
     it('is true only for a work item that the board knows and that has no open item', () => {
@@ -157,7 +157,7 @@ describe('status: the builder', () => {
     });
   });
 
-  describe('the pane (TP-50)', () => {
+  describe('the pane', () => {
     it('shows each worker as not running when no session runs', () => {
       const built = buildStatus(inputOf({ panes: null, records: [record('alpha'), record('beta')] }));
       expect(built.entries.map((entry) => [entry.id, entry.pane, entry.running])).toEqual([
@@ -204,7 +204,7 @@ describe('status: the builder', () => {
     it.each([
       ['Notification', 'waits'],
       ['PreToolUse', 'busy'],
-    ] as const)('TP-5: reads the state of a %s line as %s', (event, state) => {
+    ] as const)('reads the state of a %s line as %s', (event, state) => {
       const { entry } = firstOf(inputOf({ lines: new Map([['alpha', lineOf({ event: [event, 1] })]]) }));
       expect(entry.state).toBe(state);
     });
@@ -391,7 +391,7 @@ const snapshot = (deps: FakeDeps): string => JSON.stringify([...deps.files.entri
 
 const listCalls = (made: Made): string[] => made.tmux.commands().filter((command) => command.startsWith('list-panes'));
 
-describe('status: the table (TP-48)', () => {
+describe('status: the table', () => {
   it('lists the state, the work item and the idle state of each worker, in the order of the ids', async () => {
     const made = await make({
       workers: [
@@ -482,7 +482,7 @@ describe('status: the table (TP-48)', () => {
   });
 });
 
-describe('status: the stub of the work item port (TP-49)', () => {
+describe('status: the stub of the work item port', () => {
   it('shows the work item as unknown, and the idle state from the session alone', async () => {
     const made = await make({
       workers: [
@@ -528,7 +528,7 @@ describe('status: the stub of the work item port (TP-49)', () => {
   });
 });
 
-describe('status: the panes (TP-50)', () => {
+describe('status: the panes', () => {
   it('makes one list-panes call for three workers', async () => {
     const made = await make({
       workers: [{ id: 'alpha' }, { id: 'beta' }, { id: 'gamma' }],
@@ -578,7 +578,7 @@ describe('status: the panes (TP-50)', () => {
     expect(jsonOf(output).workers[1]).toMatchObject({ pane: '%8', dead: true, state: 'stopped' });
   });
 
-  it('TP-5: shows a worker that waits at a dialog as waits, in the table and in the JSON', async () => {
+  it('shows a worker that waits at a dialog as waits, in the table and in the JSON', async () => {
     const made = await make({ workers: [{ id: 'alpha', line: { event: 'Notification' } }], panes: [pane('alpha', { id: '%7' })] });
     const output = await statusOf(made);
     expect(rowsOf(output).map((row) => [row.id, row.state])).toEqual([['alpha', 'waits']]);
@@ -600,7 +600,7 @@ describe('status: the panes (TP-50)', () => {
   });
 });
 
-describe('status: the output is short (TP-63, TP-64)', () => {
+describe('status: the output is short', () => {
   const workers: readonly WorkerSeed[] = [
     { id: 'alpha', project: 'web', line: { event: 'Stop', percent: 35 } },
     { id: 'beta', project: 'api', line: { event: 'UserPromptSubmit', percent: 12 } },
@@ -612,7 +612,7 @@ describe('status: the output is short (TP-63, TP-64)', () => {
   };
   const items = { alpha: busyWith('W-7'), beta: NONE, gamma: NONE };
 
-  it('has a short first line and few lines for three workers, for a run with no session, and for a run with no worker (TP-63)', async () => {
+  it('has a short first line and few lines for three workers, for a run with no session, and for a run with no worker', async () => {
     const shapes: readonly (readonly [Made, WorkItemPort])[] = [
       [await make(fleet), portOf(items).port],
       [await make({ workers, tmux: { sessions: {} } }), unknownPort],
@@ -621,7 +621,7 @@ describe('status: the output is short (TP-63, TP-64)', () => {
     for (const [made, port] of shapes) expectShortOutput(plainText(await statusOf(made, port)));
   });
 
-  it('has the size of its output on the fixture of three workers in the token budget, row 2 (TP-64)', async () => {
+  it('has the size of its output on the fixture of three workers in the token budget, row 2', async () => {
     const text = plainText(await statusOf(await make(fleet), portOf(items).port));
     const row = budgetRow(2);
     expect(row.command).toBe('`factory status`');
@@ -642,7 +642,7 @@ describe('status: a record that is not valid', () => {
   });
 });
 
-describe('status: it changes only the report file (TP-13, TP-27)', () => {
+describe('status: it changes only the report file', () => {
   const alpha: Setup = { workers: [{ id: 'alpha', line: { event: 'Stop', percent: 33 } }], panes: [pane('alpha', { id: '%7' })] };
   const reportJsonOf = async (made: Made): Promise<string> => {
     const sink = captureSink();
@@ -744,7 +744,7 @@ describe('status: the command line', () => {
   });
 });
 
-describe('status: the folder (TP-51, TP-52)', () => {
+describe('status: the folder', () => {
   const PROJECT = '/w/web';
   const TREE = '/elsewhere/web-fix';
 
@@ -775,7 +775,7 @@ describe('status: the folder (TP-51, TP-52)', () => {
   });
 });
 
-describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () => {
+describe('status: the work items come from the board', () => {
   const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
   const WORKERS = [
     { id: 'alpha', line: { event: 'Stop', percent: 5 } },
@@ -796,7 +796,7 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
     return made;
   };
 
-  it('M5-1b TP-43 shows the item in progress of a worker, and idle yes for each worker at its prompt with an old event', async () => {
+  it('shows the item in progress of a worker, and idle yes for each worker at its prompt with an old event', async () => {
     const made = await withBoard(BOARD);
     const output = await statusOf(made, boardWorkItems(recipes));
     expect(rowsOf(output)).toMatchObject([
@@ -808,7 +808,7 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
     expect(output.warnings).toEqual([]);
   });
 
-  it('M5-1b TP-43 gives the board to the command line: status through runCli shows the item in progress', async () => {
+  it('gives the board to the command line: status through runCli shows the item in progress', async () => {
     const made = await withBoard(BOARD);
     const sink = captureSink();
     expect(await runCli(['status', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
@@ -821,7 +821,7 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
     });
   });
 
-  it('M5-1b TP-44 shows every worker as unknown, with the idle state of its session, when the setup has no board block', async () => {
+  it('shows every worker as unknown, with the idle state of its session, when the setup has no board block', async () => {
     const made = await withBoard(BOARD, sampleConfig());
     const output = await statusOf(made, boardWorkItems(recipes));
     expect(rowsOf(output).map((row) => [row.workItem, row.idle])).toEqual([
@@ -835,7 +835,7 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
   it.each([
     ['a board file that is not there', undefined],
     ['a board file that is not JSON', 'not json'],
-  ])('M5-1b TP-44 shows every worker as unknown, with the idle state of its session and a warning, for %s', async (_name, text) => {
+  ])('shows every worker as unknown, with the idle state of its session and a warning, for %s', async (_name, text) => {
     const made = await withBoard(text);
     const output = await statusOf(made, boardWorkItems(recipes));
     expect(rowsOf(output).map((row) => [row.workItem, row.idle])).toEqual([
@@ -849,7 +849,7 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
     expect(output.warnings[1]).toMatch(/^the report file was not written: .*board\.json/);
   });
 
-  it('M5-1b TP-64 reads the board file once for the work items and once for the report, and changes no file but the report file', async () => {
+  it('reads the board file once for the work items and once for the report, and changes no file but the report file', async () => {
     const made = await withBoard(BOARD);
     const filesBefore = new Map(made.deps.files);
     const counted = countReadsOf(made.deps, BOARD_FILE);
@@ -860,7 +860,7 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
   });
 });
 
-describe('status: the text of a work item prints clean (TP-91, TP-105)', () => {
+describe('status: the text of a work item prints clean', () => {
   const BIDI = String.fromCodePoint(0x202e);
   const LONG = `B-${'x'.repeat(300)}`;
   const WORKERS = [
@@ -870,7 +870,7 @@ describe('status: the text of a work item prints clean (TP-91, TP-105)', () => {
   const dirty = { alpha: busyWith(`B-1${BIDI}\n9`), beta: busyWith(LONG) };
   const fleet = (): Promise<Made> => make({ workers: WORKERS, panes: WORKERS.map((worker) => pane(worker.id)) });
 
-  it('M5-1b TP-91 prints a work item with a line break and a bidi mark as one clean cell', async () => {
+  it('prints a work item with a line break and a bidi mark as one clean cell', async () => {
     const output = await statusOf(await fleet(), portOf(dirty).port);
     const text = plainText(output);
     expect(text).not.toContain(BIDI);
@@ -878,7 +878,7 @@ describe('status: the text of a work item prints clean (TP-91, TP-105)', () => {
     expect(rowsOf(output).map((row) => row.workItem)).toEqual(['B-1 9', LONG.slice(0, 120)]);
   });
 
-  it('M5-1b TP-105 removes only the hidden characters from the string values of the JSON, and cuts no string', async () => {
+  it('removes only the hidden characters from the string values of the JSON, and cuts no string', async () => {
     const output = await statusOf(await fleet(), portOf(dirty).port);
     const text = renderJson(output.json);
     expect(text).not.toContain(BIDI);

@@ -42,7 +42,7 @@ describe('factory doctor (built binary)', () => {
     expect(result.stdout).toContain('0 failures');
   });
 
-  it('warns, and still exits 0, when a folder above the node holds an instruction file of an agent (TP-32)', async () => {
+  it('warns, and still exits 0, when a folder above the node holds an instruction file of an agent', async () => {
     await initNode();
     const above = join(box.root, 'AGENTS.md');
     await writeFile(above, 'x\n');
@@ -61,7 +61,7 @@ describe('factory doctor (built binary)', () => {
     expect(result.code).toBe(0);
   });
 
-  it('exits 0 from the root, the coordinator folder and a project clone, with no --home (TP-14)', async () => {
+  it('exits 0 from the root, the coordinator folder and a project clone, with no --home', async () => {
     await initNode();
     for (const cwd of [box.node, join(box.node, 'coordinator'), join(box.node, 'web')]) {
       const result = await box.run(['doctor'], { cwd });
@@ -102,7 +102,7 @@ describe('factory doctor (built binary)', () => {
     expect(found?.text).not.toContain('A rule that the owner did not accept.');
   });
 
-  it('M5-1b TP-48 warns, and still exits 0, when a board file reaches 80 percent of the read cap, and names the file', async () => {
+  it('warns, and still exits 0, when a board file reaches 80 percent of the read cap, and names the file', async () => {
     await initNode();
     const size = Math.ceil((maxFileBytes * boardWarnPercent) / 100);
     await writeFile(join(box.node, '.factory', files.waiting), 'x'.repeat(size));
@@ -130,7 +130,7 @@ describe('factory doctor (built binary)', () => {
     expect(result.stdout).toContain('coordinator (edited');
   });
 
-  it('fails for an edited safety block, exits 1 and names the command that puts it back (TP-43)', async () => {
+  it('fails for an edited safety block, exits 1 and names the command that puts it back', async () => {
     await initNode();
     const claude = join(box.node, 'coordinator', 'CLAUDE.md');
     const text = await box.read(claude);
@@ -166,7 +166,7 @@ describe('factory doctor (built binary)', () => {
     expect(result.stdout + result.stderr).not.toContain(secret);
   });
 
-  it('warns, and exits 0, for a temp folder of a stopped init, and removes nothing (TP-73)', async () => {
+  it('warns, and exits 0, for a temp folder of a stopped init, and removes nothing', async () => {
     await initNode();
     const leftover = join(box.node, '.factory.tmp-4242');
     await mkdir(leftover);
@@ -184,7 +184,7 @@ describe('factory doctor (built binary)', () => {
     expect(result.stdout).toContain('.gitignore has no intact share list');
   });
 
-  it('fails when the .gitignore of the root no longer makes git ignore the local file and the state folder (TP-61)', async () => {
+  it('fails when the .gitignore of the root no longer makes git ignore the local file and the state folder', async () => {
     await initNode();
     await writeFile(join(box.node, '.gitignore'), '!/notes.md\n');
     const result = await box.run(['doctor', '--home', box.node]);
@@ -257,7 +257,7 @@ describe('factory doctor (built binary)', () => {
   });
 });
 
-describe('the agent version check of factory doctor (built binary, TP-35)', () => {
+describe('the agent version check of factory doctor (built binary)', () => {
   /** The `agent-version` check of a doctor run in which `version` is the output of `claude --version`. */
   const agentCheckFor = async (version: string | null): Promise<{ code: number; level: string | undefined; text: string }> => {
     await initNode();
@@ -301,7 +301,7 @@ describe('the root checks of factory doctor and factory start (built binary)', (
     expect(document.checks.find((check) => check.id === 'delegations')?.text).toContain('merge: owner');
   });
 
-  it('fails doctor, and stops start with exit 4, when git tracks the local file (TP-20)', async () => {
+  it('fails doctor, and stops start with exit 4, when git tracks the local file', async () => {
     await initNode();
     expect((await box.git(box.node, ['add', '-f', 'factory.local.yaml'])).code).toBe(0);
     const doctor = await box.run(['doctor', '--home', box.node]);
@@ -314,7 +314,7 @@ describe('the root checks of factory doctor and factory start (built binary)', (
     expect(start.stderr).toContain('git rm --cached');
   });
 
-  it('fails doctor, and stops start, for a token in a tracked file, and never prints the value (TP-45)', async () => {
+  it('fails doctor, and stops start, for a token in a tracked file, and never prints the value', async () => {
     await initNode();
     await writeFile(join(box.node, 'notes.md'), `The key is ${FAKE_GITHUB_TOKEN} for now.\n`);
     expect((await box.git(box.node, ['add', '-f', 'notes.md'])).code).toBe(0);
@@ -326,7 +326,7 @@ describe('the root checks of factory doctor and factory start (built binary)', (
     for (const text of [doctor.stdout, doctor.stderr, start.stdout, start.stderr]) expect(text).not.toContain(FAKE_GITHUB_TOKEN);
   });
 
-  it('fails doctor, and stops start, for a setting that skips permission prompts in the coordinator folder (TP-133)', async () => {
+  it('fails doctor, and stops start, for a setting that skips permission prompts in the coordinator folder', async () => {
     await initNode();
     await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
     await writeFile(
@@ -341,7 +341,7 @@ describe('the root checks of factory doctor and factory start (built binary)', (
     expect(start.stderr).toContain('coordinator/.claude/settings.local.json');
   });
 
-  it('fails doctor for a Claude settings path that the root repo tracks at any depth (TP-168)', async () => {
+  it('fails doctor for a Claude settings path that the root repo tracks at any depth', async () => {
     await initNode();
     const folder = join(box.node, 'tools', 'deep', '.claude');
     await mkdir(folder, { recursive: true });
@@ -352,7 +352,7 @@ describe('the root checks of factory doctor and factory start (built binary)', (
     expect(doctor.stdout).toContain('tools/deep/.claude/settings.json skips the permission checks');
   });
 
-  it('fails doctor for a project folder that is a link to a folder outside the root (TP-63)', async () => {
+  it('fails doctor for a project folder that is a link to a folder outside the root', async () => {
     await initNode();
     const outside = join(box.root, 'outside-web');
     await rename(join(box.node, 'web'), outside);

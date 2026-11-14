@@ -956,7 +956,7 @@ describe('home index: recording a node', () => {
   });
 });
 
-describe('home index: the origin of a root (TP-159)', () => {
+describe('home index: the origin of a root', () => {
   const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
   const withEntries = (homes: readonly object[]): FakeDeps => {
     const deps = createFakeDeps({ env: {} });
@@ -1011,7 +1011,7 @@ describe('home index: the origin of a root (TP-159)', () => {
       expect(originOf(otherEntries.ok ? await entryOfHome(other, otherEntries.value, HOME_A) : null)).toBe('received');
     });
 
-    describe('the origin of a folder (TP-155)', () => {
+    describe('the origin of a folder', () => {
       const listed = (homes: readonly object[]): FakeDeps => {
         const deps = createFakeDeps({ env: { XDG_STATE_HOME: '/state' } });
         deps.seedDir(HOME_A);
@@ -1073,7 +1073,7 @@ describe('home index: the origin of a root (TP-159)', () => {
       expect(stored(deps)).toEqual({ schema: 1, homes: [after('own')] });
     });
 
-    it('writes received for an own entry with another node id, and a later registration never writes own again (TP-169)', async () => {
+    it('writes received for an own entry with another node id, and a later registration never writes own again', async () => {
       const deps = withEntries([before('own', 'old')]);
       await record(deps, { origin: 'own' }, 'web');
       expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
