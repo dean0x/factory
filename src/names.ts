@@ -1878,8 +1878,8 @@ export const machineNames = {
   powerSupplyDir: '/sys/class/power_supply',
   /** The files of one power supply in that folder. */
   supplyFiles: { type: 'type', scope: 'scope', online: 'online', status: 'status', capacity: 'capacity' },
-  /** The words of those files: the types Mains, USB and Battery, the scopes Device and System, and the status Discharging. */
-  supplyWords: { mains: 'Mains', usb: 'USB', battery: 'Battery', device: 'Device', system: 'System', discharging: 'Discharging' },
+  /** The words of those files: the types Mains, USB and Battery, the scope System, and the status Discharging. */
+  supplyWords: { mains: 'Mains', usb: 'USB', battery: 'Battery', system: 'System', discharging: 'Discharging' },
   /** The most power supplies, the most bytes of one supply file and the most characters of the `pmset` output that the reading takes. */
   maxPowerSupplies: 16,
   maxPowerFileBytes: 64,

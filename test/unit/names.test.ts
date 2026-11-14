@@ -1710,7 +1710,7 @@ describe('the names of the data for a view outside the core', () => {
     expect(machineNames.pmsetArgs).toEqual(['-g', 'batt']);
     expect(machineNames.powerSupplyDir).toBe('/sys/class/power_supply');
     expect(Object.values(machineNames.supplyFiles)).toEqual(['type', 'scope', 'online', 'status', 'capacity']);
-    expect(Object.values(machineNames.supplyWords)).toEqual(['Mains', 'USB', 'Battery', 'Device', 'System', 'Discharging']);
+    expect(Object.values(machineNames.supplyWords)).toEqual(['Mains', 'USB', 'Battery', 'System', 'Discharging']);
     expect(machineNames.maxPowerSupplies).toBe(16);
     expect(machineNames.maxPowerFileBytes).toBe(64);
     expect(machineNames.maxPowerOutputChars).toBe(4_096);
