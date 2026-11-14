@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createStyle,
@@ -839,6 +840,14 @@ describe('the item and track commands in the command line', () => {
     expect(result.out).toMatch(/--field NAME=VALUE\s+With add and update: set a field of the owner on the item/);
   });
 
+  it('shows the doc subcommand and the epic flag in the help of item', async () => {
+    const result = await run(['item', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory item doc ID PATH [--home DIR]');
+    expect(result.out).toContain('[--epic TEXT]');
+    expect(result.out).toMatch(/--epic TEXT\s+With add and update: the epic of the item\./);
+  });
+
   it('names no decide command in the help of item or of track', async () => {
     for (const argv of [['item', '--help'], ['track', '--help']]) {
       expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');
@@ -866,6 +875,38 @@ describe('the item and track commands in the command line', () => {
     expect(listed.code).toBe(0);
     expect(listed.out).toContain('B-1  building  open    P1        bug   -     New');
     expect(repo.commits).toHaveLength(3);
+  });
+
+  it('runs item add with an epic, item update with only an epic, and item doc from the command line', async () => {
+    const repo = await boardNode({ board: boardText([], []) });
+    repo.deps.seed(join(BOARD_HOME, 'docs/plan.md'), '# Plan\n');
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    expect((await runBoard(['item', 'add', '--epic', 'Launch week', '--title', 'New', '--field', 'priority=P1'])).out).toBe('Added B-1: New\n');
+    expect((await runBoard(['item', 'update', 'B-1', '--epic', 'Next release'])).out).toBe('Saved B-1: New\n');
+    expect((await runBoard(['item', 'doc', 'B-1', 'docs/plan.md'])).out).toBe('Linked B-1: New\n');
+    const json = await runBoard(['item', 'doc', 'B-1', 'docs/plan.md', '--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.out)).toMatchObject({ action: 'doc', item: { id: 'B-1', epic: 'Next release', docs: ['docs/plan.md'] } });
+    expect(repo.commits).toHaveLength(3);
+  });
+
+  it('exits 2 for item doc with a missing path, and exits 4 for a path with a dot part', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1')], []) });
+    repo.deps.seed(join(BOARD_HOME, 'docs/.hidden/x.md'), 'x');
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, err: sink.errors.join('') };
+    };
+    expect((await runBoard(['item', 'doc', 'B-1'])).code).toBe(2);
+    const refused = await runBoard(['item', 'doc', 'B-1', 'docs/.hidden/x.md']);
+    expect(refused.code).toBe(4);
+    expect(refused.err).toContain('docs/.hidden/x.md');
+    expect(repo.commits).toEqual([]);
   });
 
   it('runs item list --follow from the command line: a stdout that is not a terminal gets one frame, and the loop ends', async () => {
@@ -1077,7 +1118,16 @@ describe('the item and track commands in the command line', () => {
     expect(JSON.parse(sink.out.join(''))).toEqual({
       schema: 'factory.item/v1',
       action: 'add',
-      item: { id: 'B-1', title: 'New', status: 'open', stage: 'ticket', track: null },
+      item: {
+        id: 'B-1',
+        title: 'New',
+        status: 'open',
+        stage: 'ticket',
+        track: null,
+        epic: null,
+        stages: ['ticket', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released'],
+        docs: [],
+      },
     });
   });
 });

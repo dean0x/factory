@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, ItemRecorded } from '../board/contract.js';
-import { checkItemId, checkRecordSetup, formerWorkersOf } from '../board/edit.js';
+import { checkItemId, checkRecordSetup, docPathIssue, formerWorkersOf } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
 import { followBoard } from '../board/follow.js';
 import { boardView, trackView } from '../board/list-view.js';
@@ -12,7 +12,7 @@ import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { boardKeys, commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, roles, schemaIds } from '../names.js';
+import { boardKeys, commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, places, roles, schemaIds } from '../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
@@ -28,6 +28,8 @@ export interface ItemOptions {
   readonly title: string | undefined;
   readonly text: string | undefined;
   readonly track: string | undefined;
+  /** The epic of the item. Only `add` and `update` take it. */
+  readonly epic: string | undefined;
   /** The `NAME=VALUE` words of the field flag, in order. */
   readonly fields: readonly string[];
   readonly state: string | undefined;
@@ -59,19 +61,21 @@ type Action =
   | { readonly kind: typeof itemCommands.close; readonly id: string }
   | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean }
   | RecordAction
-  | { readonly kind: typeof itemCommands.unassign; readonly id: string };
+  | { readonly kind: typeof itemCommands.unassign; readonly id: string }
+  | { readonly kind: typeof itemCommands.doc; readonly id: string; readonly path: string };
 
 const SUBCOMMANDS = Object.values(itemCommands).join(', ');
 
 /** The flags that each subcommand takes, besides the flags that every command takes. A flag of another subcommand is a usage error. */
 const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
-  [itemCommands.add]: [flags.title, flags.text, flags.track, flags.field],
-  [itemCommands.update]: [flags.title, flags.text, flags.track, flags.field],
+  [itemCommands.add]: [flags.title, flags.text, flags.track, flags.epic, flags.field],
+  [itemCommands.update]: [flags.title, flags.text, flags.track, flags.epic, flags.field],
   [itemCommands.move]: [flags.state, flags.stage],
   [itemCommands.close]: [],
   [itemCommands.list]: [flags.all, flags.track, flags.follow],
   [itemCommands.record]: [flags.ref, flags.project],
   [itemCommands.unassign]: [],
+  [itemCommands.doc]: [],
 };
 
 const needsUsage = usageFor(commands.item);
@@ -83,6 +87,7 @@ const refuseStrayFlags = (subcommand: Subcommand, options: ItemOptions): CliResu
     [flags.title, options.title !== undefined],
     [flags.text, options.text !== undefined],
     [flags.track, options.track !== undefined],
+    [flags.epic, options.epic !== undefined],
     [flags.field, options.fields.length > 0],
     [flags.state, options.state !== undefined],
     [flags.stage, options.stage !== undefined],
@@ -104,6 +109,16 @@ const withText = (options: ItemOptions): { readonly text?: string } => (options.
 
 const withTrack = (options: ItemOptions): { readonly track?: string } => (options.track === undefined ? {} : { track: options.track });
 
+const withEpic = (options: ItemOptions): { readonly epic?: string } => (options.epic === undefined ? {} : { epic: options.epic });
+
+/** The id of an item and the path of a file, and nothing more. The path is checked by the connector. */
+const docArguments = (subcommand: Subcommand, args: readonly string[]): CliResult<{ readonly id: string; readonly path: string }> => {
+  const [id, path, ...rest] = args;
+  return id !== undefined && path !== undefined && rest.length === 0
+    ? ok({ id, path })
+    : needsUsage(`${subcommand} takes two arguments: the id of an item and the path of a file of the ${places.folder}`);
+};
+
 /** Check the words and the flags. A usage error (exit 2) from here comes before the node is found and before any lock. */
 const parseAction = (options: ItemOptions): CliResult<Action> => {
   const [word, ...args] = options.words;
@@ -118,18 +133,31 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
     case itemCommands.add: {
       if (args.length > 0) return needsUsage(`${subcommand} takes no argument: the board gives the id`);
       if (options.title === undefined) return needsUsage(`${subcommand} needs ${flagText(flags.title)} TEXT`);
-      return ok({ kind: subcommand, input: { title: options.title, fields: fields.value, ...withText(options), ...withTrack(options) } });
+      return ok({
+        kind: subcommand,
+        input: { title: options.title, fields: fields.value, ...withText(options), ...withTrack(options), ...withEpic(options) },
+      });
     }
     case itemCommands.update: {
       const id = idArgument(subcommand, args);
       if (!id.ok) return id;
-      if (options.title === undefined && options.text === undefined && options.track === undefined && options.fields.length === 0) {
+      if (
+        options.title === undefined &&
+        options.text === undefined &&
+        options.track === undefined &&
+        options.epic === undefined &&
+        options.fields.length === 0
+      ) {
         return needsUsage(
-          `${subcommand} needs at least one of ${[flags.title, flags.text, flags.track, flags.field].map(flagText).join(', ')}`,
+          `${subcommand} needs at least one of ${[flags.title, flags.text, flags.track, flags.epic, flags.field].map(flagText).join(', ')}`,
         );
       }
       const title = options.title === undefined ? {} : { title: options.title };
-      return ok({ kind: subcommand, id: id.value, patch: { fields: fields.value, ...title, ...withText(options), ...withTrack(options) } });
+      return ok({
+        kind: subcommand,
+        id: id.value,
+        patch: { fields: fields.value, ...title, ...withText(options), ...withTrack(options), ...withEpic(options) },
+      });
     }
     case itemCommands.move: {
       const id = idArgument(subcommand, args);
@@ -164,6 +192,10 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
       const id = idArgument(subcommand, args);
       return id.ok ? ok({ kind: subcommand, id: id.value }) : id;
     }
+    case itemCommands.doc: {
+      const given = docArguments(subcommand, args);
+      return given.ok ? ok({ kind: subcommand, id: given.value.id, path: given.value.path }) : given;
+    }
     default: {
       const unreachable: never = subcommand;
       return unreachable;
@@ -177,10 +209,43 @@ const answer = (line: string, json: JsonDoc): CommandOutput => ({ lines: [textLi
 
 const titleText = (item: BoardItem): string => displayLine(item.title, itemWords.maxCellChars);
 
+const isTextList = (value: unknown): value is readonly string[] => Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+
+/** The stored epic of an item, or null when the item has none or the key holds other than text. */
+const epicOf = (item: BoardItem): string | null => {
+  const stored = item.record[boardKeys.epic];
+  return typeof stored === 'string' ? stored : null;
+};
+
+/** The stored copy of the stage list, or null for an item from before the key and for a key that is not a list of text. */
+const stageCopyOf = (item: BoardItem): readonly string[] | null => {
+  const stored = item.record[boardKeys.stages];
+  return isTextList(stored) ? stored : null;
+};
+
+/**
+ * The docs of an item, in the stored order. Only a stored entry that is text and passes the doc name check is kept, the same check
+ * that the write runs, so a hand edit can not bring a path into the output that the write would refuse. A key that is not a list
+ * gives an empty list.
+ */
+const docsOf = (item: BoardItem): readonly string[] => {
+  const stored = item.record[boardKeys.docs];
+  return Array.isArray(stored) ? stored.filter((entry): entry is string => typeof entry === 'string' && docPathIssue(entry) === null) : [];
+};
+
 const itemJson = (action: Subcommand, item: BoardItem): JsonDoc => ({
   schema: schemaIds.item,
   action,
-  item: { id: item.id, title: item.title, status: item.status, stage: item.stage, track: item.track },
+  item: {
+    id: item.id,
+    title: item.title,
+    status: item.status,
+    stage: item.stage,
+    track: item.track,
+    epic: epicOf(item),
+    stages: stageCopyOf(item),
+    docs: docsOf(item),
+  },
 });
 
 const itemAnswer = (verb: string, action: Subcommand, item: BoardItem): CommandOutput =>
@@ -394,6 +459,10 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       return recordChecked(deps, board, action);
     case itemCommands.unassign:
       return unassign(deps, board, action.id);
+    case itemCommands.doc: {
+      const linked = await connector.linkDoc({ id: action.id, path: action.path });
+      return linked.ok ? ok(itemAnswer('Linked', action.kind, linked.value)) : linked;
+    }
     default: {
       const unreachable: never = action;
       return unreachable;
@@ -402,8 +471,8 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
 };
 
 /**
- * `item`: add, update, move, close and list the items of the board, record a passed check of the recipe, and take the worker off an
- * item. The words and the flags are checked first (exit 2), then the node is found and the connector runs the action. A write is one
+ * `item`: add, update, move, close and list the items of the board, record a passed check of the recipe, take the worker off an
+ * item, and link a file to an item (`doc`). The words and the flags are checked first (exit 2), then the node is found and the connector runs the action. A write is one
  * state commit through the connector, and the connector refuses it for a hosted tracker kind. `list` reads the local files with no
  * lock and has no JSON output. With the follow flag, `list` draws the list again at each change of the board, until its reader goes
  * (`followBoard`).

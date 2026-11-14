@@ -130,6 +130,8 @@ export const itemCommands = {
   list: 'list',
   record: 'record',
   unassign: 'unassign',
+  /** `doc ID PATH` links a file of the factory folder to an item. */
+  doc: 'doc',
 } as const;
 
 /** The subcommands of `track`. The command has no remove subcommand. */
@@ -170,6 +172,7 @@ export const commandLines = {
   itemList: `${commands.item} ${itemCommands.list}`,
   itemRecord: `${commands.item} ${itemCommands.record}`,
   itemUnassign: `${commands.item} ${itemCommands.unassign}`,
+  itemDoc: `${commands.item} ${itemCommands.doc}`,
   trackAdd: `${commands.track} ${trackCommands.add}`,
   trackList: `${commands.track} ${trackCommands.list}`,
   requestAdd: `${commands.request} ${requestCommands.add}`,

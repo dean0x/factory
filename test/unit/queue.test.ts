@@ -79,6 +79,7 @@ describe('queue set', () => {
       title: 'A new title',
       text: undefined,
       track: undefined,
+      epic: undefined,
       fields: [],
       state: undefined,
       stage: undefined,

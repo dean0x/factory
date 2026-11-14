@@ -1607,8 +1607,12 @@ describe('the names of the board records', () => {
     expect(Object.values(requestCommands)).toEqual(['add', 'list', 'close', 'log']);
   });
 
-  it('adds the record and unassign subcommands of item after the five older ones', () => {
-    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign']);
+  it('adds the record, unassign and doc subcommands of item after the five older ones', () => {
+    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign', 'doc']);
+  });
+
+  it('gives the doc subcommand of item a command line', () => {
+    expect(commandLines.itemDoc).toBe(`${commands.item} ${itemCommands.doc}`);
   });
 
   it('names the flags of the record and of the relayed close', () => {
