@@ -3758,8 +3758,9 @@ describe('init: the hook settings of the coordinator on a new root', () => {
     expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
     expect(deps.files.has(INDEX)).toBe(true);
     const warnings = result.ok ? result.value.warnings : [];
-    expect(warnings).toContain(declinedHookText(FILE, commands.init));
-    expect(declinedHookText(FILE, commands.init)).toContain('run "factory init" again and answer yes');
+    const declined = { kind: 'declined', file: FILE, onlyIdleCompaction: false } as const;
+    expect(warnings).toContain(declinedHookText(declined, commands.init));
+    expect(declinedHookText(declined, commands.init)).toContain('run "factory init" again and answer yes');
     expect(result.ok && result.value.json['files']).not.toContain('coordinator/.claude/settings.local.json');
   });
 

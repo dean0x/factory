@@ -177,7 +177,7 @@ const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
 
 /** The blocks that the spec gives for every config, whatever its layer. */
 const fixedBlocks = (templates: readonly BlockTemplate[]): Pick<UpgradeSpec, 'blocksOf'> => ({
-  blocksOf: async () => ok({ templates, renames: [], queueKey: softwareQueueKey }),
+  blocksOf: async () => ok({ templates, renames: [], queueKey: softwareQueueKey, idleCompaction: false }),
 });
 
 const blocksSpec = (templates: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, ...fixedBlocks(templates) });
