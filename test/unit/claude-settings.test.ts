@@ -10,7 +10,9 @@ import {
   isOwnSettingsText,
   missingHookEvents,
   ownSettingsEntries,
+  ownSettingsEntriesFor,
   requireHookConsent,
+  type DeclinedOutcome,
   type HookSettingsOutcome,
   type HookSettingsRequest,
 } from '../../src/core/claude-settings.js';
@@ -36,6 +38,7 @@ const EXPECTED_ENTRIES = {
     PreToolUse: [{ hooks: [{ type: 'command', command: 'factory hook PreToolUse' }] }],
   },
   statusLine: { type: 'command', command: 'factory hook statusline' },
+  idleCompaction: false,
 };
 
 /** The two events that a settings file of the first release lacks. */
@@ -93,6 +96,7 @@ const request = (overrides: Partial<HookSettingsRequest> = {}): HookSettingsRequ
   yes: false,
   dryRun: false,
   command: commands.start,
+  idleCompaction: false,
   ...overrides,
 });
 
@@ -121,7 +125,7 @@ const groupsOf = (settings: Record<string, unknown>, event: string): unknown[] =
   ((settings['hooks'] as Record<string, unknown[]>)[event] ?? []);
 
 describe('the own entries', () => {
-  it('are the six hooks and the status line, with the command text written out', () => {
+  it('are the six hooks, the status line and the idle compaction value false, with the command text written out', () => {
     expect(ownSettingsEntries).toEqual(EXPECTED_ENTRIES);
   });
 
@@ -140,6 +144,15 @@ describe('the own entries', () => {
     ];
     expect(commandsOfEntries).toHaveLength(hookNames.events.length + 1);
     for (const command of commandsOfEntries) expect(ownHookCommand.test(command ?? '')).toBe(true);
+  });
+
+  it('hold the hooks and the status line first, and the idle compaction value last', () => {
+    expect(Object.keys(ownSettingsEntries)).toEqual(['hooks', 'statusLine', 'idleCompaction']);
+  });
+
+  it('take the idle compaction value from the wanted setting, with the same hooks and status line', () => {
+    expect(ownSettingsEntriesFor(true)).toEqual({ ...EXPECTED_ENTRIES, idleCompaction: true });
+    expect(ownSettingsEntriesFor(false)).toEqual(EXPECTED_ENTRIES);
   });
 });
 
@@ -237,7 +250,7 @@ describe('hook settings: the change and the consent', () => {
     const log: string[] = [];
     const deps = makeDeps({ tty: true, answer, log });
     const before = snapshot(deps);
-    expect(outcomeOf(await ensureHookSettings(logged(deps, log), request()))).toEqual({ kind: 'declined', file: FILE });
+    expect(outcomeOf(await ensureHookSettings(logged(deps, log), request()))).toEqual({ kind: 'declined', file: FILE, onlyIdleCompaction: false });
     expect(log).toEqual(['prompt']);
     expect(snapshot(deps)).toBe(before);
   });
@@ -699,9 +712,11 @@ describe('hook settings: the check before the first write of a command', () => {
 });
 
 describe('the notice for a no to the hook settings', () => {
+  const declined = (onlyIdleCompaction: boolean): DeclinedOutcome => ({ kind: 'declined', file: FILE, onlyIdleCompaction });
+
   it('names the file, the effect, and the command that asked', () => {
     for (const command of [commands.start, commands.init]) {
-      const text = declinedHookText(FILE, command);
+      const text = declinedHookText(declined(false), command);
       expect(text).toContain(FILE);
       expect(text).toContain('does not call the hook');
       expect(text).toContain(`run "factory ${command}" again and answer yes`);
@@ -709,12 +724,12 @@ describe('the notice for a no to the hook settings', () => {
   });
 
   it('names the lost role text and the dismiss command for a work copy, and keeps the coordinator text as it is', () => {
-    const worker = declinedHookText(FILE, commandLines.workerNew, hookSessions.workCopy);
+    const worker = declinedHookText(declined(false), commandLines.workerNew, hookSessions.workCopy);
     expect(worker).toContain('does not call the hook');
     expect(worker).toContain('gets no role text');
     expect(worker).toContain('dismiss the worker with "factory dismiss ID"');
     expect(worker).toContain('run "factory worker new" again for a new worker and answer yes');
-    expect(declinedHookText(FILE, commands.start)).not.toContain('role text');
+    expect(declinedHookText(declined(false), commands.start)).not.toContain('role text');
   });
 });
 
@@ -724,6 +739,8 @@ describe('hook settings: the file that the writer makes is the own file', () => 
     await ensureHookSettings(deps, request({ yes: true }));
     const text = deps.files.get(FILE) ?? '';
     expect(text).toContain('\n  ');
+    expect(Object.keys(JSON.parse(text) as object)).toEqual(['hooks', 'statusLine', 'idleCompaction']);
+    expect(JSON.parse(text)).toEqual(EXPECTED_ENTRIES);
     expect(isOwnSettingsText(text)).toBe(true);
   });
 
@@ -1157,5 +1174,263 @@ describe('hook settings: with the real file system', () => {
     expect(errorOf(await ensureHookSettings(deps, request({ folder: session, yes: true }))).kind).toBe('failure');
     expect(await readFile(file, 'utf8')).toBe('[1, 2]\n');
     expect(await readdir(folder)).toEqual(['settings.local.json']);
+  });
+});
+
+/** The own entries without the idle compaction key: the file that an earlier version wrote. */
+const { idleCompaction: _wanted, ...OWN_WITHOUT_VALUE } = EXPECTED_ENTRIES;
+
+describe('the exact check of the own text', () => {
+  it.each([
+    ['false', { ...OWN_WITHOUT_VALUE, idleCompaction: false }],
+    ['true', { ...OWN_WITHOUT_VALUE, idleCompaction: true }],
+    ['no key', OWN_WITHOUT_VALUE],
+    ['the key first', { idleCompaction: true, ...OWN_WITHOUT_VALUE }],
+    ['the key between the others', { hooks: OWN_WITHOUT_VALUE.hooks, idleCompaction: false, statusLine: OWN_WITHOUT_VALUE.statusLine }],
+  ])('accepts the own entries with %s', (_name, value) => {
+    expect(isOwnSettingsText(JSON.stringify(value))).toBe(true);
+    expect(isOwnSettingsText(JSON.stringify(value, null, 2))).toBe(true);
+  });
+
+  it.each([
+    ['the string "false"', 'false'],
+    ['the string "true"', 'true'],
+    ['0', 0],
+    ['1', 1],
+    ['null', null],
+    ['an object', {}],
+    ['a list', [false]],
+  ])('rejects the own entries with the idle compaction value %s', (_name, value) => {
+    expect(isOwnSettingsText(JSON.stringify({ ...OWN_WITHOUT_VALUE, idleCompaction: value }))).toBe(false);
+  });
+
+  it('rejects a repeated idle compaction key, also when the last value is a boolean', () => {
+    const open = JSON.stringify(OWN_WITHOUT_VALUE).slice(0, -1);
+    expect(isOwnSettingsText(`${open},"idleCompaction":false,"idleCompaction":false}`)).toBe(false);
+    expect(isOwnSettingsText(`${open},"idleCompaction":true,"idleCompaction":false}`)).toBe(false);
+  });
+
+  it('rejects a name that is written with an escape', () => {
+    const open = JSON.stringify(OWN_WITHOUT_VALUE).slice(0, -1);
+    expect(isOwnSettingsText(`${open},"idle\\u0043ompaction":false}`)).toBe(false);
+  });
+
+  it.each([
+    ['an extra key next to the value', { ...OWN_WITHOUT_VALUE, idleCompaction: false, model: 'opus' }],
+    ['an extra key and no value', { ...OWN_WITHOUT_VALUE, model: 'opus' }],
+    ['no status line', { hooks: OWN_WITHOUT_VALUE.hooks, idleCompaction: false }],
+    ['a missing hook event', { ...EXPECTED_ENTRIES, hooks: { ...EXPECTED_ENTRIES.hooks, Stop: undefined } }],
+  ])('rejects %s', (_name, value) => {
+    expect(isOwnSettingsText(JSON.stringify(value))).toBe(false);
+  });
+
+  it('rejects a text that is not JSON', () => {
+    expect(isOwnSettingsText('{"hooks":')).toBe(false);
+  });
+});
+
+describe('hook settings: the idle compaction value', () => {
+  const NO_KEY = JSON.stringify(OWN_WITHOUT_VALUE);
+  const LINE = 'idleCompaction: set to false (session.idle_compaction in factory.yaml)';
+
+  const dryChange = async (seed: string, overrides: Partial<HookSettingsRequest> = {}): Promise<{ lines: string[]; outcome: HookSettingsOutcome }> => {
+    const deps = makeDeps();
+    deps.seed(FILE, seed);
+    const outcome = outcomeOf(await ensureHookSettings(deps, request({ dryRun: true, ...overrides })));
+    if (outcome.kind !== 'would-write') throw new Error(`the kind is ${outcome.kind}`);
+    return { lines: outcome.change.split('\n').slice(1).map((line) => line.trim()), outcome };
+  };
+
+  it('writes a new file with the wanted value true after the status line', async () => {
+    const deps = makeDeps();
+    expect(outcomeOf(await ensureHookSettings(deps, request({ yes: true, idleCompaction: true }))).kind).toBe('written');
+    const text = deps.files.get(FILE) ?? '';
+    expect(JSON.parse(text)).toEqual({ ...EXPECTED_ENTRIES, idleCompaction: true });
+    expect(Object.keys(JSON.parse(text) as object)).toEqual(['hooks', 'statusLine', 'idleCompaction']);
+    expect(isOwnSettingsText(text)).toBe(true);
+  });
+
+  it('finds a file that holds the wanted value true in place, with no question and no write', async () => {
+    const log: string[] = [];
+    const deps = makeDeps({ tty: true, log });
+    deps.seed(FILE, JSON.stringify({ ...EXPECTED_ENTRIES, idleCompaction: true }));
+    const before = snapshot(deps);
+    expect(outcomeOf(await ensureHookSettings(logged(deps, log), request({ idleCompaction: true })))).toEqual({ kind: 'in-place', file: FILE });
+    expect(log).toEqual([]);
+    expect(deps.prompts).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('shows one line that sets the value for a file with every other own entry and no key', async () => {
+    const { lines, outcome } = await dryChange(NO_KEY);
+    expect(lines).toEqual([LINE]);
+    expect(outcome).toMatchObject({ file: FILE, onlyIdleCompaction: true });
+  });
+
+  it('shows one line that names the old value, the config key and the config file for another boolean', async () => {
+    const { lines } = await dryChange(JSON.stringify({ ...EXPECTED_ENTRIES, idleCompaction: true }));
+    expect(lines).toEqual([`${LINE}, and replace the value true`]);
+  });
+
+  it.each([
+    ['the string "false"', 'false'],
+    ['0', 0],
+    ['null', null],
+    ['an object', { secret: 'x' }],
+    ['a string with a format character and a control character', '%s%d\u001b[31mSECRET'],
+  ])('shows a fixed line with no file text for the value %s', async (_name, value) => {
+    const { lines, outcome } = await dryChange(JSON.stringify({ ...EXPECTED_ENTRIES, idleCompaction: value }));
+    expect(lines).toEqual([`${LINE}, and replace a value that is not true or false`]);
+    expect(outcome.kind === 'would-write' && outcome.change).not.toMatch(/SECRET|secret|\u001b|%s/);
+  });
+
+  it('marks a change with a hook line or a status line as more than the idle value', async () => {
+    const lines = await dryChange(JSON.stringify({ hooks: { Stop: EXPECTED_ENTRIES.hooks.Stop }, idleCompaction: false }));
+    expect(lines.outcome).toMatchObject({ onlyIdleCompaction: false });
+    const status = await dryChange(JSON.stringify({ hooks: EXPECTED_ENTRIES.hooks, idleCompaction: true }));
+    expect(status.lines).toHaveLength(2);
+    expect(status.outcome).toMatchObject({ onlyIdleCompaction: false });
+  });
+
+  it('a dry run of the value change asks nothing and writes nothing, also with no terminal and no consent', async () => {
+    const log: string[] = [];
+    const deps = makeDeps({ log });
+    deps.seed(FILE, NO_KEY);
+    const before = snapshot(deps);
+    const outcome = outcomeOf(await ensureHookSettings(logged(deps, log), request({ dryRun: true })));
+    expect(outcome.kind).toBe('would-write');
+    expect(log).toEqual([]);
+    expect(deps.prompts).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('adds the key after the other keys of a file that has none, and keeps every other key', async () => {
+    const deps = makeDeps({ tty: true });
+    deps.seed(FILE, JSON.stringify({ model: 'opus', ...OWN_WITHOUT_VALUE }));
+    expect(outcomeOf(await ensureHookSettings(deps, request())).kind).toBe('written');
+    expect(Object.keys(stored(deps))).toEqual(['model', 'hooks', 'statusLine', 'idleCompaction']);
+    expect(stored(deps)).toEqual({ model: 'opus', ...EXPECTED_ENTRIES });
+  });
+
+  it('replaces the value where the key stands, and keeps every other key', async () => {
+    const deps = makeDeps({ tty: true });
+    deps.seed(FILE, JSON.stringify({ idleCompaction: true, model: 'opus', ...OWN_WITHOUT_VALUE }));
+    expect(outcomeOf(await ensureHookSettings(deps, request())).kind).toBe('written');
+    expect(Object.keys(stored(deps))).toEqual(['idleCompaction', 'model', 'hooks', 'statusLine']);
+    expect(stored(deps)).toEqual({ model: 'opus', ...EXPECTED_ENTRIES });
+  });
+
+  it('replaces a value that is not a boolean with the wanted boolean', async () => {
+    const deps = makeDeps({ tty: true });
+    deps.seed(FILE, JSON.stringify({ ...OWN_WITHOUT_VALUE, idleCompaction: 'no' }));
+    expect(outcomeOf(await ensureHookSettings(deps, request({ idleCompaction: true }))).kind).toBe('written');
+    expect(stored(deps)).toEqual({ ...EXPECTED_ENTRIES, idleCompaction: true });
+  });
+
+  it('with no terminal and no yes flag: exit 2 with the value line, and nothing written', async () => {
+    const log: string[] = [];
+    const deps = makeDeps({ log });
+    deps.seed(FILE, NO_KEY);
+    const error = errorOf(await ensureHookSettings(logged(deps, log), request()));
+    expect(error.kind).toBe('usage');
+    expect(error.message).toContain(LINE);
+    expect(log).toEqual([]);
+    expect(deps.files.get(FILE)).toBe(NO_KEY);
+  });
+
+  it('with the yes flag inside a factory session, on a file that exists: exit 2 and nothing written', async () => {
+    const deps = makeDeps({ inSession: true, tty: true });
+    deps.seed(FILE, NO_KEY);
+    const error = errorOf(await ensureHookSettings(deps, request({ yes: true, session: hookSessions.workCopy })));
+    expect(error.kind).toBe('usage');
+    expect(deps.prompts).toEqual([]);
+    expect(deps.files.get(FILE)).toBe(NO_KEY);
+  });
+
+  it('with the yes flag outside a factory session: prints the line, then writes the value', async () => {
+    const deps = makeDeps();
+    deps.seed(FILE, NO_KEY);
+    expect(outcomeOf(await ensureHookSettings(deps, request({ yes: true }))).kind).toBe('written');
+    expect(deps.warned.join('\n')).toContain(LINE);
+    expect(stored(deps)).toEqual(EXPECTED_ENTRIES);
+  });
+
+  it('stops with exit 1 and writes nothing when the value changes while the question waits', async () => {
+    const log: string[] = [];
+    const deps = makeDeps({ tty: true, log });
+    deps.seed(FILE, JSON.stringify({ ...EXPECTED_ENTRIES, idleCompaction: true }));
+    const changed = JSON.stringify({ ...EXPECTED_ENTRIES, idleCompaction: 'maybe' });
+    const asking: Deps = {
+      ...deps,
+      prompt: async (question) => {
+        deps.seed(FILE, changed);
+        return deps.prompt(question);
+      },
+    };
+    const error = errorOf(await ensureHookSettings(logged(asking, log), request()));
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain('changed while the question waited');
+    expect(deps.files.get(FILE)).toBe(changed);
+    expect(log.filter((line) => line.startsWith('write:'))).toEqual([]);
+  });
+
+  it('a no on the value change gives a declined outcome with the idle flag, and the file stays', async () => {
+    const deps = makeDeps({ tty: true, answer: 'n' });
+    deps.seed(FILE, NO_KEY);
+    expect(outcomeOf(await ensureHookSettings(deps, request()))).toEqual({ kind: 'declined', file: FILE, onlyIdleCompaction: true });
+    expect(deps.files.get(FILE)).toBe(NO_KEY);
+  });
+
+  it('the check before the first write stops for the value change with no terminal, and goes on with the entries and the value in place', async () => {
+    const stop = makeDeps();
+    stop.seed(FILE, NO_KEY);
+    const error = errorOf(await requireHookConsent(stop, consentRequest()));
+    expect(error.kind).toBe('usage');
+    expect(error.message).toContain(LINE);
+    const inPlace = makeDeps();
+    inPlace.seed(FILE, JSON.stringify(EXPECTED_ENTRIES));
+    expect(await requireHookConsent(inPlace, consentRequest())).toEqual(ok(undefined));
+  });
+
+  it('plans a checkout file that holds the own entries and no key with the value line', async () => {
+    const deps = createFakeDeps({ env: { HOME: USER_HOME } });
+    const error = errorOf(await requireHookConsent(deps, consentRequest(), NO_KEY));
+    expect(error.kind).toBe('usage');
+    expect(error.message).toContain(LINE);
+    expect(error.message).not.toContain('factory hook');
+  });
+});
+
+describe('the notice for a no to the value change', () => {
+  const idle: DeclinedOutcome = { kind: 'declined', file: FILE, onlyIdleCompaction: true };
+  const forbidden = ['does not call the hook', 'can not resume', 'dismiss', 'role text'];
+
+  it.each([
+    ['the coordinator', hookSessions.coordinator, commands.start],
+    ['a work copy', hookSessions.workCopy, commandLines.workerNew],
+  ])('for %s: names the file, the config key and the value that stays, and says the hooks are in place', (_name, session, command) => {
+    const text = declinedHookText(idle, command, session);
+    expect(text).toContain(FILE);
+    expect(text).toContain('session.idle_compaction');
+    expect(text).toContain('factory.yaml');
+    expect(text).toContain('idleCompaction');
+    expect(text).toContain('hooks are in place');
+    for (const phrase of forbidden) expect(text).not.toContain(phrase);
+  });
+
+  it('for the coordinator: names the command that asked, to write the value later', () => {
+    expect(declinedHookText(idle, commands.start)).toContain('run "factory start" again and answer yes');
+  });
+
+  it('for a work copy: names the upgrade command, because a second worker new makes another worker', () => {
+    expect(declinedHookText(idle, commandLines.workerNew, hookSessions.workCopy)).toContain('run "factory upgrade" and answer yes');
+  });
+
+  it('keeps the text of a change with hook lines byte for byte', () => {
+    expect(declinedHookText({ kind: 'declined', file: FILE, onlyIdleCompaction: false }, commands.start)).toBe(
+      `The hook settings in ${FILE} stay as they are, so Claude Code does not call the hook. ` +
+        'Factory has no last-seen record of the coordinator, and a restart or a reboot can not resume the session by its id. ' +
+        'To add the settings later, run "factory start" again and answer yes.',
+    );
   });
 });
