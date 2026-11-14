@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { localFileAccess, parseYamlText, settleLocalMode } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
-import type { FactoryConfig } from '../../src/config/schema.js';
+import { sharedOf, type FactoryConfig } from '../../src/config/schema.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import {
@@ -104,6 +104,50 @@ describe('parseConfigTexts', () => {
     expect(older).not.toContain('idle_after:');
     const parsed = parseConfigTexts(older, texts.local);
     expect(parsed.ok && [parsed.value.core.session.agent, parsed.value.core.limits.idle_after]).toEqual(['claude', '2h']);
+  });
+
+  describe('session.idle_compaction', () => {
+    const withIdleCompaction = (value: string): string =>
+      sample().shared.replace(/^ {2}idle_compaction: .*$/m, `  idle_compaction: ${value}`);
+
+    it('loads as false for a node whose shared text has no idle_compaction key', () => {
+      const texts = sample();
+      const older = texts.shared.replace(/^ {2}idle_compaction: .*\n/m, '');
+      expect(older).not.toContain('idle_compaction:');
+      const parsed = parseConfigTexts(older, texts.local);
+      expect(parsed.ok && parsed.value.core.session.idle_compaction).toBe(false);
+    });
+
+    it('loads true as true and false as false', () => {
+      const texts = sample();
+      const on = parseConfigTexts(withIdleCompaction('true'), texts.local);
+      const off = parseConfigTexts(withIdleCompaction('false'), texts.local);
+      expect(on.ok && on.value.core.session.idle_compaction).toBe(true);
+      expect(off.ok && off.value.core.session.idle_compaction).toBe(false);
+    });
+
+    it.each([['"false"'], ['"true"'], ['no'], ['yes'], ['0'], ['1'], ['null']])(
+      'fails the load, and names the key, for the value %s',
+      (value) => {
+        const parsed = parseConfigTexts(withIdleCompaction(value), sample().local);
+        expect(parsed.ok).toBe(false);
+        if (!parsed.ok) {
+          expect(parsed.error.message).toContain('factory.yaml is invalid');
+          expect(parsed.error.message).toContain('session.idle_compaction');
+          expect(parsed.error.message).toContain('must be true or false');
+        }
+      },
+    );
+
+    it('fails the load when the local text sets the key', () => {
+      const texts = sample();
+      const parsed = parseConfigTexts(texts.shared, texts.local.replace('  proxy: none', '  proxy: none\n  idle_compaction: true'));
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) {
+        expect(parsed.error.message).toContain('factory.local.yaml is invalid');
+        expect(parsed.error.message).toContain('session');
+      }
+    });
   });
 
   it('fails, and names the key and the file, for a shared text that is not valid', () => {
@@ -562,6 +606,7 @@ describe('renderConfig', () => {
           agent: 'claude',
           effort: 'max',
           model: 'a model',
+          idle_compaction: true,
           proxy: 'local',
           statusline: 'my-status --short',
         },
@@ -642,7 +687,29 @@ describe('renderConfig', () => {
       'agent',
       'effort',
       'model',
+      'idle_compaction',
     ]);
+  });
+
+  it('writes session.idle_compaction in the shared file only, with a comment, and reads the same value back', () => {
+    for (const idleCompaction of [false, true]) {
+      const config = withCore({ session: { ...sampleConfig().core.session, idle_compaction: idleCompaction } });
+      const texts = renderConfig(config);
+      expect(texts.shared).toMatch(new RegExp(`^ {2}idle_compaction: ${idleCompaction}$`, 'm'));
+      expect(texts.local).not.toContain('idle_compaction');
+      expect(sharedOf(config).core.session.idle_compaction).toBe(idleCompaction);
+      expect(roundTrip(config).core.session.idle_compaction).toBe(idleCompaction);
+    }
+  });
+
+  it('explains in the shared text that the key is the idle rule of Claude Code and not limits.idle_after', () => {
+    const lines = sample().shared.split('\n');
+    const at = lines.indexOf('  idle_compaction: false');
+    expect(at).toBeGreaterThan(0);
+    const comment = lines.slice(Math.max(0, at - 3), at).join('\n');
+    expect(comment).toContain('limits.idle_after');
+    expect(comment).toContain('prompt cache');
+    expect(comment).toContain('next session start');
   });
 
   it('writes the sections of the shared file in the order of the design', () => {

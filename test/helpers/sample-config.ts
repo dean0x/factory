@@ -13,7 +13,15 @@ export const sampleConfig = (): FactoryConfig => ({
       display: 'Test Owner',
       prefix: "[From {owner}, typed by {node} at the owner's explicit instruction, {date}]",
     },
-    session: { permission_mode: 'auto', agent: 'claude', effort: 'high', model: 'default', proxy: 'none', statusline: null },
+    session: {
+      permission_mode: 'auto',
+      agent: 'claude',
+      effort: 'high',
+      model: 'default',
+      idle_compaction: false,
+      proxy: 'none',
+      statusline: null,
+    },
     proxies: [],
     workers: {},
     limits: {

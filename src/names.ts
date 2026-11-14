@@ -377,6 +377,8 @@ export const claudeSettingKeys = {
   approveMcpList: 'enabledMcpjsonServers',
   /** The setting that tells a session what to do with the input of other sessions: accept it, hold it for approval, or refuse it. */
   crossSessionInbound: 'crossSessionInbound',
+  /** The setting (a boolean) that lets the program compact a session that has had no turn for about one hour. */
+  idleCompaction: 'idleCompaction',
 } as const;
 
 /** The permission mode that accepts file edits with no prompt. A settings file with it gives a warning, not a stop. */
@@ -1088,6 +1090,7 @@ export const keys = {
     agent: 'agent',
     effort: 'effort',
     model: 'model',
+    idleCompaction: 'idle_compaction',
     proxy: 'proxy',
     statusline: 'statusline',
   },
@@ -1873,6 +1876,8 @@ export const values = {
   permissionMode: 'auto',
   /** The only agent program that a session starts. */
   agent: 'claude',
+  /** Whether a session may compact itself after about one hour with no turn: off, so that the full context stays. */
+  defaultIdleCompaction: false,
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   noProxy: 'none',
   onFail: ['stop', 'direct'],
@@ -2320,6 +2325,9 @@ const keyPath = (...parts: readonly string[]): string => parts.join('.');
 
 /** The config key that names the status line command of the owner: `session.statusline`. */
 export const statuslineKeyPath = keyPath(keys.root.session, keys.session.statusline);
+
+/** The config key that sets the idle compaction of the sessions: `session.idle_compaction`. */
+export const idleCompactionKeyPath = keyPath(keys.root.session, keys.session.idleCompaction);
 
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');
