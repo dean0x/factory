@@ -92,11 +92,15 @@ export interface DecisionOption {
   readonly rec?: boolean;
 }
 
-/** A decision item for the owner: a one-line title and question, and 1 to 9 options. The connector gives it the next `D-n`. */
+/**
+ * A decision item for the owner: a one-line title and question, and 1 to 9 options. The connector gives it the next `D-n` and stores
+ * the time of the add. The group is the urgency that the asker gives; a request with no group is in the group now.
+ */
 export interface DecisionAskInput {
   readonly title: string;
   readonly question: string;
   readonly options: readonly DecisionOption[];
+  readonly group?: RequestGroup;
 }
 
 /** A link from an item to a file of the factory folder: a relative path inside the folder, never a copy. */

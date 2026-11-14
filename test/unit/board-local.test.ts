@@ -29,6 +29,7 @@ import {
   commandLines,
   commands,
   commandText,
+  decisionKeys,
   dirs,
   env,
   files as fileNames,
@@ -37,6 +38,7 @@ import {
   maxFileBytes,
   relayedMarker,
   requestDeciders,
+  requestGroups,
   stateLock,
   values,
   workerFieldGuard,
@@ -869,8 +871,9 @@ describe('the local connector: the ids of a write', () => {
     expect(valueOf(await connectorOf(repo).askDecision(DECISION))).toBe('D-10');
   });
 
-  it('gives the first decision the id D-1, and stores it with its options', async () => {
+  it('gives the first decision the id D-1, and stores it with its options, the time of the add and the group now', async () => {
     const repo = await repoWith(EMPTY_BOARD);
+    const at = repo.deps.now().toISOString();
     expect(valueOf(await connectorOf(repo).askDecision(DECISION))).toBe('D-1');
     const waiting = valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? ''));
     expect(waiting.items.map((entry) => entry.record)).toEqual([
@@ -879,9 +882,38 @@ describe('the local connector: the ids of a write', () => {
         title: 'Pick a plan',
         question: 'Which plan do we build?',
         options: [{ key: 'a', text: 'Plan A', rec: true }, { key: 'b', text: 'Plan B' }],
+        [decisionKeys.openedAt]: at,
+        [decisionKeys.group]: requestGroups.now,
       },
     ]);
     expect(repo.textOf(fileNames.decisionLog)).toBe(jsonOf({ rows: [] }));
+  });
+
+  it('stores the group that the asker gives', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    valueOf(await connectorOf(repo).askDecision({ ...DECISION, group: requestGroups.later }));
+    const waiting = valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? ''));
+    expect(waiting.items.map((entry) => entry.record[decisionKeys.group])).toEqual([requestGroups.later]);
+  });
+
+  it('writes a row that decide accepts, with the open time and the group it stored', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const at = repo.deps.now().toISOString();
+    valueOf(await connectorOf(repo).askDecision({ ...DECISION, group: requestGroups.later }));
+    const waiting = valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? ''));
+    const request = valueOf(strictRequestOf(waiting, 'D-1'));
+    expect(request.openedAt).toBe(at);
+    expect(request.group).toBe(requestGroups.later);
+  });
+
+  it('leaves the rows that are open as they are when it adds one, even for a row with no open time', async () => {
+    const old = { id: 'D-1', title: 'Old', question: 'Old?', options: [{ key: 'a', text: 'Yes' }] };
+    const open = { id: 'D-2', title: 'Open', question: 'Open?', options: [{ key: 'a', text: 'Yes' }], [decisionKeys.openedAt]: '2029-01-01T00:00:00.000Z', [decisionKeys.group]: requestGroups.later };
+    const repo = await repoWith(EMPTY_BOARD, { waiting: jsonOf({ intro: '', groups: [], items: [old, open] }) });
+    valueOf(await connectorOf(repo).askDecision(DECISION));
+    const waiting = valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? ''));
+    expect(waiting.items.map((entry) => entry.record).slice(0, 2)).toEqual([old, open]);
+    expect(waiting.items).toHaveLength(3);
   });
 
   it('stops an item add when the numbers B-n are used up, with exit 1, and writes nothing', async () => {

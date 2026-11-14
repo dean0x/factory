@@ -8,10 +8,12 @@ import {
   commandLines,
   commands,
   commandText,
+  decisionKeys,
   files as fileNames,
   program,
   relayedMarker,
   requestCommands,
+  requestGroups,
   requestWords,
 } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
@@ -113,6 +115,7 @@ const nodeWithStore = async (store: string, setup: Parameters<typeof boardNode>[
 describe('request add', () => {
   it('stores the decision with the first D-n, prints one line, and makes one commit that holds only the waiting file', async () => {
     const repo = await boardNode();
+    const at = repo.deps.now().toISOString();
     expect(linesOf(await run(repo, ADD))).toEqual(['Added D-1: Pick a plan']);
     expect(waitingOf(repo).items).toEqual([
       {
@@ -123,9 +126,22 @@ describe('request add', () => {
           { key: 'a', text: 'Plan A', rec: true },
           { key: 'b', text: 'Plan B' },
         ],
+        [decisionKeys.openedAt]: at,
+        [decisionKeys.group]: requestGroups.now,
       },
     ]);
     expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.waiting]]);
+  });
+
+  it('stores the time of each add, read from the clock under the lock, so a later add has a later open time', async () => {
+    const repo = await boardNode();
+    const first = repo.deps.now().toISOString();
+    valueOf(await run(repo, ADD));
+    repo.deps.advance(60_000);
+    const second = repo.deps.now().toISOString();
+    valueOf(await run(repo, { ...ADD, title: 'Other' }));
+    expect(waitingOf(repo).items.map((item) => item[decisionKeys.openedAt])).toEqual([first, second]);
+    expect(first).not.toBe(second);
   });
 
   it('takes the number after the highest D-n of the waiting file and of the decision log', async () => {
@@ -150,6 +166,7 @@ describe('request add', () => {
     const error = errorOf(await run(repo, { words: ['update', 'D-1'] }));
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain(Object.values(requestCommands).join(', '));
+    repo.deps.advance(60_000);
     valueOf(await run(repo, { ...ADD, title: 'Other', options: ['x=Plan X'], recommend: undefined }));
     expect(waitingOf(repo).items).toHaveLength(2);
     expect(waitingOf(repo).items[0]).toEqual(first);

@@ -22,6 +22,7 @@ import {
   queueLimits,
   relayedMarker,
   requestDeciders,
+  requestGroups,
   requestWords,
   roles,
   trackLimits,
@@ -43,6 +44,7 @@ import type {
   QueueRowSet,
   RequestClosed,
   RequestDecider,
+  RequestGroup,
   RequestSettlement,
   TrackAddInput,
 } from './contract.js';
@@ -198,6 +200,7 @@ export interface CheckedDecision {
   readonly question: string;
   /** The options as the waiting file stores them. */
   readonly options: readonly Stored[];
+  readonly group: RequestGroup;
 }
 
 const optionOf = (option: DecisionAskInput['options'][number]): CliResult<Stored> => {
@@ -236,7 +239,7 @@ export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecisio
     stored.push(record.value);
   }
   if (options.filter((option) => option.rec === true).length > 1) return usageError('only one option can be the recommended one');
-  return ok({ title: title.value, question: question.value, options: stored });
+  return ok({ title: title.value, question: question.value, options: stored, group: input.group ?? requestGroups.now });
 };
 
 /** Why a path can not be linked, as a phrase for a message ("the path ..."), or null. The checks need no file. */
@@ -600,13 +603,15 @@ export const addTrackIn = (doc: BoardDoc, track: TrackAddInput): CliResult<Edit<
 
 /**
  * Add a decision to the waiting file. Its id is the number after the highest `D-n` of the waiting file, of the decision log and of
- * the decision records of the owner (`storeIds`), counted on the texts that were read under the lock. The value is the id.
+ * the decision records of the owner (`storeIds`), counted on the texts that were read under the lock. The row holds the time of the
+ * add (`at`, an exact `toISOString()` time) and the group. The value is the id.
  */
 export const askIn = (
   waiting: WaitingDoc,
   log: DecisionLogDoc,
   decision: CheckedDecision,
   storeIds: readonly string[],
+  at: string,
 ): CliResult<Edit<string> & { readonly top: Stored }> => {
   const id = nextId('D-', [...waiting.items.map((entry) => entry.id), ...log.rows.map((row) => row.id), ...storeIds]);
   if (!id.ok) return id;
@@ -615,6 +620,8 @@ export const askIn = (
     [decisionKeys.title]: decision.title,
     [decisionKeys.question]: decision.question,
     [decisionKeys.options]: decision.options,
+    [decisionKeys.openedAt]: at,
+    [decisionKeys.group]: decision.group,
   };
   return ok({ top: { ...waiting.top, [waitingKeys.items]: [...listAt(waiting.top, waitingKeys.items), stored] }, value: id.value });
 };

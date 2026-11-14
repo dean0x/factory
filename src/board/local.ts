@@ -578,7 +578,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         if (!read.ok) return read;
         const stored = await storedIdsOf(place.value);
         if (!stored.ok) return stored;
-        const edited = askIn(read.value.waiting, read.value.log, checked.value, stored.value);
+        const edited = askIn(read.value.waiting, read.value.log, checked.value, stored.value, deps.now().toISOString());
         if (!edited.ok) return edited;
         const written = newText(files.waiting, edited.value.top, parseWaiting);
         if (!written.ok) return written;
