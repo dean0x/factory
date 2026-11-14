@@ -2003,9 +2003,6 @@ export type RoleSizeUnit = 'bytes' | 'characters';
 
 const ROLE_TEXT_MAX_CHARS = 9_000;
 
-/** The event whose own hook gives a session of a worker its role text. */
-const ROLE_START_EVENT = 'SessionStart' satisfies HookEvent;
-
 /** The remedy for a work copy whose hook settings hold some own hooks: `upgrade` adds the rest, and `resume` starts the worker again. */
 const upgradeThen = (resume: string): string => `Run "${commandText(commands.upgrade)}", then "${resume}".`;
 
@@ -2054,18 +2051,18 @@ export const roleText = {
   },
   /**
    * The words of the doctor check of the role delivery (`checkIds.roleDelivery`). The line counts the work copies that hold the
-   * hook, gives the size of the role text, and names in words where the acceptance of the setup text is kept. Each finding
-   * gives one remedy.
+   * own hook of every event that a launch needs, gives the size of the role text, and names in words where the acceptance of the
+   * setup text is kept. Each finding gives one remedy.
    */
   doctor: {
-    startEvent: ROLE_START_EVENT,
     /** The line of a node that has no worker file: it has no role text to deliver. */
     noWorkerFile: `this layer has no ${roles.worker} file, so no role text is delivered`,
-    hooks: (withHook: number, copies: number): string => `${ROLE_START_EVENT} hook in ${withHook} of ${copies} work copies`,
+    hooks: (withHooks: number, copies: number): string => `every hook event in ${withHooks} of ${copies} work copies`,
     size: (chars: number): string => `role text ${chars} of ${ROLE_TEXT_MAX_CHARS} characters`,
     acceptance: `The acceptance of the setup text is recorded in ${files.setupAcceptances}, in the ${program} folder of the state folder of the user.`,
-    /** A work copy whose hook settings lack the own hook of the start event. */
-    gap: (id: string): string => `${id}: the hook settings of the work copy hold no ${ROLE_START_EVENT} hook, so its session gets no role text.`,
+    /** A work copy whose hook settings lack the own hook of these events: the launch of the worker refuses the same work copy. */
+    gap: (id: string, events: readonly HookEvent[]): string =>
+      `${id}: the hook settings of the work copy lack the hook of these events: ${events.join(', ')}. The worker does not start until they are in place.`,
     /** A work copy whose hook settings file is a link: the check reads nothing through it. */
     linkGap: (id: string): string => `${id}: the hook settings file of the work copy is a link, and the check does not read it.`,
     /** A work copy whose hook settings the check cannot read. `reason` is the read fault. */

@@ -42,6 +42,7 @@ import { boardWarnPercent, checkIds, childReasons, dirs, files, instructionFiles
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { inspectState } from '../../src/state/load.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
+import { requireOwnHooks } from '../../src/workers/session-checks.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, registerRoot, withFsWatch, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
@@ -2511,7 +2512,7 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     const deps = await initialized();
     const result = await check(deps);
     expect(result).toMatchObject({ id: 'role-delivery', level: 'ok' });
-    expect(result.text).toMatch(/^SessionStart hook in 0 of 0 work copies; role text \d+ of 9000 characters/);
+    expect(result.text).toMatch(/^every hook event in 0 of 0 work copies; role text \d+ of 9000 characters/);
     expect(result.text).toContain(files.setupAcceptances);
     expect(result.text).not.toContain('/state');
   });
@@ -2522,7 +2523,7 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     seedOwnHooks(deps, await withWorker(deps, 'beta', 'api'));
     const result = await check(deps);
     expect(result.level).toBe('ok');
-    expect(result.text).toContain('SessionStart hook in 2 of 2 work copies');
+    expect(result.text).toContain('every hook event in 2 of 2 work copies');
   });
 
   it('gives the size of the accepted text in the line', async () => {
@@ -2540,7 +2541,7 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     await withWorker(deps, 'beta');
     const result = await check(deps);
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('SessionStart hook in 1 of 2 work copies');
+    expect(result.text).toContain('every hook event in 1 of 2 work copies');
     expect(result.text).toContain('beta');
     expect(result.text).toContain('Run "factory dismiss beta", then "factory worker new beta --project web"');
     expect(result.text).not.toContain('factory worker resume');
@@ -2551,7 +2552,7 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     seedHooks(deps, await withWorker(deps, 'alpha'), without('SessionStart'));
     const result = await check(deps);
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('SessionStart hook in 0 of 1 work copies');
+    expect(result.text).toContain('every hook event in 0 of 1 work copies');
     expect(result.text).toContain('Run "factory upgrade", then "factory worker resume alpha".');
     expect(result.text).not.toContain('factory dismiss');
   });
@@ -2562,13 +2563,53 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     seedHooks(deps, await withWorker(deps, 'alpha'), hooks);
     const result = await check(deps);
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('SessionStart hook in 0 of 1 work copies');
+    expect(result.text).toContain('every hook event in 0 of 1 work copies');
   });
 
-  it('does not warn for a work copy that lacks another hook: the check is about the role text', async () => {
+  it.each(['PreCompact', 'Notification'])(
+    'warns for a work copy that lacks only the %s hook, names that event, and the remedy is upgrade, then resume',
+    async (event) => {
+      const deps = await initialized();
+      seedHooks(deps, await withWorker(deps, 'alpha'), without(event));
+      const result = await check(deps);
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('every hook event in 0 of 1 work copies');
+      expect(result.text).toContain(`alpha: the hook settings of the work copy lack the hook of these events: ${event}.`);
+      expect(result.text).not.toContain('SessionStart');
+      expect(result.text).toContain('Run "factory upgrade", then "factory worker resume alpha".');
+      expect(result.text).not.toContain('factory dismiss');
+    },
+  );
+
+  it('names each event that a work copy lacks, in the order of the list', async () => {
     const deps = await initialized();
-    seedHooks(deps, await withWorker(deps, 'alpha'), without('PreToolUse'));
-    expect(await check(deps)).toMatchObject({ level: 'ok' });
+    const hooks = Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([name]) => name !== 'Stop' && name !== 'PreToolUse'));
+    seedHooks(deps, await withWorker(deps, 'alpha'), hooks);
+    expect((await check(deps)).text).toContain('lack the hook of these events: Stop, PreToolUse.');
+  });
+
+  it('warns exactly when a launch refuses the hook settings of the work copy', async () => {
+    const cases: readonly (readonly [string, (deps: FakeDeps, workCopy: string) => void])[] = [
+      ['a work copy with every hook', (deps, workCopy) => seedOwnHooks(deps, workCopy)],
+      ['a work copy that lacks only PreToolUse', (deps, workCopy) => seedHooks(deps, workCopy, without('PreToolUse'))],
+      ['a work copy that lacks only SessionStart', (deps, workCopy) => seedHooks(deps, workCopy, without('SessionStart'))],
+      ['a work copy with a Notification hook under another matcher', (deps, workCopy) => {
+        const hooks = { ...ownSettingsEntries.hooks, Notification: [{ matcher: 'idle_prompt', hooks: ownSettingsEntries.hooks['Notification']?.[0]?.hooks ?? [] }] };
+        seedHooks(deps, workCopy, hooks);
+      }],
+      ['a work copy with a hooks value of a wrong shape', (deps, workCopy) => deps.seed(settingsFileOf(workCopy), '{"hooks": []}')],
+      ['a work copy with no settings file', () => undefined],
+    ];
+    const outcomes: { readonly name: string; readonly warns: boolean; readonly refuses: boolean }[] = [];
+    for (const [name, seed] of cases) {
+      const deps = await initialized();
+      const workCopy = await withWorker(deps, 'alpha');
+      seed(deps, workCopy);
+      const launch = await requireOwnHooks(deps, { folder: workCopy, then: 'worker resume alpha' });
+      outcomes.push({ name, warns: (await check(deps)).level === 'warn', refuses: !launch.ok });
+    }
+    expect(outcomes.filter((outcome) => outcome.warns !== outcome.refuses)).toEqual([]);
+    expect(outcomes.map((outcome) => outcome.warns)).toEqual([false, true, true, true, true, true]);
   });
 
   it('warns for hook settings that are a link, reads nothing through the link, and names the link in its remedy', async () => {
@@ -2579,7 +2620,7 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     plain.seed(TARGET, OWN_SETTINGS_TEXT);
     const result = await check(withLinks(plain, { [settingsFileOf(copyOf('alpha'))]: TARGET }));
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('SessionStart hook in 0 of 1 work copies');
+    expect(result.text).toContain('every hook event in 0 of 1 work copies');
     expect(result.text).toContain('Replace the hook settings file of alpha with a plain file');
   });
 
@@ -2613,7 +2654,7 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     seedUnacceptedSetup(deps, HOME, SETUP_TEXT);
     const result = await check(deps);
     expect(result.level).toBe('fail');
-    expect(result.text).toContain('SessionStart hook in 0 of 1 work copies');
+    expect(result.text).toContain('every hook event in 0 of 1 work copies');
     expect(result.text).toContain('role text refused: the setup file is not accepted');
     expect(result.text).toContain('Run "factory dismiss alpha"');
   });
@@ -2635,7 +2676,7 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
       seedOwnHooks(deps, beta);
       const result = await check(unreadable(deps, beta));
       expect(result.level).toBe('warn');
-      expect(result.text).toContain('SessionStart hook in 1 of 2 work copies');
+      expect(result.text).toContain('every hook event in 1 of 2 work copies');
       expect(result.text).toContain('beta: the hook settings of the work copy are not checked (the folder cannot be read).');
       expect(result.text).toContain('Make the hook settings of beta readable, then run "factory doctor" again.');
     });
@@ -2654,12 +2695,14 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
 
   it('is ok for a layer with no worker file, and reads no work copy', async () => {
     const deps = await initialized();
+    await withWorker(deps, 'alpha');
     const config = await inspectConfig(deps, HOME);
     if (config.kind !== 'valid') throw new Error('the config is not valid');
     const bare = { ...config, value: { ...config.value, entry: { ...config.value.entry, roles: { ...config.value.entry.roles, templateFor: () => null } } } };
     const result = await checkRoleDelivery(deps, HOME, bare);
     expect(result).toMatchObject({ id: 'role-delivery', level: 'ok' });
     expect(result.text).toContain('no worker file');
+    expect(result.text).not.toContain('alpha');
   });
 
   it('is not checked when the config is not valid', async () => {

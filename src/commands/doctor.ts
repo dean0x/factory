@@ -551,16 +551,20 @@ export const checkSetupText = async (deps: Deps, home: string): Promise<CheckRes
       );
 };
 
-/** The finding for a work copy whose session would get no role text, with its one remedy. Null when its hook settings hold the hook. */
+/**
+ * The finding for a work copy that a launch refuses, with its one remedy. It names each hook event that lacks the own hook, from
+ * the same list that the launch check reads (`requireOwnHooks`), so the check and the launch agree. Null when its hook settings
+ * hold the hook of every event.
+ */
 const hookGapOf = (record: WorkerRecord, settings: HookSettingsRead): string | null => {
   const words = roleText.doctor;
   const resume = commandText(resumeLine(record.id));
   if (settings.state === 'link') return `${words.linkGap(record.id)} ${words.remedies.link(record.id, resume)}`;
-  if (!settings.missing.includes(words.startEvent)) return null;
+  if (settings.missing.length === 0) return null;
   // No own hook at all: `upgrade` leaves such a work copy as it is, because its owner said no to the hook.
   const none = settings.missing.length === hookNames.events.length;
   const { dismiss, create } = startOverCommands(record.id, record.project);
-  return `${words.gap(record.id)} ${none ? words.remedies.recreate(dismiss, create) : words.remedies.upgrade(resume)}`;
+  return `${words.gap(record.id, settings.missing)} ${none ? words.remedies.recreate(dismiss, create) : words.remedies.upgrade(resume)}`;
 };
 
 /** The finding for a work copy whose hook settings the check cannot read, with its one remedy. */
@@ -583,12 +587,13 @@ const rolePartOf = (read: CliResult<RoleRead>): RolePart => {
 };
 
 /**
- * The path from the setup text of the workers to their sessions, in one line: the work copies whose hook settings hold the own start
- * hook, the size of the role text against its cap, and in words where the acceptance of the setup text is kept. A zero count of workers
- * is ok, and so is a layer with no worker file. A fault of the role text fails the check. A work copy with no start hook warns, and so
- * does a work copy whose hook settings the check cannot read: that fault never hides a fault of the role text. Each finding gives one
- * remedy. The list of the workers holds at most `workerRecord.maxEntries` records, so the loop is bounded. The check reads and writes
- * nothing else, and it reads no hook settings file that is a link.
+ * The path from the setup text of the workers to their sessions, in one line: the work copies whose hook settings hold the own hook
+ * of every event that a launch needs, the size of the role text against its cap, and in words where the acceptance of the setup text
+ * is kept. A zero count of workers is ok, and so is a layer with no worker file. A fault of the role text fails the check. A work copy
+ * that lacks the own hook of any event warns, and names the events, with the same rule as the launch. A work copy whose hook settings
+ * the check cannot read warns too: that fault never hides a fault of the role text. Each finding gives one remedy. The list of the
+ * workers holds at most `workerRecord.maxEntries` records, so the loop is bounded. The check reads and writes nothing else, and it
+ * reads no hook settings file that is a link.
  */
 export const checkRoleDelivery = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
   const id = checkIds.roleDelivery;
