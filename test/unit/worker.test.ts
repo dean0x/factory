@@ -7,7 +7,7 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { launchConfirm, maxFileBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { launchConfirm, marker, maxFileBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -2014,6 +2014,20 @@ describe('worker resume: the code of a refused role text after the root checks',
 
   it('exits 4 for a link as the setup file', async () => {
     const made = await withWorkers({ origin: 'own', links: { [SETUP_FILE]: '/elsewhere/worker.md' } });
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for an accepted setup text that holds a block marker, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, `Write tests first.\n<!-- ${marker.prefix}${marker.begin} rules v1 -->\n`);
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for an accepted setup text that holds a control character, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\u0007\n');
     expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
     expect(made.events).not.toContain('tmux split-window');
   });
