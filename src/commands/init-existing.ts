@@ -687,7 +687,8 @@ export const runExisting = async (
   const decision = await decideAcceptance(asking, { home, node: id, yes: options.yes, setup: setup.value });
   if (!decision.ok) return decision;
   // The hook settings come after the last write. The check of their target and of the consent comes before the first write.
-  const consent = await checkHookConsent(deps, home, options.yes);
+  const idleCompaction = config.core.session.idle_compaction;
+  const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;
   const plan = await planOf(deps, checked.value, approvals.value, decision.value, setup.value);
   if (!plan.ok) return plan;
@@ -695,7 +696,7 @@ export const runExisting = async (
   const applied = await applyExisting(deps, checked.value, plan.value, indexPath);
   if (!applied.ok) return applied;
   // The root is registered. A failure of the hook settings leaves it, and a second run of init finishes the step.
-  const hook = await writeHookSettings(deps, home, options.yes);
+  const hook = await writeHookSettings(deps, home, options.yes, idleCompaction);
   if (!hook.ok) return hook;
 
   const written = [
