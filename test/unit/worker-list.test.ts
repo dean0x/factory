@@ -5,7 +5,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
-import { files, schemaIds, type HookEvent } from '../../src/names.js';
+import { boardKeys, files, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { readOwnLastSeen, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -126,6 +126,16 @@ type JsonWorker = {
   readonly state: string;
   readonly contextPct: number | null;
   readonly mark: string | null;
+  readonly itemId: string | null;
+  readonly itemTitle: string | null;
+  readonly itemStatus: string | null;
+  readonly stage: string | null;
+  readonly stageAt: string | null;
+  readonly parkedCount: number | null;
+  readonly paneLive: boolean;
+  readonly sessionState: string;
+  readonly activityAt: string | null;
+  readonly stalled: boolean;
 };
 
 const jsonOf = (output: CommandOutput) =>
@@ -193,9 +203,51 @@ describe('worker list: the table', () => {
       schema: schemaIds.workerList,
       home: HOME,
       running: true,
-      workers: [{ id: 'alpha', project: 'web', pane: '%7', dead: false, state: 'busy', contextPct: 41, mark: 'MAX' }],
+      workers: [
+        {
+          id: 'alpha',
+          project: 'web',
+          pane: '%7',
+          dead: false,
+          state: 'busy',
+          contextPct: 41,
+          mark: 'MAX',
+          itemId: null,
+          itemTitle: null,
+          itemStatus: null,
+          stage: null,
+          stageAt: null,
+          parkedCount: null,
+          paneLive: true,
+          sessionState: 'busy',
+          activityAt: made.deps.now().toISOString(),
+          stalled: false,
+        },
+      ],
       invalid: [],
     });
+  });
+
+  it('keeps the state key as the raw state and gives the pane and the stalled flag as separate facts', async () => {
+    const made = await make({
+      workers: [{ id: 'alpha', line: { event: 'UserPromptSubmit', percent: 10 } }, { id: 'beta', line: { event: 'Stop', percent: 10 } }],
+      panes: [pane('alpha', { dead: true }), pane('beta')],
+    });
+    const [alpha, beta] = jsonOf(await listed(made)).workers;
+    expect(alpha).toMatchObject({ state: 'busy', sessionState: 'busy', paneLive: false, stalled: false });
+    expect(beta).toMatchObject({ state: 'at prompt', sessionState: 'at prompt', paneLive: true, stalled: false });
+    const older = ['id', 'project', 'pane', 'dead', 'state', 'contextPct', 'mark'];
+    for (const worker of [alpha, beta]) {
+      expect(Object.keys(worker ?? {}).sort()).toEqual([...older, ...Object.values(workerRowKeys)].sort());
+    }
+  });
+
+  it('says that a worker is stalled when its session is busy and its activity is older than the limit', async () => {
+    const made = await make({ workers: [{ id: 'alpha', line: { event: 'UserPromptSubmit', percent: 10 } }], panes: [pane('alpha')] });
+    made.deps.advance(watchPoll.stalledAfterMs);
+    expect(jsonOf(await listed(made)).workers[0]?.stalled).toBe(false);
+    made.deps.advance(1);
+    expect(jsonOf(await listed(made)).workers[0]).toMatchObject({ stalled: true, sessionState: 'busy' });
   });
 });
 
@@ -639,6 +691,29 @@ describe('worker list: the board port', () => {
     expect(output.warnings).toHaveLength(1);
     expect(output.warnings[0]).toContain(files.board);
     expect(output.failed).toBe(false);
+  });
+
+  it('gives the item, its title, its status, its stage and the stage time of a worker in the row', async () => {
+    const stageTime = '2030-01-01T09:30:00.000Z';
+    const board = boardText([
+      itemRecord('B-1', { status: 'doing', lane: 'alpha', stage: 'build', stage_at: stageTime }),
+      itemRecord('B-0', { status: 'open', [boardKeys.unassignedFrom]: ['alpha'] }),
+    ]);
+    const [alpha, beta] = jsonOf(await listed(await withBoard(board))).workers;
+    expect(alpha).toMatchObject({
+      itemId: 'B-1',
+      itemTitle: 'Item B-1',
+      itemStatus: 'doing',
+      stage: 'build',
+      stageAt: stageTime,
+      parkedCount: 1,
+    });
+    expect(beta).toMatchObject({ itemId: null, itemTitle: null, stage: null, stageAt: null, parkedCount: 0 });
+  });
+
+  it('gives null item fields and a count of null for a worker whose board is not read', async () => {
+    const [alpha] = jsonOf(await listed(await withBoard(undefined))).workers;
+    expect(alpha).toMatchObject({ itemId: null, itemTitle: null, itemStatus: null, stage: null, stageAt: null, parkedCount: null });
   });
 
   it('reads the board file once, and changes no file', async () => {

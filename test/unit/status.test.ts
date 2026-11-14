@@ -5,15 +5,16 @@ import { failure } from '../../src/cli/errors.js';
 import { renderJson, type CommandOutput } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { runStatus, type StatusOptions } from '../../src/commands/status.js';
+import { runWorkerList } from '../../src/commands/worker-list.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import type { PaneRow } from '../../src/launch/tmux.js';
-import { files, schemaIds, type HookEvent } from '../../src/names.js';
+import { files, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession, type LastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord, type WorkerRecord } from '../../src/workers/registry.js';
-import { buildStatus, type LineRead, type StatusInput } from '../../src/workers/status.js';
+import { boardRowOf, buildStatus, type LineRead, type StatusInput } from '../../src/workers/status.js';
 import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { EMPTY_WAITING } from '../helpers/board-repo.js';
@@ -227,6 +228,161 @@ describe('status: the builder', () => {
     });
   });
 
+  describe('session facts', () => {
+    const lineWith = (change: Partial<LastSeen>): LineRead => ({
+      kind: 'line',
+      line: {
+        schema: schemaIds.lastSeen,
+        session_id: SESSION,
+        event: null,
+        event_at: null,
+        context_pct: null,
+        pct_at: null,
+        session_marker: 'alpha',
+        ...change,
+      },
+    });
+    const msAgo = (ms: number): string => new Date(NOW.getTime() - ms).toISOString();
+    const rowOf = (change: Partial<StatusInput>) => boardRowOf(firstOf(inputOf(change)).entry);
+    const lineMap = (read: LineRead): ReadonlyMap<string, LineRead> => new Map([['alpha', read]]);
+    const busyAt = (ms: number): ReadonlyMap<string, LineRead> => lineMap(lineWith({ event: 'UserPromptSubmit', event_at: msAgo(ms) }));
+    const LIMIT = watchPoll.stalledAfterMs;
+
+    it.each([
+      ['older than the limit', LIMIT + 1, true],
+      ['exactly as old as the limit', LIMIT, false],
+      ['newer than the limit', LIMIT - 1, false],
+      ['after the current time', -1000, false],
+    ] as const)('says that a busy session on a live pane with an activity time %s is stalled: %s', (_name, age, stalled) => {
+      const input = inputOf({ lines: busyAt(age) });
+      expect(firstOf(input).entry.stalled).toBe(stalled);
+      expect(boardRowOf(firstOf(input).entry).stalled).toBe(stalled);
+    });
+
+    it('never says that a busy session with no activity time, or a time that does not parse, is stalled', () => {
+      expect(rowOf({ lines: lineMap(lineWith({ event: 'UserPromptSubmit' })) }).stalled).toBe(false);
+      expect(rowOf({ lines: lineMap(lineWith({ event: 'UserPromptSubmit', event_at: 'last week' })) }).stalled).toBe(false);
+      expect(rowOf({ lines: lineMap(lineWith({ event: 'UserPromptSubmit', event_at: '' })) }).stalled).toBe(false);
+    });
+
+    it.each(['Stop', 'Notification'] as const)('never says that a session after the event %s is stalled, however old its activity time is', (event) => {
+      const row = rowOf({ lines: lineMap(lineWith({ event, event_at: msAgo(50 * LIMIT) })) });
+      expect(row.stalled).toBe(false);
+    });
+
+    it('never says that a worker with no line is stalled', () => {
+      for (const lines of [new Map<string, LineRead>(), lineMap({ kind: 'none' }), lineMap({ kind: 'fault', reason: 'EIO' })]) {
+        expect(rowOf({ lines }).stalled).toBe(false);
+      }
+    });
+
+    it('never says that a worker with no pane or a dead pane is stalled, whatever its last line says', () => {
+      const lines = busyAt(50 * LIMIT);
+      expect(rowOf({ lines }).stalled).toBe(true);
+      for (const panes of [[], null, [paneOf('alpha', { dead: true })]]) {
+        const row = rowOf({ lines, panes });
+        expect(row).toMatchObject({ paneLive: false, stalled: false, sessionState: 'busy' });
+      }
+    });
+
+    it('takes the newer of the event time and the percent time as the activity time', () => {
+      const old = msAgo(50 * LIMIT);
+      const recent = msAgo(1000);
+      const eventOld = rowOf({ lines: lineMap(lineWith({ event: 'PreToolUse', event_at: old, context_pct: 30, pct_at: recent })) });
+      expect(eventOld).toMatchObject({ activityAt: recent, stalled: false });
+      const percentOld = rowOf({ lines: lineMap(lineWith({ event: 'PreToolUse', event_at: recent, context_pct: 30, pct_at: old })) });
+      expect(percentOld).toMatchObject({ activityAt: recent, stalled: false });
+      const bothOld = rowOf({ lines: lineMap(lineWith({ event: 'PreToolUse', event_at: old, context_pct: 30, pct_at: old })) });
+      expect(bothOld).toMatchObject({ activityAt: old, stalled: true });
+    });
+
+    it('gives no activity time for a worker with no time on its line or no line', () => {
+      expect(rowOf({ lines: lineMap(lineWith({ event: 'Stop' })) }).activityAt).toBeNull();
+      expect(rowOf({ lines: new Map() }).activityAt).toBeNull();
+    });
+
+    it.each([
+      ['SessionStart', 'at prompt'],
+      ['Stop', 'at prompt'],
+      ['UserPromptSubmit', 'busy'],
+      ['Notification', 'waits'],
+    ] as const)('gives the raw state of the last event: %s is %s', (event, state) => {
+      expect(rowOf({ lines: lineMap(lineWith({ event, event_at: msAgo(1000) })) }).sessionState).toBe(state);
+    });
+
+    it('gives the state unknown for a worker with no line that it owns', () => {
+      for (const lines of [new Map<string, LineRead>(), lineMap({ kind: 'none' }), lineMap({ kind: 'fault', reason: 'EIO' })]) {
+        expect(rowOf({ lines }).sessionState).toBe('unknown');
+      }
+    });
+
+    it('says that the pane is live only for a pane that exists and has not ended', () => {
+      expect(rowOf({}).paneLive).toBe(true);
+      expect(rowOf({ panes: [paneOf('alpha', { dead: true })] }).paneLive).toBe(false);
+      expect(rowOf({ panes: [paneOf('beta')] }).paneLive).toBe(false);
+      expect(rowOf({ panes: null }).paneLive).toBe(false);
+    });
+  });
+
+  describe('the worker row', () => {
+    const DISPLAY = sampleDisplay('B-1', 'doing', { stage: 'build', stageAt: '2030-01-02T10:00:00.000Z' });
+    const rowOf = (workItem?: WorkItem) =>
+      boardRowOf(firstOf(inputOf(workItem === undefined ? {} : { workItems: new Map([['alpha', workItem]]) })).entry);
+
+    it('holds exactly the keys of the worker row and no final state word', () => {
+      expect(Object.keys(rowOf(knownItem('B-1', { display: DISPLAY })))).toEqual(Object.values(workerRowKeys));
+    });
+
+    it('gives the item, its title, its status, its stage, the stage time and the number of parked items', () => {
+      const row = rowOf(knownItem('B-1', { display: DISPLAY, parked: ['B-0', 'B-9'] }));
+      expect(row).toMatchObject({
+        itemId: 'B-1',
+        itemTitle: 'Item B-1',
+        itemStatus: 'doing',
+        stage: 'build',
+        stageAt: '2030-01-02T10:00:00.000Z',
+        parkedCount: 2,
+      });
+    });
+
+    it('gives null item fields and the number of parked items for a worker with no open item', () => {
+      expect(rowOf(knownItem(null, { parked: ['B-0'] }))).toMatchObject({
+        itemId: null,
+        itemTitle: null,
+        itemStatus: null,
+        stage: null,
+        stageAt: null,
+        parkedCount: 1,
+      });
+      expect(rowOf(NONE).parkedCount).toBe(0);
+    });
+
+    it('gives null item fields and a null count for a work item that is unknown or that the port did not give', () => {
+      for (const workItem of [UNKNOWN, undefined]) {
+        expect(rowOf(workItem)).toMatchObject({
+          itemId: null,
+          itemTitle: null,
+          itemStatus: null,
+          stage: null,
+          stageAt: null,
+          parkedCount: null,
+        });
+      }
+    });
+
+    it('gives null for the fields of display data that an item does not have', () => {
+      const row = rowOf(knownItem('B-2', { display: sampleDisplay('B-2', 'todo') }));
+      expect(row).toMatchObject({ itemId: 'B-2', itemTitle: 'Item B-2', itemStatus: 'todo', stage: null, stageAt: null });
+      expect(rowOf(busyWith('B-3'))).toMatchObject({ itemId: 'B-3', itemTitle: null, itemStatus: null, stage: null, stageAt: null });
+    });
+
+    it('removes the hidden characters from the title and makes it one line', () => {
+      const bidi = String.fromCodePoint(0x202e);
+      const row = rowOf(knownItem('B-1', { display: { ...DISPLAY, title: `Ship${bidi} the\nfirst\tpart` } }));
+      expect(row.itemTitle).toBe('Ship the first part');
+    });
+  });
+
   it('keeps the order of the records and changes none of its inputs', () => {
     const records = [record('beta'), record('alpha')];
     const lines = new Map<string, LineRead>([['alpha', lineOf({ event: ['Stop', 5] })]]);
@@ -376,6 +532,15 @@ interface JsonWorker {
   readonly activityAt: string | null;
   readonly workItem: WorkItem;
   readonly idle: boolean;
+  readonly itemId: string | null;
+  readonly itemTitle: string | null;
+  readonly itemStatus: string | null;
+  readonly stage: string | null;
+  readonly stageAt: string | null;
+  readonly parkedCount: number | null;
+  readonly paneLive: boolean;
+  readonly sessionState: string;
+  readonly stalled: boolean;
 }
 
 const jsonOf = (output: CommandOutput) =>
@@ -475,10 +640,41 @@ describe('status: the table', () => {
           activityAt: made.deps.now().toISOString(),
           workItem: busyWith('W-3'),
           idle: false,
+          itemId: 'W-3',
+          itemTitle: null,
+          itemStatus: null,
+          stage: null,
+          stageAt: null,
+          parkedCount: 0,
+          paneLive: true,
+          sessionState: 'busy',
+          stalled: false,
         },
       ],
       invalid: [],
     });
+  });
+
+  it('gives no final state word: the state key stays the shown state and the row adds the raw session state', async () => {
+    const made = await make({
+      workers: [{ id: 'alpha', line: { event: 'UserPromptSubmit', percent: 10 } }, { id: 'beta', line: { event: 'Stop', percent: 10 } }],
+      panes: [pane('alpha', { dead: true }), pane('beta')],
+    });
+    const [alpha, beta] = jsonOf(await statusOf(made, unknownPort)).workers;
+    expect(alpha).toMatchObject({ state: 'stopped', sessionState: 'busy', paneLive: false, stalled: false });
+    expect(beta).toMatchObject({ state: 'at prompt', sessionState: 'at prompt', paneLive: true, stalled: false });
+    const older = ['id', 'project', 'pane', 'dead', 'state', 'contextPct', 'mark', 'workItem', 'idle'];
+    for (const worker of [alpha, beta]) {
+      expect(Object.keys(worker ?? {}).sort()).toEqual([...older, ...Object.values(workerRowKeys)].sort());
+    }
+  });
+
+  it('says that a worker is stalled when its session is busy and its activity is older than the limit', async () => {
+    const made = await make({ workers: [{ id: 'alpha', line: { event: 'UserPromptSubmit', percent: 10 } }], panes: [pane('alpha')] });
+    made.deps.advance(watchPoll.stalledAfterMs);
+    expect(jsonOf(await statusOf(made)).workers[0]?.stalled).toBe(false);
+    made.deps.advance(1);
+    expect(jsonOf(await statusOf(made)).workers[0]).toMatchObject({ stalled: true, sessionState: 'busy' });
   });
 });
 
@@ -777,6 +973,7 @@ describe('status: the folder', () => {
 
 describe('status: the work items come from the board', () => {
   const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
+  const STAGE_TIME = '2030-01-01T09:30:00.000Z';
   const WORKERS = [
     { id: 'alpha', line: { event: 'Stop', percent: 5 } },
     { id: 'beta', line: { event: 'Stop', percent: 6 } },
@@ -805,11 +1002,62 @@ describe('status: the work items come from the board', () => {
       { id: 'gamma', workItem: 'none', idle: 'yes' },
     ]);
     expect(jsonOf(output).workers.map((worker) => worker.workItem)).toEqual([
-      knownItem('B-1', { display: sampleDisplay('B-1', 'doing') }),
+      knownItem('B-1'),
       NONE,
       knownItem(null, { closed: ['B-2'] }),
     ]);
     expect(output.warnings).toEqual([]);
+  });
+
+  it('gives the display data of the open item in the flat keys of the row, and the evidence alone in the work item', async () => {
+    const made = await withBoard(boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha', stage: 'build', stage_at: STAGE_TIME })]));
+    const [alpha, beta] = jsonOf(await statusOf(made, boardWorkItems(recipes))).workers;
+    expect(alpha).toMatchObject({
+      itemId: 'B-1',
+      itemTitle: 'Item B-1',
+      itemStatus: 'doing',
+      stage: 'build',
+      stageAt: STAGE_TIME,
+      parkedCount: 0,
+      workItem: knownItem('B-1'),
+    });
+    expect(beta).toMatchObject({ itemId: null, itemTitle: null, itemStatus: null, stage: null, stageAt: null, parkedCount: 0 });
+  });
+
+  it('prints the title of the open item once, as one clean line, and no raw stored title anywhere in the JSON', async () => {
+    const bidi = String.fromCodePoint(0x202e);
+    const title = `Ship${bidi} the\nfirst\tpart`;
+    const made = await withBoard(boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha', title })]));
+    const output = await statusOf(made, boardWorkItems(recipes));
+    const text = renderJson(output.json);
+    expect(jsonOf(output).workers[0]?.itemTitle).toBe('Ship the first part');
+    expect(text).not.toContain(bidi);
+    expect(text).not.toContain('\\n');
+    expect(text.split('first').length - 1).toBe(1);
+  });
+
+  it('gives one row of the same keys and values in status and in worker list for one seed', async () => {
+    const board = boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha', stage: 'build', stage_at: STAGE_TIME })]);
+    const made = await withBoard(board);
+    const listed = await runWorkerList(made.deps, { home: HOME }, recipes, boardWorkItems(recipes));
+    if (!listed.ok) throw new Error(listed.error.message);
+    const fromStatus = jsonOf(await statusOf(made, boardWorkItems(recipes))).workers;
+    const fromList = (listed.value.json as unknown as { readonly workers: readonly JsonWorker[] }).workers;
+    const rowOf = (worker: JsonWorker): Record<string, unknown> =>
+      Object.fromEntries(Object.values(workerRowKeys).map((key) => [key, worker[key]]));
+    expect(fromList.map(rowOf)).toEqual(fromStatus.map(rowOf));
+    expect(rowOf(fromStatus[0] as JsonWorker)).toEqual({
+      itemId: 'B-1',
+      itemTitle: 'Item B-1',
+      itemStatus: 'doing',
+      stage: 'build',
+      stageAt: STAGE_TIME,
+      parkedCount: 0,
+      paneLive: true,
+      sessionState: 'at prompt',
+      activityAt: expect.any(String),
+      stalled: false,
+    });
   });
 
   it('gives the board to the command line: status through runCli shows the item in progress', async () => {
@@ -818,7 +1066,7 @@ describe('status: the work items come from the board', () => {
     expect(await runCli(['status', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
     expect(JSON.parse(sink.out.join(''))).toMatchObject({
       workers: [
-        { id: 'alpha', workItem: knownItem('B-1', { display: sampleDisplay('B-1', 'doing') }), idle: true },
+        { id: 'alpha', workItem: knownItem('B-1'), itemId: 'B-1', itemTitle: 'Item B-1', idle: true },
         { id: 'beta', workItem: NONE, idle: true },
         { id: 'gamma', workItem: knownItem(null, { closed: ['B-2'] }), idle: true },
       ],

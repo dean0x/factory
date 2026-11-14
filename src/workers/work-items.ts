@@ -47,3 +47,13 @@ export interface WorkItemPort {
 }
 
 export const unknownItem: WorkItem = { state: 'unknown' };
+
+/**
+ * The work item with the evidence alone: the display data is left out. A command that prints the work item as proof uses this, so
+ * display data, which is never proof, reaches a view only through the flat keys of the worker row.
+ */
+export const evidenceOf = (workItem: WorkItem): WorkItem => {
+  if (workItem.state === 'unknown') return workItem;
+  const { display: _display, ...evidence } = workItem;
+  return evidence;
+};

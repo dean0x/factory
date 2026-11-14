@@ -1,5 +1,6 @@
+import { displayLine } from '../cli/output.js';
 import type { PaneRow } from '../launch/tmux.js';
-import { keys, lastSeen, roles, statusWords, workerListWords, type HookState } from '../names.js';
+import { keys, lastSeen, roles, statusWords, watchPoll, workerListWords, workerRowKeys, type HookState } from '../names.js';
 import { promptStateOf, type LastSeen } from './last-seen.js';
 import type { MachineLimits } from './machine.js';
 import type { WorkerRecord } from './registry.js';
@@ -45,6 +46,8 @@ export interface WorkerStatus {
   readonly workItem: WorkItem;
   /** True when the pane lives, the session waits at the prompt and its last event is older than `idle_after`. It says nothing of the work item. */
   readonly idle: boolean;
+  /** True when the pane lives, the session works and its newest write (`activityAt`) is older than `watchPoll.stalledAfterMs`. It is a hint. */
+  readonly stalled: boolean;
   /** True when the board knows the work item of the worker and the worker has no open item. */
   readonly noOpenWork: boolean;
 }
@@ -108,6 +111,17 @@ const isIdle = (running: boolean, state: WorkerState, eventAt: string | null, no
   return now.getTime() - Date.parse(eventAt) > idleAfterMinutes * MS_PER_MINUTE;
 };
 
+/**
+ * A session that works is stalled when its newest write is more than `watchPoll.stalledAfterMs` old. A missing time, a time that
+ * does not parse and a time after the current time are never stalled: an unknown fact fails closed. It is a hint: a long tool call
+ * with no hook write reads as stalled.
+ */
+const isStalledAt = (activityAt: string | null, now: Date): boolean => {
+  if (activityAt === null) return false;
+  const writtenAt = Date.parse(activityAt);
+  return !Number.isNaN(writtenAt) && now.getTime() - writtenAt > watchPoll.stalledAfterMs;
+};
+
 /** True when the board knows the work of the worker and the worker has no open item. An unknown work item is never free of work. */
 const hasNoOpenWork = (workItem: WorkItem): boolean => workItem.state === 'known' && workItem.item === null;
 
@@ -139,6 +153,7 @@ const entryOf = (
     activityAt,
     workItem,
     idle: isIdle(running, state, eventAt, input.now, input.idleAfterMinutes),
+    stalled: running && state === workerListWords.states.busy && isStalledAt(activityAt, input.now),
     noOpenWork: hasNoOpenWork(workItem),
   };
   return { entry, warnings: [pane.warning, fault].filter((warning): warning is string => warning !== null) };
@@ -152,3 +167,41 @@ export const buildStatus = (input: StatusInput): BuiltStatus => {
 
 /** What a person reads as the state: a worker with no live pane is stopped, whatever its last line says. */
 export const shownStateOf = (entry: WorkerStatus): ShownState => (entry.running ? entry.state : statusWords.stopped);
+
+/**
+ * The facts of one worker for a view outside the core, the same in `status --json` and `worker list --json`. Each key is in
+ * `workerRowKeys`. The row gives facts only and holds no final state word: a view makes its own words. The item fields come from
+ * the display data of the work item and are null when the worker has no open item or the work item is unknown. `parkedCount` is
+ * null only for an unknown work item. `paneLive` is true only for a pane that exists and has not ended, and `sessionState` is the
+ * raw state of the last event, whatever the pane is. The title is stored owner text, so it prints as one clean line.
+ */
+export type BoardRow = {
+  readonly [workerRowKeys.itemId]: string | null;
+  readonly [workerRowKeys.itemTitle]: string | null;
+  readonly [workerRowKeys.itemStatus]: string | null;
+  readonly [workerRowKeys.stage]: string | null;
+  readonly [workerRowKeys.stageAt]: string | null;
+  readonly [workerRowKeys.parkedCount]: number | null;
+  readonly [workerRowKeys.paneLive]: boolean;
+  readonly [workerRowKeys.sessionState]: WorkerState;
+  readonly [workerRowKeys.activityAt]: string | null;
+  readonly [workerRowKeys.stalled]: boolean;
+};
+
+export const boardRowOf = (entry: WorkerStatus): BoardRow => {
+  const { workItem } = entry;
+  const known = workItem.state === 'known' ? workItem : null;
+  const display = known?.display;
+  return {
+    [workerRowKeys.itemId]: known?.item ?? null,
+    [workerRowKeys.itemTitle]: display === undefined ? null : displayLine(display.title),
+    [workerRowKeys.itemStatus]: display?.status ?? null,
+    [workerRowKeys.stage]: display?.stage ?? null,
+    [workerRowKeys.stageAt]: display?.stageAt ?? null,
+    [workerRowKeys.parkedCount]: known?.parked.length ?? null,
+    [workerRowKeys.paneLive]: entry.running,
+    [workerRowKeys.sessionState]: entry.state,
+    [workerRowKeys.activityAt]: entry.activityAt,
+    [workerRowKeys.stalled]: entry.stalled,
+  };
+};
