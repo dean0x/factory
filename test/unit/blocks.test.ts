@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   appendBlocks,
+  insertBlocksBefore,
   parseBlocks,
   renderBlock,
   replaceBlock,
@@ -161,6 +162,30 @@ describe('appendBlocks', () => {
 
   it('adds a newline when the owner text has none at the end', () => {
     expect(appendBlocks('My rules.', [a])).toBe(`My rules.\n\n${a}\n`);
+  });
+});
+
+describe('insertBlocksBefore', () => {
+  const [a, b, setup] = [rendered('a', 1, 'x'), rendered('b', 1, 'y'), rendered('setup', 1, 'z')];
+
+  /** Insert the blocks before the setup block of the text. */
+  const insertBeforeSetup = (text: string, blocks: readonly string[]): string => {
+    const parsed = parseBlocks(text);
+    const target = parsed.ok ? parsed.value.find((block) => block.name === 'setup') : undefined;
+    if (target === undefined) throw new Error('the text has no setup block');
+    return insertBlocksBefore(text, target, blocks);
+  };
+
+  it('puts the blocks first when nothing comes before the block', () => {
+    expect(insertBeforeSetup(`${setup}\n`, [a, b])).toBe(`${a}\n\n${b}\n\n${setup}\n`);
+  });
+
+  it('adds a blank line after owner text that ends with one line break', () => {
+    expect(insertBeforeSetup(`My rules.\n${setup}\n`, [a])).toBe(`My rules.\n\n${a}\n\n${setup}\n`);
+  });
+
+  it('keeps the blank line that is already there, and adds no other', () => {
+    expect(insertBeforeSetup(`${b}\n\n${setup}\n\nMore of mine.\n`, [a])).toBe(`${b}\n\n${a}\n\n${setup}\n\nMore of mine.\n`);
   });
 });
 

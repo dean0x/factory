@@ -136,7 +136,7 @@ export const planLocal = async (
 };
 
 /** The value of a file as it is after the migrations. A failing migration stops the upgrade here. */
-export const migratedFile =(plan: FilePlan, file: UpgradeFile): CliResult<unknown> => {
+export const migratedFile = (plan: FilePlan, file: UpgradeFile): CliResult<unknown> => {
   const migrated = plan.kind === 'migrate' ? runMigrations(plan.raw, plan.steps) : ok(plan.raw);
   return migrated.ok ? migrated : failure(`${file.spec.file}: ${migrated.error.message}`);
 };
