@@ -652,11 +652,19 @@ describe('the local connector: the text of the board file', () => {
     expect(changedLines(SAMPLE, afterState)).toEqual({ removed: ['      "status": "doing",'], added: ['      "status": "blocked",'] });
     const at = repo.deps.now().toISOString();
     valueOf(await connector.moveItem('B-3', { stage: 'review' }));
+    const afterStage = repo.textOf(fileNames.board) ?? '';
     const itemOf = (text: string): Readonly<Record<string, unknown>> => valueOf(parseBoard(text, QUEUE)).items.find((entry) => entry.id === 'B-3')?.record ?? {};
     const before = itemOf(afterState);
-    const after = itemOf(repo.textOf(fileNames.board) ?? '');
+    const after = itemOf(afterStage);
     expect(after).toEqual({ ...before, stage: 'review', [boardKeys.stageAt]: at });
     expect(Object.keys(after)).toEqual([...Object.keys(before), boardKeys.stageAt]);
+    // The new key goes at the end of the item, so the diff runs from the stage line to the last old line of the item, which gets a comma.
+    const { removed, added } = changedLines(afterState, afterStage);
+    expect(removed[0]).toBe('      "stage": "building",');
+    expect(added[0]).toBe('      "stage": "review",');
+    expect(added.at(-1)).toBe(`      "${boardKeys.stageAt}": "${at}"`);
+    expect(added.at(-2)).toBe(`${removed.at(-1)},`);
+    expect(added.slice(1, -2)).toEqual(removed.slice(1, -1));
   });
 
   it('changes only the value line of an owner field', async () => {
