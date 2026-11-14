@@ -309,13 +309,16 @@ export const docPathIssue = (path: string): DocPathIssue | null => {
   return place === null ? null : { kind: 'place', reason: `is refused: ${displayLine(place, maxEchoChars)}` };
 };
 
-const DOC_PLACE_REMEDY = `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}.`;
-
 export const checkDocPath = (path: string): CliResult<string> => {
   const issue = docPathIssue(path);
   if (issue === null) return ok(path);
   const message = `the path ${shown(path)} ${issue.reason}`;
-  return issue.kind === 'form' ? usageError(message) : safetyRefusal(message, DOC_PLACE_REMEDY);
+  return issue.kind === 'form'
+    ? usageError(message)
+    : safetyRefusal(
+        message,
+        `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}. Then run "${commandText(commandLines.itemDoc)}" again with that file.`,
+      );
 };
 
 /** A request id of the form `D-n`. The form check comes first, because the id goes into the text of a commit. */
@@ -663,7 +666,7 @@ export const linkDocIn = (doc: BoardDoc, id: string, path: string): CliResult<Ed
   if (current.length >= boardTextLimits.maxItemDocs) {
     return usageError(
       `the item ${id} holds ${boardTextLimits.maxItemDocs} docs already, so it takes no more`,
-      `Take a path out of the "${boardKeys.docs}" of the item in ${files.board}, then link the new path.`,
+      `Take a path out of the "${boardKeys.docs}" of the item in ${files.board}, then run "${commandText(commandLines.itemDoc)}" again with the new path.`,
     );
   }
   return ok({ top: withItem(doc, id, withKeys(found.value.record, [[boardKeys.docs, [...current, path]]]).record), value: id });
