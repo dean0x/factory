@@ -25,6 +25,7 @@ import type { DecisionInput, DecisionWrite } from '../../src/core/owner-record.j
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
 import { ok } from '../../src/core/result.js';
 import {
+  boardKeys,
   commandLines,
   commands,
   commandText,
@@ -641,17 +642,19 @@ describe('the local connector: the text of the board file', () => {
     });
   });
 
-  it('changes only the state line of the item for a move, and only the stage line for a stage move', async () => {
+  it('changes only the state line of the item for a move, and only the stage line and the time at the end for a stage move', async () => {
     const repo = await repoWith(SAMPLE);
     const connector = connectorOf(repo);
     valueOf(await connector.moveItem('B-3', { state: 'blocked' }));
     const afterState = repo.textOf(fileNames.board) ?? '';
     expect(changedLines(SAMPLE, afterState)).toEqual({ removed: ['      "status": "doing",'], added: ['      "status": "blocked",'] });
+    const at = repo.deps.now().toISOString();
     valueOf(await connector.moveItem('B-3', { stage: 'review' }));
-    expect(changedLines(afterState, repo.textOf(fileNames.board) ?? '')).toEqual({
-      removed: ['      "stage": "building",'],
-      added: ['      "stage": "review",'],
-    });
+    const itemOf = (text: string): Readonly<Record<string, unknown>> => valueOf(parseBoard(text, QUEUE)).items.find((entry) => entry.id === 'B-3')?.record ?? {};
+    const before = itemOf(afterState);
+    const after = itemOf(repo.textOf(fileNames.board) ?? '');
+    expect(after).toEqual({ ...before, stage: 'review', [boardKeys.stageAt]: at });
+    expect(Object.keys(after)).toEqual([...Object.keys(before), boardKeys.stageAt]);
   });
 
   it('changes only the value line of an owner field', async () => {
@@ -693,7 +696,7 @@ describe('the local connector: the text of the board file', () => {
     const repo = await repoWith(SAMPLE);
     const added = valueOf(await connectorOf(repo).addItem({ title: 'Brand new', text: 'Words', track: 'docs', fields: { priority: 'P1', type: 'bug', lane: 'w-1' } }));
     expect(added.id).toBe('B-17');
-    expect(Object.keys(added.record)).toEqual(['id', 'title', 'status', 'stage', 'track', 'text', 'priority', 'type', 'lane']);
+    expect(Object.keys(added.record)).toEqual(['id', 'title', 'status', 'stage', boardKeys.stageAt, 'track', 'text', 'priority', 'type', 'lane']);
     expect(added.record['priority']).toBe('P1');
   });
 
@@ -1982,11 +1985,12 @@ describe('the local connector: record a passed check', () => {
 
   it('sets the merged stage, the closed state and the PR head, and keeps the merge commit out of the item', async () => {
     const repo = await repoWith(boardWith([workItem({ zeta: 1 }), item('B-2')]));
+    const at = repo.deps.now().toISOString();
     const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
     expect(done.changed).toBe(true);
     expect(done.item.status).toBe('done');
     expect(done.item.stage).toBe('merged');
-    expect(itemAfter(repo, 'B-1')).toEqual({ ...workItem({ zeta: 1 }), status: 'done', stage: 'merged', merged_pr_head: PR_HEAD });
+    expect(itemAfter(repo, 'B-1')).toEqual({ ...workItem({ zeta: 1 }), status: 'done', stage: 'merged', merged_pr_head: PR_HEAD, [boardKeys.stageAt]: at });
     expect(repo.textOf(fileNames.board)).not.toContain(MERGE_COMMIT);
   });
 
@@ -2463,5 +2467,104 @@ describe('the local connector: close a request with a relayed answer', () => {
     const repo = await decideRepo();
     valueOf(await localOf(repo.deps).closeRequest('D-1', { decider: requestDeciders.coordinator, decision: 'Yes' }));
     expect(repo.textOf(fileNames.decisionLog)).not.toContain('relayed');
+  });
+});
+
+describe('the local connector: the time of the last stage change', () => {
+  const STAGE_AT = '2029-12-31T23:59:59.999Z';
+  const stageAtOf = (repo: BoardRepo, id: string): unknown => itemAfter(repo, id)[boardKeys.stageAt];
+  const timeOf = (repo: BoardRepo): string => repo.deps.now().toISOString();
+
+  it('stamps a new item that has a stage with the time of the add, right after the stage', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const at = timeOf(repo);
+    const added = valueOf(await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY }));
+    expect(added.record[boardKeys.stageAt]).toBe(at);
+    expect(Object.keys(added.record)).toEqual(['id', 'title', 'status', 'stage', boardKeys.stageAt, 'priority']);
+    expect(stageAtOf(repo, added.id)).toBe(at);
+  });
+
+  it('stamps no time on a new item when the recipe has no stage list', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const added = valueOf(await connectorOf(repo, { recipe: {} }).addItem({ title: 'New', fields: PRIORITY }));
+    expect(Object.hasOwn(added.record, boardKeys.stageAt)).toBe(false);
+  });
+
+  it('stamps the time of the move when a move changes the stage', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket' })]));
+    const at = timeOf(repo);
+    valueOf(await connectorOf(repo).moveItem('B-1', { stage: 'building' }));
+    expect(itemAfter(repo, 'B-1')).toEqual(item('B-1', { stage: 'building', [boardKeys.stageAt]: at }));
+  });
+
+  it('replaces the stored time with the time of a later stage change', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket', [boardKeys.stageAt]: STAGE_AT })]));
+    repo.deps.advance(5_000);
+    const at = timeOf(repo);
+    valueOf(await connectorOf(repo).moveItem('B-1', { stage: 'building' }));
+    expect(stageAtOf(repo, 'B-1')).toBe(at);
+    expect(Object.keys(itemAfter(repo, 'B-1'))).toEqual(['id', 'title', 'status', 'stage', boardKeys.stageAt]);
+  });
+
+  it('keeps the stored time, and makes no commit, when a move sets the stage that the item has', async () => {
+    const board = boardWith([item('B-1', { stage: 'building', [boardKeys.stageAt]: STAGE_AT })]);
+    const repo = await repoWith(board);
+    repo.deps.advance(5_000);
+    const moved = valueOf(await connectorOf(repo).moveItem('B-1', { stage: 'building' }));
+    expect(moved.changed).toBe(false);
+    expectUntouched(repo, board);
+  });
+
+  it('keeps the stored time when a move changes the state only, and adds no time to an item that has none', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket', [boardKeys.stageAt]: STAGE_AT }), item('B-2', { stage: 'ticket' })]));
+    repo.deps.advance(5_000);
+    valueOf(await connectorOf(repo).moveItem('B-1', { state: 'doing' }));
+    valueOf(await connectorOf(repo).moveItem('B-2', { state: 'doing' }));
+    expect(stageAtOf(repo, 'B-1')).toBe(STAGE_AT);
+    expect(Object.hasOwn(itemAfter(repo, 'B-2'), boardKeys.stageAt)).toBe(false);
+  });
+
+  it('stamps no time on an update or a close', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket', [boardKeys.stageAt]: STAGE_AT }), item('B-2', { stage: 'ticket' })]));
+    repo.deps.advance(5_000);
+    const connector = connectorOf(repo);
+    valueOf(await connector.updateItem('B-1', { title: 'Changed' }));
+    valueOf(await connector.closeItem('B-1'));
+    valueOf(await connector.closeItem('B-2'));
+    expect(stageAtOf(repo, 'B-1')).toBe(STAGE_AT);
+    expect(Object.hasOwn(itemAfter(repo, 'B-2'), boardKeys.stageAt)).toBe(false);
+  });
+
+  it('stamps the time of the record when a record changes the stage', async () => {
+    const repo = await repoWith(boardWith([workItem({ [boardKeys.stageAt]: STAGE_AT })]));
+    repo.deps.advance(5_000);
+    const at = timeOf(repo);
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(itemAfter(repo, 'B-1')).toMatchObject({ stage: 'merged', status: 'done', [boardKeys.stageAt]: at });
+  });
+
+  it('keeps the stored time when a record finds the stage that it sets', async () => {
+    const repo = await repoWith(boardWith([workItem({ stage: 'merged', [boardKeys.stageAt]: STAGE_AT }), item('B-2')]));
+    repo.deps.advance(5_000);
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(itemAfter(repo, 'B-1')).toMatchObject({ status: 'done', [boardKeys.stageAt]: STAGE_AT });
+  });
+
+  it('adds no time when a record finds the stage that it sets on an item that has none', async () => {
+    const repo = await repoWith(boardWith([workItem({ stage: 'merged' })]));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(Object.hasOwn(itemAfter(repo, 'B-1'), boardKeys.stageAt)).toBe(false);
+  });
+
+  it('makes no second commit, and keeps the time, when a record runs again later', async () => {
+    const repo = await repoWith(boardWith([workItem()]));
+    const connector = connectorOf(repo);
+    const at = timeOf(repo);
+    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
+    repo.deps.advance(5_000);
+    const again = valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(again.changed).toBe(false);
+    expect(repo.commits).toHaveLength(1);
+    expect(stageAtOf(repo, 'B-1')).toBe(at);
   });
 });
