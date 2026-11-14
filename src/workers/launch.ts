@@ -17,6 +17,7 @@ import { layoutOf } from '../state/layout.js';
 import { confirmLaunch, paneFailure, type PaneFailureRequest } from './confirm.js';
 import { closePane, type BoundPane } from './panes.js';
 import { workCopyOf } from './registry.js';
+import { requireRoleDelivery } from './session-checks.js';
 import { closeWorkerPane } from './slot.js';
 
 /**
@@ -289,12 +290,15 @@ const markPane = async (deps: Deps, request: PaneFailureRequest): Promise<CliRes
  * Starts the program of a worker in a new pane of the workers window, in its work copy. In order:
  * 1. the work copy, which must be exactly the folder of this worker below the work copies folder with no link in its path, and its
  *    settings files (a failure is exit 4, and nothing starts);
- * 2. the instruction files above the work copy (a warning);
- * 3. the proxy of the worker, with its health check;
- * 4. the argument list, with auto mode, the resume id when there is one, and the name of the session;
- * 5. the pane, and the worker mark on the pane id;
- * 6. the tile of the workers window, so that the next launch finds room (a failed tile is a warning);
- * 7. the wait for the pane to prove itself (`confirmLaunch`): the pane must still run the launch after the first wait, and a launch
+ * 2. the delivery of the role text (`requireRoleDelivery`): the own hook of every event in the settings of the work copy (exit 3
+ *    for a missing entry), and a role text that passes every check (exit 4 or exit 1). The launch does not wait for the first
+ *    session start, so this check is where a launch with no role text fails, before any pane;
+ * 3. the instruction files above the work copy (a warning);
+ * 4. the proxy of the worker, with its health check;
+ * 5. the argument list, with auto mode, the resume id when there is one, and the name of the session;
+ * 6. the pane, and the worker mark on the pane id;
+ * 7. the tile of the workers window, so that the next launch finds room (a failed tile is a warning);
+ * 8. the wait for the pane to prove itself (`confirmLaunch`): the pane must still run the launch after the first wait, and a launch
  *    with a resume id must also see the SessionStart line of the new session. A pane that ends is exit 1. A resume that the line
  *    does not confirm is exit 3 with "resume not confirmed". Nothing is undone: the pane stays for a person to read.
  * The caller makes the work copy and the record, and it checks that the tmux session is its own.
@@ -306,6 +310,8 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   if (!folder.ok) return folder;
   const settings = await requireCleanSettings(deps, home, workCopy);
   if (!settings.ok) return settings;
+  const delivery = await requireRoleDelivery(deps, { home, config, workerId, workCopy, again: resumeLine(workerId) });
+  if (!delivery.ok) return delivery;
   for (const line of await instructionWarnings(deps, home, workerId, workCopy)) deps.warn(line);
 
   const proxy = await chooseProxy(deps, config, workerProxyWish(config, workerId, request.retry), request.proxyAnswers);

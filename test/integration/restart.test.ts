@@ -81,6 +81,20 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, 
     expect(await lab.launchCount('alpha')).toBe(1);
   }, LIFECYCLE_CASE_MS);
 
+  it('exits 4 and stops nothing when the settings of the work copy turn off every hook', async () => {
+    await lab.node();
+    const before = await lab.workerPanes();
+    const settings = join(lab.box.node, 'work-copies', 'web', 'alpha', '.claude', 'settings.local.json');
+    await writeFile(settings, JSON.stringify({ disableAllHooks: true }));
+
+    const result = await lab.factory('restart', ['alpha']);
+    expect(result.code, result.stderr).toBe(4);
+    expect(result.stderr).toContain('turns off every hook');
+    expect(await lab.workerPanes()).toEqual(before);
+    for (const fact of before) expect(isAlive(fact.pid)).toBe(true);
+    expect(await lab.launchCount('alpha')).toBe(1);
+  }, LIFECYCLE_CASE_MS);
+
   it('exits 4 for a session of the same name that belongs to another home, and the remedy names factory shutdown (TP-132)', async () => {
     await lab.init();
     const made = await lab.tmux(['new-session', '-d', '-s', 'demo', '-P', '-F', '#{pane_pid}', 'sleep 300']);

@@ -131,7 +131,14 @@ export const runShutdown = async (
       failed: false,
     });
   }
-  const checked = await checkTargets(deps, { home, session, again: commands.shutdown, panes: panes.value, launches: [] });
+  const checked = await checkTargets(deps, {
+    home,
+    config: loaded.value,
+    session,
+    again: commands.shutdown,
+    panes: panes.value,
+    launches: [],
+  });
   if (!checked.ok) return checked;
   const ended = await endSession(deps, {
     home,
@@ -186,8 +193,9 @@ const restartOutput = (input: {
  * `restart ID`: stops one worker and starts it again with its session id. The other workers keep their panes. In order: the checks
  * of `start` for the root and the tools (exit 4) and the session (exit 3, which names `start`, or exit 4 for a session of another
  * folder); the record of the worker (exit 2); one list of the panes; then the checks of this worker before the stop: a session id
- * that passed the owner check, a known case, a work copy with clean settings files (exit 3 or exit 4), and the proxy of the worker
- * (exit 1). After these checks the worker stops (`stopWorker`) and starts again (`resumeWorker`), with the answer of the proxy check.
+ * that passed the owner check, a known case, a work copy with clean settings files (exit 3 or exit 4), a role text that reaches the
+ * session (exit 3, exit 4 or exit 1), and the proxy of the worker (exit 1). After these checks the worker stops (`stopWorker`) and
+ * starts again (`resumeWorker`), with the answer of the proxy check. A fault of a check stops no worker.
  */
 export const runRestart = async (
   deps: Deps,
@@ -214,7 +222,7 @@ export const runRestart = async (
   const listed = await listPanes(deps, session);
   if (!listed.ok) return listed;
   const panes = listed.value.filter((row) => row.worker === id);
-  const checked = await checkTargets(deps, { home, session, again, panes, launches: [record.value] });
+  const checked = await checkTargets(deps, { home, config, session, again, panes, launches: [record.value] });
   if (!checked.ok) return checked;
   const resumeId = checked.value.get(id);
   if (resumeId === undefined) {
@@ -326,7 +334,8 @@ const rebootOutside = async (
  * `reboot`: every recorded worker stops and starts again with its session id. In order: the checks of `start` for the root and the
  * tools (exit 4); the session of the node, which must be the session of this folder when it runs (exit 4); one list of the panes;
  * then the checks of every worker before the first stop (`checkTargets`), which need a session id that passed the owner check
- * for each recorded worker (exit 3), and the proxy of each launch after the stop (exit 1). Outside the session, the git checks of
+ * for each recorded worker (exit 3), a role text that reaches each session (exit 3, exit 4 or exit 1), and the proxy of each launch
+ * after the stop (exit 1). Outside the session, the git checks of
  * `start` come next (exit 1): a git older than 2.26 stops the reboot before the first stop. With no session, nothing stops and the
  * start path recovers the workers as `start` does.
  * Outside the session, the steps of `start` that change a file come first (the safety block rendered again, and the hook
@@ -353,6 +362,7 @@ export const runReboot = async (
   if (listed !== null && !listed.ok) return listed;
   const checked = await checkTargets(deps, {
     home,
+    config,
     session,
     again: commands.reboot,
     panes: running ?? [],

@@ -34,6 +34,7 @@ import {
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
+import { seedOwnHooks } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -1253,6 +1254,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     for (const id of seed.workers ?? IDS) {
       must(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${COPIES}/${id}`, branch: `worker/${id}` }));
       deps.seedDir(`${COPIES}/${id}`);
+      seedOwnHooks(deps, `${COPIES}/${id}`);
       const own = IDS.find((known) => known === id);
       const pointer = seed.pointers !== undefined && id in seed.pointers ? seed.pointers[id] : own === undefined ? null : SESSION[own];
       if (pointer === null || pointer === undefined) continue;

@@ -17,7 +17,7 @@ import {
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
-import { commands, hookNames, hookSessions, maxFileBytes, ownHookCommand } from '../../src/names.js';
+import { commandLines, commands, hookNames, hookSessions, maxFileBytes, ownHookCommand } from '../../src/names.js';
 import { createFakeDeps, withFsWatch, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 
 const FOLDER = '/h/factory/coordinator';
@@ -706,6 +706,15 @@ describe('the notice for a no to the hook settings', () => {
       expect(text).toContain('does not call the hook');
       expect(text).toContain(`run "factory ${command}" again and answer yes`);
     }
+  });
+
+  it('names the lost role text and the dismiss command for a work copy, and keeps the coordinator text as it is', () => {
+    const worker = declinedHookText(FILE, commandLines.workerNew, hookSessions.workCopy);
+    expect(worker).toContain('does not call the hook');
+    expect(worker).toContain('gets no role text');
+    expect(worker).toContain('dismiss the worker with "factory dismiss ID"');
+    expect(worker).toContain('run "factory worker new" again for a new worker and answer yes');
+    expect(declinedHookText(FILE, commands.start)).not.toContain('role text');
   });
 });
 

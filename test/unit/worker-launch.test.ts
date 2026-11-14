@@ -5,7 +5,7 @@ import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { launchConfirm, statuslineKeyPath } from '../../src/names.js';
+import { launchConfirm, roleText, statuslineKeyPath } from '../../src/names.js';
 import {
   launchWorker,
   newProxyAnswers,
@@ -15,6 +15,7 @@ import {
   type WorkerResumeRequest,
 } from '../../src/workers/launch.js';
 import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
+import { seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup, STATE_ENV } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { atWait, endsPane, startsSession, withProgram, type Program } from '../helpers/worker-program.js';
@@ -79,7 +80,7 @@ const make = (setup: Setup = {}): Made => {
   const { handler, log } = tmuxHandler({ sessions: { demo: HOME }, ...setup.tmux });
   const events: string[] = [];
   const base = createFakeDeps({
-    env: { PATH: '/bin', ANTHROPIC_BASE_URL: ENV_PROXY, ...setup.env },
+    env: { PATH: '/bin', ANTHROPIC_BASE_URL: ENV_PROXY, ...STATE_ENV, ...setup.env },
     run: (call) => {
       events.push(`tmux ${call.args[0]}`);
       return setup.answer?.(call) ?? handler(call);
@@ -90,7 +91,10 @@ const make = (setup: Setup = {}): Made => {
     },
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
-  for (const folder of setup.work ?? [COPY]) base.seedDir(folder);
+  for (const folder of setup.work ?? [COPY]) {
+    base.seedDir(folder);
+    seedOwnHooks(base, folder);
+  }
   const deps: FakeDeps = {
     ...base,
     warn: (message) => {
@@ -612,7 +616,7 @@ describe('the launch of a worker: the settings of the work copy (TP-15, TP-16)',
 
   it('goes on after a warning, prints the warning at once, and keeps the launch', async () => {
     const made = make();
-    put(made, JSON.stringify({ model: 'sonnet' }));
+    put(made, JSON.stringify({ ...ownSettingsEntries, model: 'sonnet' }));
     await launched(made, { proxy: null });
     expect(made.deps.warned).toHaveLength(1);
     expect(made.deps.warned[0]).toContain('is a settings file in a work copy');
@@ -624,6 +628,129 @@ describe('the launch of a worker: the settings of the work copy (TP-15, TP-16)',
     put(made, `${JSON.stringify(ownSettingsEntries, null, 2)}\n`);
     await launched(made, { proxy: null });
     expect(made.deps.warned).toEqual([]);
+  });
+});
+
+
+describe('the launch of a worker: the role text of the session', () => {
+  const PROJECT_SETTINGS = `${COPY}/.claude/settings.json`;
+  const HOOKS_OFF = JSON.stringify({ ...ownSettingsEntries, disableAllHooks: true });
+  const nothingStarted = (made: Made): void => {
+    expect(made.events).toEqual([]);
+    expect(made.deps.fetched).toEqual([]);
+    expect(panesOf(made)).toBe(START_PANES);
+  };
+
+  it('starts the worker for a node with no setup text for the worker, and for the setup text that the owner accepted', async () => {
+    await launched(make(), { proxy: null });
+    const accepted = make();
+    seedAcceptedSetup(accepted.deps, HOME, 'Write tests first.\n');
+    await launched(accepted, { proxy: null });
+  });
+
+  describe('a work copy whose settings turn off every hook', () => {
+    it('stops with exit 4 for the local settings file, names the effect, and starts nothing', async () => {
+      const made = make();
+      made.deps.seed(SETTINGS_FILE, HOOKS_OFF);
+      const error = await failed(made);
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toContain('turns off every hook');
+      expect(error.message).toContain('no role text');
+      nothingStarted(made);
+    });
+
+    it('stops with exit 4 for the project settings file, and starts nothing', async () => {
+      const made = make();
+      made.deps.seed(PROJECT_SETTINGS, JSON.stringify({ disableAllHooks: true }));
+      const error = await failed(made);
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toContain(PROJECT_SETTINGS.replace(`${HOME}/`, ''));
+      nothingStarted(made);
+    });
+
+    it('stops a resume with the same refusal, and starts nothing', async () => {
+      const made = make();
+      made.deps.seed(SETTINGS_FILE, HOOKS_OFF);
+      const result = await resumeWorker(made.deps, { ...request(), resumeId: UUID });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      nothingStarted(made);
+    });
+  });
+
+  describe('a work copy with no own hook entry', () => {
+    it('stops with exit 3 for a work copy with no settings file, and starts nothing', async () => {
+      const made = make();
+      made.deps.files.delete(SETTINGS_FILE);
+      const error = await failed(made);
+      expect(exitCodeOf[error.kind]).toBe(3);
+      expect(error.message).toContain('SessionStart');
+      nothingStarted(made);
+    });
+
+    it('stops with exit 3 when only the SessionStart entry lacks', async () => {
+      const made = make();
+      const { SessionStart: _start, ...others } = ownSettingsEntries.hooks;
+      made.deps.seed(SETTINGS_FILE, JSON.stringify({ ...ownSettingsEntries, hooks: others }));
+      expect(exitCodeOf[(await failed(made)).kind]).toBe(3);
+      expect(made.events.filter((event) => event.startsWith('tmux'))).toEqual([]);
+      expect(panesOf(made)).toBe(START_PANES);
+    });
+
+    it('puts each command of the remedy on its own line, for the work copy and for a new worker', async () => {
+      const made = make();
+      made.deps.files.delete(SETTINGS_FILE);
+      const lines = ((await failed(made)).hint ?? '').split('\n');
+      expect(lines).toEqual(
+        expect.arrayContaining([
+          'factory upgrade',
+          'factory worker resume alpha',
+          'factory dismiss alpha',
+          'factory worker new alpha --project web',
+        ]),
+      );
+    });
+  });
+
+  describe('a role text that a check refuses', () => {
+    it('stops with exit 4 for a setup text that the owner did not accept, and starts nothing', async () => {
+      const made = make();
+      seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+      const error = await failed(made);
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.hint).toContain('"factory worker resume alpha"');
+      nothingStarted(made);
+    });
+
+    it('stops with exit 1 for a text above the cap, names its size and the cap, and starts nothing', async () => {
+      const made = make();
+      seedAcceptedSetup(made.deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
+      const error = await failed(made);
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
+      nothingStarted(made);
+    });
+
+    it('stops a resume of a worker with the same refusal, and starts nothing', async () => {
+      const made = make();
+      seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+      const result = await resumeWorker(made.deps, { ...request(), resumeId: UUID });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      nothingStarted(made);
+    });
+
+    it('makes the check before the proxy request: a proxy that does not answer is not asked', async () => {
+      const made = make({ fetch: silent });
+      seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+      const error = await failed(made, { config: configWith({ session: 'local' }) });
+      expect(error.kind).toBe('safety');
+      nothingStarted(made);
+    });
+
+    it('prints no text of the setup file', async () => {
+      const made = make();
+      seedUnacceptedSetup(made.deps, HOME, 'SECRET-LINE\n');
+      expect(JSON.stringify(await failed(made))).not.toContain('SECRET-LINE');
+    });
   });
 });
 

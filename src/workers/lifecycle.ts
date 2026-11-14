@@ -10,6 +10,7 @@ import { readOwnLastSeen, type OwnSessionRead } from './last-seen.js';
 import { chooseProxy, requireCleanSettings, requireWorkCopy, type ProxyAnswers, type ProxyWish } from './launch.js';
 import { readCoordinatorPane, type BoundPane } from './panes.js';
 import type { WorkerRecord } from './registry.js';
+import { requireRoleDelivery } from './session-checks.js';
 import { readWorkerPanes } from './slot.js';
 import { requireOneLivePane, requireStopCase, stopWorker, terminatePane } from './stop.js';
 
@@ -57,16 +58,28 @@ export const requireOtherPane = (deps: Deps, id: string, pane: { readonly paneId
 /** The deps of a check that prints no warning: the launch that follows prints the warnings of the work copy. */
 const withoutWarnings = (deps: Deps): Deps => ({ ...deps, warn: () => undefined });
 
-/** The work copy and its settings files, checked before a stop so that the launch after the stop has no reason to fail. */
-const requireLaunchable = async (deps: Deps, home: string, record: WorkerRecord): Promise<CliResult<void>> => {
+/**
+ * The work copy, its settings files and the delivery of its role text, checked before a stop so that the launch after the stop has
+ * no reason to fail: a fault of any of them stops no worker. `again` is the command that a person runs after the fix.
+ */
+const requireLaunchable = async (
+  deps: Deps,
+  request: { readonly home: string; readonly config: FactoryConfig; readonly again: string },
+  record: WorkerRecord,
+): Promise<CliResult<void>> => {
+  const { home, config, again } = request;
   const folder = await requireWorkCopy(deps, home, record.id, record.workCopy);
   if (!folder.ok) return folder;
-  return requireCleanSettings(withoutWarnings(deps), home, record.workCopy);
+  const settings = await requireCleanSettings(withoutWarnings(deps), home, record.workCopy);
+  if (!settings.ok) return settings;
+  return requireRoleDelivery(deps, { home, config, workerId: record.id, workCopy: record.workCopy, again });
 };
 
 export interface TargetCheck {
   /** The factory folder: an absolute path. */
   readonly home: string;
+  /** The config of the node: the role text of a worker that starts again is rendered from it. */
+  readonly config: FactoryConfig;
   /** The tmux session of the node: the id of the node. */
   readonly session: string;
   /** The command that a person runs in another pane, without the program name (`commandText` adds it). */
@@ -90,8 +103,9 @@ const requireLivePane = async (deps: Deps, request: TargetCheck, id: string): Pr
 
 /**
  * The checks of one worker, in this order: the panes of the worker (exit 4 or exit 2), the session id that it resumes (exit 3),
- * the pane that it must not stop (exit 2) and the case of its session (exit 3), then the work copy and its settings (exit 4 for
- * a settings file). The value is the id to resume, or null for a worker that does not start again.
+ * the pane that it must not stop (exit 2) and the case of its session (exit 3), then the work copy, its settings (exit 4 for a
+ * settings file) and the delivery of its role text (exit 3, exit 4 or exit 1). The value is the id to resume, or null for a worker
+ * that does not start again.
  */
 const checkWorker = async (
   deps: Deps,
@@ -115,7 +129,7 @@ const checkWorker = async (
     if (!known.ok) return known;
   }
   if (record !== undefined) {
-    const launchable = await requireLaunchable(deps, home, record);
+    const launchable = await requireLaunchable(deps, request, record);
     if (!launchable.ok) return launchable;
   }
   return ok(resume.value);
@@ -125,8 +139,8 @@ const checkWorker = async (
  * Checks every worker that will stop or start again, before the first stop, and changes nothing. Every pane that carries the mark
  * of a worker must be a pane that the launch made, and a worker has at most one live pane. A worker with a live pane needs a
  * known case of its session. A worker that starts again needs a session id that passed the owner check, a work copy that is its
- * folder, and settings files that pass the check. The first fault is the result. The value is the id to resume for each worker that
- * starts again.
+ * folder, settings files that pass the check, and a role text that reaches its session. The first fault is the result, and no
+ * worker has stopped then. The value is the id to resume for each worker that starts again.
  */
 export const checkTargets = async (deps: Deps, request: TargetCheck): Promise<CliResult<ReadonlyMap<string, string>>> => {
   const records = new Map(request.launches.map((record) => [record.id, record] as const));
