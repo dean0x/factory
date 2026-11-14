@@ -472,7 +472,7 @@ interface SettingsSource {
   readonly display: string;
   /** The place for the warning that a settings file is there, or null where a settings file is normal. */
   readonly presence: string | null;
-  /** True for the work copy of a worker, whose session must keep its hooks. A file there that turns off every hook is a failure. */
+  /** True for the work copy of a worker, whose session must keep its hooks. A file there that turns off every hook or sets the state folder is a failure. */
   readonly requiresHooks: boolean;
 }
 
@@ -571,7 +571,8 @@ const settingsOfFolder = async (
  * One settings file: its failures and warnings. A setting that skips the permission prompts, a variable with the prefix of
  * the program in the env values and a setting of the proxy or the credential of the session are failures. A setting that
  * runs a command is a failure where a settings file is not expected (`presence` is set), and a warning in the factory folder
- * itself. A setting that turns off every hook is a failure where the session must keep its hooks (`requiresHooks` is set). The
+ * itself. A setting that turns off every hook, and a variable of the state folder or the home folder in the env values, are
+ * failures where the session must keep its hooks (`requiresHooks` is set). The
  * warning that a settings file is there is not given for a file that holds exactly the entries that the program writes
  * (`isOwnSettingsText`); every other finding stays for such a file.
  */
@@ -589,6 +590,9 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
     ...(source.presence !== null && facts.runsCommands.length > 0 ? [`runs a command through ${commandNames}`] : []),
     ...(source.requiresHooks && facts.disablesHooks
       ? [`turns off every hook (${claudeSettingKeys.disableAllHooks}), so the ${roles.worker} gets no role text`]
+      : []),
+    ...(source.requiresHooks && facts.movesState.length > 0
+      ? [`sets a variable of the state folder of the user in its env values (${facts.movesState.join(', ')}), so the ${roles.worker} gets no role text`]
       : []),
   ];
   const keepStatusLine =

@@ -897,6 +897,17 @@ describe('settings files', () => {
       expect(levelsOf(found, checkIds.permissionMode)).not.toContain('fail');
       expect(requireRootClean(found).ok).toBe(true);
     });
+
+    it.each([env.stateHome, env.userHome])(
+      'does not fail for a file that sets %s in its env values: only a work copy must keep its hooks',
+      async (name) => {
+        const deps = make();
+        put(deps, folder, JSON.stringify({ env: { [name]: '/elsewhere' } }));
+        const found = await scan(deps);
+        expect(levelsOf(found, checkIds.permissionMode)).not.toContain('fail');
+        expect(requireRootClean(found).ok).toBe(true);
+      },
+    );
   });
 
   it.each([
@@ -1078,6 +1089,35 @@ describe('settings files', () => {
       expect(found.some((entry) => entry.level === 'fail' && entry.text.includes('work-copies/web-a/.claude/settings.json'))).toBe(true);
     });
 
+    it.each([env.stateHome, env.userHome])(
+      'gives a failure for a file that sets %s in its env values, names the file, the variable and the effect, and gives one remedy line',
+      async (name) => {
+        const deps = make();
+        deps.seed(FILE, JSON.stringify({ env: { [name]: '/elsewhere' } }));
+        const found = await check(deps);
+        const stop = found.find((entry) => entry.level === 'fail');
+        expect(stop?.text).toContain('work-copies/web-a/.claude/settings.local.json');
+        expect(stop?.text).toContain(name);
+        expect(stop?.text).toContain('gets no role text');
+        expect(stop?.remedy).toContain('Remove the setting');
+        expect(stop?.remedy).not.toContain('\n');
+        expect(requireNoFailures(found).ok).toBe(false);
+      },
+    );
+
+    it('gives a failure for a project settings file that sets the state folder in a file that is not valid JSON', async () => {
+      const deps = make();
+      deps.seed(`${FOLDER}/.claude/settings.json`, `// kept by the project\n{"env": {"${env.stateHome}": "/elsewhere"},`);
+      const found = await check(deps);
+      expect(found.some((entry) => entry.level === 'fail' && entry.text.includes('gets no role text'))).toBe(true);
+    });
+
+    it('gives no failure for a file whose env values set other variables', async () => {
+      const deps = make();
+      deps.seed(FILE, JSON.stringify({ env: { OTHER: '1', [`${env.userHome}_BASE`]: '/x' } }));
+      expect(requireNoFailures(await check(deps)).ok).toBe(true);
+    });
+
     it('gives no failure for a file that sets the hooks setting to false', async () => {
       const deps = make();
       deps.seed(FILE, JSON.stringify({ [claudeSettingKeys.disableAllHooks]: false }));
@@ -1126,6 +1166,15 @@ describe('settings files', () => {
     it('checks every tracked settings file, not only the local one', async () => {
       const found = await tracked({ 'settings.json': '{"disableAllHooks": true}' });
       expect(found.findings.some((entry) => entry.level === 'fail' && entry.text.includes('.claude/settings.json'))).toBe(true);
+    });
+
+    it('gives a failure for a tracked file that sets the state folder or the home folder in its env values', async () => {
+      const found = await tracked({ 'settings.local.json': JSON.stringify({ env: { [env.stateHome]: '/elsewhere' } }) });
+      const stop = found.findings.find((entry) => entry.level === 'fail');
+      expect(stop?.text).toContain('work-copies/web-a/.claude/settings.local.json');
+      expect(stop?.text).toContain(env.stateHome);
+      expect(stop?.text).toContain('gets no role text');
+      expect(requireNoFailures(found.findings).ok).toBe(false);
     });
 
     it('gives no failure for tracked files that keep the hooks on', async () => {

@@ -533,6 +533,13 @@ export const trafficEnvNames = [
   'ANTHROPIC_CUSTOM_HEADERS',
 ] as const;
 
+/**
+ * The `env` variables of a settings file that set the state folder or the home folder of the user. The hook of a worker finds
+ * the factory list in the state folder of the user, so a work copy must not set either of these: the hook would not find the
+ * worker, and the worker would get no role text.
+ */
+export const stateEnvNames = [env.stateHome, env.userHome] as const;
+
 /** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
 export const maxFileBytes = 1_048_576;
 

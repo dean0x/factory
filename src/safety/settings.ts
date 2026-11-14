@@ -12,6 +12,7 @@ import {
   permissionSkipList,
   planMode,
   settingsCommandType,
+  stateEnvNames,
   trafficEnvNames,
   type CrossSessionHeldValue,
   type PermissionSkip,
@@ -37,6 +38,8 @@ export interface SettingsFacts {
   readonly changesFactoryEnv: boolean;
   /** The `env` variables of the file that set the proxy or the credential of the session, in the order of the list. */
   readonly movesTraffic: readonly string[];
+  /** The `env` variables of the file that set the state folder or the home folder of the user, in the order of the list. */
+  readonly movesState: readonly string[];
   /** The settings of the file that run a command, except the hook and the status line that the program writes. */
   readonly runsCommands: readonly string[];
   /** The allow rules that cover a whole tool, or every command of `lock run`. At most `MAX_LISTED_RULES`, each cut at `MAX_RULE_CHARS`. */
@@ -211,6 +214,7 @@ export const analyzeSettings = (text: string): SettingsFacts => {
     skips: skipsOf(text, parsed),
     changesFactoryEnv: envPrefixIn(text, parsed, env.factoryPrefix),
     movesTraffic: envNamesIn(text, parsed, trafficEnvNames),
+    movesState: envNamesIn(text, parsed, stateEnvNames),
     runsCommands: runsCommands(text, parsed),
     wholeToolRules: rules.filter(allowsEveryUse).slice(0, MAX_LISTED_RULES).map(shown),
     narrowRules: rules.filter((rule) => !allowsEveryUse(rule)).slice(0, MAX_LISTED_RULES).map(shown),
