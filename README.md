@@ -398,7 +398,7 @@ The promise holds these keys and forms:
 - **Null.** A null `stageAt` or `openedAt` means a row from before this version, or a stored value in a wrong form. A null item key in a worker row means that the worker has no work item, or that the board does not give the work items.
 - **The source.** `worker list --json` is the source of the worker rows for a view outside the core, and `status --json` holds the same row keys. `request list --json` is the source of the waiting requests. The waiting count of a view includes all open requests, in both groups.
 - **Facts and no final state word.** Factory gives facts. A view makes its own state words from `paneLive`, `sessionState`, `stalled` and the item keys. `stalled` is a hint (see "List the workers").
-- **Known gaps.** Factory records no fact that a worker stopped after an error. Factory has no parked or on-hold mark for a worker. The key `mark` is the context mark and is not that mark. `itemStatus` and `parkedCount` are plain facts of the board. They promise no Parked or On hold meaning.
+- **Known gaps.** Factory records no fact that a worker stopped after an error. Factory has no parked or on-hold mark for a worker. Issue 49 of the public factory repository tracks that mark (https://github.com/dean0x/factory/issues/49). The key `mark` is the context mark and is not that mark. `itemStatus` and `parkedCount` are plain facts of the board. They promise no Parked or On hold meaning.
 - **Text.** A title is text of the owner. The commands remove control, bidi and invisible characters from it, and a view must escape it for its own output.
 
 ### Answer a decision
