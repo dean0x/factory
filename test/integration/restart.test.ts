@@ -12,8 +12,8 @@ const resumeIdOf = (argv: readonly string[]): string | undefined => {
   return at < 0 ? undefined : argv[at + 1];
 };
 
-describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, AC-19, TP-17, TP-43, TP-44, TP-132)', () => {
-  it('stops one worker and starts it again with its session id, and the other worker keeps its pane and its process (TP-43)', async () => {
+describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server)', () => {
+  it('stops one worker and starts it again with its session id, and the other worker keeps its pane and its process', async () => {
     await lab.node();
     const alpha = await lab.livePaneOf('alpha');
     const beta = await lab.livePaneOf('beta');
@@ -39,7 +39,7 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, 
     expect(await lab.hasSession('demo')).toBe(true);
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 3 and names factory start when no tmux session runs (TP-44)', async () => {
+  it('exits 3 and names factory start when no tmux session runs', async () => {
     await lab.node();
     expect((await lab.factory('shutdown')).code).toBe(0);
 
@@ -67,7 +67,7 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, 
     for (const fact of before) expect(isAlive(fact.pid)).toBe(true);
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 and stops nothing when the settings file of the work copy is wrong (TP-17)', async () => {
+  it('exits 4 and stops nothing when the settings file of the work copy is wrong', async () => {
     await lab.node();
     const before = await lab.workerPanes();
     const settings = join(lab.box.node, 'work-copies', 'web', 'alpha', '.claude', 'settings.local.json');
@@ -81,7 +81,7 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, 
     expect(await lab.launchCount('alpha')).toBe(1);
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 for a session of the same name that belongs to another home, and the remedy names factory shutdown (TP-132)', async () => {
+  it('exits 4 for a session of the same name that belongs to another home, and the remedy names factory shutdown', async () => {
     await lab.init();
     const made = await lab.tmux(['new-session', '-d', '-s', 'demo', '-P', '-F', '#{pane_pid}', 'sleep 300']);
     expect(made.code, made.stderr).toBe(0);

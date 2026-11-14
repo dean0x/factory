@@ -104,7 +104,7 @@ const run = spawnSync(process.execPath, [dist, "lock", "run", "--", process.exec
 process.exit(run.status ?? 9);`;
 
 describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
-  it('passes the output and the exit code of the child through, and gives it the token and the caller environment (TP-17, TP-18, TP-26)', async () => {
+  it('passes the output and the exit code of the child through, and gives it the token and the caller environment', async () => {
     const out = path('report.json');
     const run = await factory(lockRun(REPORT, out, lockFile(), '7'), { MY_VAR: 'kept' }).done;
     expect(run).toEqual({ code: 7, stdout: 'out-line\n', stderr: 'err-line\n' });
@@ -120,14 +120,14 @@ describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
     ['the program itself', ['lock', 'run', '--', 'factory', 'version'], 4, lockWords.refused],
     ['the node program with the script of this program', ['lock', 'run', '--', process.execPath, DIST, 'version'], 4, lockWords.refused],
     ['no double dash', ['lock', 'run'], 2, lockWords.usage],
-  ])('writes one line that starts with the program and the fixed word for %s, and nothing on stdout (TP-26)', async (_name, argv, code, word) => {
+  ])('writes one line that starts with the program and the fixed word for %s, and nothing on stdout', async (_name, argv, code, word) => {
     const run = await factory(argv).done;
     expect(run.code).toBe(code);
     expect(run.stdout).toBe('');
     expect(run.stderr.split('\n')[0]).toMatch(new RegExp(`^error: factory lock run: ${word}\\. `));
   });
 
-  it('refuses a link at the lock path, follows it nowhere and starts no child (TP-5)', async () => {
+  it('refuses a link at the lock path, follows it nowhere and starts no child', async () => {
     await mkdir(stateDir(), { recursive: true, mode: 0o700 });
     await chmod(stateDir(), 0o700);
     await writeFile(path('target'), 'keep');
@@ -140,7 +140,7 @@ describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
     expect(await exists(out)).toBe(false);
   });
 
-  it('starts the second child only after the first child has ended (TP-25)', async () => {
+  it('starts the second child only after the first child has ended', async () => {
     const stamps = path('stamps.txt');
     const first = factory(lockRun(STAMP, stamps, '1200'));
     await until(async () => (await textOf(stamps)).includes('start'));
@@ -153,7 +153,7 @@ describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
     expect(Number(marks[2]?.[1])).toBeGreaterThanOrEqual(Number(marks[1]?.[1]));
   });
 
-  it('runs a lock run inside a lock run at once, with no second wait (TP-33)', async () => {
+  it('runs a lock run inside a lock run at once, with no second wait', async () => {
     const marker = path('inner.txt');
     const begun = Date.now();
     const run = await factory(lockRun(OUTER, DIST, marker)).done;
@@ -162,7 +162,7 @@ describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
     expect(Date.now() - begun).toBeLessThan(4_000);
   });
 
-  it('forwards TERM to the child and frees the lock after the child has ended (TP-21)', async () => {
+  it('forwards TERM to the child and frees the lock after the child has ended', async () => {
     const [ready, marker] = [path('hold-ready'), path('hold-marker')];
     const run = factory(lockRun(HOLD, ready, marker));
     await until(async () => (await textOf(ready)) !== '');
@@ -175,7 +175,7 @@ describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
     expect(await exists(lockFile())).toBe(false);
   });
 
-  it('ends the wait on TERM, starts no child, leaves the lock of the other run and exits 143 (TP-23)', async () => {
+  it('ends the wait on TERM, starts no child, leaves the lock of the other run and exits 143', async () => {
     const [ready, marker, out] = [path('wait-ready'), path('wait-marker'), path('waiter.json')];
     factory(lockRun(HOLD, ready, marker));
     await until(async () => (await textOf(ready)) !== '');

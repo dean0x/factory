@@ -111,10 +111,10 @@ const DECISION_OPS: readonly (readonly [string, Write])[] = [
 
 const FILES = [fileNames.board, fileNames.waiting, fileNames.decisionLog];
 
-describe('a hosted tracker kind: each board write refuses with exit 4 and one line (TP-67)', () => {
+describe('a hosted tracker kind: each board write refuses with exit 4 and one line', () => {
   const CASES = values.trackerHosted.flatMap((kind) => WRITES.map(([name, write]) => [kind, name, write] as const));
 
-  it.each(CASES)('M5-1b TP-67 %s: %s exits 4 with one line that says hosted boards come in FAC-M3 (provider plugin)', async (kind, _name, write) => {
+  it.each(CASES)('%s: %s exits 4 with one line that says hosted boards come in FAC-M3 (provider plugin)', async (kind, _name, write) => {
     const repo = await repoWith();
     const error = errorOf(await write(connectorOf(repo.deps, kind)));
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -123,7 +123,7 @@ describe('a hosted tracker kind: each board write refuses with exit 4 and one li
     expect(error.message).not.toContain('\n');
   });
 
-  it('M5-1b TP-67 names the command to run again in the remedy line, and the local tracker kind', async () => {
+  it('names the command to run again in the remedy line, and the local tracker kind', async () => {
     const repo = await repoWith();
     const error = errorOf(await connectorOf(repo.deps, 'github').addItem({ title: 'Second', fields: { priority: 'P1' } }));
     expect(error.hint).toContain(commandText(PASSED_COMMAND));
@@ -131,28 +131,28 @@ describe('a hosted tracker kind: each board write refuses with exit 4 and one li
     expect(error.hint).not.toContain('\n');
   });
 
-  it('M5-1b TP-67 names the command that the connector was given, and no other, in the remedy line', async () => {
+  it('names the command that the connector was given, and no other, in the remedy line', async () => {
     const repo = await repoWith();
     const error = errorOf(await connectorOf(repo.deps, 'github', commands.decide).addItem({ title: 'Second', fields: { priority: 'P1' } }));
     expect(error.hint).toContain(`"${commandText(commands.decide)}"`);
     expect(error.hint).not.toContain(commandText(commands.start));
   });
 
-  it.each(BAD_WRITES)('M5-1b TP-67 %s with bad input exits 4 too, because the refusal comes before the input check', async (_name, write) => {
+  it.each(BAD_WRITES)('%s with bad input exits 4 too, because the refusal comes before the input check', async (_name, write) => {
     const repo = await repoWith();
     const error = errorOf(await write(connectorOf(repo.deps, 'jira')));
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain(HOSTED_LINE);
   });
 
-  it('M5-1b TP-67 exits 4 for the hosted kind when the delete guard is off, because the refusal comes before the guard check', async () => {
+  it('exits 4 for the hosted kind when the delete guard is off, because the refusal comes before the guard check', async () => {
     const repo = await repoWith();
     repo.deps.files.delete(HOOK);
     const error = errorOf(await connectorOf(repo.deps, 'linear').closeItem('B-1'));
     expect(error.message).toContain(HOSTED_LINE);
   });
 
-  it('M5-1b TP-67 names the kind of the setup in the line, cleaned of control characters', async () => {
+  it('names the kind of the setup in the line, cleaned of control characters', async () => {
     const repo = await repoWith();
     const error = errorOf(await connectorOf(repo.deps, 'bad\nkind').closeItem('B-1'));
     expect(error.message).toContain('bad kind board');
@@ -160,8 +160,8 @@ describe('a hosted tracker kind: each board write refuses with exit 4 and one li
   });
 });
 
-describe('a hosted tracker kind: a refused write changes nothing (TP-68)', () => {
-  it.each(WRITES)('M5-1b TP-68 %s makes no commit, takes no lock, makes no copy and leaves the files byte for byte', async (_name, write) => {
+describe('a hosted tracker kind: a refused write changes nothing', () => {
+  it.each(WRITES)('%s makes no commit, takes no lock, makes no copy and leaves the files byte for byte', async (_name, write) => {
     const repo = await repoWith();
     const before = new Map(repo.deps.files);
     const touched: string[] = [];
@@ -175,7 +175,7 @@ describe('a hosted tracker kind: a refused write changes nothing (TP-68)', () =>
     expect(repo.deps.warned).toEqual([]);
   });
 
-  it('M5-1b TP-68 leaves the board file, the waiting file and the decision log as they were after every refused write', async () => {
+  it('leaves the board file, the waiting file and the decision log as they were after every refused write', async () => {
     const repo = await repoWith();
     const before = FILES.map((file) => repo.textOf(file));
     const connector = connectorOf(repo.deps, 'github');
@@ -186,10 +186,10 @@ describe('a hosted tracker kind: a refused write changes nothing (TP-68)', () =>
   });
 });
 
-describe('a hosted tracker kind: the decision operations refuse before any read (TP-164)', () => {
+describe('a hosted tracker kind: the decision operations refuse before any read', () => {
   const CASES = values.trackerHosted.flatMap((kind) => DECISION_OPS.map(([name, op]) => [kind, name, op] as const));
 
-  it.each(CASES)('M5-1b TP-164 %s: %s exits 4 with the hosted line, reads and writes no file, runs no git and never calls the writer', async (kind, _name, op) => {
+  it.each(CASES)('%s: %s exits 4 with the hosted line, reads and writes no file, runs no git and never calls the writer', async (kind, _name, op) => {
     const repo = await repoWith();
     const before = new Map(repo.deps.files);
     const touched: string[] = [];
@@ -207,7 +207,7 @@ describe('a hosted tracker kind: the decision operations refuse before any read 
     expect(repo.deps.files).toEqual(before);
   });
 
-  it.each(DECISION_OPS)('M5-1b TP-164 %s exits 4 for the hosted kind when the delete guard is off, because the refusal comes first', async (_name, op) => {
+  it.each(DECISION_OPS)('%s exits 4 for the hosted kind when the delete guard is off, because the refusal comes first', async (_name, op) => {
     const repo = await repoWith();
     repo.deps.files.delete(HOOK);
     const error = errorOf(await op(connectorOf(repo.deps, 'github')));
@@ -216,8 +216,8 @@ describe('a hosted tracker kind: the decision operations refuse before any read 
   });
 });
 
-describe('a hosted tracker kind reads the local files; the local kind writes (TP-69)', () => {
-  it.each(values.trackerHosted)('M5-1b TP-69 reads the items, the tracks and the changes from the local files for %s, and exits 0', async (kind) => {
+describe('a hosted tracker kind reads the local files; the local kind writes', () => {
+  it.each(values.trackerHosted)('reads the items, the tracks and the changes from the local files for %s, and exits 0', async (kind) => {
     const repo = await repoWith();
     const connector = connectorOf(repo.deps, kind);
     expect(connector.kind).toBe(kind);
@@ -230,7 +230,7 @@ describe('a hosted tracker kind reads the local files; the local kind writes (TP
     expect(repo.commits).toEqual([]);
   });
 
-  it.each(WRITES)('M5-1b TP-69 with the local kind, %s makes one commit and prints no tracker line', async (_name, write) => {
+  it.each(WRITES)('with the local kind, %s makes one commit and prints no tracker line', async (_name, write) => {
     const repo = await repoWith();
     const connector = connectorOf(repo.deps, values.trackerLocal);
     expect(connector.kind).toBe(values.trackerLocal);
@@ -239,7 +239,7 @@ describe('a hosted tracker kind reads the local files; the local kind writes (TP
     expect(repo.deps.warned).toEqual([]);
   });
 
-  it('M5-1b TP-69 with the local kind, a write that fails keeps its own exit kind and prints no tracker line', async () => {
+  it('with the local kind, a write that fails keeps its own exit kind and prints no tracker line', async () => {
     const repo = await repoWith();
     const error = errorOf(await connectorOf(repo.deps, values.trackerLocal).addItem({ title: 'x'.repeat(101), fields: { priority: 'P1' } }));
     expect(exitCodeOf[error.kind]).toBe(2);

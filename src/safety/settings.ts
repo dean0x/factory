@@ -19,7 +19,7 @@ import {
 import { parseJsonText } from '../state/load.js';
 
 /**
- * The facts about one Claude Code settings file that the checks of the root use (design 4.4, AC-21). The analysis is a
+ * The facts about one Claude Code settings file that the checks of the root use (design 4.4). The analysis is a
  * pure function of the text. It never fails: a text that is not a settings object gives a result with `valid` false, and
  * the checks that read the raw text still run, so a broken file does not hide a setting that skips permission prompts.
  */

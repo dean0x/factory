@@ -247,7 +247,7 @@ const boardSchema = z
     }
   });
 
-/** The address of another node. Only a file address on this machine is valid (F-13). */
+/** The address of another node. Only a file address on this machine is valid. */
 const addressSchema = z.string().superRefine((value, ctx) => {
   const checked = checkFileAddress(value);
   if (!checked.ok) ctx.addIssue({ code: 'custom', message: checked.error });

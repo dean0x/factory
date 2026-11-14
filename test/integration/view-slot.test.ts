@@ -133,7 +133,7 @@ afterAll(removeOpenSandboxes);
 
 describe.skipIf(!hasTmux)('the view slot (built binary, separate tmux server)', () => {
   it(
-    'M5-1b TP-46 shows the item titles of one-item tracks in the slot pane, and a new title after an item add',
+    'shows the item titles of one-item tracks in the slot pane, and a new title after an item add',
     async () => {
       await makeBoard();
       const started = await box.run(['start', '--home', box.node], { env: tmuxEnv });
@@ -153,7 +153,7 @@ describe.skipIf(!hasTmux)('the view slot (built binary, separate tmux server)', 
   );
 
   it(
-    'M5-1b TP-96 ends the follow process when the slot pane closes',
+    'ends the follow process when the slot pane closes',
     async () => {
       await makeBoard();
       const started = await box.run(['start', '--home', box.node], { env: tmuxEnv });

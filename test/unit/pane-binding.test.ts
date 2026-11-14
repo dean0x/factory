@@ -164,14 +164,14 @@ describe('startsWorker: the start command shows that the launch of this worker m
   });
 });
 
-describe('TP-11: the name of the session is not a mark of the pane binding', () => {
+describe('the name of the session is not a mark of the pane binding', () => {
   const withoutName = (startCommand: string): string => {
     const words = wordsOfStartCommand(startCommand) ?? [];
     const at = words.indexOf('--name');
     return startCommandText(words.filter((_word, index) => index !== at && index !== at + 1));
   };
 
-  it('TP-11: the start command of a worker binds with --name and binds without it', () => {
+  it('the start command of a worker binds with --name and binds without it', () => {
     const named = startCommandOf('alpha');
     expect(wordsOfStartCommand(named)).toContain('--name');
     expect(wordsOfStartCommand(withoutName(named))).not.toContain('--name');
@@ -179,7 +179,7 @@ describe('TP-11: the name of the session is not a mark of the pane binding', () 
     expect(startsWorker(withoutName(named), HOME, 'alpha')).toBe(true);
   });
 
-  it('TP-11: the start command of the coordinator binds with --name and binds without it', () => {
+  it('the start command of the coordinator binds with --name and binds without it', () => {
     const named = coordinatorStartOf();
     expect(wordsOfStartCommand(named)).toContain('--name');
     expect(startsCoordinator(named, HOME, NODE, STATE)).toBe(true);

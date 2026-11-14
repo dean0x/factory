@@ -42,7 +42,7 @@ describe('parseBudgetRows', () => {
   });
 });
 
-describe('the token budget of the built jobs (TP-64, TP-39)', () => {
+describe('the token budget of the built jobs', () => {
   /**
    * The jobs that are built: the status round, the restart of all workers, the worker creation, the session reset, the CI
    * watch, the worker watch, the resource check and the self reset. The typed owner input is built later (FAC-M5) and the
@@ -62,7 +62,7 @@ describe('the token budget of the built jobs (TP-64, TP-39)', () => {
   it.each([
     [12, 'factory worker relay', 'FAC-M5'],
     [15, 'factory worker adopt', 'FAC-M7'],
-  ])('TP-39: the job %i (%s) is built in %s and has no measured size yet', (job, command, milestone) => {
+  ])('the job %i (%s) is built in %s and has no measured size yet', (job, command, milestone) => {
     const line = readFileSync(BUDGET_FILE, 'utf8')
       .split('\n')
       .find((candidate) => new RegExp(`^\\|\\s*${job}\\s*\\|`).test(candidate));

@@ -63,7 +63,7 @@ describe('the state lock: one writer', () => {
   });
 });
 
-describe('the state lock: two writers at once (TP-18)', () => {
+describe('the state lock: two writers at once', () => {
   it('lets the second writer wait for the first, then run after it', async () => {
     const deps = fake();
     const order: string[] = [];
@@ -132,7 +132,7 @@ describe('the state lock: two writers at once (TP-18)', () => {
   });
 });
 
-describe('the state lock: with the real file system (TP-18)', () => {
+describe('the state lock: with the real file system', () => {
   const deps = createNodeDeps();
   let home = '';
 

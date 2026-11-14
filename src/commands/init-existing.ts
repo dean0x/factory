@@ -85,7 +85,7 @@ import { makeStateFolder } from './init-state.js';
  *
  * The registration has three states. `registered`: the factory list has the entry with the same node id; the owner may set
  * the approval points again. `moved`: the list has no entry; `other-id`: the entry has another node id. Both ask the owner
- * to register the folder, and write the origin `received` (D-16). The state folder has three states too: it is right, its
+ * to register the folder, and write the origin `received`. The state folder has three states too: it is right, its
  * marker is missing or broken (the marker is written again and committed), or the folder is absent (it is made as a
  * received factory makes it). The two states are independent.
  */
@@ -556,7 +556,7 @@ const applyWrites = async (deps: Deps, checked: Checked, plan: Plan, indexPath: 
     home: layout.home,
     id,
     projects: config.recipe.projects.map((project) => project.path),
-    // A folder that the list did not count is received, whatever its old entry says (D-16).
+    // A folder that the list did not count is received, whatever its old entry says.
     origin: standing.registration === 'registered' ? 'own' : 'received',
   });
   if (!recorded.ok) {

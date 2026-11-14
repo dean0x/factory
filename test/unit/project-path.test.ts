@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { describeProjectPathIssue, projectFolderKey, projectPathIssue } from '../../src/core/project-path.js';
 import { dirs, files, reservedRootNames } from '../../src/names.js';
 
-describe('the project path rule (design 4.3, TP-28)', () => {
+describe('the project path rule (design 4.3)', () => {
   it('accepts one folder name', () => {
     for (const name of ['web', 'web-app', 'web_app', 'web.app', 'Web2', 'a', 'odd;', 'we b']) {
       expect({ name, issue: projectPathIssue(name) }).toEqual({ name, issue: null });

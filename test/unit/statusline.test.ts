@@ -89,8 +89,8 @@ const lineOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(FILE) ?? '
 
 const heartbeatFiles = (deps: FakeDeps): string[] => [...deps.files.keys()].filter((path) => path.startsWith(`${FOLDER}/`));
 
-describe('factory hook statusline: the command of the owner (TP-13)', () => {
-  it('prints exactly the output of the command of the owner, and writes the last-seen line (TP-13)', async () => {
+describe('factory hook statusline: the command of the owner', () => {
+  it('prints exactly the output of the command of the owner, and writes the last-seen line', async () => {
     const deps = make({ statusline: OWNER_COMMAND, run: () => exited(0, OWNER_OUTPUT) });
     expect(await statusline(deps)).toEqual({ code: 0, out: OWNER_OUTPUT, err: '' });
     expect(lineOf(deps)).toEqual({
@@ -125,7 +125,7 @@ describe('factory hook statusline: the command of the owner (TP-13)', () => {
     });
   });
 
-  it('reads the input with the byte cap of the hook (TP-8)', async () => {
+  it('reads the input with the byte cap of the hook', async () => {
     const deps = make({ statusline: OWNER_COMMAND, run: () => exited(0, OWNER_OUTPUT) });
     const caps: number[] = [];
     const spy: Deps = {
@@ -165,7 +165,7 @@ describe('factory hook statusline: the command of the owner (TP-13)', () => {
   });
 });
 
-describe('factory hook statusline: the fallback line (TP-14)', () => {
+describe('factory hook statusline: the fallback line', () => {
   const failing: ReadonlyArray<readonly [string, MakeOptions]> = [
     ['no command of the owner in the config', { statusline: null }],
     ['a command of the owner that exits with a code other than 0', { statusline: OWNER_COMMAND, run: () => exited(3, 'half an output', 'bad') }],
@@ -173,7 +173,7 @@ describe('factory hook statusline: the fallback line (TP-14)', () => {
     ['a shell that cannot start', { statusline: OWNER_COMMAND, run: () => failure('cannot run /bin/sh: ENOENT') }],
   ];
 
-  it.each(failing)('prints context N%% and exits 0 for %s (TP-14)', async (_name, options) => {
+  it.each(failing)('prints context N%% and exits 0 for %s', async (_name, options) => {
     const deps = make(options);
     const result = await statusline(deps);
     expect(result.code).toBe(0);
@@ -293,7 +293,7 @@ describe('factory hook statusline: the context percent', () => {
     expect(lineOf(deps)).toEqual(stored);
   });
 
-  it.each([[101], [100.6], [-1], [1e9]])('writes nothing for the percent %s, which is outside 0-100, and prints one line on stderr (TP-8)', async (given) => {
+  it.each([[101], [100.6], [-1], [1e9]])('writes nothing for the percent %s, which is outside 0-100, and prints one line on stderr', async (given) => {
     const deps = make({ stdin: withWindow({ ...WINDOW, used_percentage: given }) });
     const before = snapshot(deps);
     const result = await statusline(deps);
@@ -326,7 +326,7 @@ describe('factory hook statusline: the guards of the write', () => {
     expect(deps.calls).toEqual([]);
   });
 
-  it('writes the percent for the id of a worker that has a record in the registry (TP-125)', async () => {
+  it('writes the percent for the id of a worker that has a record in the registry', async () => {
     const deps = make({ env: { FACTORY_SESSION: 'fix-login' } });
     const record = { id: 'fix-login', project: 'web', workCopy: '/h/factory/work-copies/web/fix-login', branch: 'worker/fix-login' };
     expect((await writeWorkerRecord(deps, HOME, record)).ok).toBe(true);
@@ -506,7 +506,7 @@ describe('factory hook statusline: the input', () => {
     expect(result.out).toBe(OWNER_OUTPUT);
   });
 
-  it('prints the fallback line, runs no command and writes nothing for an input over the byte cap (TP-8)', async () => {
+  it('prints the fallback line, runs no command and writes nothing for an input over the byte cap', async () => {
     const deps = make({ statusline: OWNER_COMMAND, stdin: input({ filler: 'x'.repeat(hookNames.maxStdinBytes) }), run: () => exited(0, OWNER_OUTPUT) });
     const before = snapshot(deps);
     const result = await statusline(deps);

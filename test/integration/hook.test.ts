@@ -79,7 +79,7 @@ const groupExists = (group: number): boolean => {
 };
 
 describe('factory hook (built binary)', () => {
-  it('writes the last-seen line for one event from the input of a hook (TP-6)', async () => {
+  it('writes the last-seen line for one event from the input of a hook', async () => {
     const before = Date.now();
     const result = await hook('SessionStart', JSON.stringify(FIXTURE.hooks.SessionStart));
     expect(result).toEqual({ code: 0, stdout: '', stderr: '' });
@@ -98,7 +98,7 @@ describe('factory hook (built binary)', () => {
     expect((await stat(lastSeenFile())).mode & 0o777).toBe(0o600);
   });
 
-  it('records the pointer to the newest session of the coordinator in the run-time folder, which the state repo ignores (TP-133)', async () => {
+  it('records the pointer to the newest session of the coordinator in the run-time folder, which the state repo ignores', async () => {
     expect(await hook('SessionStart', JSON.stringify(FIXTURE.hooks.SessionStart))).toEqual({ code: 0, stdout: '', stderr: '' });
     const pointer = join(home, '.factory', 'state', 'coordinator-last-session');
     expect(await readFile(pointer, 'utf8')).toBe(`${SESSION}\n`);
@@ -122,7 +122,7 @@ describe('factory hook (built binary)', () => {
     expect(text).not.toContain('placeholder');
   });
 
-  it('exits 0 with an empty stdout and stderr, and writes nothing, outside a factory session (TP-12)', async () => {
+  it('exits 0 with an empty stdout and stderr, and writes nothing, outside a factory session', async () => {
     const result = await box.run(['hook', 'Stop'], { cwd: home, input: JSON.stringify(FIXTURE.hooks.Stop) });
     expect(result).toEqual({ code: 0, stdout: '', stderr: '' });
     expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
@@ -134,7 +134,7 @@ describe('factory hook (built binary)', () => {
     ['an event off the list', 'SubagentStop', JSON.stringify(FIXTURE.hooks.Stop)],
     ['an event that differs from the input', 'SessionStart', JSON.stringify(FIXTURE.hooks.Stop)],
     ['a session id that is not a UUID', 'Stop', JSON.stringify({ ...FIXTURE.hooks.Stop, session_id: '../../escape' })],
-  ])('exits 0 with an empty stdout and one line on stderr for %s, and writes nothing (TP-12)', async (_name, event, input) => {
+  ])('exits 0 with an empty stdout and one line on stderr for %s, and writes nothing', async (_name, event, input) => {
     const result = await hook(event, input);
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('');
@@ -142,7 +142,7 @@ describe('factory hook (built binary)', () => {
     expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
   });
 
-  it('writes nothing for a session that is not the node (TP-9)', async () => {
+  it('writes nothing for a session that is not the node', async () => {
     const result = await hook('Stop', JSON.stringify(FIXTURE.hooks.Stop), { FACTORY_SESSION: 'another' });
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('');
@@ -150,7 +150,7 @@ describe('factory hook (built binary)', () => {
     expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
   });
 
-  describe('with the id of a worker as the session (TP-125)', () => {
+  describe('with the id of a worker as the session', () => {
     const WORKER_ID = 'fix-login';
 
     /** The record of a worker as the file on disk holds it. The key names are written out: they are the file format. */
@@ -197,7 +197,7 @@ describe('factory hook (built binary)', () => {
     });
   });
 
-  it('exits 0 with an empty stdout for a broken config, and writes nothing (TP-12)', async () => {
+  it('exits 0 with an empty stdout for a broken config, and writes nothing', async () => {
     await writeFile(join(home, 'factory.yaml'), 'core: [not closed');
     const result = await hook('Stop', JSON.stringify(FIXTURE.hooks.Stop));
     expect(result.code).toBe(0);
@@ -215,7 +215,7 @@ describe('factory hook (built binary)', () => {
     expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
   });
 
-  it('exits 0 with an empty stdout for a flag and for no event (TP-12)', async () => {
+  it('exits 0 with an empty stdout for a flag and for no event', async () => {
     for (const args of [['hook'], ['hook', '--help'], ['hook', '--json', 'Stop'], ['hook', '--bogus']]) {
       const result = await box.run(args, { cwd: home, env: { FACTORY_HOME: home, FACTORY_SESSION: NODE_ID }, input: '{}' });
       expect(result.code, args.join(' ')).toBe(0);
@@ -310,7 +310,7 @@ describe('factory hook (built binary): a pipe that Claude Code closed early', ()
 });
 
 describe('factory hook statusline (built binary)', () => {
-  it('prints the output of the command of the owner as it is, gives it the input, and writes the percent (TP-13)', async () => {
+  it('prints the output of the command of the owner as it is, gives it the input, and writes the percent', async () => {
     // The command prints the one part of its input that proves it got the input of the wrapper.
     await setOwnerCommand(`grep -o '"session_id":"[^"]*"'`);
     const result = await statusline(STATUS_INPUT);
@@ -345,11 +345,11 @@ describe('factory hook statusline (built binary)', () => {
     expect(await exists(lastSeenFile())).toBe(false);
   });
 
-  it('prints context N% and exits 0 when the config names no command (TP-14)', async () => {
+  it('prints context N% and exits 0 when the config names no command', async () => {
     expect(await statusline(STATUS_INPUT)).toEqual({ code: 0, stdout: 'context 8%', stderr: '' });
   });
 
-  it('prints context N%, drops the output of the command and exits 0 when the command fails (TP-14)', async () => {
+  it('prints context N%, drops the output of the command and exits 0 when the command fails', async () => {
     await setOwnerCommand('echo half an output; exit 3');
     const result = await statusline(STATUS_INPUT);
     expect(result.code).toBe(0);
@@ -357,7 +357,7 @@ describe('factory hook statusline (built binary)', () => {
     expect(result.stderr).toMatch(/^factory hook: [^\n]*code 3\n$/);
   });
 
-  it('prints context N% and exits 0 when the command does not end in time (TP-14)', async () => {
+  it('prints context N% and exits 0 when the command does not end in time', async () => {
     await setOwnerCommand('exec sleep 30');
     const started = Date.now();
     const result = await statusline(STATUS_INPUT);
@@ -367,7 +367,7 @@ describe('factory hook statusline (built binary)', () => {
     expect(Date.now() - started).toBeLessThan(15_000);
   });
 
-  it('stops every process of a command with a pipe at the time limit, so none of them runs on (TP-14)', async () => {
+  it('stops every process of a command with a pipe at the time limit, so none of them runs on', async () => {
     const late = join(box.root, 'late');
     await setOwnerCommand(`(sleep 3; echo late > '${late}') | cat`);
     const started = Date.now();

@@ -92,7 +92,7 @@ describe('the software record check: the reference', () => {
   });
 });
 
-describe('the software record check: a merged PR (AC-1, AC-2)', () => {
+describe('the software record check: a merged PR', () => {
   it('gives the stage, the checked reference, the head of the PR and a summary with the merge commit', async () => {
     const fake = world();
     const done = await check(fake, inputOf());

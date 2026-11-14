@@ -63,7 +63,7 @@ import { leftoverTempFolders } from './init-home.js';
 import { checkRootSetup, checkSetupSet, notListedStop, type SetupCheck } from './setup-check.js';
 
 /**
- * The checks of the root repo and of the settings of every session folder (design 4.4, F-17c): only a security boundary
+ * The checks of the root repo and of the settings of every session folder (design 4.4): only a security boundary
  * fails, and every other check warns. `doctor` shows the findings as check results, and `start` stops (exit 4) on a
  * failure and prints the warnings. A finding has the id of its check, its level, the text, and a remedy line.
  */
@@ -763,7 +763,7 @@ export const checkTrackedSettings = async (
 /**
  * The settings files that a session reads from the factory folder: the files in the settings folder of the factory folder
  * itself, of the coordinator folder and of each project folder, and each Claude settings path that the root repo tracks,
- * at any depth (AC-21). A file is read once. A link is never followed: a link to a folder or to a file stops the scan. The
+ * at any depth. A file is read once. A link is never followed: a link to a folder or to a file stops the scan. The
  * user settings folder of Claude Code is never read, and no call of the file system names it.
  */
 export const scanSettings = async (

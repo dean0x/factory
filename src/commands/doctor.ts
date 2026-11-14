@@ -445,7 +445,7 @@ export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
 
 /**
  * An instruction file of an agent in the root or in a folder above it reaches every session of the factory. It is a
- * warning only, never a failure (F-17c): the file is the choice of the person who owns that folder.
+ * warning only, never a failure: the file is the choice of the person who owns that folder.
  */
 export const checkInstructionFiles = async (deps: Deps, home: string): Promise<CheckResult> => {
   const lines = instructionFileWarnings(await scanInstructionFiles(deps, home));

@@ -75,7 +75,7 @@ const expectUntouched = (repo: BoardRepo, board: string): void => {
   expect(repo.deps.files.has(join(LOCKS, `${stateLock.name}${stateLock.lock.suffix}`))).toBe(false);
 };
 
-describe('item: each write is one state commit of the local files (TP-22)', () => {
+describe('item: each write is one state commit of the local files', () => {
   const WRITES: readonly (readonly [string, Partial<ItemOptions>])[] = [
     ['add', { words: ['add'], title: 'New', fields: ['priority=P1'] }],
     ['update', { words: ['update', 'B-1'], title: 'Changed' }],
@@ -84,15 +84,15 @@ describe('item: each write is one state commit of the local files (TP-22)', () =
     ['close', { words: ['close', 'B-1'] }],
   ];
 
-  it.each(WRITES)('M5-1b TP-22 item %s makes one commit that holds only the board file', async (_name, overrides) => {
+  it.each(WRITES)('item %s makes one commit that holds only the board file', async (_name, overrides) => {
     const repo = await boardNode({ board: START });
     expect((await run(repo, overrides)).ok).toBe(true);
     expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
   });
 });
 
-describe('item: the fields of the setup (TP-25, TP-26)', () => {
-  it('M5-1b TP-25 stores a priority and a type on add, and changes them on update', async () => {
+describe('item: the fields of the setup', () => {
+  it('stores a priority and a type on add, and changes them on update', async () => {
     const repo = await boardNode({ board: START });
     expect(await textOf(repo, { words: ['add'], title: 'New', track: 'core', fields: ['priority=P1', 'type=bug'] })).toContain('B-2');
     const added = repo.textOf(fileNames.board) ?? '';
@@ -103,7 +103,7 @@ describe('item: the fields of the setup (TP-25, TP-26)', () => {
     expect(repo.textOf(fileNames.board)).toContain('"type": "bug"');
   });
 
-  it('M5-1b TP-26 refuses a value outside the list with exit 2, names the field, and changes no file', async () => {
+  it('refuses a value outside the list with exit 2, names the field, and changes no file', async () => {
     const repo = await boardNode({ board: START });
     const error = errorOf(await run(repo, { words: ['add'], title: 'New', fields: ['priority=P9'] }));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -111,7 +111,7 @@ describe('item: the fields of the setup (TP-25, TP-26)', () => {
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-26 refuses a field that the setup does not declare with exit 2, names the field, and changes no file', async () => {
+  it('refuses a field that the setup does not declare with exit 2, names the field, and changes no file', async () => {
     const repo = await boardNode({ board: START });
     const error = errorOf(await run(repo, { words: ['update', 'B-1'], fields: ['colour=red'] }));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -119,7 +119,7 @@ describe('item: the fields of the setup (TP-25, TP-26)', () => {
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-26 gives a new setup with no board block no field, and no state: add exits 2 and points to the examples', async () => {
+  it('gives a new setup with no board block no field, and no state: add exits 2 and points to the examples', async () => {
     const repo = await boardNode({ board: START, config: sampleConfig() });
     const added = errorOf(await run(repo, { words: ['add'], title: 'New' }));
     expect(exitCodeOf[added.kind]).toBe(2);
@@ -132,8 +132,8 @@ describe('item: the fields of the setup (TP-25, TP-26)', () => {
   });
 });
 
-describe('item move with a stage (TP-73 to TP-76, TP-78, TP-103)', () => {
-  it('M5-1b TP-73 sets the stage, keeps the status, and prints one line with the id and the old and new stage', async () => {
+describe('item move with a stage', () => {
+  it('sets the stage, keeps the status, and prints one line with the id and the old and new stage', async () => {
     const repo = await boardNode({ board: START });
     const text = await textOf(repo, { words: ['move', 'B-1'], stage: 'building' });
     expect(text.trimEnd().split('\n')).toEqual(['B-1 stage: ticket -> building']);
@@ -142,14 +142,14 @@ describe('item move with a stage (TP-73 to TP-76, TP-78, TP-103)', () => {
     expect(stored).toContain('"status": "open"');
   });
 
-  it('M5-1b TP-73 works in a new setup with no board block', async () => {
+  it('works in a new setup with no board block', async () => {
     const repo = await boardNode({ board: START, config: sampleConfig() });
     const text = await textOf(repo, { words: ['move', 'B-1'], stage: 'review' });
     expect(text).toContain('B-1 stage: ticket -> review');
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('M5-1b TP-74 refuses an unknown stage with exit 2, lists the stages, and changes no file', async () => {
+  it('refuses an unknown stage with exit 2, lists the stages, and changes no file', async () => {
     const repo = await boardNode({ board: START });
     const error = errorOf(await run(repo, { words: ['move', 'B-1'], stage: 'nope' }));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -157,14 +157,14 @@ describe('item move with a stage (TP-73 to TP-76, TP-78, TP-103)', () => {
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-74 refuses a stage when the recipe has no stage list, with exit 2', async () => {
+  it('refuses a stage when the recipe has no stage list, with exit 2', async () => {
     const repo = await boardNode({ board: START });
     const bare: RecipeRegistry = [{ ...recipes[0], board: { queueKey: softwareQueueKey } }];
     expect(exitOf(await run(repo, { words: ['move', 'B-1'], stage: 'building' }, bare))).toBe(2);
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-74 refuses the state flag and the stage flag together, with exit 2, before it reads a file', async () => {
+  it('refuses the state flag and the stage flag together, with exit 2, before it reads a file', async () => {
     const repo = await boardNode({ board: START });
     const touched: string[] = [];
     const result = await runItem(withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)), { ...BASE, words: ['move', 'B-1'], state: 'doing', stage: 'building' }, recipes);
@@ -173,20 +173,20 @@ describe('item move with a stage (TP-73 to TP-76, TP-78, TP-103)', () => {
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-74 needs one of the state flag and the stage flag', async () => {
+  it('needs one of the state flag and the stage flag', async () => {
     const repo = await boardNode({ board: START });
     expect(exitOf(await run(repo, { words: ['move', 'B-1'] }))).toBe(2);
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-75 makes no commit for a move to the current stage, exits 0, and says that nothing changed', async () => {
+  it('makes no commit for a move to the current stage, exits 0, and says that nothing changed', async () => {
     const repo = await boardNode({ board: START });
     const text = await textOf(repo, { words: ['move', 'B-1'], stage: 'ticket' });
     expect(text).toContain('B-1 stage: ticket (no change)');
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-75 gives a new item the first stage of the recipe', async () => {
+  it('gives a new item the first stage of the recipe', async () => {
     const repo = await boardNode({ board: START });
     valueOf(await run(repo, { words: ['add'], title: 'New', fields: ['priority=P1'] }));
     const stored = repo.textOf(fileNames.board) ?? '';
@@ -194,7 +194,7 @@ describe('item move with a stage (TP-73 to TP-76, TP-78, TP-103)', () => {
     expect(added).toContain(`"stage": "${softwareBoard.stages?.[0]}"`);
   });
 
-  it('M5-1b TP-76 refuses a stage that only a flow sets with exit 2, names the flow, and takes no lock', async () => {
+  it('refuses a stage that only a flow sets with exit 2, names the flow, and takes no lock', async () => {
     const repo = await boardNode({ board: START });
     const touched: string[] = [];
     const watched = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
@@ -207,7 +207,7 @@ describe('item move with a stage (TP-73 to TP-76, TP-78, TP-103)', () => {
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-103 names the flow that the recipe data gives, for a recipe that is not the software recipe', async () => {
+  it('names the flow that the recipe data gives, for a recipe that is not the software recipe', async () => {
     const stage = Object.keys(publishBoard.flowOnly ?? {})[0] ?? '';
     const base = sampleConfig();
     const config: FactoryConfig = {
@@ -224,7 +224,7 @@ describe('item move with a stage (TP-73 to TP-76, TP-78, TP-103)', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-78 keeps the status on a stage move, and keeps the stage on a close', async () => {
+  it('keeps the status on a stage move, and keeps the stage on a close', async () => {
     const repo = await boardNode({ board: START });
     valueOf(await run(repo, { words: ['move', 'B-1'], stage: 'review' }));
     valueOf(await run(repo, { words: ['close', 'B-1'] }));
@@ -234,15 +234,15 @@ describe('item move with a stage (TP-73 to TP-76, TP-78, TP-103)', () => {
     expect(repo.commits).toHaveLength(2);
   });
 
-  it('M5-1b TP-78 moves the state and keeps the stage', async () => {
+  it('moves the state and keeps the stage', async () => {
     const repo = await boardNode({ board: START });
     expect(await textOf(repo, { words: ['move', 'B-1'], state: 'doing' })).toContain('B-1 state: open -> doing');
     expect(repo.textOf(fileNames.board)).toContain('"stage": "ticket"');
   });
 });
 
-describe('item add and update with a track (TP-79, TP-81, TP-89)', () => {
-  it('M5-1b TP-79 stores a listed track id on add and on update', async () => {
+describe('item add and update with a track', () => {
+  it('stores a listed track id on add and on update', async () => {
     const repo = await boardNode({ board: START });
     valueOf(await run(repo, { words: ['add'], title: 'New', track: 'core', fields: ['priority=P1'] }));
     valueOf(await run(repo, { words: ['update', 'B-1'], track: 'docs' }));
@@ -254,7 +254,7 @@ describe('item add and update with a track (TP-79, TP-81, TP-89)', () => {
   it.each([
     ['add', { words: ['add'], title: 'New', track: 'nope', fields: ['priority=P1'] }],
     ['update', { words: ['update', 'B-1'], track: 'nope' }],
-  ] as const)('M5-1b TP-81 item %s with an unknown track exits 2, lists the track ids, and writes nothing', async (_name, overrides) => {
+  ] as const)('item %s with an unknown track exits 2, lists the track ids, and writes nothing', async (_name, overrides) => {
     const repo = await boardNode({ board: START });
     const error = errorOf(await run(repo, overrides));
     expect(exitCodeOf[error.kind]).toBe(2);
@@ -262,7 +262,7 @@ describe('item add and update with a track (TP-79, TP-81, TP-89)', () => {
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-89 gives a new item the id after the highest one, so no id that exists is used again, closed items included', async () => {
+  it('gives a new item the id after the highest one, so no id that exists is used again, closed items included', async () => {
     const board = boardText([itemRecord('B-1', { status: 'done' }), itemRecord('B-5')], TRACKS);
     const repo = await boardNode({ board });
     expect(await textOf(repo, { words: ['add'], title: 'New', fields: ['priority=P1'] })).toContain('Added B-6');
@@ -295,7 +295,7 @@ describe('item: the words and the flags are checked before the node is read (exi
     ['unassign with a flag of another subcommand', { words: ['unassign', 'B-1'], ref: '12' }, '--ref is not for'],
   ];
 
-  it.each(BAD)('M5-1b TP-22 %s exits 2 and touches no file', async (_name, overrides, message) => {
+  it.each(BAD)('%s exits 2 and touches no file', async (_name, overrides, message) => {
     const repo = await boardNode({ board: START });
     const touched: string[] = [];
     const result = await runItem(withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)), { ...BASE, ...overrides }, recipes);
@@ -308,8 +308,8 @@ describe('item: the words and the flags are checked before the node is read (exi
   });
 });
 
-describe('item: text from the board file prints as one clean line (TP-91)', () => {
-  it('M5-1b TP-91 prints a stored title with a line break and a bidi mark as one clean line', async () => {
+describe('item: text from the board file prints as one clean line', () => {
+  it('prints a stored title with a line break and a bidi mark as one clean line', async () => {
     const bidi = String.fromCodePoint(0x202e);
     const board = boardText([itemRecord('B-1', { title: `Two\nlines${bidi} here`, stage: 'ticket' })], []);
     const repo = await boardNode({ board });
@@ -319,13 +319,13 @@ describe('item: text from the board file prints as one clean line (TP-91)', () =
   });
 });
 
-describe('item with a hosted tracker kind (TP-67)', () => {
+describe('item with a hosted tracker kind', () => {
   const hosted = (): FactoryConfig => {
     const config = sampleConfigWithBoard();
     return { ...config, core: { ...config.core, tracker: { kind: 'github', items: 'acme/items', decisions: 'acme/decisions', watch_interval: '5m' } } };
   };
 
-  it('M5-1b TP-67 refuses a write with exit 4 and one line, names the command to run again, and writes nothing', async () => {
+  it('refuses a write with exit 4 and one line, names the command to run again, and writes nothing', async () => {
     const repo = await boardNode({ board: START, config: hosted() });
     const error = errorOf(await run(repo, { words: ['close', 'B-1'] }));
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -335,7 +335,7 @@ describe('item with a hosted tracker kind (TP-67)', () => {
     expectUntouched(repo, START);
   });
 
-  it('M5-1b TP-69 lists the local board with a hosted kind, and exits 0', async () => {
+  it('lists the local board with a hosted kind, and exits 0', async () => {
     const repo = await boardNode({ board: START, config: hosted() });
     expect(await textOf(repo, { words: ['list'] })).toContain('1 item in 2 tracks');
   });
@@ -431,7 +431,7 @@ const mergeWorld = async (setup: MergeSetup = {}): Promise<MergeWorld> => {
 const runMerge = (world: MergeWorld, overrides: Partial<ItemOptions> = {}, registry: RecipeRegistry = recipes): Promise<CliResult<CommandOutput>> =>
   runItem(world.gh.deps, { ...BASE, words: ['record', 'B-1'], ref: '12', ...overrides }, registry);
 
-describe('item record with the software recipe: the record of a merge (AC-1)', () => {
+describe('item record with the software recipe: the record of a merge', () => {
   it('records the stage, the closed state and the PR head in one commit of the board file, and takes the item out of the queue', async () => {
     const world = await mergeWorld();
     const text = outputOf(await runMerge(world));
@@ -499,7 +499,7 @@ describe('item record with the software recipe: the record of a merge (AC-1)', (
   });
 });
 
-describe('item record with the software recipe: the check fails closed (AC-2)', () => {
+describe('item record with the software recipe: the check fails closed', () => {
   const FAULTS: readonly (readonly [string, Partial<MergeSetup>, string])[] = [
     ['gh is not installed', { answer: () => missingProgram(toolNames.gh) }, 'gh could not read PR 12'],
     ['gh exits with an error', { answer: () => exited(1, '', 'not signed in') }, 'gh could not read PR 12'],
@@ -672,7 +672,7 @@ describe('item record with the software recipe: the local checks come before any
   });
 });
 
-describe('item update: the worker field of an item that has a worker (AC-4)', () => {
+describe('item update: the worker field of an item that has a worker', () => {
   const BOARD = boardText([itemRecord('B-1', { status: 'doing', stage: 'review', lane: WORKER }), itemRecord('B-2')], TRACKS);
 
   it('refuses a new worker value with exit 2, names the item and the remedy, and changes nothing', async () => {
@@ -720,7 +720,7 @@ describe('item update: the worker field of an item that has a worker (AC-4)', ()
   });
 });
 
-describe('item unassign: take the worker off an item (AC-3)', () => {
+describe('item unassign: take the worker off an item', () => {
   const BOARD = boardText([itemRecord('B-1', { status: 'doing', stage: 'review', lane: WORKER }), itemRecord('B-2')], TRACKS);
 
   const unassign = (deps: FakeDeps, id = 'B-1'): Promise<CliResult<CommandOutput>> => runItem(deps, { ...BASE, words: ['unassign', id] }, recipes);

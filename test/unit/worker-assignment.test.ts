@@ -59,7 +59,7 @@ const withKind = (deps: FakeDeps, path: string, kind: LinkKind): Deps => ({
   fs: { ...deps.fs, lstat: async (asked) => (asked === path ? ok(kind) : deps.fs.lstat(asked)) },
 });
 
-describe('TP-32: a source that the check refuses (exit 4) and changes nothing', () => {
+describe('a source that the check refuses (exit 4) and changes nothing', () => {
   const refused = async (made: Made, path: string): Promise<CliError> => {
     const before = new Map(made.deps.files);
     const error = errorOf(await read(made.deps, path));
@@ -68,14 +68,14 @@ describe('TP-32: a source that the check refuses (exit 4) and changes nothing', 
     return error;
   };
 
-  it('TP-32: refuses a file that is a link', async () => {
+  it('refuses a file that is a link', async () => {
     const made = make({ files: { [`${TREE}/real.md`]: TEXT }, links: { [`${TREE}/task.md`]: `${TREE}/real.md` } });
     const error = await refused(made, `${TREE}/task.md`);
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain('link');
   });
 
-  it('TP-32: refuses a file with a link in a folder above it, also when the link stays in the same folder tree', async () => {
+  it('refuses a file with a link in a folder above it, also when the link stays in the same folder tree', async () => {
     const made = make({
       files: { [`${TREE}/dir/task.md`]: TEXT },
       links: { [`${TREE}/dir`]: `${TREE}/real` },
@@ -85,12 +85,12 @@ describe('TP-32: a source that the check refuses (exit 4) and changes nothing', 
     expect(error.message).toContain('link');
   });
 
-  it('TP-32: refuses a file that a link in a folder above it moves out of the work tree', async () => {
+  it('refuses a file that a link in a folder above it moves out of the work tree', async () => {
     const made = make({ files: { [`${TREE}/dir/task.md`]: TEXT }, links: { [`${TREE}/dir`]: '/w/elsewhere' } });
     expect(exitCodeOf[(await refused(made, `${TREE}/dir/task.md`)).kind]).toBe(4);
   });
 
-  it('TP-32: refuses a file outside the factory folder and outside the work tree', async () => {
+  it('refuses a file outside the factory folder and outside the work tree', async () => {
     const made = make({ files: { '/w/other/task.md': TEXT } });
     const error = await refused(made, '/w/other/task.md');
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -98,7 +98,7 @@ describe('TP-32: a source that the check refuses (exit 4) and changes nothing', 
     expect(error.hint).toContain('work tree');
   });
 
-  it('TP-32: refuses every file when the working folder is in no work tree and the file is outside the factory folder', async () => {
+  it('refuses every file when the working folder is in no work tree and the file is outside the factory folder', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: TEXT }, workTree: false });
     expect(exitCodeOf[(await refused(made, `${TREE}/task.md`)).kind]).toBe(4);
   });
@@ -114,34 +114,34 @@ describe('TP-32: a source that the check refuses (exit 4) and changes nothing', 
     ['the backups of the factory folder', `${HOME}/.factory/backups/a.md`],
     ['a file below the orders folder that starts with a dot', `${HOME}/.factory/orders/.hidden.md`],
     ['the orders folder below the top of a work tree that is not the factory folder', `${TREE}/.factory/orders/task.md`],
-  ])('TP-32: refuses %s', async (_name, path) => {
+  ])('refuses %s', async (_name, path) => {
     const made = make({ files: { [path]: TEXT } });
     const error = await refused(made, path);
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.hint).toContain('.factory/orders/');
   });
 
-  it('TP-32: refuses the local config at the top of the factory folder', async () => {
+  it('refuses the local config at the top of the factory folder', async () => {
     const made = make({ files: { [`${HOME}/factory.local.yaml`]: 'proxy: secret\n' } });
     const error = await refused(made, `${HOME}/factory.local.yaml`);
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).not.toContain('secret');
   });
 
-  it('TP-32: refuses the local config of the factory folder when the working folder is in a work tree that holds it', async () => {
+  it('refuses the local config of the factory folder when the working folder is in a work tree that holds it', async () => {
     const made = make({ files: { [`${HOME}/factory.local.yaml`]: 'proxy: secret\n' }, cwd: HOME });
     expect(exitCodeOf[(await refused(made, 'factory.local.yaml')).kind]).toBe(4);
   });
 });
 
-describe('TP-32: a source that is not a plain text file (exit 2) changes nothing', () => {
+describe('a source that is not a plain text file (exit 2) changes nothing', () => {
   const refusedWith2 = async (made: Made | { readonly deps: Deps }, path: string): Promise<CliError> => {
     const error = errorOf(await read(made.deps, path));
     expect(exitCodeOf[error.kind]).toBe(2);
     return error;
   };
 
-  it('TP-32: refuses a FIFO before it opens the file', async () => {
+  it('refuses a FIFO before it opens the file', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: TEXT } });
     const opened: string[] = [];
     const watched = withFsWatch(withKind(made.deps, `${TREE}/task.md`, 'other'), (method, path) => {
@@ -151,71 +151,71 @@ describe('TP-32: a source that is not a plain text file (exit 2) changes nothing
     expect(opened).toEqual([]);
   });
 
-  it('TP-32: refuses a file of more than 1 MiB, and takes one of exactly 1 MiB', async () => {
+  it('refuses a file of more than 1 MiB, and takes one of exactly 1 MiB', async () => {
     const big = make({ files: { [`${TREE}/big.md`]: 'a'.repeat(maxFileBytes + 1) } });
     await refusedWith2(big, `${TREE}/big.md`);
     const edge = make({ files: { [`${TREE}/edge.md`]: 'a'.repeat(maxFileBytes) } });
     expect(valueOf(await read(edge.deps, `${TREE}/edge.md`))).toHaveLength(maxFileBytes);
   });
 
-  it('TP-32: refuses a file with a NUL byte, and does not repeat its text', async () => {
+  it('refuses a file with a NUL byte, and does not repeat its text', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: 'secret\0text' } });
     const error = await refusedWith2(made, `${TREE}/task.md`);
     expect(error.message).not.toContain('secret');
   });
 
-  it('TP-32: refuses a file that is not valid UTF-8 (the decoder marks a bad byte with U+FFFD)', async () => {
+  it('refuses a file that is not valid UTF-8 (the decoder marks a bad byte with U+FFFD)', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: 'secret � text' } });
     const error = await refusedWith2(made, `${TREE}/task.md`);
     expect(error.message).not.toContain('secret');
   });
 
-  it('TP-32: refuses a folder where a file must be', async () => {
+  it('refuses a folder where a file must be', async () => {
     const made = make({});
     made.deps.seedDir(`${TREE}/docs`);
     await refusedWith2(made, `${TREE}/docs`);
   });
 
-  it('TP-32: refuses a file that does not exist', async () => {
+  it('refuses a file that does not exist', async () => {
     await refusedWith2(make({}), `${TREE}/missing.md`);
   });
 
-  it('TP-32: refuses an empty path', async () => {
+  it('refuses an empty path', async () => {
     await refusedWith2(make({}), '');
   });
 });
 
-describe('TP-33: a good source gives its text', () => {
-  it('TP-33: reads a file of the work tree, by an absolute path and by a path from the working folder', async () => {
+describe('a good source gives its text', () => {
+  it('reads a file of the work tree, by an absolute path and by a path from the working folder', async () => {
     const made = make({ files: { [`${TREE}/docs/task.md`]: TEXT } });
     expect(valueOf(await read(made.deps, `${TREE}/docs/task.md`))).toBe(TEXT);
     expect(valueOf(await read(made.deps, 'docs/task.md'))).toBe(TEXT);
   });
 
-  it('TP-33: reads a file of the work tree from a folder below its top', async () => {
+  it('reads a file of the work tree from a folder below its top', async () => {
     const made = make({ files: { [`${TREE}/docs/task.md`]: TEXT, [`${TREE}/src/a.ts`]: '' }, cwd: `${TREE}/src` });
     made.deps.seedDir(`${TREE}/src`);
     expect(valueOf(await read(made.deps, '../docs/task.md'))).toBe(TEXT);
   });
 
-  it('TP-33: reads a file of the orders folder of the factory folder', async () => {
+  it('reads a file of the orders folder of the factory folder', async () => {
     const made = make({ files: { [`${HOME}/.factory/orders/task.md`]: TEXT }, workTree: false });
     expect(valueOf(await read(made.deps, `${HOME}/.factory/orders/task.md`))).toBe(TEXT);
   });
 
-  it('TP-33: reads a path that starts with the orders folder from the factory folder, also from a folder below it', async () => {
+  it('reads a path that starts with the orders folder from the factory folder, also from a folder below it', async () => {
     const made = make({ files: { [`${HOME}/.factory/orders/task.md`]: TEXT }, cwd: `${HOME}/coordinator`, workTree: false });
     made.deps.seedDir(`${HOME}/coordinator`);
     expect(valueOf(await read(made.deps, '.factory/orders/task.md'))).toBe(TEXT);
     expect(valueOf(await read(made.deps, './.factory/orders/task.md'))).toBe(TEXT);
   });
 
-  it('TP-33: reads a path that starts with the orders folder from the factory folder when the working folder is a work tree', async () => {
+  it('reads a path that starts with the orders folder from the factory folder when the working folder is a work tree', async () => {
     const made = make({ files: { [`${HOME}/.factory/orders/task.md`]: TEXT } });
     expect(valueOf(await read(made.deps, '.factory/orders/task.md'))).toBe(TEXT);
   });
 
-  it('TP-33: a path that only looks like the orders folder after a climb resolves from the working folder', async () => {
+  it('a path that only looks like the orders folder after a climb resolves from the working folder', async () => {
     const made = make({ files: { [`${HOME}/.factory/orders/task.md`]: TEXT }, cwd: `${HOME}/coordinator`, workTree: false });
     made.deps.seedDir(`${HOME}/coordinator`);
     for (const path of ['x/../.factory/orders/task.md', '.factory/orders/../orders/task.md']) {
@@ -225,17 +225,17 @@ describe('TP-33: a good source gives its text', () => {
     }
   });
 
-  it('TP-33: reads a file below a folder of the orders folder', async () => {
+  it('reads a file below a folder of the orders folder', async () => {
     const made = make({ files: { [`${HOME}/.factory/orders/web/task.md`]: TEXT } });
     expect(valueOf(await read(made.deps, `${HOME}/.factory/orders/web/task.md`))).toBe(TEXT);
   });
 
-  it('TP-33: reads a file of the factory folder that has no dot part', async () => {
+  it('reads a file of the factory folder that has no dot part', async () => {
     const made = make({ files: { [`${HOME}/notes/task.md`]: TEXT } });
     expect(valueOf(await read(made.deps, `${HOME}/notes/task.md`))).toBe(TEXT);
   });
 
-  it('TP-33: reads the file once and no other file', async () => {
+  it('reads the file once and no other file', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: TEXT } });
     const reads: string[] = [];
     const watched = withFsWatch(made.deps, (method, path) => {
@@ -245,7 +245,7 @@ describe('TP-33: a good source gives its text', () => {
     expect(reads).toEqual([`${TREE}/task.md`]);
   });
 
-  it('TP-33: reads a file by the path of its real folder when the working folder is reached by a link', async () => {
+  it('reads a file by the path of its real folder when the working folder is reached by a link', async () => {
     const { handler } = gitHandler({ repos: { '/w/link-tree': {}, [HOME]: {} } });
     const deps = createFakeDeps({ cwd: '/w/link-tree', run: handler, links: { '/w/link-tree': '/w/real-tree' } });
     deps.seed('/w/real-tree/task.md', TEXT);
@@ -255,7 +255,7 @@ describe('TP-33: a good source gives its text', () => {
   });
 });
 
-describe('TP-33: a source that changes during the read is refused (exit 4)', () => {
+describe('a source that changes during the read is refused (exit 4)', () => {
   /** The deps whose read runs `change` right after it returns its text. */
   const changingAfterRead = (deps: FakeDeps, change: () => void): Deps => ({
     ...deps,
@@ -269,7 +269,7 @@ describe('TP-33: a source that changes during the read is refused (exit 4)', () 
     },
   });
 
-  it('TP-33: refuses a file that became a link after the read', async () => {
+  it('refuses a file that became a link after the read', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: TEXT, [`${TREE}/other.md`]: 'other\n' } });
     const deps = changingAfterRead(made.deps, () => {
       made.links[`${TREE}/task.md`] = `${TREE}/other.md`;
@@ -279,7 +279,7 @@ describe('TP-33: a source that changes during the read is refused (exit 4)', () 
     expect(errorOf(result).message).toContain('changed');
   });
 
-  it('TP-33: refuses a file whose real path moved after the read, because a folder above it became a link', async () => {
+  it('refuses a file whose real path moved after the read, because a folder above it became a link', async () => {
     const made = make({ files: { [`${TREE}/dir/task.md`]: TEXT, '/w/elsewhere/task.md': 'other\n' } });
     const deps = changingAfterRead(made.deps, () => {
       made.links[`${TREE}/dir`] = '/w/elsewhere';
@@ -287,14 +287,14 @@ describe('TP-33: a source that changes during the read is refused (exit 4)', () 
     expect(codeOf(await read(deps, `${TREE}/dir/task.md`))).toBe(4);
   });
 
-  it('TP-33: gives the text of a file that did not change', async () => {
+  it('gives the text of a file that did not change', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: TEXT } });
     const deps = changingAfterRead(made.deps, () => undefined);
     expect(valueOf(await read(deps, `${TREE}/task.md`))).toBe(TEXT);
   });
 });
 
-describe('TP-33: a fault of the file system in the check after the read is exit 1, and not a change of the file', () => {
+describe('a fault of the file system in the check after the read is exit 1, and not a change of the file', () => {
   const FAULT = 'EIO: input/output error';
 
   /** The deps whose `lstat` of one path fails with a fault, from the moment the read of the file has returned its text. */
@@ -331,7 +331,7 @@ describe('TP-33: a fault of the file system in the check after the read is exit 
     };
   };
 
-  it('TP-33: the second lstat of the file fails: the fault is exit 1, and the message does not say that the file changed', async () => {
+  it('the second lstat of the file fails: the fault is exit 1, and the message does not say that the file changed', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: TEXT } });
     const result = await read(lstatFailingAfterRead(made.deps, `${TREE}/task.md`), `${TREE}/task.md`);
     expect(codeOf(result)).toBe(1);
@@ -339,7 +339,7 @@ describe('TP-33: a fault of the file system in the check after the read is exit 
     expect(errorOf(result).message).not.toContain('changed while it was read');
   });
 
-  it('TP-33: the second realpath of the file fails: the fault is exit 1, and the message does not say that the file changed', async () => {
+  it('the second realpath of the file fails: the fault is exit 1, and the message does not say that the file changed', async () => {
     const made = make({ files: { [`${TREE}/task.md`]: TEXT } });
     const result = await read(realpathFailingAfterRead(made.deps, `${TREE}/task.md`), `${TREE}/task.md`);
     expect(codeOf(result)).toBe(1);

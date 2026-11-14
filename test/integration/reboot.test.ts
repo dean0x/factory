@@ -17,8 +17,8 @@ const expectRuleOf = async (...markers: readonly Marker[]): Promise<void> => {
   for (const marker of markers) expectLaunchRule(await lab.argvOf(marker), await lab.proxyOf(marker));
 };
 
-describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, AC-20, TP-45, TP-46, TP-47)', () => {
-  it('ends the session and starts it again with the coordinator and each worker resumed by its id, and leaves another session alone (TP-45)', async () => {
+describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server)', () => {
+  it('ends the session and starts it again with the coordinator and each worker resumed by its id, and leaves another session alone', async () => {
     await lab.node();
     const bystander = await lab.bystander();
     const before = await lab.workerPanes();
@@ -48,7 +48,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, A
     expect(isAlive(bystander)).toBe(true);
   }, LIFECYCLE_CASE_MS);
 
-  it('stops and starts only the workers, and keeps the session and the coordinator pane, when it runs in a pane of the session (TP-47)', async () => {
+  it('stops and starts only the workers, and keeps the session and the coordinator pane, when it runs in a pane of the session', async () => {
     await lab.node();
     const coordinator = await lab.coordinatorPane();
     expect(coordinator).toMatch(/^%\d+$/);
@@ -69,7 +69,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, A
     await expectRuleOf('alpha', 'beta');
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 3 and stops nothing when one worker has no session id that it may resume (TP-46)', async () => {
+  it('exits 3 and stops nothing when one worker has no session id that it may resume', async () => {
     await lab.node();
     const before = await lab.workerPanes();
     await unlink(lab.pointerOf('beta'));
@@ -83,7 +83,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, A
     expect(await lab.launchCount('demo')).toBe(1);
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 and ends nothing for a session of the same name that belongs to another home (TP-45)', async () => {
+  it('exits 4 and ends nothing for a session of the same name that belongs to another home', async () => {
     await lab.init();
     const made = await lab.tmux(['new-session', '-d', '-s', 'demo', '-P', '-F', '#{pane_pid}', 'sleep 300']);
     expect(made.code, made.stderr).toBe(0);

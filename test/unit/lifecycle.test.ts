@@ -373,8 +373,8 @@ const expectNothingStopped = (made: Made): void => {
   expect(countOf(made, 'kill-session')).toBe(0);
 };
 
-describe('shutdown (AC-18)', () => {
-  it('says that nothing runs and exits 0 when the tmux session does not run (TP-41)', async () => {
+describe('shutdown', () => {
+  it('says that nothing runs and exits 0 when the tmux session does not run', async () => {
     const made = await make({ sessions: {} });
     const output = await succeeded(shutdown(made));
     expect(textOf(output)).toBe(`Nothing runs: the tmux session ${NODE} does not run.`);
@@ -386,7 +386,7 @@ describe('shutdown (AC-18)', () => {
   it.each([
     ['another home', { [NODE]: OTHER_HOME }],
     ['no home option', { [NODE]: null }],
-  ])('ends nothing and exits 4 for a session of the same name with %s, and names factory shutdown (TP-40)', async (_name, sessions) => {
+  ])('ends nothing and exits 4 for a session of the same name with %s, and names factory shutdown', async (_name, sessions) => {
     const made = await make({ sessions });
     const error = await failed(shutdown(made));
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -396,7 +396,7 @@ describe('shutdown (AC-18)', () => {
     expect(paneLists(made)).toBe(0);
   });
 
-  it('stops each worker with TERM in order, then ends the session by its exact name (TP-135)', async () => {
+  it('stops each worker with TERM in order, then ends the session by its exact name', async () => {
     const made = await make({ workers: { alpha: { event: 'UserPromptSubmit' }, beta: {}, gamma: { event: 'UserPromptSubmit' } } });
     const output = await succeeded(shutdown(made));
     expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma, made.coordinatorPid]);
@@ -412,7 +412,7 @@ describe('shutdown (AC-18)', () => {
     expect(output.json).toMatchObject({ schema: schemaIds.shutdown, running: true, workers: ['alpha', 'beta', 'gamma'] });
   });
 
-  describe('the end of the coordinator (F-7)', () => {
+  describe('the end of the coordinator', () => {
     it.each([
       ['shutdown', shutdown],
       ['reboot', reboot],
@@ -499,7 +499,7 @@ describe('shutdown (AC-18)', () => {
     expect(paneLists(made)).toBe(1);
   });
 
-  it('exits 3 and stops nothing when one worker is in an unknown state (TP-42)', async () => {
+  it('exits 3 and stops nothing when one worker is in an unknown state', async () => {
     const made = await make({ workers: { alpha: {}, beta: { event: null }, gamma: {} } });
     const error = await failed(shutdown(made));
     expect(exitCodeOf[error.kind]).toBe(3);
@@ -612,7 +612,7 @@ describe('shutdown (AC-18)', () => {
       expect(output.json).toMatchObject({ schema: schemaIds.shutdown, running: true, workers: ['alpha', 'beta', 'gamma'], mark: 'cleared' });
     });
 
-    it('sends no signal to its own coordinator pane: the report comes first, then the session ends (F-7)', async () => {
+    it('sends no signal to its own coordinator pane: the report comes first, then the session ends', async () => {
       const made = await make({ from: 'coordinator' });
       await succeeded(shutdown(made));
       expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma]);
@@ -635,7 +635,7 @@ describe('shutdown (AC-18)', () => {
     });
   });
 
-  describe('the mark of the active machine (TP-39)', () => {
+  describe('the mark of the active machine', () => {
     it('clears the mark of this machine before it ends the session, and commits the removal', async () => {
       const made = await make({ mark: 'own' });
       const output = await succeeded(shutdown(made));
@@ -715,8 +715,8 @@ describe('shutdown (AC-18)', () => {
   });
 });
 
-describe('restart (AC-19)', () => {
-  it('stops one worker with TERM and starts it again with its session id, and the other workers keep their panes (TP-43)', async () => {
+describe('restart', () => {
+  it('stops one worker with TERM and starts it again with its session id, and the other workers keep their panes', async () => {
     const made = await make();
     const output = await succeeded(restart(made, 'beta'));
     expect(made.deps.terminated).toEqual([PID.beta]);
@@ -737,7 +737,7 @@ describe('restart (AC-19)', () => {
     expect(output.json).toMatchObject({ stopped: false });
   });
 
-  it('keeps assignment.md and resume.md in the folder of the worker (TP-42)', async () => {
+  it('keeps assignment.md and resume.md in the folder of the worker', async () => {
     const made = await make();
     const { inboxDir } = workerPathsOf(HOME, 'beta');
     made.deps.seed(`${inboxDir}/assignment.md`, 'the task');
@@ -755,7 +755,7 @@ describe('restart (AC-19)', () => {
     expect(paneLists(made)).toBe(1);
   });
 
-  it('exits 3 and names factory start when no tmux session runs (TP-44)', async () => {
+  it('exits 3 and names factory start when no tmux session runs', async () => {
     const made = await make({ sessions: {} });
     const error = await failed(restart(made, 'alpha'));
     expect(exitCodeOf[error.kind]).toBe(3);
@@ -767,7 +767,7 @@ describe('restart (AC-19)', () => {
     ['no pointer', { event: null }],
     ['a line of another session', { marker: 'gamma' }],
     ['a line with no session marker', { marker: null }],
-  ] as const)('exits 3 and stops nothing for a worker with %s (TP-44)', async (_name, spec) => {
+  ] as const)('exits 3 and stops nothing for a worker with %s', async (_name, spec) => {
     const made = await make({ workers: { alpha: {}, beta: spec } });
     const error = await failed(restart(made, 'beta'));
     expect(exitCodeOf[error.kind]).toBe(3);
@@ -776,7 +776,7 @@ describe('restart (AC-19)', () => {
     expectNothingStopped(made);
   });
 
-  it('exits 3 and stops nothing for a session whose line holds no event (TP-44)', async () => {
+  it('exits 3 and stops nothing for a session whose line holds no event', async () => {
     const made = await make({ workers: { alpha: {} } });
     seedLineWithoutEvent(made.deps, 'alpha');
     const error = await failed(restart(made, 'alpha'));
@@ -792,7 +792,7 @@ describe('restart (AC-19)', () => {
     expectNothingStopped(made);
   });
 
-  it('exits 4 and stops nothing for a session of another home, and the remedy names factory shutdown (TP-132)', async () => {
+  it('exits 4 and stops nothing for a session of another home, and the remedy names factory shutdown', async () => {
     const made = await make({ sessions: { [NODE]: OTHER_HOME } });
     const error = await failed(restart(made, 'alpha'));
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -821,7 +821,7 @@ describe('restart (AC-19)', () => {
     expect(made.deps.terminated).toEqual([PID.alpha]);
   });
 
-  describe('the checks of the root come before any stop (TP-131)', () => {
+  describe('the checks of the root come before any stop', () => {
     it('exits 4 and stops nothing when a root check fails', async () => {
       const config = sampleConfig();
       const made = await make({ claudeFile: claudeFileText(config).replace('Do not write keys', 'Write keys') });
@@ -838,7 +838,7 @@ describe('restart (AC-19)', () => {
     });
   });
 
-  describe('the settings of the work copy (TP-17, AC-7)', () => {
+  describe('the settings of the work copy', () => {
     it('exits 4 with one remedy and stops nothing for a wrong settings file', async () => {
       const made = await make({ workers: { alpha: { settings: BAD_SETTINGS }, beta: {} } });
       const error = await failed(restart(made, 'alpha'));
@@ -901,8 +901,8 @@ describe('restart (AC-19)', () => {
   });
 });
 
-describe('reboot (AC-20)', () => {
-  it('ends the session as shutdown does and starts it again with each worker resumed by its id (TP-45)', async () => {
+describe('reboot', () => {
+  it('ends the session as shutdown does and starts it again with each worker resumed by its id', async () => {
     const made = await make({
       sessions: { [NODE]: HOME, other: OTHER_HOME },
       otherPanes: [{ session: 'other', options: { '@worker': 'alpha' }, pid: 9001 }],
@@ -937,7 +937,7 @@ describe('reboot (AC-20)', () => {
     );
   });
 
-  it('exits 4 and ends nothing for a session of the same name that belongs to another home (TP-45)', async () => {
+  it('exits 4 and ends nothing for a session of the same name that belongs to another home', async () => {
     const made = await make({ sessions: { [NODE]: OTHER_HOME } });
     const error = await failed(reboot(made));
     expect(exitCodeOf[error.kind]).toBe(4);
@@ -946,7 +946,7 @@ describe('reboot (AC-20)', () => {
     expect(countOf(made, 'new-session')).toBe(0);
   });
 
-  it('exits 3 and stops nothing when one worker has no session id that it may resume (TP-46)', async () => {
+  it('exits 3 and stops nothing when one worker has no session id that it may resume', async () => {
     const made = await make({ workers: { alpha: {}, beta: { event: null }, gamma: {} } });
     const error = await failed(reboot(made));
     expect(exitCodeOf[error.kind]).toBe(3);
@@ -961,7 +961,7 @@ describe('reboot (AC-20)', () => {
     expectNothingStopped(made);
   });
 
-  describe('the checks come before any stop (TP-131, TP-17)', () => {
+  describe('the checks come before any stop', () => {
     it('exits 4 and stops nothing when a root check fails', async () => {
       const made = await make({ claudeFile: claudeFileText(sampleConfig()).replace('Do not write keys', 'Write keys') });
       expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(4);
@@ -1123,7 +1123,7 @@ describe('reboot (AC-20)', () => {
     });
   });
 
-  it('keeps the coordinator pane and the session when it runs in a pane of the session (TP-47)', async () => {
+  it('keeps the coordinator pane and the session when it runs in a pane of the session', async () => {
     const made = await make({ from: 'coordinator' });
     const output = await succeeded(reboot(made));
     expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma]);
@@ -1225,7 +1225,7 @@ describe('reboot (AC-20)', () => {
     expect(warning).not.toContain('factory shutdown');
   });
 
-  describe('the output is short (TP-63, TP-64)', () => {
+  describe('the output is short', () => {
     it('has a short first line and few lines, from outside the session, from inside it, with no session, and with a worker that did not start', async () => {
       const silentBeta: Program = async (wait) => {
         if (wait.resumeId === SESSION.beta) return;
@@ -1240,7 +1240,7 @@ describe('reboot (AC-20)', () => {
       for (const made of shapes) expectShortOutput(plainText(await succeeded(reboot(made))));
     });
 
-    it('has the size of its output on the fixture of three workers in the token budget, row 3 (TP-64)', async () => {
+    it('has the size of its output on the fixture of three workers in the token budget, row 3', async () => {
       const text = plainText(await succeeded(reboot(await make())));
       const row = budgetRow(3);
       expect(row.command).toBe('`factory reboot`');
@@ -1249,7 +1249,7 @@ describe('reboot (AC-20)', () => {
     });
   });
 
-  describe('the proxy is asked once for each run (TP-62, AC-25)', () => {
+  describe('the proxy is asked once for each run', () => {
     it('sends one health check for three workers on one proxy, from outside the session', async () => {
       const made = await make({ config: withProxy() });
       await succeeded(reboot(made));
@@ -1276,7 +1276,7 @@ describe('reboot (AC-20)', () => {
     });
   });
 
-  describe('a worker with a proxy of its own is asked too (TP-62, AC-20, AC-25)', () => {
+  describe('a worker with a proxy of its own is asked too', () => {
     it.each<[string, 'coordinator' | undefined]>([
       ['from outside the session', undefined],
       ['from inside the session', 'coordinator'],
@@ -1301,7 +1301,7 @@ describe('reboot (AC-20)', () => {
   });
 });
 
-describe('restart: the proxy of the worker (AC-19)', () => {
+describe('restart: the proxy of the worker', () => {
   it('asks the proxy once, before the stop, and the launch uses that answer', async () => {
     const made = await make({ config: withProxy() });
     await succeeded(restart(made, 'alpha'));

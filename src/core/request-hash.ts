@@ -3,7 +3,7 @@ import { requestHash } from '../names.js';
 import { err, ok, type Result } from './result.js';
 
 /**
- * The hash of a decision request (AC-39). This module owns the canonical text and the hash, so the core, the workers and the
+ * The hash of a decision request. This module owns the canonical text and the hash, so the core, the workers and the
  * board use one rule. The canonical text of a request is the JSON of the wrapper `{ tag, version, request }`, where `request`
  * is the whole waiting entry. The keys are sorted at every level, the order of an array stays, and the text has no white space
  * between tokens. The text uses the stored strings: nothing is trimmed or cleaned.

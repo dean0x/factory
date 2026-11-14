@@ -600,7 +600,7 @@ describe('git: the status of a state repo', () => {
   });
 });
 
-describe('git: every git step in a state folder runs with hooks off (TP-15)', () => {
+describe('git: every git step in a state folder runs with hooks off', () => {
   const STATE_DIR = '/w/node/.factory';
   const PATHS = { present: ['node.json'], gone: ['protocol.md'] };
   const steps: readonly (readonly [string, (deps: FakeDeps) => Promise<unknown>])[] = [
@@ -759,7 +759,7 @@ describe('git: one entry of the index of a state repo', () => {
   });
 });
 
-describe('git: a state repo whose local config names a program (TP-16)', () => {
+describe('git: a state repo whose local config names a program', () => {
   const STATE_DIR = '/w/node/.factory';
   /** The list as git prints it with `-z`: for each setting the scope, a NUL, the key, a line break, the value and a NUL. */
   const listOf = (...settings: readonly (readonly [scope: string, key: string, value?: string])[]): string =>
@@ -857,7 +857,7 @@ describe('git: a state repo whose local config names a program (TP-16)', () => {
   });
 });
 
-describe('git: the minimum version of git (TP-55)', () => {
+describe('git: the minimum version of git', () => {
   const STATE_DIR = '/w/node/.factory';
   const ready = (run: RunHandler) =>
     requireStateRepoReady(createFakeDeps({ cwd: WS, run }), STATE_DIR, [], 'the upgrade', commands.upgrade);
@@ -1001,7 +1001,7 @@ describe('git: the version of git', () => {
   });
 });
 
-describe('git: the tracked files of a repo (TP-167)', () => {
+describe('git: the tracked files of a repo', () => {
   const ROOT = '/r';
   const listed = async (fixture: GitFixture, max?: number, run?: RunHandler) => {
     const { handler, log } = gitHandler({ repos: { [ROOT]: {} }, ...fixture });
@@ -1282,7 +1282,7 @@ describe('git: the checks before a work copy is freed', () => {
       expect(calls).toEqual([['-C', COPY, 'fetch', '--prune', '--no-tags', 'origin', '+refs/heads/worker/*:refs/remotes/origin/worker/*']]);
     });
 
-    it('fetches each extra branch by name in the same call, so one fetch updates every copy that a check reads (TP-60)', async () => {
+    it('fetches each extra branch by name in the same call, so one fetch updates every copy that a check reads', async () => {
       const { deps, calls } = asked(exited(0));
       expect(await fetchBranches(deps, COPY, 'origin', 'worker', ['main'])).toEqual({ ok: true, value: undefined });
       expect(calls).toEqual([

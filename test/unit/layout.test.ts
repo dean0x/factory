@@ -68,7 +68,7 @@ const viewOnly = async (setup: SlotSetup = {}): Promise<SlotMade> => {
   return made;
 };
 
-describe('layout: the windows (TP-33)', () => {
+describe('layout: the windows', () => {
   it('makes the window workers on a session that has only the window view, and tiles it', async () => {
     const made = await viewOnly();
     expect(windowNames(made)).toEqual(['view']);
@@ -136,7 +136,7 @@ describe('layout: the windows (TP-33)', () => {
   });
 });
 
-describe('layout: the board returns to the slot (TP-31)', () => {
+describe('layout: the board returns to the slot', () => {
   it('swaps a summoned pane back to the board and unsets the summon mark', async () => {
     const made = await makeSlot(ALPHA_ONLY);
     await summonAlpha(made);
@@ -284,7 +284,7 @@ describe('layout: a board pane that is not in the window view', () => {
   });
 });
 
-describe('layout: the session of the node (TP-127)', () => {
+describe('layout: the session of the node', () => {
   it('exits 3 and names factory start when no tmux session of the node runs', async () => {
     const made = await makeSlot({ tmux: { sessions: {} } });
     const error = await failedWith(made);

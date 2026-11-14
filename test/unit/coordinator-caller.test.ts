@@ -69,8 +69,8 @@ const coordinatorReadAnswers =
   (call) =>
     call.args[0] === 'display-message' && call.args.some((arg) => arg.includes('{left}')) ? answer : handler(call);
 
-describe('TP-18: the caller rule lets the coordinator pane pass', () => {
-  it('TP-18: gives the coordinator pane with its pid for a caller in that pane', async () => {
+describe('the caller rule lets the coordinator pane pass', () => {
+  it('gives the coordinator pane with its pid for a caller in that pane', async () => {
     const { check, log } = setup();
     const result = await check();
     expect(result).toMatchObject({ ok: true, value: { paneId: COORDINATOR_PANE, node: true, dead: false } });
@@ -78,13 +78,13 @@ describe('TP-18: the caller rule lets the coordinator pane pass', () => {
   });
 });
 
-describe('TP-18: the env part of the caller rule makes no tmux call', () => {
+describe('the env part of the caller rule makes no tmux call', () => {
   it.each([
     ['no TMUX_PANE', { TMUX_PANE: undefined }],
     ['an empty TMUX_PANE', { TMUX_PANE: '' }],
     ['a TMUX_PANE that is not a pane id', { TMUX_PANE: 'coordinator' }],
     ['a TMUX_PANE with a second command in it', { TMUX_PANE: '%0;' }],
-  ])('TP-18: a caller with %s exits 2', async (_name, env) => {
+  ])('a caller with %s exits 2', async (_name, env) => {
     const { check, deps } = setup({ env });
     expect(codeOf(await check())).toBe(2);
     expect(deps.calls).toEqual([]);
@@ -94,26 +94,26 @@ describe('TP-18: the env part of the caller rule makes no tmux call', () => {
     ['the id of a worker', { FACTORY_SESSION: 'alpha' }],
     ['no FACTORY_SESSION', { FACTORY_SESSION: undefined }],
     ['an empty FACTORY_SESSION', { FACTORY_SESSION: '' }],
-  ])('TP-18: a caller with %s as its session exits 2', async (_name, env) => {
+  ])('a caller with %s as its session exits 2', async (_name, env) => {
     const { check, deps } = setup({ env });
     expect(codeOf(await check())).toBe(2);
     expect(deps.calls).toEqual([]);
   });
 
-  it('TP-18: the env part comes first: a caller in a worker pane exits 2 also when no session runs', async () => {
+  it('the env part comes first: a caller in a worker pane exits 2 also when no session runs', async () => {
     const { check, deps } = setup({ fixture: { sessions: {} }, env: { FACTORY_SESSION: 'alpha', TMUX_PANE: '%5' } });
     expect(codeOf(await check())).toBe(2);
     expect(deps.calls).toEqual([]);
   });
 
-  it('TP-18: the refusal names the coordinator pane as the place to run the command again', async () => {
+  it('the refusal names the coordinator pane as the place to run the command again', async () => {
     const { check } = setup({ env: { FACTORY_SESSION: 'alpha' } });
     const error = errorOf(await check());
     expect(error.message).toContain('coordinator');
     expect(error.hint).toContain(`factory ${AGAIN}`);
   });
 
-  it('TP-18: the remedy of every refusal names the command to run again', async () => {
+  it('the remedy of every refusal names the command to run again', async () => {
     for (const change of [{ env: { TMUX_PANE: SLOT_PANE } }, { fixture: { sessions: {} } }, { fixture: { endedCoordinators: [NODE] } }]) {
       const error = errorOf(await setup(change).check());
       expect(error.hint).toContain(`factory ${AGAIN}`);
@@ -121,22 +121,22 @@ describe('TP-18: the env part of the caller rule makes no tmux call', () => {
   });
 });
 
-describe('TP-18: the session part of the caller rule', () => {
-  it('TP-18: no tmux session exits 3 and the remedy is factory start', async () => {
+describe('the session part of the caller rule', () => {
+  it('no tmux session exits 3 and the remedy is factory start', async () => {
     const { check } = setup({ fixture: { sessions: {} } });
     const result = await check();
     expect(codeOf(result)).toBe(3);
     expect(errorOf(result).hint).toContain('factory start');
   });
 
-  it('TP-18: a session of another factory folder exits 4', async () => {
+  it('a session of another factory folder exits 4', async () => {
     const { check } = setup({ fixture: { sessions: { [NODE]: '/other/node' } } });
     expect(codeOf(await check())).toBe(4);
   });
 });
 
-describe('TP-18: the pane part of the caller rule', () => {
-  it('TP-18: a coordinator pane that ended exits 3 and the remedy is factory start', async () => {
+describe('the pane part of the caller rule', () => {
+  it('a coordinator pane that ended exits 3 and the remedy is factory start', async () => {
     const { check } = setup({ fixture: { endedCoordinators: [NODE] } });
     const result = await check();
     expect(codeOf(result)).toBe(3);
@@ -147,14 +147,14 @@ describe('TP-18: the pane part of the caller rule', () => {
     ['tmux has no pane at the place of the coordinator (empty fields, exit 0)', exited(0, '|||\n')],
     ['tmux fails for the place of the coordinator', exited(1, '', "can't find pane\n")],
     ['the pane at that place has no node mark', exited(0, '%0|4001|0|0|env FACTORY_SESSION=demo\n')],
-  ])('TP-18: %s: exit 3 and the remedy is factory start', async (_name, answer) => {
+  ])('%s: exit 3 and the remedy is factory start', async (_name, answer) => {
     const { check } = setup({ wrap: coordinatorReadAnswers(answer) });
     const result = await check();
     expect(codeOf(result)).toBe(3);
     expect(errorOf(result).hint).toContain('factory start');
   });
 
-  it('TP-18: text that is not the line of one pane is a failure (exit 1), not a pass', async () => {
+  it('text that is not the line of one pane is a failure (exit 1), not a pass', async () => {
     const { check } = setup({ wrap: coordinatorReadAnswers(exited(0, 'zzz-odd-output\n')) });
     expect(codeOf(await check())).toBe(1);
   });
@@ -173,7 +173,7 @@ describe('TP-18: the pane part of the caller rule', () => {
         return argv.value;
       })(),
     ],
-  ])('TP-18: a start command that is %s exits 4 and types nothing', async (_name, words) => {
+  ])('a start command that is %s exits 4 and types nothing', async (_name, words) => {
     const { check, log } = setup({ fixture: { coordinatorCommands: { [NODE]: words } } });
     const result = await check();
     expect(codeOf(result)).toBe(4);
@@ -181,39 +181,39 @@ describe('TP-18: the pane part of the caller rule', () => {
     expect(log.typed()).toEqual([]);
   });
 
-  it('TP-18: the refusal for a start command names no text of the start command', async () => {
+  it('the refusal for a start command names no text of the start command', async () => {
     const secret = 'PROXY-SECRET-TEXT';
     const { check } = setup({ fixture: { coordinatorCommands: { [NODE]: ['env', `TOKEN=${secret}`, 'claude'] } } });
     const error = errorOf(await check());
     expect(`${error.message} ${error.hint ?? ''}`).not.toContain(secret);
   });
 
-  it('TP-18: a caller in another pane of the session exits 2', async () => {
+  it('a caller in another pane of the session exits 2', async () => {
     const { check, log } = setup({ env: { TMUX_PANE: SLOT_PANE } });
     expect(codeOf(await check())).toBe(2);
     expect(log.typed()).toEqual([]);
   });
 
-  it('TP-18: a caller in a worker pane that has its own session word exits 2 before any tmux call', async () => {
+  it('a caller in a worker pane that has its own session word exits 2 before any tmux call', async () => {
     const { check, deps } = setup({ env: { TMUX_PANE: '%2', FACTORY_SESSION: 'alpha' } });
     expect(codeOf(await check())).toBe(2);
     expect(deps.calls).toEqual([]);
   });
 
-  it('TP-18: the checks of the coordinator pane come before the check of the caller pane: a start command that does not bind is exit 4 for a caller in another pane', async () => {
+  it('the checks of the coordinator pane come before the check of the caller pane: a start command that does not bind is exit 4 for a caller in another pane', async () => {
     const { check } = setup({ env: { TMUX_PANE: SLOT_PANE }, fixture: { coordinatorCommands: { [NODE]: ['sleep', '3000'] } } });
     expect(codeOf(await check())).toBe(4);
   });
 });
 
-describe('TP-19: the readers of the coordinator pane keep their behavior', () => {
-  it('TP-19: reads the pane that carries the node mark, with its start command', async () => {
+describe('the readers of the coordinator pane keep their behavior', () => {
+  it('reads the pane that carries the node mark, with its start command', async () => {
     const { deps } = setup();
     const result = await readCoordinatorPane(deps, NODE);
     expect(result).toMatchObject({ ok: true, value: { paneId: COORDINATOR_PANE, node: true, dead: false } });
   });
 
-  it('TP-19: gives null for a place with no pane and for a pane with no node mark', async () => {
+  it('gives null for a place with no pane and for a pane with no node mark', async () => {
     const absent = setup({ wrap: coordinatorReadAnswers(exited(0, '|||\n')) });
     expect(await readCoordinatorPane(absent.deps, NODE)).toEqual({ ok: true, value: null });
     const unmarked = setup({ wrap: coordinatorReadAnswers(exited(0, '%0|4001|0|0|\n')) });

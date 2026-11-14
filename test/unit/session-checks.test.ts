@@ -31,12 +31,12 @@ const valueOf = <T>(result: CliResult<T>): T => {
   return result.value;
 };
 
-describe('TP-20: the start time of the process of a pane', () => {
+describe('the start time of the process of a pane', () => {
   const PID = 4321;
   const depsAnswering = (answer: RunHandler) => createFakeDeps({ now: NOW, run: answer });
   const startOf = async (deps: FakeDeps, pid = PID): Promise<CliResult<number>> => paneProcessStart(deps, pid, AGAIN);
 
-  it('TP-20: runs ps once for the pid, with a limit of 5 seconds and the default environment', async () => {
+  it('runs ps once for the pid, with a limit of 5 seconds and the default environment', async () => {
     const deps = depsAnswering(() => exited(0, '01:00\n'));
     await startOf(deps);
     expect(deps.calls).toHaveLength(1);
@@ -55,12 +55,12 @@ describe('TP-20: the start time of the process of a pane', () => {
     ['many days', '12345-23:59:59', 12345 * DAY + 23 * HOUR + 59 * MINUTE + 59 * SECOND],
     ['spaces before the time', '   05:03', 5 * MINUTE + 3 * SECOND],
     ['spaces and a new line at the ends', '  1-02:03:04  \n', DAY + 2 * HOUR + 3 * MINUTE + 4 * SECOND],
-  ])('TP-20: parses %s (%j)', async (_name, text, elapsedMs) => {
+  ])('parses %s (%j)', async (_name, text, elapsedMs) => {
     const deps = depsAnswering(() => exited(0, text));
     expect(valueOf(await startOf(deps))).toBe(NOW.getTime() - elapsedMs);
   });
 
-  it('TP-20: reads the clock after ps returns, so a slow ps makes the start later and the line check stricter', async () => {
+  it('reads the clock after ps returns, so a slow ps makes the start later and the line check stricter', async () => {
     const slow: FakeDeps = createFakeDeps({
       now: NOW,
       run: () => {
@@ -94,90 +94,90 @@ describe('TP-20: the start time of the process of a pane', () => {
     ['a tab in front', '\t12:34'],
     ['digits that are not ASCII', '١٢:٣٤'],
     ['a time in a sentence', 'elapsed 12:34'],
-  ])('TP-20: refuses %s (%j) with exit 3', async (_name, text) => {
+  ])('refuses %s (%j) with exit 3', async (_name, text) => {
     const result = await startOf(depsAnswering(() => exited(0, text)));
     expect(codeOf(result)).toBe(3);
   });
 
-  it('TP-20: a ps that fails is exit 3, also when its output looks like a time', async () => {
+  it('a ps that fails is exit 3, also when its output looks like a time', async () => {
     expect(codeOf(await startOf(depsAnswering(() => exited(1, '01:00\n'))))).toBe(3);
     expect(codeOf(await startOf(depsAnswering(() => exited(1, '', 'no such process\n'))))).toBe(3);
   });
 
-  it('TP-20: empty output with exit 0 (the pid is gone) is exit 3', async () => {
+  it('empty output with exit 0 (the pid is gone) is exit 3', async () => {
     expect(codeOf(await startOf(depsAnswering(() => exited(0, ''))))).toBe(3);
   });
 
-  it('TP-20: a ps that does not start or that runs past the limit is exit 3', async () => {
+  it('a ps that does not start or that runs past the limit is exit 3', async () => {
     expect(codeOf(await startOf(depsAnswering(() => failure('cannot run ps: ENOENT'))))).toBe(3);
     expect(codeOf(await startOf(depsAnswering(() => failure('ps ran past 5000 ms'))))).toBe(3);
   });
 
-  it('TP-20: the refusal names the command to run again and repeats no text of the output', async () => {
+  it('the refusal names the command to run again and repeats no text of the output', async () => {
     const error = errorOf(await startOf(depsAnswering(() => exited(0, 'SECRET-OUTPUT'))));
     expect(error.hint).toContain(`factory ${AGAIN}`);
     expect(`${error.message} ${error.hint ?? ''}`).not.toContain('SECRET-OUTPUT');
   });
 
-  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53])('TP-20: refuses the pid %s and runs no ps', async (pid) => {
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53])('refuses the pid %s and runs no ps', async (pid) => {
     const deps = depsAnswering(() => exited(0, '01:00\n'));
     expect(codeOf(await startOf(deps, pid))).toBe(3);
     expect(deps.calls).toEqual([]);
   });
 });
 
-describe('TP-20: the line check', () => {
+describe('the line check', () => {
   const START = NOW.getTime() - MINUTE;
   const at = (ms: number): string => new Date(ms).toISOString();
 
-  it('TP-20: refuses a line 500 ms before the start of the process', () => {
+  it('refuses a line 500 ms before the start of the process', () => {
     expect(codeOf(requireLineAfterStart(at(START - 500), START, AGAIN))).toBe(3);
   });
 
-  it('TP-20: refuses a line at the same time as the start: the line must be strictly later', () => {
+  it('refuses a line at the same time as the start: the line must be strictly later', () => {
     expect(codeOf(requireLineAfterStart(at(START), START, AGAIN))).toBe(3);
   });
 
-  it('TP-20: passes a line 1 ms after the start', () => {
+  it('passes a line 1 ms after the start', () => {
     expect(requireLineAfterStart(at(START + 1), START, AGAIN).ok).toBe(true);
   });
 
-  it.each(['', 'yesterday', '2030-13-45T00:00:00Z'])('TP-20: refuses the time %j that is no time', (text) => {
+  it.each(['', 'yesterday', '2030-13-45T00:00:00Z'])('refuses the time %j that is no time', (text) => {
     expect(codeOf(requireLineAfterStart(text, START, AGAIN))).toBe(3);
   });
 
-  it('TP-20: the refusal names the command to run again', () => {
+  it('the refusal names the command to run again', () => {
     expect(errorOf(requireLineAfterStart(at(START), START, AGAIN)).hint).toContain(`factory ${AGAIN}`);
   });
 });
 
-describe('TP-21: the resume file', () => {
+describe('the resume file', () => {
   const FOLDER = '/h/node/.factory/resume';
   const FILE = `${FOLDER}/demo.md`;
   const request = { folders: [{ path: FOLDER, what: 'the resume folder' }], file: { path: FILE, what: 'the resume file' }, again: AGAIN };
   const make = (more: Parameters<typeof createFakeDeps>[0] = {}): FakeDeps => createFakeDeps({ now: NOW, ...more });
 
-  it('TP-21: gives the age of a file that holds text', async () => {
+  it('gives the age of a file that holds text', async () => {
     const deps = make();
     deps.seed(FILE, 'what is done and what is next');
     deps.mtimes.set(FILE, NOW.getTime() - 90 * SECOND);
     expect(valueOf(await requireResumeFile(deps, request))).toEqual({ ageMs: 90 * SECOND });
   });
 
-  it('TP-21: gives an age of 0 for a file with a time in the future', async () => {
+  it('gives an age of 0 for a file with a time in the future', async () => {
     const deps = make();
     deps.seed(FILE, 'notes');
     deps.mtimes.set(FILE, NOW.getTime() + HOUR);
     expect(valueOf(await requireResumeFile(deps, request))).toEqual({ ageMs: 0 });
   });
 
-  it('TP-21: a file with exactly the most bytes is valid', async () => {
+  it('a file with exactly the most bytes is valid', async () => {
     const deps = make();
     deps.seed(FILE, 'x'.repeat(maxFileBytes));
     expect((await requireResumeFile(deps, request)).ok).toBe(true);
   });
 
-  it('TP-21: a missing file is exit 3, and the refusal names the file', async () => {
+  it('a missing file is exit 3, and the refusal names the file', async () => {
     const deps = make();
     deps.seedDir(FOLDER);
     const error = errorOf(await requireResumeFile(deps, request));
@@ -186,11 +186,11 @@ describe('TP-21: the resume file', () => {
     expect(error.hint).toContain(`factory ${AGAIN}`);
   });
 
-  it('TP-21: a missing folder is exit 3 too', async () => {
+  it('a missing folder is exit 3 too', async () => {
     expect(codeOf(await requireResumeFile(make(), request))).toBe(3);
   });
 
-  it('TP-21: a file that is a link is exit 4, and the refusal names the file', async () => {
+  it('a file that is a link is exit 4, and the refusal names the file', async () => {
     const deps = make({ links: { [FILE]: '/elsewhere/notes.md' } });
     deps.seedDir(FOLDER);
     deps.seed('/elsewhere/notes.md', 'notes');
@@ -199,7 +199,7 @@ describe('TP-21: the resume file', () => {
     expect(`${error.message} ${error.hint ?? ''}`).toContain(FILE);
   });
 
-  it('TP-21: a folder of the chain that is a link is exit 4', async () => {
+  it('a folder of the chain that is a link is exit 4', async () => {
     const deps = make({ links: { [FOLDER]: '/elsewhere' } });
     deps.seed(FILE, 'notes');
     expect(codeOf(await requireResumeFile(deps, request))).toBe(4);
@@ -208,7 +208,7 @@ describe('TP-21: the resume file', () => {
   it.each([
     ['empty', ''],
     ['only spaces and new lines', '  \n\t\n'],
-  ])('TP-21: a file that is %s is exit 3', async (_name, text) => {
+  ])('a file that is %s is exit 3', async (_name, text) => {
     const deps = make();
     deps.seed(FILE, text);
     const error = errorOf(await requireResumeFile(deps, request));
@@ -216,19 +216,19 @@ describe('TP-21: the resume file', () => {
     expect(`${error.message} ${error.hint ?? ''}`).toContain(FILE);
   });
 
-  it('TP-21: a file above 1 MiB is exit 3', async () => {
+  it('a file above 1 MiB is exit 3', async () => {
     const deps = make();
     deps.seed(FILE, 'x'.repeat(maxFileBytes + 1));
     expect(codeOf(await requireResumeFile(deps, request))).toBe(3);
   });
 
-  it('TP-21: a file that is a folder is exit 3', async () => {
+  it('a file that is a folder is exit 3', async () => {
     const deps = make();
     deps.seedDir(FILE);
     expect(codeOf(await requireResumeFile(deps, request))).toBe(3);
   });
 
-  it('TP-21: the refusal repeats no text of the file', async () => {
+  it('the refusal repeats no text of the file', async () => {
     const deps = make();
     deps.seed(FILE, '   ');
     const error = errorOf(await requireResumeFile(deps, request));
@@ -236,7 +236,7 @@ describe('TP-21: the resume file', () => {
   });
 });
 
-describe('TP-21: the hook settings of a session folder', () => {
+describe('the hook settings of a session folder', () => {
   const FOLDER = '/h/node/work-copies/web/alpha';
   const FILE = join(FOLDER, dirs.claude, localSettingsFile);
   const request = { folder: FOLDER, then: 'restart alpha' };
@@ -245,13 +245,13 @@ describe('TP-21: the hook settings of a session folder', () => {
   const withoutEvent = (event: string): string =>
     JSON.stringify({ hooks: Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([name]) => name !== event)) });
 
-  it('TP-21: passes settings that hold the command of every event', async () => {
+  it('passes settings that hold the command of every event', async () => {
     const deps = make();
     deps.seed(FILE, JSON.stringify(ownSettingsEntries));
     expect((await requireOwnHooks(deps, request)).ok).toBe(true);
   });
 
-  it.each(hookNames.events)('TP-21: settings without the event %s are exit 3, and the refusal names the event', async (event) => {
+  it.each(hookNames.events)('settings without the event %s are exit 3, and the refusal names the event', async (event) => {
     const deps = make();
     deps.seed(FILE, withoutEvent(event));
     const error = errorOf(await requireOwnHooks(deps, request));
@@ -259,7 +259,7 @@ describe('TP-21: the hook settings of a session folder', () => {
     expect(error.message).toContain(event);
   });
 
-  it('TP-21: the remedy is factory upgrade, then the command that starts the session again', async () => {
+  it('the remedy is factory upgrade, then the command that starts the session again', async () => {
     const deps = make();
     deps.seed(FILE, withoutEvent('Notification'));
     const error = errorOf(await requireOwnHooks(deps, request));
@@ -267,7 +267,7 @@ describe('TP-21: the hook settings of a session folder', () => {
     expect(error.hint).toContain('factory restart alpha');
   });
 
-  it('TP-21: a Notification group with another matcher counts as missing', async () => {
+  it('a Notification group with another matcher counts as missing', async () => {
     const deps = make();
     const hooks = { ...ownSettingsEntries.hooks, Notification: [{ matcher: 'idle_prompt', hooks: ownSettingsEntries.hooks['Notification']?.[0]?.hooks ?? [] }] };
     deps.seed(FILE, JSON.stringify({ hooks }));
@@ -280,24 +280,24 @@ describe('TP-21: the hook settings of a session folder', () => {
     ['an object with no hooks', '{}'],
     ['a hooks value that is a list', '{"hooks": []}'],
     ['an event whose value is not a list', '{"hooks": {"Stop": "x"}}'],
-  ])('TP-21: %s is exit 3', async (_name, text) => {
+  ])('%s is exit 3', async (_name, text) => {
     const deps = make();
     deps.seed(FILE, text);
     expect(codeOf(await requireOwnHooks(deps, request))).toBe(3);
   });
 
-  it('TP-21: a missing settings file is exit 3', async () => {
+  it('a missing settings file is exit 3', async () => {
     expect(codeOf(await requireOwnHooks(make(), request))).toBe(3);
   });
 
-  it('TP-21: a settings file that is a link is exit 4', async () => {
+  it('a settings file that is a link is exit 4', async () => {
     const deps = make({ links: { [FILE]: '/elsewhere/settings.json' } });
     deps.seedDir(join(FOLDER, dirs.claude));
     deps.seed('/elsewhere/settings.json', JSON.stringify(ownSettingsEntries));
     expect(codeOf(await requireOwnHooks(deps, request))).toBe(4);
   });
 
-  it('TP-21: a settings file above 1 MiB is exit 3', async () => {
+  it('a settings file above 1 MiB is exit 3', async () => {
     const deps = make();
     deps.seed(FILE, ' '.repeat(maxFileBytes + 1));
     expect(codeOf(await requireOwnHooks(deps, request))).toBe(3);
@@ -313,26 +313,26 @@ describe('TP-21: the hook settings of a session folder', () => {
       return deps;
     };
 
-    it('TP-21: passes settings that changed before the start', async () => {
+    it('passes settings that changed before the start', async () => {
       expect((await requireSettingsOlderThan(settingsWritten(START - SECOND), olderRequest)).ok).toBe(true);
     });
 
-    it('TP-21: refuses settings that changed at the start: they must be strictly earlier', async () => {
+    it('refuses settings that changed at the start: they must be strictly earlier', async () => {
       expect(codeOf(await requireSettingsOlderThan(settingsWritten(START), olderRequest))).toBe(3);
     });
 
-    it('TP-21: refuses settings that changed after the start, and the remedy starts the session again', async () => {
+    it('refuses settings that changed after the start, and the remedy starts the session again', async () => {
       const error = errorOf(await requireSettingsOlderThan(settingsWritten(START + SECOND), olderRequest));
       expect(error.kind).toBe('not-ready');
       expect(error.hint).toContain('factory restart alpha');
     });
 
-    it('TP-21: the refusal says that a permission rule that Claude Code saved also changes the file', async () => {
+    it('the refusal says that a permission rule that Claude Code saved also changes the file', async () => {
       const error = errorOf(await requireSettingsOlderThan(settingsWritten(START + SECOND), olderRequest));
       expect(error.hint).toContain('permission rule');
     });
 
-    it('TP-21: a settings file that is not there is exit 3', async () => {
+    it('a settings file that is not there is exit 3', async () => {
       expect(codeOf(await requireSettingsOlderThan(make(), olderRequest))).toBe(3);
     });
   });

@@ -36,7 +36,7 @@ const run = async (argv: string[]) => {
 };
 
 describe('a row with the double dash rule in the command line', () => {
-  it('runs the row with the child words kept apart, also a word that looks like a flag (TP-3)', async () => {
+  it('runs the row with the child words kept apart, also a word that looks like a flag', async () => {
     const result = await run(['wrap', 'run', '--', 'npm', 'test', '--json', '--help']);
     expect(result.code).toBe(0);
     expect(ran).toEqual([{ words: ['run'], after: ['npm', 'test', '--json', '--help'] }]);
@@ -47,7 +47,7 @@ describe('a row with the double dash rule in the command line', () => {
     [['wrap', 'run', 'x', '--', 'npm']],
     [['wrap', 'run', '--help', '--', 'npm']],
     [['wrap', 'run', '--help', '--']],
-  ])('exits 2, prints no help and runs nothing: %j (TP-1, TP-2)', async (argv) => {
+  ])('exits 2, prints no help and runs nothing: %j', async (argv) => {
     const result = await run(argv);
     expect(result.code).toBe(2);
     expect(result.out).toBe('');
@@ -55,7 +55,7 @@ describe('a row with the double dash rule in the command line', () => {
     expect(ran).toEqual([]);
   });
 
-  it.each([[['wrap', '--help']], [['wrap', 'run', '--help']]])('prints help and exits 0: %j (TP-2)', async (argv) => {
+  it.each([[['wrap', '--help']], [['wrap', 'run', '--help']]])('prints help and exits 0: %j', async (argv) => {
     const result = await run(argv);
     expect(result.code).toBe(0);
     expect(result.out).toContain('Usage: factory wrap');

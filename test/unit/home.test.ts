@@ -264,7 +264,7 @@ describe('home: the index', () => {
   });
 });
 
-describe('home: a git work tree of a listed project (TP-51, TP-52)', () => {
+describe('home: a git work tree of a listed project', () => {
   const FACTORY = '/w/web-factory';
   const PROJECT = '/w/web';
   /** A separate git work tree of the project, outside the factory folder. */

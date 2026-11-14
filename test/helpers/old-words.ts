@@ -1,5 +1,5 @@
 /**
- * The eight words that D-59 replaced. The scan of the source, the help text, the templates, the glossary and the files
+ * The eight old words that the names of the glossary replaced. The scan of the source, the help text, the templates, the glossary and the files
  * that init writes uses this list. `scripts/exit-check.sh` holds the same list and the same endings, and
  * `OLD_WORD_LIST` of `test/helpers/plain-words.ts` holds the same list for the scan of the docs. A unit test keeps the
  * three equal.

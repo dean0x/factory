@@ -218,14 +218,14 @@ describe('init: the files', () => {
     expect(deps.files.get(`${HOME}/.factory/orders/.gitkeep`)).toBe('');
   });
 
-  it('M5-1b TP-29 seeds the board with the queue key of the software recipe', async () => {
+  it('seeds the board with the queue key of the software recipe', async () => {
     const { deps } = setup();
     await runInit(deps, options());
     const board = JSON.parse(deps.files.get(`${HOME}/.factory/board.json`) ?? 'null') as Record<string, unknown>;
     expect(Object.keys(board)).toEqual(['merge', 'items', 'tracks']);
   });
 
-  it('M5-1b TP-70 seeds the tracks of the board as an empty list', async () => {
+  it('seeds the tracks of the board as an empty list', async () => {
     const { deps } = setup();
     await runInit(deps, options());
     const board = JSON.parse(deps.files.get(`${HOME}/.factory/board.json`) ?? 'null') as Record<string, unknown>;
@@ -492,7 +492,7 @@ describe('init: the proposed home in a git work tree', () => {
 
   const ORIGIN = 'git@github.com:acme/web.git';
 
-  it('uses the folder beside the work tree for --yes, and clones the repo into the root from its origin (TP-13)', async () => {
+  it('uses the folder beside the work tree for --yes, and clones the repo into the root from its origin', async () => {
     const { handler, log } = gitHandler({ repos });
     const deps = createFakeDeps({ cwd: `${REPO}/src`, run: handler, env: ENV });
     deps.seedDir(`${REPO}/src`);
@@ -508,7 +508,7 @@ describe('init: the proposed home in a git work tree', () => {
     expect(config.ok && config.value.core.sources).toEqual({});
   });
 
-  it('warns that the old folder keeps the work that is not pushed, and leaves the old folder as it is (TP-13)', async () => {
+  it('warns that the old folder keeps the work that is not pushed, and leaves the old folder as it is', async () => {
     const deps = inRepo();
     const inOldFolder = ([path]: [string, string]): boolean => path.startsWith(`${REPO}/`);
     const before = [...deps.files.entries()].filter(inOldFolder);
@@ -520,7 +520,7 @@ describe('init: the proposed home in a git work tree', () => {
     expect([...deps.files.entries()].filter(inOldFolder)).toEqual(before);
   });
 
-  it('with no origin clones from the local folder, keeps the source in the local file only, and warns (TP-13)', async () => {
+  it('with no origin clones from the local folder, keeps the source in the local file only, and warns', async () => {
     const { handler, log } = gitHandler({ repos: { [REPO]: {} } });
     const deps = createFakeDeps({ cwd: `${REPO}/src`, run: handler, env: ENV });
     deps.seedDir(`${REPO}/src`);
@@ -926,7 +926,7 @@ describe('init: projects', () => {
   });
 });
 
-describe('init: the project path rule (TP-28)', () => {
+describe('init: the project path rule', () => {
   const REMEDY = 'Use one folder name that is not reserved';
 
   it.each([
@@ -994,7 +994,7 @@ describe('init: the project path rule (TP-28)', () => {
   });
 });
 
-describe('init: a project with no URL to share (F-17c, AC-11)', () => {
+describe('init: a project with no URL to share', () => {
   const FILE_ORIGIN = 'file:///srv/acme/api.git';
   const SHARED = `${HOME}/factory.yaml`;
   const LOCAL = `${HOME}/factory.local.yaml`;
@@ -1010,7 +1010,7 @@ describe('init: a project with no URL to share (F-17c, AC-11)', () => {
   const sharedWarnings = (result: Awaited<ReturnType<typeof runInit>>): string[] =>
     result.ok ? result.value.warnings.filter((warning) => warning.includes(NOT_SHARED)) : [];
 
-  it('warns once per project that the factory can not be shared with the repo, and goes on (TP-109)', async () => {
+  it('warns once per project that the factory can not be shared with the repo, and goes on', async () => {
     const { result } = await initWith({ '/w/lib': {}, '/w/tool': {}, '/w/web': { origin: 'git@host:acme/web.git' } }, [
       '/w/lib',
       '/w/tool',
@@ -1053,7 +1053,7 @@ describe('init: a project with no URL to share (F-17c, AC-11)', () => {
     expect(log.clones()).toEqual([]);
   });
 
-  it('writes the project with no url, and no local path in factory.yaml, for a repo with no origin (TP-135)', async () => {
+  it('writes the project with no url, and no local path in factory.yaml, for a repo with no origin', async () => {
     const { deps, config } = await initWith({ '/w/lib': {} }, ['/w/lib']);
     expect(config.ok && config.value.recipe.projects.map((project) => project.url)).toEqual([undefined]);
     const shared = deps.files.get(SHARED) ?? '';
@@ -1062,13 +1062,13 @@ describe('init: a project with no URL to share (F-17c, AC-11)', () => {
     expect(shared).not.toContain('file:');
   });
 
-  it('keeps the local source of a repo with no origin in the local file only (TP-135)', async () => {
+  it('keeps the local source of a repo with no origin in the local file only', async () => {
     const { deps, config } = await initWith({ '/w/lib': {} }, ['/w/lib']);
     expect(config.ok && config.value.core.sources).toEqual({ lib: '/w/lib' });
     expect(deps.files.get(LOCAL)).toContain('"lib": "/w/lib"');
   });
 
-  it('treats a file URL as the origin like no origin: no url in factory.yaml, the URL as the local source (TP-135)', async () => {
+  it('treats a file URL as the origin like no origin: no url in factory.yaml, the URL as the local source', async () => {
     const { deps, config, result, log } = await initWith({ '/w/api': { origin: FILE_ORIGIN } }, ['/w/api']);
     expect(log.clones()).toEqual([['clone', '--', FILE_ORIGIN, '/w/node/api']]);
     expect(config.ok && config.value.recipe.projects.map((project) => project.url)).toEqual([undefined]);
@@ -1091,7 +1091,7 @@ describe('init: a project with no URL to share (F-17c, AC-11)', () => {
     expect(sharedWarnings(result)).toHaveLength(1);
   });
 
-  it('clones a file URL of the project flag, writes no url, keeps the URL as the local source, and warns (TP-135)', async () => {
+  it('clones a file URL of the project flag, writes no url, keeps the URL as the local source, and warns', async () => {
     const { deps, log } = setup({});
     const result = await runInit(deps, options({ projects: [FILE_ORIGIN] }));
     expect(result.ok).toBe(true);
@@ -1184,7 +1184,7 @@ describe('init: the state repository', () => {
     });
   });
 
-  it('writes the package hook text as each hook file in the guard folder of the git folder, with mode 755, and sets the path (TP-1)', async () => {
+  it('writes the package hook text as each hook file in the guard folder of the git folder, with mode 755, and sets the path', async () => {
     const { deps, log } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
     const expected = guardHookText(FAKE_PROGRAM_ARGV);
@@ -1197,7 +1197,7 @@ describe('init: the state repository', () => {
     expect(log.commands()).toContain(`config -- core.hooksPath ${GUARD_FOLDER}`);
   });
 
-  it('keeps the guard out of what git tracks: the hook is inside the git folder, and no state file names it (TP-1)', async () => {
+  it('keeps the guard out of what git tracks: the hook is inside the git folder, and no state file names it', async () => {
     const { deps } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
     const outside = [...deps.files.keys()].filter((path) => path.startsWith(`${HOME}/.factory/`) && !path.startsWith(`${HOME}/.factory/.git/`));
@@ -1205,7 +1205,7 @@ describe('init: the state repository', () => {
     expect(GUARD_FOLDER.startsWith(`${HOME}/.factory/.git/`)).toBe(true);
   });
 
-  it('names the final state folder in the setting, not the staging folder, and the hook stays in place after the rename (TP-3)', async () => {
+  it('names the final state folder in the setting, not the staging folder, and the hook stays in place after the rename', async () => {
     const { deps, log } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
     const staging = `${HOME}/.factory.tmp-4242`;
@@ -1217,7 +1217,7 @@ describe('init: the state repository', () => {
     expect([...deps.files.keys()].some((path) => path.includes('.tmp-'))).toBe(false);
   });
 
-  it('writes the hook before the first commit, so the first commit of the folder runs with the hook in place (TP-1)', async () => {
+  it('writes the hook before the first commit, so the first commit of the folder runs with the hook in place', async () => {
     const { deps, log } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
     const lines = log.commands();
@@ -1226,7 +1226,7 @@ describe('init: the state repository', () => {
     expect(setting).toBeLessThan(lines.findIndex((line) => line.includes('commit -q')));
   });
 
-  it('goes on with a warning that names the program, and writes no hook, when the program path is not known (TP-1)', async () => {
+  it('goes on with a warning that names the program, and writes no hook, when the program path is not known', async () => {
     const { deps } = setup({}, { programArgv: [] });
     const result = await runInit(deps, options());
     expect(result.ok).toBe(true);
@@ -1239,7 +1239,7 @@ describe('init: the state repository', () => {
     expect(deps.files.has(`${HOME}/.factory/node.json`)).toBe(true);
   });
 
-  it('goes on with a warning that names the link, and leaves the folder of the link as it was, when the guard folder is a link (TP-53)', async () => {
+  it('goes on with a warning that names the link, and leaves the folder of the link as it was, when the guard folder is a link', async () => {
     const staging = `${HOME}/.factory.tmp-4242`;
     const guard = `${staging}/.git/${stateGuard.folder}`;
     const { deps } = setup({}, { links: { [guard]: '/elsewhere/folder' } });
@@ -1303,7 +1303,7 @@ describe('init: the state repository', () => {
     expect(log.commands().some((line) => line.includes('commit'))).toBe(false);
   });
 
-  it('makes the root a repo of its own and commits the three shared paths by name, after all files are there (TP-10)', async () => {
+  it('makes the root a repo of its own and commits the three shared paths by name, after all files are there', async () => {
     const { deps, log } = setup();
     const result = await runInit(deps, options());
     expect(result.ok && result.value.json['rootCommitted']).toBe(true);
@@ -1747,7 +1747,7 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(deps.prompts).toEqual([]);
   });
 
-  it('does not stop for a temp folder that a stopped init left, names it with the words temp folder, and removes nothing (TP-12, TP-73)', async () => {
+  it('does not stop for a temp folder that a stopped init left, names it with the words temp folder, and removes nothing', async () => {
     // The pid of the fake run is 4242, so a temp folder of another pid is a leftover.
     const deps = inWorkspace({}, { repos: { '/ws/.factory.tmp-77': {} } });
     deps.seedDir('/ws/.factory.tmp-77');
@@ -2191,7 +2191,7 @@ describe('init: a project URL', () => {
       return { deps, code, out: sink.out.join(''), err: sink.errors.join('') };
     };
 
-    it('refuses a project flag with a token, exits 2, clones nothing, and changes nothing (TP-26)', async () => {
+    it('refuses a project flag with a token, exits 2, clones nothing, and changes nothing', async () => {
       const { deps, log, done } = run({}, [URL_TOKEN]);
       const before = snapshot(deps);
       const result = await done;
@@ -2229,7 +2229,7 @@ describe('init: a project URL', () => {
       expect(log.clones()).toEqual([]);
     });
 
-    it('writes the url of an origin with a token without the token, and warns without naming it (TP-26)', async () => {
+    it('writes the url of an origin with a token without the token, and warns without naming it', async () => {
       const { deps, log, done } = run(WITH_TOKEN, ['/w/api']);
       const result = await done;
       expect(result.ok).toBe(true);
@@ -2485,7 +2485,7 @@ describe('init: the checks before a clone', () => {
     expect(changed).toBe(false);
   });
 
-  it('warns about a temp folder of a stopped init, does not stop for it, and keeps the folder (TP-73)', async () => {
+  it('warns about a temp folder of a stopped init, does not stop for it, and keeps the folder', async () => {
     const leftover = `${HOME}/.factory.tmp-77`;
     const { deps } = setup({ repos: { [leftover]: {} } });
     deps.seedDir(`${leftover}/.git`);
@@ -2580,7 +2580,7 @@ describe('init: the factory list', () => {
   });
 });
 
-describe('init: when the factory list can not be written (TP-74, TP-94)', () => {
+describe('init: when the factory list can not be written', () => {
   /** The fake git makes the `.git` folder of the root, as real git does. */
   const withRootRepo = (seed?: (deps: FakeDeps) => void) => {
     const { handler, log } = gitHandler();
@@ -2597,7 +2597,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
   };
   const listFails = <T extends Deps>(deps: T): T => withFailingWrites(deps, (path) => path.endsWith('/homes.json'));
 
-  it('exits 1, removes what the run made with the root repo, and prints no success line (TP-74)', async () => {
+  it('exits 1, removes what the run made with the root repo, and prints no success line', async () => {
     const { deps } = withRootRepo();
     const before = snapshot(deps);
     const result = await runInit(listFails(deps), options());
@@ -2610,7 +2610,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('through the command line prints the error and no success line, and exits 1 (TP-74)', async () => {
+  it('through the command line prints the error and no success line, and exits 1', async () => {
     const { deps } = withRootRepo();
     const sink = captureSink();
     const code = await runCli(['init', '--yes', '--home', HOME, '--owner-name', 'Test Owner'], listFails(deps), sink);
@@ -2646,7 +2646,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     expect(sink.errors.join('')).not.toContain('was not updated');
   });
 
-  it('lets a second init in the same folder succeed (TP-74)', async () => {
+  it('lets a second init in the same folder succeed', async () => {
     const { deps } = withRootRepo();
     expect((await runInit(listFails(deps), options())).ok).toBe(false);
     const second = await runInit(deps, options());
@@ -2654,7 +2654,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
   });
 
-  it('removes the clones and the folders that the run made, and keeps a clone that was there before (TP-74)', async () => {
+  it('removes the clones and the folders that the run made, and keeps a clone that was there before', async () => {
     const url = 'https://host/acme/api.git';
     const { handler } = gitHandler();
     const deps: FakeDeps = createFakeDeps({
@@ -2672,7 +2672,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     expect(deps.dirs.has('/w')).toBe(true);
   });
 
-  it('keeps a local file and a coordinator folder that were there before the run, byte for byte (TP-94)', async () => {
+  it('keeps a local file and a coordinator folder that were there before the run, byte for byte', async () => {
     const { deps } = withRootRepo((fake) => {
       fake.seed(`${HOME}/coordinator/notes.txt`, 'my notes\n');
       fake.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
@@ -2703,7 +2703,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
   it.each([
     ['coordinator/CLAUDE.md', 'Owner text.\n', 'coordinator/CLAUDE.md was made or changed by another program'],
     ['.gitignore', '!/notes.md\n', '.gitignore was made or changed by another program'],
-  ])('keeps %s when another program makes it after the plan, and removes nothing of it (TP-94)', async (name, text, message) => {
+  ])('keeps %s when another program makes it after the plan, and removes nothing of it', async (name, text, message) => {
     const { deps } = withRootRepo();
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
@@ -2716,7 +2716,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     expect(deps.files.has(INDEX)).toBe(false);
   });
 
-  it('keeps a shared file that appeared after the plan, and writes no list entry (TP-94)', async () => {
+  it('keeps a shared file that appeared after the plan, and writes no list entry', async () => {
     const { deps } = withRootRepo();
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
@@ -2730,7 +2730,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(false);
   });
 
-  it('keeps a state folder that appeared after the plan, and removes nothing of it (TP-94)', async () => {
+  it('keeps a state folder that appeared after the plan, and removes nothing of it', async () => {
     const { deps } = withRootRepo();
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
@@ -2743,7 +2743,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     expect(deps.files.has(INDEX)).toBe(false);
   });
 
-  it('removes the paths that it made but not the ones around them: the list write fails last (TP-94)', async () => {
+  it('removes the paths that it made but not the ones around them: the list write fails last', async () => {
     const { deps } = withRootRepo((fake) => {
       fake.seed(`${HOME}/coordinator/notes.txt`, 'my notes\n');
       fake.seed(`${HOME}/.gitignore`, '!/notes.md\n');
@@ -2820,7 +2820,7 @@ describe('init: output', () => {
   });
 });
 
-describe('init: the root .gitignore and the setup text (TP-10, TP-69)', () => {
+describe('init: the root .gitignore and the setup text', () => {
   const GITIGNORE = `${HOME}/.gitignore`;
 
   it('writes the share list as the whole .gitignore of a new root, with mode 644 for the setup text', async () => {
@@ -2908,7 +2908,7 @@ describe('init: a local file that is there already', () => {
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('stops with exit 4 and one remedy line for a local file that is a link, and changes nothing (TP-147)', async () => {
+  it('stops with exit 4 and one remedy line for a local file that is a link, and changes nothing', async () => {
     const links: Record<string, string> = { [LOCAL]: '/outside/factory.local.yaml' };
     const { deps } = setup({}, { links });
     deps.seed(LOCAL, 'schema: 1\n');
@@ -2923,7 +2923,7 @@ describe('init: a local file that is there already', () => {
   });
 });
 
-describe('init: the setup texts and the link rule (TP-102, TP-130)', () => {
+describe('init: the setup texts and the link rule', () => {
   const SETUP = `${HOME}/setup/coordinator.md`;
   const SETUP_WORKER = `${HOME}/setup/roles/worker.md`;
   const CLAUDE = `${HOME}/coordinator/CLAUDE.md`;
@@ -3034,7 +3034,7 @@ describe('init: the setup texts and the link rule (TP-102, TP-130)', () => {
     expect(deps.files.has(INDEX)).toBe(false);
   });
 
-  it('works for a factory folder that sits under a linked parent folder (TP-149)', async () => {
+  it('works for a factory folder that sits under a linked parent folder', async () => {
     const links: Record<string, string> = { '/w/linked': '/w/real' };
     // The person says no to the hook settings: the fake file system keeps no file under the real path of a link.
     // Git prints the real path of its git folder, so the fixture names the real staging folder.
@@ -3046,7 +3046,7 @@ describe('init: the setup texts and the link rule (TP-102, TP-130)', () => {
   });
 });
 
-describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
+describe('init: the approval points', () => {
   const STORE = '/state/factory/owner-records.json';
   const ACCEPTANCES = '/state/factory/setup-acceptances.json';
   const [owner, delegated] = values.approvalModes;
@@ -3081,7 +3081,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
   const delegation = (point: string, mode: string) =>
     expect.objectContaining({ kind: 'delegation', node: 'node', root: HOME, point, mode });
 
-  describe('a terminal window (TP-37)', () => {
+  describe('a terminal window', () => {
     it('asks owner or delegated for each point of the recipe, in order, with owner as the default', async () => {
       const { deps } = setup({}, typing(['', '']));
       const result = await runInit(deps, options());
@@ -3191,7 +3191,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
     });
   });
 
-  describe('no terminal window, or the yes flag (TP-37)', () => {
+  describe('no terminal window, or the yes flag', () => {
     it('writes owner for each point with the yes flag and no terminal window, asks nothing, and writes no record', async () => {
       const { deps } = setup();
       expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
@@ -3215,7 +3215,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
       expect(deps.files.has(STORE)).toBe(false);
     });
 
-    it('stops with exit 2 before any write when the flag comes from a terminal for the input only, because the hook settings need a full terminal window (TP-16)', async () => {
+    it('stops with exit 2 before any write when the flag comes from a terminal for the input only, because the hook settings need a full terminal window', async () => {
       const { deps } = setup({}, { stdinIsTTY: true });
       const before = snapshot(deps);
       const result = await runInit(deps, options({ approval: [`merge=${delegated}`] }));
@@ -3225,7 +3225,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
     });
   });
 
-  describe('a delegated choice that the writer would refuse (TP-38)', () => {
+  describe('a delegated choice that the writer would refuse', () => {
     it('exits 4 with no terminal window, names the point and the remedy, and writes no file', async () => {
       const { deps, log } = setup();
       const before = snapshot(deps);
@@ -3271,7 +3271,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
     });
   });
 
-  describe('the yes flag with delegated (TP-81)', () => {
+  describe('the yes flag with delegated', () => {
     it.each([
       ['no terminal window', {}],
       ['a terminal window', terminal],
@@ -3346,7 +3346,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
     });
   });
 
-  describe('when the records are written (TP-91)', () => {
+  describe('when the records are written', () => {
     const listFails = (deps: Deps): Deps => failingWrite(deps, '/homes.json');
 
     it('writes the records after the factory list, and no record before it', async () => {
@@ -3381,7 +3381,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
     });
   });
 
-  describe('when a record can not be written after the factory list (TP-91)', () => {
+  describe('when a record can not be written after the factory list', () => {
     const storeFails = (deps: Deps): Deps => failingWrite(deps, '/owner-records.json');
 
     it('still succeeds, warns and names the point, and keeps the node', async () => {
@@ -3566,7 +3566,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     expect(linesOf(result)).toContain('Accepted the setup text');
   });
 
-  it('writes no acceptance in a factory session on a new root, still succeeds, and warns (TP-83)', async () => {
+  it('writes no acceptance in a factory session on a new root, still succeeds, and warns', async () => {
     const { deps } = setup({}, person({ ...terminal, env: inSession }));
     const result = await runInit(deps, options({ yes: false }));
     expect(result.ok).toBe(true);
@@ -3579,7 +3579,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     ['the coordinator text', { [COORDINATOR]: 'My own rules.\n' }],
     ['the worker text', { [WORKER]: 'My own worker rules.\n' }],
     ['both texts', { [COORDINATOR]: 'My own rules.\n', [WORKER]: 'My own worker rules.\n' }],
-  ])('does not accept a setup file that was there before the run (%s): no acceptance, a warning that names the command (TP-157)', async (_name, before) => {
+  ])('does not accept a setup file that was there before the run (%s): no acceptance, a warning that names the command', async (_name, before) => {
     const { deps } = setup();
     for (const [path, text] of Object.entries(before)) deps.seed(`${HOME}/${path}`, text);
     const result = await runInit(deps, options({ yes: true }));
@@ -3614,7 +3614,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
   });
 });
 
-describe('init: instruction files at the root and above it (TP-33)', () => {
+describe('init: instruction files at the root and above it', () => {
   const ABOVE = '/w/CLAUDE.md';
   const WRITES = new Set(['mkdir', 'writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'chmod', 'copyTree']);
   const GIT_ACTIONS = new Set(['init', 'clone', 'add', 'commit']);
@@ -3703,7 +3703,7 @@ describe('init: instruction files at the root and above it (TP-33)', () => {
   });
 });
 
-describe('init: the hook settings of the coordinator on a new root (TP-16)', () => {
+describe('init: the hook settings of the coordinator on a new root', () => {
   const FILE = `${HOME}/coordinator/.claude/settings.local.json`;
   const ACCEPTANCES = '/state/factory/setup-acceptances.json';
   const terminal = { stdinIsTTY: true, stdoutIsTTY: true };

@@ -198,7 +198,7 @@ describe('the parsers of the machine facts', () => {
   );
 });
 
-describe('gatherMachine on the fixtures of both systems (TP-19)', () => {
+describe('gatherMachine on the fixtures of both systems', () => {
   it('reads the macOS fixtures into four facts, with the limit that the config gives', async () => {
     const report = await gatherMachine(macMachine(), HOME, LIMITS);
     expect(report).toEqual([
@@ -274,7 +274,7 @@ describe('gatherMachine on the fixtures of both systems (TP-19)', () => {
   });
 });
 
-describe('a fact that does not parse or does not come is unknown (TP-20)', () => {
+describe('a fact that does not parse or does not come is unknown', () => {
   const NOT_PARSED: readonly (readonly [Source, string])[] = [
     ['memory', 'The system has 4 pages.\n'],
     ['memory', 'System-wide memory free percentage: 101%\n'],
@@ -443,7 +443,7 @@ describe('machineVerdict', () => {
   });
 });
 
-describe('machineWarnings (the warnings of worker new, AC-9)', () => {
+describe('machineWarnings (the warnings of worker new)', () => {
   it('gives no warning when every fact is ok', async () => {
     expect(machineWarnings(await gatherMachine(macMachine(), HOME, LIMITS))).toEqual([]);
     expect(machineWarnings(await gatherMachine(linuxMachine(), HOME, LIMITS))).toEqual([]);
@@ -548,7 +548,7 @@ describe('factory machine', () => {
     });
   });
 
-  it('prints a short output on every shape of the facts (TP-63)', async () => {
+  it('prints a short output on every shape of the facts', async () => {
     const limits: MachineLimits = { ...LIMITS, memory_free_min_pct: 80 };
     const none = withFactory(createFakeDeps({ ...fakeOptions, os: 'darwin', run: (call) => missingProgram(call.command) }));
     for (const deps of [macMachine(), linuxMachine(), macMachine({ disk: missingProgram('df') }, limits), none]) {
@@ -556,7 +556,7 @@ describe('factory machine', () => {
     }
   });
 
-  it('has the size of its output on the macOS fixtures in the token budget, row 16 (TP-64)', async () => {
+  it('has the size of its output on the macOS fixtures in the token budget, row 16', async () => {
     const text = plainText(await run(macMachine()));
     const row = budgetRow(16);
     expect(row.command).toContain('`factory machine`');

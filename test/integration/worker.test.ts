@@ -184,7 +184,7 @@ const workerNew = (...extra: string[]): Promise<RunResult> =>
   box.run(['worker', 'new', '--home', box.node, ...extra], { env: tmuxEnv });
 
 describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux server)', () => {
-  it('makes the work copy, the record and a marked pane that runs the program in the work copy (TP-5)', async () => {
+  it('makes the work copy, the record and a marked pane that runs the program in the work copy', async () => {
     const clone = await startedNode();
     const result = await workerNew('alpha', '--project', 'web', '--yes');
     expect(result.code).toBe(0);
@@ -228,7 +228,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(await outOf('config-dir')).toBe(FAKE_CONFIG_DIR);
   });
 
-  it('keeps every entry of the Claude folder and of the Claude file of the test home as it was, and the status line of the user out of the config (AC-3)', async () => {
+  it('keeps every entry of the Claude folder and of the Claude file of the test home as it was, and the status line of the user out of the config', async () => {
     const home = box.env['HOME'] ?? '';
     expect(home.startsWith(`${box.root}${sep}`)).toBe(true);
     const userSettings = {
@@ -252,7 +252,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(JSON.parse(await readFile(join(copy, '.claude', 'settings.local.json'), 'utf8'))).toEqual(ownSettings());
   });
 
-  it('names the session of a new worker with the id of the node and the id of the worker (TP-12)', async () => {
+  it('names the session of a new worker with the id of the node and the id of the worker', async () => {
     await startedNode();
     expect((await workerNew('alpha', '--project', 'web', '--yes')).code).toBe(0);
     await waitForLaunches(2);
@@ -291,7 +291,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(marks.sort()).toEqual(['', ...ids]);
   }, 120_000);
 
-  it('exits 2 for a taken id and starts no second pane (TP-7)', async () => {
+  it('exits 2 for a taken id and starts no second pane', async () => {
     await startedNode();
     expect((await workerNew('alpha', '--project', 'web', '--yes')).code).toBe(0);
     await waitForLaunches(2);
@@ -302,7 +302,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(await workerPanes()).toEqual(before);
   });
 
-  it('exits 2 for a project that the config does not list and makes nothing (TP-6)', async () => {
+  it('exits 2 for a project that the config does not list and makes nothing', async () => {
     await startedNode();
     const before = await treeOf(box.node);
     const result = await workerNew('alpha', '--project', 'nope', '--yes');
@@ -312,7 +312,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(await workerPanes()).toHaveLength(1);
   });
 
-  it('exits 2 with no terminal window and no yes flag, and writes nothing (TP-12)', async () => {
+  it('exits 2 with no terminal window and no yes flag, and writes nothing', async () => {
     await startedNode();
     const before = await treeOf(box.node);
     const result = await workerNew('alpha', '--project', 'web');
@@ -368,7 +368,7 @@ const startedWorker = async (): Promise<void> => {
 
 // Each case launches several processes: 5 to 10 s alone, 14 to 24 s under load, so the 30 s global limit is too tight.
 describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binary, separate tmux server)', { timeout: 60_000 }, () => {
-  it('shows the worker in the slot, and layout puts the board back (TP-31)', async () => {
+  it('shows the worker in the slot, and layout puts the board back', async () => {
     await startedWorker();
     expect(await marksOf('view')).toContain('|board|');
 
@@ -425,7 +425,7 @@ describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binar
     expect(await marksOf('view')).toContain('|board|');
   });
 
-  it('exits 2 for a time outside the bounds and moves no pane (TP-32)', async () => {
+  it('exits 2 for a time outside the bounds and moves no pane', async () => {
     await startedWorker();
     const before = await marksOf('view');
     const result = await summon('alpha', '--for', '3h');
@@ -434,7 +434,7 @@ describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binar
     expect(await marksOf('view')).toEqual(before);
   });
 
-  it('makes the window workers again on a session that has only the window view (TP-33)', async () => {
+  it('makes the window workers again on a session that has only the window view', async () => {
     await startedNode();
     expect((await tmux(['kill-window', '-t', '=demo:workers'])).code).toBe(0);
     const result = await layout();
@@ -444,7 +444,7 @@ describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binar
     expect(windows.sort()).toEqual(['view', 'workers']);
   });
 
-  it('exits 3 and names factory start when no tmux server runs (TP-127)', async () => {
+  it('exits 3 and names factory start when no tmux server runs', async () => {
     await startedWorker();
     await stopServer();
     const result = await summon('alpha');
@@ -519,7 +519,7 @@ const stoppedAlpha = async (): Promise<RunResult> => {
 };
 
 describe.skipIf(!hasTmux)('factory worker stop and factory worker resume (built binary, separate tmux server)', () => {
-  it('ends the program of the pane of the worker, closes the pane, and leaves no process of that pane (TP-26)', async () => {
+  it('ends the program of the pane of the worker, closes the pane, and leaves no process of that pane', async () => {
     await startedWorker();
     expect((await sessionStarted()).code).toBe(0);
     const { pane, pid } = await livePaneOf('alpha');

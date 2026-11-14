@@ -397,10 +397,10 @@ export type PermissionSkip =
   | { readonly kind: 'text'; readonly label: string; readonly text: string };
 
 /**
- * The permission-skip list (design 4.4, AC-21): the settings of Claude Code that skip permission prompts. A checked
+ * The permission-skip list (design 4.4): the settings of Claude Code that skip permission prompts. A checked
  * settings file with one of them makes `doctor` fail and `start` exit 4, on every root and also after a setup acceptance.
- * Only a setting that skips permission prompts is on the list: an allow rule is not (D-15 B), and `skipAutoPermissionPrompt`
- * is not, because it hides a notice and skips no prompt.
+ * Only a setting that skips permission prompts is on the list: an allow rule is not, because it gives a warning only, and
+ * `skipAutoPermissionPrompt` is not, because it hides a notice and skips no prompt.
  *
  * Sources: the permissions page (https://code.claude.com/docs/en/permissions) says that the mode `bypassPermissions` skips
  * the permission prompts and that the flag `--dangerously-skip-permissions` starts it. The settings reference
@@ -913,7 +913,7 @@ export const ownerDecisions = {
 } as const;
 
 /**
- * The hash of a decision request (AC-39). The canonical text is the JSON of the wrapper `{ tag, version, request }`, with the
+ * The hash of a decision request. The canonical text is the JSON of the wrapper `{ tag, version, request }`, with the
  * whole waiting entry in `request`. The hash is SHA-256 of that text as lowercase hex, and `pattern` is its form.
  */
 export const requestHash = {

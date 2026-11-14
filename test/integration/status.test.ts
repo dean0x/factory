@@ -20,7 +20,7 @@ interface StatusJson {
   }[];
 }
 
-describe('factory status (built binary, separate tmux server, AC-21, TP-48, TP-50)', () => {
+describe('factory status (built binary, separate tmux server)', () => {
   it.skipIf(!hasTmux)(
     'lists each worker with its state, an unknown work item and no idle worker',
     async () => {
@@ -35,7 +35,7 @@ describe('factory status (built binary, separate tmux server, AC-21, TP-48, TP-5
   );
 
   it.skipIf(!hasTmux)(
-    'shows each worker as stopped when no tmux server runs (TP-50)',
+    'shows each worker as stopped when no tmux server runs',
     async () => {
       await lab.node();
       expect((await lab.tmux(['kill-server'])).code).toBe(0);
@@ -52,8 +52,8 @@ describe('factory status (built binary, separate tmux server, AC-21, TP-48, TP-5
   );
 });
 
-describe('factory status: the folder of a git work tree (built binary, AC-22, TP-51, TP-52)', () => {
-  it('finds the factory from a separate git work tree of a listed project, outside the factory folder, and exits 0 (TP-51)', async () => {
+describe('factory status: the folder of a git work tree (built binary)', () => {
+  it('finds the factory from a separate git work tree of a listed project, outside the factory folder, and exits 0', async () => {
     await lab.init();
     const tree = join(lab.box.root, 'web-fix');
     const added = await lab.box.git(join(lab.box.node, 'web'), ['worktree', 'add', '-q', '-b', 'fix', tree]);
@@ -66,7 +66,7 @@ describe('factory status: the folder of a git work tree (built binary, AC-22, TP
     expect(status.home).toBe(await realpath(lab.box.node));
   });
 
-  it('exits 2 and prints the hint from a git work tree of no listed project (TP-52)', async () => {
+  it('exits 2 and prints the hint from a git work tree of no listed project', async () => {
     await lab.init();
     const other = await lab.box.makeProject('other');
 
@@ -78,7 +78,7 @@ describe('factory status: the folder of a git work tree (built binary, AC-22, TP
   });
 });
 
-describe('factory report: the report file (built binary, AC-12, TP-13)', () => {
+describe('factory report: the report file (built binary)', () => {
   const stateOf = (): string => join(lab.box.node, '.factory');
   const outboxOf = (): string => join(stateOf(), 'outbox');
 

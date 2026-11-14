@@ -29,7 +29,7 @@ const coreFiles = (): string[] => allSourceFiles(SRC).filter((path) => !insideRe
 /** File names that git gives its hooks. A hook name is a git name, not a word of the software recipe. */
 const GIT_HOOK_NAMES: ReadonlySet<string> = new Set(['pre-merge-commit']);
 
-describe('the word list of the software recipe (TP-97)', () => {
+describe('the word list of the software recipe', () => {
   it('holds the words of the recipe, with the abbreviations', () => {
     expect([...softwareWordList]).toEqual([
       'merge',
@@ -91,7 +91,7 @@ describe('the word list of the software recipe (TP-97)', () => {
   });
 });
 
-describe('no software word in the core (TP-97)', () => {
+describe('no software word in the core', () => {
   it('scans the names file, the glossary, the state files and the templates', () => {
     const scanned = coreFiles().map((path) => relative(SRC, path));
     expect(scanned).toEqual(
@@ -131,7 +131,7 @@ describe('no software word in the core (TP-97)', () => {
   });
 });
 
-describe('no import of a recipe folder from the core (TP-137)', () => {
+describe('no import of a recipe folder from the core', () => {
   it('finds no import of src/recipes/<id>/ in a file outside src/recipes', () => {
     const found = coreFiles().flatMap((path) =>
       recipeFolderImports(path, readFileSync(path, 'utf8')).map((target) => `${relative(SRC, path)} imports ${target}`),
@@ -255,7 +255,7 @@ describe('no run-time import of the loader or the command table from a recipe', 
   });
 });
 
-describe('the copies of the word lists in the shell scripts (TP-150)', () => {
+describe('the copies of the word lists in the shell scripts', () => {
   const exitCheck = readFileSync(join(ROOT, 'scripts', 'exit-check.sh'), 'utf8');
   const docsCheck = readFileSync(join(ROOT, 'scripts', 'check-intent-docs.sh'), 'utf8');
 

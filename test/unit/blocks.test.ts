@@ -164,7 +164,7 @@ describe('appendBlocks', () => {
   });
 });
 
-describe('safetyStateOf (TP-43, TP-77, TP-125)', () => {
+describe('safetyStateOf', () => {
   const HOME = '/w/node';
   const CLAUDE = `${HOME}/coordinator/CLAUDE.md`;
   const config = sampleConfig();

@@ -57,7 +57,7 @@ const failureOf = (result: ReturnType<typeof parseReport>): string => {
   return result.error;
 };
 
-describe('the report document (AC-9)', () => {
+describe('the report document', () => {
   it('holds the keys of the digest and nothing else', () => {
     const result = parseReport(document());
     expect(result.ok).toBe(true);
@@ -117,7 +117,7 @@ describe('the report document (AC-9)', () => {
   });
 });
 
-describe('the report allow-list (AC-10)', () => {
+describe('the report allow-list', () => {
   const sentinels = ['ownerPrefix', 'proxy', 'sessionId', 'pane', 'approval'];
 
   it.each(sentinels)('refuses the key %s at the top level', (key) => {
@@ -144,7 +144,7 @@ describe('the report allow-list (AC-10)', () => {
   });
 });
 
-describe('the report caps (AC-12 limits)', () => {
+describe('the report caps', () => {
   it('accepts a list at its cap and refuses one more', () => {
     const many = (count: number, make: (at: number) => unknown): unknown[] => Array.from({ length: count }, (_, at) => make(at));
     const workerAt = (at: number): unknown => ({ ...worker, id: `w${at}` });
@@ -259,7 +259,7 @@ describe('the work item of a worker row', () => {
   });
 });
 
-describe('the child row (AC-19, final in this version)', () => {
+describe('the child row (final in this version)', () => {
   const rowParses = (row: unknown): boolean => parsed((doc) => (doc['children'] = [row])).ok;
 
   it('holds id, address, state, reason, counts and age', () => {

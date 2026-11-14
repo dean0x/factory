@@ -194,7 +194,7 @@ describe('config schema 2', () => {
     });
   });
 
-  describe('session.agent (AC-1, TP-2)', () => {
+  describe('session.agent', () => {
     it('accepts claude, and defaults to claude when the key is missing', () => {
       expect(parsedOf(sampleObject()).core.session.agent).toBe('claude');
       const raw = sampleObject();
@@ -212,7 +212,7 @@ describe('config schema 2', () => {
     );
   });
 
-  describe('limits.idle_after (AC-2, TP-4)', () => {
+  describe('limits.idle_after', () => {
     it('defaults to 2h when the key is missing', () => {
       const raw = sampleObject();
       delete raw['limits'].idle_after;
@@ -355,7 +355,7 @@ describe('config schema 2', () => {
 
   });
 
-  describe('project path (AC-12, TP-28)', () => {
+  describe('project path', () => {
     const withPath = (path: unknown): Mutate => (raw) => {
       raw['recipe'].projects[0].path = path;
     };
@@ -436,7 +436,7 @@ describe('config schema 2', () => {
 
   });
 
-  describe('clone URLs (AC-11)', () => {
+  describe('clone URLs', () => {
     const SECRET = 'ghp_S3cretT0kenValue';
     const withUrl = (url: unknown): Mutate => (raw) => {
       raw['recipe'].projects[0].url = url;
@@ -528,7 +528,7 @@ describe('config schema 2', () => {
     });
   });
 
-  describe('addresses (F-13)', () => {
+  describe('addresses', () => {
     const SCHEME_HINT = 'factory runs on one machine: use a file:// address';
     const bad: readonly (readonly [string, string])[] = [
       ['ssh', 'ssh://owner@host/srv/web-factory'],
@@ -670,7 +670,7 @@ describe('config schema 2', () => {
   });
 });
 
-describe('the board block (AC-12)', () => {
+describe('the board block', () => {
   /** The mixed sample document with the sample board block, changed by `mutate`. */
   const checkBoard = (mutate: Mutate): string | null =>
     check((raw) => {
@@ -683,21 +683,21 @@ describe('the board block (AC-12)', () => {
   /** Text that is not a token: empty, a space, a hyphen or underscore first, a line break, a non-ASCII letter, or 41 characters. */
   const BAD_TOKENS = ['', 'a b', ' a', '-a', '_a', 'a\nb', 'café', 'x'.repeat(41)];
 
-  it('M5-1b TP-27 accepts the block with its states, roles and fields, and keeps it in the core', () => {
+  it('accepts the block with its states, roles and fields, and keeps it in the core', () => {
     const parsed = parseMixed({ ...sampleObject(), board: sampleBoard() });
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.core.board).toEqual(sampleBoard());
   });
 
-  it('M5-1b TP-27 has no default: a config with no board block has no board key', () => {
+  it('has no default: a config with no board block has no board key', () => {
     const parsed = parseMixed(sampleObject());
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect('board' in parsed.data.core).toBe(false);
   });
 
-  it('M5-1b TP-27 accepts the block with every tracker kind', () => {
+  it('accepts the block with every tracker kind', () => {
     expect(check((raw) => (raw['board'] = sampleBoard()))).toBeNull();
     expect(
       check((raw) => {
@@ -707,18 +707,18 @@ describe('the board block (AC-12)', () => {
     ).toBeNull();
   });
 
-  it('M5-1b TP-27 reads an empty block as a block that declares nothing', () => {
+  it('reads an empty block as a block that declares nothing', () => {
     const parsed = parseMixed({ ...sampleObject(), board: {} });
     expect(parsed.success && parsed.data.core.board).toEqual({});
   });
 
-  it('M5-1b TP-27 refuses a block that is not a mapping', () => {
+  it('refuses a block that is not a mapping', () => {
     for (const value of [[], 'open', 3, null]) {
       expect(check((raw) => (raw['board'] = value))).toContain('board:');
     }
   });
 
-  it('M5-1b TP-27 refuses a name, a state and a value that is not a token, and names the key', () => {
+  it('refuses a name, a state and a value that is not a token, and names the key', () => {
     for (const bad of BAD_TOKENS) {
       expect(checkBoard((board) => (board.fields[0].name = bad))).toContain('board.fields.0.name:');
       expect(checkBoard((board) => (board.states[0] = bad))).toContain('board.states.0:');
@@ -726,13 +726,13 @@ describe('the board block (AC-12)', () => {
     }
   });
 
-  it('M5-1b TP-27 TP-139 accepts a token of 40 characters, the length of the longest worker id, and refuses one of 41', () => {
+  it('accepts a token of 40 characters, the length of the longest worker id, and refuses one of 41', () => {
     const edge = 'a'.repeat(40);
     expect(checkBoard((board) => (board.fields[1].name = edge))).toBeNull();
     expect(checkBoard((board) => (board.fields[1].name = `${edge}a`))).toContain('board.fields.1.name:');
   });
 
-  it('M5-1b TP-139 accepts a state and a value of 40 characters, and refuses one of 41', () => {
+  it('accepts a state and a value of 40 characters, and refuses one of 41', () => {
     const edge = 'a'.repeat(40);
     expect(checkBoard((board) => (board.states[2] = edge))).toBeNull();
     expect(checkBoard((board) => (board.states[2] = `${edge}a`))).toContain('board.states.2:');
@@ -740,7 +740,7 @@ describe('the board block (AC-12)', () => {
     expect(checkBoard((board) => (board.fields[0].values[0] = `${edge}a`))).toContain('board.fields.0.values.0:');
   });
 
-  it('M5-1b TP-27 refuses a role and a worker field that are not tokens', () => {
+  it('refuses a role and a worker field that are not tokens', () => {
     for (const bad of BAD_TOKENS) {
       expect(checkBoard((board) => (board.in_progress = bad))).toContain('board.in_progress:');
       expect(checkBoard((board) => (board.closed = bad))).toContain('board.closed:');
@@ -748,7 +748,7 @@ describe('the board block (AC-12)', () => {
     }
   });
 
-  it('M5-1b TP-27 never repeats a rejected value in the message', () => {
+  it('never repeats a rejected value in the message', () => {
     const secret = `sk-ant-api03-${'SECRET'.repeat(5)}`;
     expect(secret.length).toBeGreaterThan(boardLimits.maxTokenChars);
     const message = checkBoard((board) => {
@@ -760,7 +760,7 @@ describe('the board block (AC-12)', () => {
     expect(message).not.toContain('SECRET');
   });
 
-  it('M5-1b TP-27 refuses too many states, too many fields and too many values of one field', () => {
+  it('refuses too many states, too many fields and too many values of one field', () => {
     expect(checkBoard((board) => (board.states = tokens(boardLimits.maxStates + 1, 's')))).toContain('board.states:');
     expect(
       checkBoard((board) => {
@@ -773,7 +773,7 @@ describe('the board block (AC-12)', () => {
     );
   });
 
-  it('M5-1b TP-27 accepts the most states, the most fields and the most values', () => {
+  it('accepts the most states, the most fields and the most values', () => {
     expect(
       checkBoard((board) => {
         board.states = tokens(boardLimits.maxStates, 's');
@@ -790,7 +790,7 @@ describe('the board block (AC-12)', () => {
     ).toBeNull();
   });
 
-  it('M5-1b TP-27 refuses an empty list of values and an empty list of states', () => {
+  it('refuses an empty list of values and an empty list of states', () => {
     expect(checkBoard((board) => (board.fields[0].values = []))).toContain('board.fields.0.values:');
     expect(
       checkBoard((board) => {
@@ -801,14 +801,14 @@ describe('the board block (AC-12)', () => {
     ).toContain('board.states:');
   });
 
-  it('M5-1b TP-27 refuses tracks, track and stage as the name of a field', () => {
+  it('refuses tracks, track and stage as the name of a field', () => {
     for (const name of ['tracks', 'track', 'stage']) {
       expect(reservedFieldNames).toContain(name);
       expect(checkBoard((board) => (board.fields[1].name = name))).toContain('board.fields.1.name:');
     }
   });
 
-  it('M5-1b TP-27 refuses every reserved name as the name of a field, and accepts a name next to it', () => {
+  it('refuses every reserved name as the name of a field, and accepts a name next to it', () => {
     for (const name of reservedFieldNames) {
       expect(checkBoard((board) => (board.fields[1].name = name))).toContain('board.fields.1.name:');
     }
@@ -823,7 +823,7 @@ describe('the board block (AC-12)', () => {
     }
   });
 
-  it('M5-1b TP-27 refuses a role with no declared state', () => {
+  it('refuses a role with no declared state', () => {
     expect(checkBoard((board) => (board.in_progress = 'nowhere'))).toContain('board.in_progress:');
     expect(checkBoard((board) => (board.closed = 'nowhere'))).toContain('board.closed:');
     expect(
@@ -833,7 +833,7 @@ describe('the board block (AC-12)', () => {
     ).toContain('board.in_progress:');
   });
 
-  it('M5-1b TP-27 refuses a worker field that is not a declared field, or that is not a field of an item', () => {
+  it('refuses a worker field that is not a declared field, or that is not a field of an item', () => {
     expect(checkBoard((board) => (board.worker_field = 'nowhere'))).toContain('board.worker_field:');
     expect(checkBoard((board) => (board.worker_field = 'release'))).toContain('board.worker_field:');
     expect(
@@ -843,18 +843,18 @@ describe('the board block (AC-12)', () => {
     ).toContain('board.worker_field:');
   });
 
-  it('M5-1b TP-27 refuses a repeated field name, a repeated state and a repeated value', () => {
+  it('refuses a repeated field name, a repeated state and a repeated value', () => {
     expect(checkBoard((board) => (board.fields[1].name = 'priority'))).toContain('board.fields.1.name:');
     expect(checkBoard((board) => (board.states[1] = 'open'))).toContain('board.states:');
     expect(checkBoard((board) => (board.fields[0].values[1] = 'P0'))).toContain('board.fields.0.values:');
   });
 
-  it('M5-1b TP-27 refuses an unknown key in the block and in a field', () => {
+  it('refuses an unknown key in the block and in a field', () => {
     expect(checkBoard((board) => (board.extra = 1))).toContain('board.extra: unknown key');
     expect(checkBoard((board) => (board.fields[0].extra = 1))).toContain('board.fields.0.extra: unknown key');
   });
 
-  it('M5-1b TP-27 refuses a field with a bad target or kind, a values field with no list, and a list on another kind', () => {
+  it('refuses a field with a bad target or kind, a values field with no list, and a list on another kind', () => {
     expect(checkBoard((board) => (board.fields[0].target = 'track'))).toContain('board.fields.0.target:');
     expect(checkBoard((board) => (board.fields[0].kind = 'text'))).toContain('board.fields.0.kind:');
     expect(checkBoard((board) => delete board.fields[0].values)).toContain('board.fields.0.values:');
@@ -862,7 +862,7 @@ describe('the board block (AC-12)', () => {
     expect(checkBoard((board) => (board.fields[3].values = ['a']))).toContain('board.fields.3.values: unknown key');
   });
 
-  it('M5-1b TP-27 reads required as false when it is absent, and refuses a value that is not a boolean', () => {
+  it('reads required as false when it is absent, and refuses a value that is not a boolean', () => {
     const parsed = parseMixed({
       ...sampleObject(),
       board: { fields: [{ name: 'lane', target: 'item', kind: 'token' }] },
@@ -871,13 +871,13 @@ describe('the board block (AC-12)', () => {
     expect(checkBoard((board) => (board.fields[0].required = 'yes'))).toContain('board.fields.0.required:');
   });
 
-  it('M5-1b TP-27 keeps the schema version at 2: a board block loads with version 2 and not with another version', () => {
+  it('keeps the schema version at 2: a board block loads with version 2 and not with another version', () => {
     expect(CONFIG_SCHEMA_VERSION).toBe(2);
     expect(check((raw) => (raw['board'] = sampleBoard()))).toBeNull();
     expect(check((raw) => ((raw['board'] = sampleBoard()), (raw['schema'] = 3)))).toContain('schema:');
   });
 
-  it('M5-1b TP-27 keeps the block in the shared file and refuses it in the local file', () => {
+  it('keeps the block in the shared file and refuses it in the local file', () => {
     const files = sampleFiles({ ...sampleObject(), board: sampleBoard() });
     expect(Object.keys(files.shared)).toContain('board');
     expect(Object.keys(files.local)).not.toContain('board');
@@ -1037,7 +1037,7 @@ describe('the shared file and the local file (design 4.4)', () => {
     expect(mergeConfig(shared.data, local.data).success).toBe(false);
   });
 
-  describe('sources: the local source of a project with no URL (AC-11)', () => {
+  describe('sources: the local source of a project with no URL', () => {
     const TOKEN = 'ghp_S3cretT0kenValue';
     /** The sample project sits at `web`, so a key of `sources` can name it. */
     const parsedWith = (sources: unknown, change: Mutate = () => undefined) => {

@@ -192,7 +192,7 @@ const refusedHits = (source: string, file: string): Hit[] =>
     ? []
     : hitsIn(source, file).filter((hit) => !NOT_TMUX_WORDS.some((kept) => kept.file === hit.file && kept.literal === hit.literal));
 
-describe('TP-16: the words that tmux reads as an input command', () => {
+describe('the words that tmux reads as an input command', () => {
   it('knows the aliases and the unique starts of the six input commands', () => {
     expect(formsOf('send-keys').sort()).toEqual(['send', 'send-k', 'send-ke', 'send-key', 'send-keys']);
     expect(formsOf('send-prefix').sort()).toEqual(['send-p', 'send-pr', 'send-pre', 'send-pref', 'send-prefi', 'send-prefix']);
@@ -224,7 +224,7 @@ describe('TP-16: the words that tmux reads as an input command', () => {
   });
 });
 
-describe('TP-16: the scan of the source texts', () => {
+describe('the scan of the source texts', () => {
   const sample = join(SRC, 'commands', 'sample.ts');
   /** The words that the scan finds. A text in quotes inside another literal is a literal twice, so each word counts once. */
   const wordsOf = (source: string): string[] => [...new Set(hitsIn(source, sample).map((hit) => hit.word))];
@@ -279,7 +279,7 @@ describe('TP-16: the scan of the source texts', () => {
   });
 });
 
-describe('TP-16: the input commands in the source', () => {
+describe('the input commands in the source', () => {
   const sources = allSourceFiles(SRC).map((path) => ({ file: relative(SRC, path), source: readFileSync(path, 'utf8') }));
 
   it('scans the whole source, including the tmux module with the shell text of the summon timer', () => {

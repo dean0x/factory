@@ -9,7 +9,7 @@ const idsOf = (text: string): readonly string[] | string => {
   return read.ok ? read.value : read.error;
 };
 
-describe('the item ids of a board text (TP-10)', () => {
+describe('the item ids of a board text', () => {
   it('reads the id of each item, in the order of the items', () => {
     expect(idsOf(board([{ id: 'B-2' }, { id: 'B-1', title: 'first' }]))).toEqual(['B-2', 'B-1']);
   });
@@ -48,7 +48,7 @@ describe('the item ids of a board text (TP-10)', () => {
   });
 });
 
-describe('the item ids that a change loses (TP-10)', () => {
+describe('the item ids that a change loses', () => {
   const lost = (before: string | null, after: string | null) => lostItemIds(before, after);
 
   it('loses nothing when the change adds an item or changes one', () => {

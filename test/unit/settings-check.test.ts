@@ -18,7 +18,7 @@ const textFor = (item: PermissionSkip): string => {
   return JSON.stringify(nested);
 };
 
-describe('the permission-skip list (TP-133)', () => {
+describe('the permission-skip list', () => {
   it('has the four items of the design', () => {
     expect(permissionSkipList.map((item) => item.label)).toEqual([
       'permissions.defaultMode set to bypassPermissions',
@@ -47,7 +47,7 @@ describe('the permission-skip list (TP-133)', () => {
     expect(facts.skips).toEqual(['skipDangerousModePermissionPrompt set to true']);
   });
 
-  it('holds no allow rule: a rule that covers a whole tool is a warning and not a stop (D-15 B)', () => {
+  it('holds no allow rule: a rule that covers a whole tool is a warning and not a stop', () => {
     const facts = analyzeSettings(JSON.stringify({ permissions: { allow: ['Bash', 'Bash(*)', '*'] } }));
     expect(facts.skips).toEqual([]);
     expect(permissionSkipList.some((item) => item.kind === 'setting' && item.path.includes(claudeSettingKeys.allow))).toBe(false);
@@ -79,7 +79,7 @@ describe('the permission-skip list (TP-133)', () => {
   });
 });
 
-describe('the variables with the prefix of the program in the environment values (TP-179, TP-23)', () => {
+describe('the variables with the prefix of the program in the environment values', () => {
   it('has the prefix that the names of the session variables start with', () => {
     expect(env.session.startsWith(env.factoryPrefix)).toBe(true);
     expect(env.home.startsWith(env.factoryPrefix)).toBe(true);
@@ -208,7 +208,7 @@ describe('the settings that run a command', () => {
   });
 });
 
-describe('an allow rule that covers a whole tool (TP-154)', () => {
+describe('an allow rule that covers a whole tool', () => {
   it.each([
     'Bash',
     'Bash()',
@@ -299,7 +299,7 @@ describe('the permission mode acceptEdits', () => {
   });
 });
 
-describe('the settings that hold or refuse the input of other sessions (TP-36)', () => {
+describe('the settings that hold or refuse the input of other sessions', () => {
   it.each([['hold'], ['refuse']])('finds crossSessionInbound %s', (value) => {
     expect(analyzeSettings(JSON.stringify({ [claudeSettingKeys.crossSessionInbound]: value })).crossSessionInbound).toBe(value);
   });
@@ -320,7 +320,7 @@ describe('the settings that hold or refuse the input of other sessions (TP-36)',
   });
 });
 
-describe('the approval of project MCP servers (TP-180)', () => {
+describe('the approval of project MCP servers', () => {
   it('finds the setting that approves all of them', () => {
     expect(analyzeSettings(JSON.stringify({ [claudeSettingKeys.approveAllMcp]: true })).approvesMcp).toEqual([
       claudeSettingKeys.approveAllMcp,

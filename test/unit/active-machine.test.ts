@@ -367,7 +367,7 @@ describe('the mark of the active machine: who it names', () => {
   });
 });
 
-describe('the mark of the active machine in a state repo whose delete guard is off (TP-6)', () => {
+describe('the mark of the active machine in a state repo whose delete guard is off', () => {
   /** The git reads that tell a guard that is on from a guard that is off. The ready check of the state repo makes none of them. */
   const guardReadsOf = (deps: FakeDeps): string[] =>
     deps.calls
@@ -393,7 +393,7 @@ describe('the mark of the active machine in a state repo whose delete guard is o
   });
 });
 
-describe('the mark of the active machine and the state lock (TP-19)', () => {
+describe('the mark of the active machine and the state lock', () => {
   const LOCK_FILE = `${LAYOUT.locksDir}/${stateLock.name}${stateLock.lock.suffix}`;
   const WAITS = Array.from({ length: stateLock.lock.attempts - 1 }, () => stateLock.lock.waitMs);
   const marked = (machine: string): FakeDeps => {

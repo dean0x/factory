@@ -7,7 +7,7 @@ import { comparable, isSameOrInside, realPathOf } from './paths.js';
  * The instruction-file check (design 4.3, the instruction-file rule). An agent loads instruction files from its
  * working folder and from every folder above it, so a file in or above the root reaches every session of the factory.
  * The check walks from the root to the top of the file system and tests which paths of `instructionFiles` exist. It
- * only warns: it never stops a command (F-17c), and it never reads a file.
+ * only warns: it never stops a command, and it never reads a file.
  *
  * The user Claude folder is the folder of the user level instructions. The walk never looks inside it. In the user
  * home folder it skips the paths that start with the Claude folder name. So factory cannot see the instructions of the

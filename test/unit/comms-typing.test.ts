@@ -37,8 +37,8 @@ const KEY_CLEAR = { pane: PANE, literal: false, text: 'C-u' };
 const KEY_ENTER = { pane: PANE, literal: false, text: 'Enter' };
 const text = (value: string) => ({ pane: PANE, literal: true, text: value });
 
-describe('TP-13: the typing builder makes one tmux run', () => {
-  it('TP-13: types the line with 3 send-keys calls in one run, joined by the separator, with -l and -- before the text', async () => {
+describe('the typing builder makes one tmux run', () => {
+  it('types the line with 3 send-keys calls in one run, joined by the separator, with -l and -- before the text', async () => {
     const { deps, log, sent } = setup();
     expect((await typeLine(deps, PANE, typing.lines.clear, AGAIN)).ok).toBe(true);
     expect(sent()).toHaveLength(1);
@@ -50,13 +50,13 @@ describe('TP-13: the typing builder makes one tmux run', () => {
     expect(log.typed()).toEqual([KEY_CLEAR, text('/clear'), KEY_ENTER]);
   });
 
-  it('TP-13: types the compact line the same way', async () => {
+  it('types the compact line the same way', async () => {
     const { deps, log } = setup();
     expect((await typeLine(deps, PANE, typing.lines.compact, AGAIN)).ok).toBe(true);
     expect(log.typed()).toEqual([KEY_CLEAR, text('/compact'), KEY_ENTER]);
   });
 
-  it('TP-13: reads the mode of the pane once, then the screen once with one capture-pane, and the capture is the last call before the keys', async () => {
+  it('reads the mode of the pane once, then the screen once with one capture-pane, and the capture is the last call before the keys', async () => {
     const { deps, log } = setup();
     await typeLine(deps, PANE, typing.lines.clear, AGAIN);
     expect(log.commands()).toEqual([
@@ -66,7 +66,7 @@ describe('TP-13: the typing builder makes one tmux run', () => {
     ]);
   });
 
-  it('TP-13: exits 1 and types nothing for a pane that does not exist', async () => {
+  it('exits 1 and types nothing for a pane that does not exist', async () => {
     const { deps, log, sent } = setup();
     const error = errorOf(await typeLine(deps, '%99', typing.lines.clear, AGAIN));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -76,7 +76,7 @@ describe('TP-13: the typing builder makes one tmux run', () => {
   });
 
   it.each(['demo', '0', '=demo:view.0', '%', '%7;', '%7 ', ' %7', '%7\n', '%a'])(
-    'TP-13: refuses the target %j, which is not a pane id, with exit 1 and no tmux call',
+    'refuses the target %j, which is not a pane id, with exit 1 and no tmux call',
     async (target) => {
       const { deps } = setup();
       const error = errorOf(await typeLine(deps, target, typing.lines.clear, AGAIN));
@@ -97,7 +97,7 @@ describe('TP-13: the typing builder makes one tmux run', () => {
     ['a final semicolon', '/clear;'],
     ['a final semicolon after a space', '/clear ;'],
     ['no text', ''],
-  ])('TP-13: refuses a line with %s, with exit 1 and no tmux call', async (_what, line) => {
+  ])('refuses a line with %s, with exit 1 and no tmux call', async (_what, line) => {
     const { deps } = setup();
     const error = errorOf(await typeLine(deps, PANE, notFixed(line), AGAIN));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -112,7 +112,7 @@ describe('TP-13: the typing builder makes one tmux run', () => {
     ['spaces', '/compact  keep the plan'],
     ['text that starts like a fixed line', '/clear now'],
     ['a fixed line in other case', '/CLEAR'],
-  ])('TP-13: refuses a printable line with %s that is not one of the fixed lines, with exit 1 and no tmux call', async (_what, line) => {
+  ])('refuses a printable line with %s that is not one of the fixed lines, with exit 1 and no tmux call', async (_what, line) => {
     const { deps } = setup();
     const error = errorOf(await typeLine(deps, PANE, notFixed(line), AGAIN));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -120,7 +120,7 @@ describe('TP-13: the typing builder makes one tmux run', () => {
     expect(deps.calls).toEqual([]);
   });
 
-  it.each(Object.values(typing.lines))('TP-13: types the fixed line %s as one word of the second call', async (line) => {
+  it.each(Object.values(typing.lines))('types the fixed line %s as one word of the second call', async (line) => {
     const { deps, log, sent } = setup();
     expect((await typeLine(deps, PANE, line, AGAIN)).ok).toBe(true);
     expect(log.typed()).toEqual([KEY_CLEAR, text(line), KEY_ENTER]);
@@ -128,7 +128,7 @@ describe('TP-13: the typing builder makes one tmux run', () => {
   });
 });
 
-describe('TP-14: the capture refuses a dialog list', () => {
+describe('the capture refuses a dialog list', () => {
   const DIALOG = 'Do you want to proceed?\n❯ 1. Yes\n  2. Yes, and do not ask again\n  3. No\n';
 
   it.each([
@@ -143,7 +143,7 @@ describe('TP-14: the capture refuses a dialog list', () => {
     ['a side border without a space before the pointer', '│❯ 1. Yes\n│  2. No\n'],
     ['the pointer sign > inside a side border', '┃ > 1. Yes\n┃   2. No\n'],
     ['a border sign, then spaces, before each line', '  │  ❯ 1. Yes\n  │    2. No\n'],
-  ])('TP-14: exits 3 and types nothing for a screen with %s', async (_what, screen) => {
+  ])('exits 3 and types nothing for a screen with %s', async (_what, screen) => {
     const { deps, log } = setup(screen);
     const error = errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN));
     expect(exitCodeOf[error.kind]).toBe(3);
@@ -153,7 +153,7 @@ describe('TP-14: the capture refuses a dialog list', () => {
     expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message', 'capture-pane']);
   });
 
-  it('TP-14: ends the remedy of a dialog with the clause of the caller, so it names the command to run again', async () => {
+  it('ends the remedy of a dialog with the clause of the caller, so it names the command to run again', async () => {
     const { deps } = setup(DIALOG);
     const error = errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN));
     expect(error.hint).toBe(`Look at pane ${PANE} and answer the dialog there. ${AGAIN}`);
@@ -171,13 +171,13 @@ describe('TP-14: the capture refuses a dialog list', () => {
     ['an idle prompt inside a box and no numbered choice', '╭────────────╮\n│ >          │\n╰────────────╯\n'],
     ['a boxed numbered list and a boxed prompt with no digits', '│ 1. first   │\n│ 2. second  │\n│ > ask      │\n'],
     ['a border sign inside a line before the pointer', '│ x ❯ 1. Yes\n│   2. No\n'],
-  ])('TP-14: types normally for a screen with %s', async (_what, screen) => {
+  ])('types normally for a screen with %s', async (_what, screen) => {
     const { deps, log } = setup(screen);
     expect((await typeLine(deps, PANE, typing.lines.compact, AGAIN)).ok).toBe(true);
     expect(log.typed()).toEqual([KEY_CLEAR, text('/compact'), KEY_ENTER]);
   });
 
-  it('TP-14: reads only the bottom 20 lines of the screen', async () => {
+  it('reads only the bottom 20 lines of the screen', async () => {
     const above = `❯ 1. Yes\n  2. No\n${'x\n'.repeat(typing.captureLines)}`;
     const inside = `❯ 1. Yes\n  2. No\n${'x\n'.repeat(typing.captureLines - 2)}`;
     expect((await typeLine(setup(above).deps, PANE, typing.lines.clear, AGAIN)).ok).toBe(true);
@@ -185,8 +185,8 @@ describe('TP-14: the capture refuses a dialog list', () => {
   });
 });
 
-describe('TP-14: the pane mode check', () => {
-  it('TP-14: exits 3 for a pane in a mode of tmux, types nothing, and reads no screen', async () => {
+describe('the pane mode check', () => {
+  it('exits 3 for a pane in a mode of tmux, types nothing, and reads no screen', async () => {
     const { deps, log, sent } = setup(undefined, undefined, true);
     const error = errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN));
     expect(exitCodeOf[error.kind]).toBe(3);
@@ -196,19 +196,19 @@ describe('TP-14: the pane mode check', () => {
     expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message']);
   });
 
-  it('TP-14: ends the remedy of a mode with the way to leave it and the clause of the caller', async () => {
+  it('ends the remedy of a mode with the way to leave it and the clause of the caller', async () => {
     const { deps } = setup(undefined, undefined, true);
     const error = errorOf(await typeLine(deps, PANE, typing.lines.compact, AGAIN));
     expect(error.hint).toBe(`Press q in pane ${PANE} to leave the mode. ${AGAIN}`);
   });
 
-  it.each(['2\n', 'copy-mode\n'])('TP-14: exits 3 for the answer %j, because only the text 0 means that the pane is in no mode', async (answer) => {
+  it.each(['2\n', 'copy-mode\n'])('exits 3 for the answer %j, because only the text 0 means that the pane is in no mode', async (answer) => {
     const { deps, sent } = setup(undefined, (handler) => (call) => (call.args.includes('#{pane_in_mode}') ? exited(0, answer) : handler(call)));
     expect(exitCodeOf[errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN)).kind]).toBe(3);
     expect(sent()).toEqual([]);
   });
 
-  it('TP-14: exits 1 and types nothing when the read of the mode fails', async () => {
+  it('exits 1 and types nothing when the read of the mode fails', async () => {
     const { deps, sent } = setup(undefined, (handler) => (call) =>
       call.args.includes('#{pane_in_mode}') ? exited(1, '', 'server gone\n') : handler(call),
     );
@@ -218,7 +218,7 @@ describe('TP-14: the pane mode check', () => {
     expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message']);
   });
 
-  it('TP-14: exits 1 and types nothing when the read of the mode cannot start', async () => {
+  it('exits 1 and types nothing when the read of the mode cannot start', async () => {
     const { deps, sent } = setup(undefined, (handler) => (call) =>
       call.args.includes('#{pane_in_mode}') ? failure('cannot run tmux: timed out') : handler(call),
     );
@@ -226,7 +226,7 @@ describe('TP-14: the pane mode check', () => {
     expect(sent()).toEqual([]);
   });
 
-  it('TP-14: exits 1, not 3, when tmux prints nothing for the mode, because the pane is gone', async () => {
+  it('exits 1, not 3, when tmux prints nothing for the mode, because the pane is gone', async () => {
     const { deps, sent } = setup(undefined, (handler) => (call) => (call.args.includes('#{pane_in_mode}') ? exited(0, '\n') : handler(call)));
     const error = errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -234,17 +234,17 @@ describe('TP-14: the pane mode check', () => {
     expect(sent()).toEqual([]);
   });
 
-  it('TP-14: reads the mode before the screen, so a pane in a mode with a dialog on it is exit 3 for the mode', async () => {
+  it('reads the mode before the screen, so a pane in a mode with a dialog on it is exit 3 for the mode', async () => {
     const { deps } = setup('Do you want to proceed?\n❯ 1. Yes\n  2. No\n', undefined, true);
     expect(errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN)).message).toContain('mode of tmux');
   });
 });
 
-describe('TP-15: a failed run clears the input line once', () => {
+describe('a failed run clears the input line once', () => {
   const failsTheRun: Wrap = (handler) => (call) =>
     call.args[0] === 'send-keys' && call.args.includes(';') ? exited(1, '', 'no space\n') : handler(call);
 
-  it('TP-15: exits 1 and sends exactly one C-u when the run fails', async () => {
+  it('exits 1 and sends exactly one C-u when the run fails', async () => {
     const { deps, log, sent } = setup(undefined, failsTheRun);
     const error = errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -255,7 +255,7 @@ describe('TP-15: a failed run clears the input line once', () => {
     expect(error.message).not.toContain('may still hold text');
   });
 
-  it('TP-15: exits 1 and sends exactly one C-u when the run cannot start', async () => {
+  it('exits 1 and sends exactly one C-u when the run cannot start', async () => {
     const { deps, log, sent } = setup(undefined, (handler) => (call) =>
       call.args[0] === 'send-keys' && call.args.includes(';') ? failure('cannot run tmux: timed out') : handler(call),
     );
@@ -265,7 +265,7 @@ describe('TP-15: a failed run clears the input line once', () => {
     expect(log.typed()).toEqual([KEY_CLEAR]);
   });
 
-  it('TP-15: exits 1, sends the C-u once and does not retry when the clean-up fails too, and names the pane input', async () => {
+  it('exits 1, sends the C-u once and does not retry when the clean-up fails too, and names the pane input', async () => {
     const { deps, log, sent } = setup(undefined, (handler) => (call) => (call.args[0] === 'send-keys' ? exited(1, '', 'gone\n') : handler(call)));
     const error = errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -274,7 +274,7 @@ describe('TP-15: a failed run clears the input line once', () => {
     expect(log.typed()).toEqual([]);
   });
 
-  it('TP-15: sends no C-u when the capture fails, because nothing was typed', async () => {
+  it('sends no C-u when the capture fails, because nothing was typed', async () => {
     const { deps, sent } = setup(undefined, (handler) => (call) => (call.args[0] === 'capture-pane' ? exited(1, '', 'gone\n') : handler(call)));
     const error = errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN));
     expect(exitCodeOf[error.kind]).toBe(1);

@@ -309,7 +309,7 @@ export const effectiveModes = async (deps: Deps, root: string, config: FactoryCo
   (await delegationReport(deps, root, config)).modes;
 
 /*
- * The decision records (AC-10, AC-14, AC-41). A per-user file of its own beside the approval records, with its own lock.
+ * The decision records. A per-user file of its own beside the approval records, with its own lock.
  * A record is the proof that the owner answered a decision request in a terminal window. This file is its only writer.
  */
 

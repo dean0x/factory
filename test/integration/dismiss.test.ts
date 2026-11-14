@@ -36,8 +36,8 @@ const commitWork = async (id: string): Promise<void> => {
   expect(committed.code, committed.stderr).toBe(0);
 };
 
-describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work is pushed (built binary, separate tmux server, AC-23, TP-53 to TP-57)', () => {
-  it('prints the dry run of a pushed worker, names the ignored settings file that the removal deletes, and changes nothing (TP-56)', async () => {
+describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work is pushed (built binary, separate tmux server)', () => {
+  it('prints the dry run of a pushed worker, names the ignored settings file that the removal deletes, and changes nothing', async () => {
     await lab.node();
     await push('alpha');
     const before = await lab.workerPanes();
@@ -53,7 +53,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('beta');
   }, LIFECYCLE_CASE_MS);
 
-  it('ends the pane, removes the work copy that holds the excluded settings file, deletes the record and the line, keeps the branch and the primary clone, and leaves the other worker alone (TP-53, TP-55, TP-57)', async () => {
+  it('ends the pane, removes the work copy that holds the excluded settings file, deletes the record and the line, keeps the branch and the primary clone, and leaves the other worker alone', async () => {
     await lab.node();
     await push('alpha');
     const pane = await lab.livePaneOf('alpha');
@@ -80,7 +80,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     expect(status.stdout).toMatch(/\bbeta\b/);
   }, LIFECYCLE_CASE_MS);
 
-  it('frees a worker that has no commit of its own and was never pushed, because its head is on the default branch of the remote (TP-53)', async () => {
+  it('frees a worker that has no commit of its own and was never pushed, because its head is on the default branch of the remote', async () => {
     await lab.node();
     const pane = await lab.livePaneOf('beta');
     expect(pane).toBeDefined();
@@ -93,7 +93,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prints STUCK and frees nothing for a branch that is not on the remote and holds a commit of its own (TP-54)', async () => {
+  it('prints STUCK and frees nothing for a branch that is not on the remote and holds a commit of its own', async () => {
     await lab.node();
     await commitWork('beta');
 
@@ -104,7 +104,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prints STUCK and frees nothing for a head that is ahead of the remote branch (TP-54)', async () => {
+  it('prints STUCK and frees nothing for a head that is ahead of the remote branch', async () => {
     await lab.node();
     await push('alpha');
     await commitWork('alpha');
@@ -115,7 +115,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prints STUCK and keeps the file when the work copy has an untracked file (TP-54)', async () => {
+  it('prints STUCK and keeps the file when the work copy has an untracked file', async () => {
     await lab.node();
     await push('alpha');
     await writeFile(join(copyOf('alpha'), 'notes.txt'), 'not committed\n');
@@ -127,7 +127,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prints STUCK when the stash of the repo holds an entry (TP-54)', async () => {
+  it('prints STUCK when the stash of the repo holds an entry', async () => {
     await lab.node();
     await push('alpha');
     await writeFile(join(copyOf('alpha'), 'saved.txt'), 'in the stash\n');
@@ -140,7 +140,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prunes a stale remote reference with its fetch, so a branch that the remote dropped is not pushed (TP-54)', async () => {
+  it('prunes a stale remote reference with its fetch, so a branch that the remote dropped is not pushed', async () => {
     await lab.node();
     await commitWork('alpha');
     await push('alpha');
@@ -155,7 +155,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('stops with exit 4 for a record whose work copy is outside work-copies/, and touches neither that folder nor the clone (TP-55)', async () => {
+  it('stops with exit 4 for a record whose work copy is outside work-copies/, and touches neither that folder nor the clone', async () => {
     await lab.node();
     await push('alpha');
     const outside = join(lab.box.root, 'elsewhere');
@@ -175,7 +175,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     expect(await lab.livePaneOf('alpha')).toBeDefined();
   }, LIFECYCLE_CASE_MS);
 
-  it('stops with exit 4 and runs no program of the work copy when its .git file names another git folder, in the dry run and with --yes (TP-55)', async () => {
+  it('stops with exit 4 and runs no program of the work copy when its .git file names another git folder, in the dry run and with --yes', async () => {
     await lab.node();
     await push('alpha');
     const marker = join(lab.box.root, 'ran-in-the-work-copy');
@@ -195,7 +195,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
   }, LIFECYCLE_CASE_MS);
 });
 
-describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick step stops in a session (built binary, separate tmux server, AC-24, TP-58 to TP-60)', () => {
+describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick step stops in a session (built binary, separate tmux server)', () => {
   it('refuses a worker whose session works with exit 1 and a remedy, and ends nothing', async () => {
     await lab.node();
     await push('alpha');
@@ -208,7 +208,7 @@ describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick s
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('lists no idle worker while the work item port knows no work item, and changes nothing (TP-58)', async () => {
+  it('lists no idle worker while the work item port knows no work item, and changes nothing', async () => {
     await lab.node();
     const before = await lab.workerPanes();
 
@@ -220,7 +220,7 @@ describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick s
     await expectIntact('beta');
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 for --yes and for the pick step with FACTORY_SESSION set, and ends nothing (TP-60)', async () => {
+  it('exits 4 for --yes and for the pick step with FACTORY_SESSION set, and ends nothing', async () => {
     await lab.node();
     await push('alpha');
 
@@ -236,7 +236,7 @@ describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick s
     await expectIntact('beta');
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 and ends nothing when a session of the same name has another home option, so it keeps running (TP-59)', async () => {
+  it('exits 4 and ends nothing when a session of the same name has another home option, so it keeps running', async () => {
     await lab.node();
     await push('alpha');
     const other = join(lab.box.root, 'other-home');
@@ -264,7 +264,7 @@ const BOARD_BLOCK = [
   '',
 ].join('\n');
 
-describe.skipIf(!hasTmux)('factory dismiss --closed frees a finished worker for the coordinator pane only (built binary, separate tmux server, TP-40)', () => {
+describe.skipIf(!hasTmux)('factory dismiss --closed frees a finished worker for the coordinator pane only (built binary, separate tmux server)', () => {
   const inPaneOf = (pane: string): Record<string, string> => ({ TMUX_PANE: pane, FACTORY_SESSION: 'demo' });
 
   /** A node with the board block, and an item of alpha that is closed. */
