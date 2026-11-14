@@ -7,7 +7,7 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { launchConfirm, marker, maxFileBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -24,7 +24,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { runWorker } from '../helpers/package-registry.js';
-import { seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
+import { SETUP_WORKER, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
@@ -1046,7 +1046,9 @@ describe('worker new: the role text of the new worker stops the command before t
     seedAcceptedSetup(made.deps, HOME, '<!-- factory:begin worker v1 sha256=00 -->\n');
     expect(exitCodeOf[(await failed(made)).kind]).toBe(1);
     expect(made.events).not.toContain('git worktree-add');
+    expect(made.events).not.toContain('tmux split-window');
     expect(made.deps.files.has(RECORD)).toBe(false);
+    expect(made.deps.dirs.has(COPY)).toBe(false);
   });
 
   it('asks no question about the hook settings and writes nothing for a refused role text', async () => {
@@ -2028,6 +2030,36 @@ describe('worker resume: the code of a refused role text after the root checks',
   it('exits 4 for an accepted setup text that holds a control character, and starts no pane', async () => {
     const made = await withWorkers({ origin: 'own' });
     seedAcceptedSetup(made.deps, HOME, 'Write tests first.\u0007\n');
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for a setup file that another user owns, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    made.deps.owners.set(`${HOME}/${SETUP_WORKER}`, (made.deps.uid ?? 0) + 1);
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for a setup file that a group can write, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    made.deps.modes.set(`${HOME}/${SETUP_WORKER}`, 0o664);
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for an accepted setup text that holds a hidden character, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\u3164\n');
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for an accepted setup text above the bound of the setup text, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'x'.repeat(maxSetupTextBytes + 1));
     expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
     expect(made.events).not.toContain('tmux split-window');
   });
