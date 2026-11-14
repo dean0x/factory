@@ -225,7 +225,8 @@ export const describeBoardContract = (name: string, setup: () => Promise<Contrac
         const { connector, doc, fields } = await setup();
         const added = valueOf(await connector.addItem({ title: 'With a doc', fields: fields.add }));
         const linked = valueOf(await connector.linkDoc({ id: added.id, path: doc }));
-        expect(linked.id).toBe(added.id);
+        expect(linked.item.id).toBe(added.id);
+        expect(linked.changed).toBe(true);
       });
 
       it('refuses an item that is not there, and a path that leaves the factory folder, with exit 2', async () => {

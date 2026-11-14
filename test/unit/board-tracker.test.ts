@@ -77,7 +77,9 @@ type Write = (connector: LocalBoard) => Promise<CliResult<unknown>>;
 /** Each write of the connector, with input that the local connector accepts. */
 const WRITES: readonly (readonly [string, Write])[] = [
   ['item add', (c) => c.addItem({ title: 'Second', fields: { priority: 'P1' } })],
+  ['item add with an epic', (c) => c.addItem({ title: 'Second', epic: 'Launch', fields: { priority: 'P1' } })],
   ['item update', (c) => c.updateItem('B-1', { title: 'Changed' })],
+  ['item update with an epic only', (c) => c.updateItem('B-1', { epic: 'Launch' })],
   ['item move to a state', (c) => c.moveItem('B-1', { state: 'doing' })],
   ['item move to a stage', (c) => c.moveItem('B-1', { stage: 'building' })],
   ['item close', (c) => c.closeItem('B-1')],
@@ -86,12 +88,15 @@ const WRITES: readonly (readonly [string, Write])[] = [
   ['decision ask', (c) => c.askDecision(DECISION)],
   ['request close', (c) => c.closeRequest('D-1')],
   ['queue set', (c) => c.setQueueRow({ name: 'Docs', items: ['B-1'] })],
+  ['queue set with a release group', (c) => c.setQueueRow({ name: 'Docs', items: ['B-1'], releaseGroup: 'Release 2' })],
 ];
 
 /** Each write of the connector, with input that the local connector refuses with exit 2. */
 const BAD_WRITES: readonly (readonly [string, Write])[] = [
   ['item add', (c) => c.addItem({ title: 'x'.repeat(101), fields: { priority: 'P1' } })],
+  ['item add with an epic', (c) => c.addItem({ title: 'Second', epic: 'x'.repeat(61), fields: { priority: 'P1' } })],
   ['item update', (c) => c.updateItem('nope', { title: 'Changed' })],
+  ['item update with an epic', (c) => c.updateItem('B-1', { epic: 'two\nlines' })],
   ['item move', (c) => c.moveItem('nope', { state: 'unknown' })],
   ['item close', (c) => c.closeItem('nope')],
   ['track add', (c) => c.addTrack({ id: 'Bad Id', name: '', roadmap: true })],
@@ -99,6 +104,7 @@ const BAD_WRITES: readonly (readonly [string, Write])[] = [
   ['decision ask', (c) => c.askDecision({ title: '', question: '', options: [] })],
   ['request close', (c) => c.closeRequest('nope')],
   ['queue set', (c) => c.setQueueRow({ name: ' ' })],
+  ['queue set with a release group', (c) => c.setQueueRow({ name: 'Docs', releaseGroup: 'two\nlines' })],
   ['decision request', (c) => c.decisionRequest('nope')],
   ['decision record', (c) => c.recordDecision({ ...RECORD_CALL, at: 'yesterday' }, WRITER)],
 ];
