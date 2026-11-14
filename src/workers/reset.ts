@@ -35,6 +35,7 @@ import {
   requireSettingsOlderThan,
 } from './session-checks.js';
 import { readWorkerPanes } from './slot.js';
+import { requireRoleText } from './role-text.js';
 import { requireOneLivePane } from './stop.js';
 
 /**
@@ -48,7 +49,8 @@ import { requireOneLivePane } from './stop.js';
  *  3. the record of the worker (exit 2, exit 4);
  *  4. the one live pane of the worker, which a summon does not show in the view window (exit 2, exit 3);
  *  5. the start of the pane process, then the hook events of the settings of the work copy, then the age of that settings file
- *     (exit 3);
+ *     (exit 3), then the role text that the session gets at its next start (exit 4 for a link, a wrong owner or mode, or a setup text
+ *     that the owner did not accept, exit 1 for any other fault);
  *  6. the work is pushed after one fetch (exit 1);
  *  7. the resume notes of the worker (exit 3, exit 4);
  *  8. the pane is read and bound again, and it has the same process (exit 4, exit 3);
@@ -290,6 +292,8 @@ const checkWorker = async (deps: Deps, request: ResetRequest, again: string): Pr
   if (!placed.ok) return placed;
   const start = await requireFreshSession(deps, record.value, live.value, again);
   if (!start.ok) return start;
+  const roleTextChecked = await requireRoleText(deps, { home, config, retry: commandText(again) });
+  if (!roleTextChecked.ok) return roleTextChecked;
   const pushed = await requirePushed(deps, request, record.value, again);
   if (!pushed.ok) return pushed;
   const resumeAgeMs = await requireResumeNotes(deps, home, workerId, again);
