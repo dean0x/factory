@@ -8,6 +8,7 @@ import { ROADMAPS_README_LINES } from './roadmaps.js';
 import { safetyLines } from './safety.js';
 import { SETUP_COORDINATOR_LINES, SETUP_WORKER_LINES } from './setup.js';
 import type { BlockInput, BlockTemplate, SetupTexts } from './types.js';
+import { WORK_RULES_LINES } from './work-rules.js';
 
 /**
  * The safety block belongs to the core. Every role gets it. Its approval point lines follow the modes, the recipe adds
@@ -21,6 +22,14 @@ const safetyFor = (input: BlockInput): BlockTemplate => ({
     safetyLines(approvalLines(input.recipe.approvalPoints, input.modes), input.recipe.safetyLines),
     coordinatorValuesFor(input),
   ),
+});
+
+/** The work rules block belongs to the core, and only the node on layer 1 gets it. It lives in the coordinator folder. */
+const workRulesFor = (input: BlockInput): BlockTemplate => ({
+  name: blockNames.workRules,
+  version: 1,
+  target: 'claudeFile',
+  body: fillTemplate(WORK_RULES_LINES, coordinatorValuesFor(input)),
 });
 
 const NO_SETUP: SetupTexts = { coordinator: null, worker: null };
@@ -37,20 +46,23 @@ const setupBlock = (name: string, target: BlockTemplate['target'], text: string 
   text === null ? [] : [{ name, version: 1, target, body: text }];
 
 /**
- * The managed blocks of a node on this layer: its role block, the safety block, and, on layer 1 and above, the worker
- * block. A worker has no home, so the node that holds the workers has the instructions that the workers follow. A node
- * on layer 2 or above can hold workers and child nodes at the same time. A layer with no role template has the safety block
- * and the worker block. After the core blocks come the blocks of the setup texts: the coordinator text goes into the
- * coordinator file, and the worker text goes into the worker file of a node that has one. The text of the blocks follows
- * `input`.
+ * The managed blocks of a node on this layer: its role block, the safety block, the work rules block on layer 1 only, and,
+ * on layer 1 and above, the worker block. A worker has no home, so the node that holds the workers has the instructions
+ * that the workers follow. A node on layer 2 or above can hold workers and child nodes at the same time. A layer with no
+ * role template has the safety block and the worker block. After the core blocks come the blocks of the setup texts: the
+ * coordinator text goes into the coordinator file, and the worker text goes into the worker file of a node that has one.
+ * The text of the blocks follows `input`.
  */
 export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] => {
   const role = input.recipe.roles.templateFor(input);
+  const workRules = input.layer === COORDINATOR_LAYER ? workRulesFor(input) : null;
   const worker =
     input.layer >= COORDINATOR_LAYER
       ? input.recipe.roles.templateFor({ ...input, layer: WORKER_LAYER, holderLayer: input.layer })
       : null;
-  const core = [role, safetyFor(input), worker].filter((template): template is BlockTemplate => template !== null);
+  const core = [role, safetyFor(input), workRules, worker].filter(
+    (template): template is BlockTemplate => template !== null,
+  );
   const hasWorkerFile = core.some((template) => template.target === 'workerFile');
   return [
     ...core,

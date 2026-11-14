@@ -48,6 +48,23 @@ export const composeRoleText = (templates: readonly BlockTemplate[]): string => 
   return [roleText.sourceLine, ...bodies].join(roleText.joiner);
 };
 
+/** The characters of setup text that the cap leaves after the package part and the joiner. */
+const freeRoomOf = (packageText: string): number =>
+  Math.max(0, roleText.maxChars - packageText.length - roleText.joiner.length);
+
+/**
+ * The warning for a role text above the cap, or null when the text fits or the templates hold no worker block. A command
+ * that renders the worker file gives this warning and still writes its files. The text names its size, the cap and the
+ * characters that the setup text may hold. `retry` is the command that a person runs again after the fix.
+ */
+export const roleTextSizeWarning = (templates: readonly BlockTemplate[], retry: string): string | null => {
+  if (!templates.some((template) => template.name === blockNames.worker)) return null;
+  const size = composeRoleText(templates).length;
+  if (size <= roleText.maxChars) return null;
+  const free = freeRoomOf(composeRoleText(templates.filter((template) => template.name !== blockNames.setupWorker)));
+  return `${roleText.tooLargeText(size, 'characters')}. ${roleText.remedies.shorten(free, retry)}`;
+};
+
 /** The faults of a file that the checked open refuses before it reads a byte, other than the size. */
 const OPEN_FAULTS: Readonly<Record<Exclude<CheckedFault, 'size'>, RoleFault>> = {
   'wrong-kind': { kind: 'readFailed' },
@@ -116,7 +133,7 @@ export const readRoleText = async (
   const packageTemplates = workerFileTemplatesFor(config, null);
   if (!packageTemplates.some((template) => template.name === blockNames.worker)) return refused({ kind: 'configNotUsable' });
   const packageText = composeRoleText(packageTemplates);
-  const free = Math.max(0, roleText.maxChars - packageText.length - roleText.joiner.length);
+  const free = freeRoomOf(packageText);
 
   const layout = layoutOf(home);
   const linked = await requireNoLinks(deps, home, [layout.setupWorkerFile]);

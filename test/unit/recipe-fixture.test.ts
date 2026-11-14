@@ -148,7 +148,7 @@ describe('the fixture recipe: the blocks', () => {
     const { deps } = await initialized();
     const blocks = parseBlocks(fileOf(deps, 'coordinator/CLAUDE.md'));
     if (!blocks.ok) throw new Error(blocks.error.message);
-    expect(blocks.value.map((block) => block.name)).toEqual(['coordinator', 'safety', 'setup']);
+    expect(blocks.value.map((block) => block.name)).toEqual(['coordinator', 'safety', 'work-rules', 'setup']);
     const safety = blocks.value.find((block) => block.name === 'safety')?.body ?? '';
     expect(safety.indexOf('`send`')).toBeGreaterThan(-1);
     expect(safety.indexOf('Proof copies')).toBeGreaterThan(safety.indexOf('`send`'));
