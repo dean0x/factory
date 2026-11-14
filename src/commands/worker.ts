@@ -2,7 +2,7 @@ import { join, relative, resolve } from 'node:path';
 import { isUtcTime } from '../board/decision-record.js';
 import { boardWorkItems } from '../board/work-items.js';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
-import type { CommandOutput, OutLine } from '../cli/output.js';
+import { displayLine, type CommandOutput, type OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import { durationMinutes, isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
@@ -29,6 +29,7 @@ import {
   flagText,
   hookSessions,
   lastSeen,
+  maxEchoChars,
   places,
   program,
   roles,
@@ -36,6 +37,7 @@ import {
   summonLimits,
   tmuxNames,
   workerCommands,
+  workerHold,
   workerRecord,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
@@ -43,6 +45,7 @@ import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { dismissLine } from '../workers/dismiss.js';
 import { readAssignment } from '../workers/assignment.js';
 import { ensureCloneExclude } from '../workers/exclude.js';
+import { holdOf, markWords, writeHold } from '../workers/hold.js';
 import { launchWorker, requireCleanTrackedSettings, resumeLine, resumeWorker } from '../workers/launch.js';
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
@@ -712,6 +715,45 @@ const runWatch = async (
   return watched.ok ? ok(watchOutput(watched.value)) : watched;
 };
 
+/**
+ * `worker mark ID parked|on-hold|none`: sets the hold word of the worker, or clears it with `none` (`writeHold`). The words are
+ * checked first (exit 2), then the node, then the record of the worker (`requireRecord`). It writes only the hold file of the worker.
+ * A hold word is no approval.
+ */
+const runMark = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const [id, word] = args;
+  const choices = markWords.join(', ');
+  if (args.length !== 2 || id === undefined || word === undefined) {
+    return needsUsage(`${workerCommands.mark} takes two arguments: the id of the ${roles.worker}, then one of ${choices}`);
+  }
+  const hold = holdOf(word);
+  if (hold === null) return needsUsage(`the mark ${JSON.stringify(displayLine(word, maxEchoChars))} is not one of ${choices}`);
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const record = await requireRecord(deps, home, id, commandText(commandLines.workerMark), hold);
+  if (!record.ok) return record;
+  const written = await writeHold(deps, home, id, hold);
+  if (!written.ok) return written;
+  return ok({
+    lines: [
+      text(
+        hold === workerHold.none
+          ? `The ${roles.worker} ${id} has no hold word.`
+          : `The ${roles.worker} ${id} has the hold word ${hold}.`,
+      ),
+    ],
+    json: { schema: schemaIds.workerMark, id, hold },
+    warnings: [],
+    failed: false,
+  });
+};
+
 /** The flags `--clear` and `--compact` belong to `reset`. Another subcommand refuses them (exit 2), so no flag is taken and then ignored. */
 const requireNoResetFlags = (options: WorkerOptions): CliResult<void> => {
   const given = [...(options.clear === true ? [flags.clear] : []), ...(options.compact === true ? [flags.compact] : [])];
@@ -767,6 +809,8 @@ export const runWorker = async (
       return runReset(deps, options, args, registry);
     case workerCommands.watch:
       return runWatch(deps, options, args, registry);
+    case workerCommands.mark:
+      return runMark(deps, options, args, registry);
     case workerCommands.list:
       return args.length === 0
         ? runWorkerList(deps, { home: options.home }, registry, boardWorkItems(registry))

@@ -122,6 +122,8 @@ export interface WorkerPaths {
   readonly recordFile: string;
   /** The pointer to the newest session of the worker: the file that names its last-seen line. */
   readonly lastSessionFile: string;
+  /** The hold word of the worker. No file: the worker has no hold word. */
+  readonly holdFile: string;
   /** The folder of the messages for the worker. */
   readonly inboxDir: string;
 }
@@ -133,6 +135,7 @@ export const workerPathsOf = (home: string, id: string): WorkerPaths => {
     dir,
     recordFile: join(dir, files.workerRecord),
     lastSessionFile: join(dir, files.workerLastSession),
+    holdFile: join(dir, files.workerHold),
     inboxDir: join(dir, dirs.inbox),
   };
 };
