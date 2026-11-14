@@ -478,6 +478,81 @@ describe('factory upgrade (built binary)', () => {
     },
   );
 
+  describe('the work rules block of a node that lacks it', () => {
+    const claudePath = (): string => join(box.node, ...COORDINATOR_FILE);
+    const nodePath = (): string => join(box.node, '.factory', 'node.json');
+    const blockNamesOf = async (): Promise<string[]> => {
+      const parsed = parseBlocks(await box.read(claudePath()));
+      return parsed.ok ? parsed.value.map((block) => block.name) : [];
+    };
+
+    /** The owner removed the block from the coordinator file. When `forget` is set, the state never recorded the block either. */
+    const removeWorkRules = async (forget: boolean): Promise<number> => {
+      await initNode();
+      const claude = await box.read(claudePath());
+      const parsed = parseBlocks(claude);
+      const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === 'work-rules') : undefined;
+      expect(block).toBeDefined();
+      if (block === undefined) return 0;
+      await writeFile(claudePath(), `${claude.slice(0, block.start)}${claude.slice(block.end).replace(/^\n+/, '')}`);
+      const state = JSON.parse(await box.read(nodePath())) as { blocks: Record<string, number> };
+      const version = state.blocks['work-rules'] ?? 0;
+      if (forget) {
+        delete state.blocks['work-rules'];
+        await writeFile(nodePath(), `${JSON.stringify(state, null, 2)}\n`);
+        const stateDir = join(box.node, '.factory');
+        expect((await box.git(stateDir, ['add', 'node.json'])).code).toBe(0);
+        expect((await box.git(stateDir, ['commit', '-q', '-m', 'forget the work rules block'])).code).toBe(0);
+      }
+      return version;
+    };
+
+    it('adds the block before the setup block, records its version, and then the doctor exits 0', async () => {
+      const version = await removeWorkRules(true);
+      expect(await blockNamesOf()).toEqual(['coordinator', 'safety', 'setup']);
+
+      const upgraded = await box.run(['upgrade', '--home', box.node]);
+
+      expect(upgraded.code, upgraded.stderr).toBe(0);
+      expect(upgraded.stdout).toContain(`block work-rules: add version ${version}`);
+      expect(await blockNamesOf()).toEqual(['coordinator', 'safety', 'work-rules', 'setup']);
+      const state = JSON.parse(await box.read(nodePath())) as { blocks: Record<string, number> };
+      expect(state.blocks['work-rules']).toBe(version);
+      expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+      expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
+    });
+
+    it('shows the add in a dry run and writes nothing', async () => {
+      await removeWorkRules(true);
+      const before = await box.read(claudePath());
+      const result = await box.run(['upgrade', '--home', box.node, '--dry-run']);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('block work-rules: add version');
+      expect(await box.read(claudePath())).toBe(before);
+    });
+
+    it('keeps a block that the state records but the file lacks, and the doctor names the overwrite command', async () => {
+      await removeWorkRules(false);
+      const before = await box.read(claudePath());
+
+      const upgraded = await box.run(['upgrade', '--home', box.node]);
+
+      expect(upgraded.code).toBe(0);
+      expect(upgraded.stderr).toContain('block work-rules is missing');
+      expect(upgraded.stderr).toContain('--overwrite work-rules');
+      expect(await box.read(claudePath())).toBe(before);
+      expect((await box.run(['doctor', '--home', box.node])).stdout).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+    });
+
+    it('names the upgrade command in the doctor report when the state never recorded the block', async () => {
+      await removeWorkRules(true);
+      const doctor = await box.run(['doctor', '--home', box.node]);
+      expect(doctor.stdout).toContain('work-rules (missing');
+      expect(doctor.stdout).toContain('Run "factory upgrade".');
+      expect(doctor.stdout).not.toContain('--overwrite work-rules');
+    });
+  });
+
   it('prints one JSON document with its schema id', async () => {
     await initNode();
     const result = await box.run(['upgrade', '--home', box.node, '--dry-run', '--json']);
