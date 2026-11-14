@@ -6,6 +6,7 @@ import type {
   DecisionAskInput,
   DecisionProofWriter,
   DecisionRecordCall,
+  DocLinked,
   ItemAddInput,
   LocalBoard,
   RequestDecider,
@@ -20,7 +21,7 @@ import { createLocalBoard, type LocalBoardOptions } from '../../src/board/local.
 import { firstStageOf, requireSettableStage, requireStage, stageShown, stagesOf, UNLISTED_MARK } from '../../src/board/stages.js';
 import { trackIdIssue, trackNameIssue, tracksOf } from '../../src/board/tracks.js';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
-import type { Deps } from '../../src/core/deps.js';
+import type { Deps, LinkInfo } from '../../src/core/deps.js';
 import type { DecisionInput, DecisionWrite } from '../../src/core/owner-record.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
 import { ok } from '../../src/core/result.js';
@@ -1092,12 +1093,14 @@ describe('the local connector: an item that is not on the board', () => {
 });
 
 describe('the local connector: a link to a file of the factory (doc link)', () => {
-  const link = async (repo: BoardRepo, path: string): Promise<CliResult<unknown>> => connectorOf(repo).linkDoc({ id: 'B-1', path });
+  const link = async (repo: BoardRepo, path: string): Promise<CliResult<DocLinked>> => connectorOf(repo).linkDoc({ id: 'B-1', path });
 
   it('stores the relative path in the docs of the item, and stores a path once', async () => {
     const repo = await repoWith(boardWith([item('B-1', { docs: ['docs/a.md'] })]));
-    valueOf(await link(repo, DOC_PATH));
-    valueOf(await link(repo, DOC_PATH));
+    expect(valueOf(await link(repo, DOC_PATH)).changed).toBe(true);
+    const again = valueOf(await link(repo, DOC_PATH));
+    expect(again.changed).toBe(false);
+    expect(again.item.id).toBe('B-1');
     const doc = valueOf(parseBoard(repo.textOf(fileNames.board) ?? '', QUEUE));
     expect(doc.items[0]?.record['docs']).toEqual(['docs/a.md', DOC_PATH]);
     expect(repo.commits).toHaveLength(1);
@@ -1220,13 +1223,20 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
     expect(repo.commits).toHaveLength(1);
   });
 
-  it('stops the link when the size of the file can not be read, and writes nothing', async () => {
+  const DIR_INFO: LinkInfo = { kind: 'dir', uid: 0, mode: 0o755, mtimeMs: 0, size: 0 };
+
+  it.each<[string, CliResult<LinkInfo | null>, number]>([
+    ['can not be read', failure('cannot look at the file'), 1],
+    ['is not there', ok(null), 2],
+    ['is a link', ok({ kind: 'link' }), 2],
+    ['is a folder', ok(DIR_INFO), 2],
+  ])('stops the link, and writes nothing, when the one look at the file says that it %s', async (_name, seen, exit) => {
     const board = boardWith([item('B-1')]);
     const repo = await repoWith(board);
     const full = join(HOME, DOC_PATH);
     const blind: Deps = {
       ...repo.deps,
-      fs: { ...repo.deps.fs, statInfo: async (target) => (target === full ? failure('cannot look at the file') : repo.deps.fs.statInfo(target)) },
+      fs: { ...repo.deps.fs, lstatInfo: async (target) => (target === full ? seen : repo.deps.fs.lstatInfo(target)) },
     };
     const blinded = createLocalBoard(blind, LAYOUT, {
       queueKey: QUEUE,
@@ -1236,8 +1246,29 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
       tracker: values.trackerLocal,
       node: NODE,
     });
-    expect(exitOf(await blinded.linkDoc({ id: 'B-1', path: DOC_PATH }))).toBe(1);
+    expect(exitOf(await blinded.linkDoc({ id: 'B-1', path: DOC_PATH }))).toBe(exit);
     expectUntouched(repo, board);
+  });
+
+  it('gets the size of the file from the same look that gets its kind, and follows no link for it', async () => {
+    const repo = await repoWith(boardWith([item('B-1')]));
+    const full = join(HOME, DOC_PATH);
+    const blind: Deps = {
+      ...repo.deps,
+      fs: {
+        ...repo.deps.fs,
+        statInfo: async (target) => (target === full ? failure('the size was read by a look that follows a link') : repo.deps.fs.statInfo(target)),
+      },
+    };
+    const connector = createLocalBoard(blind, LAYOUT, {
+      queueKey: QUEUE,
+      recipe: softwareBoard,
+      config: sampleBoard(),
+      command: commands.start,
+      tracker: values.trackerLocal,
+      node: NODE,
+    });
+    expect(valueOf(await connector.linkDoc({ id: 'B-1', path: DOC_PATH })).changed).toBe(true);
   });
 
   describe('the most docs of an item', () => {

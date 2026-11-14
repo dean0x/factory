@@ -112,6 +112,13 @@ export interface DocLinkInput {
   readonly path: string;
 }
 
+/** What a doc link did: the item with its docs, and whether the board changed. */
+export interface DocLinked {
+  readonly item: BoardItem;
+  /** False when the item held the path already: the board stays as it is. */
+  readonly changed: boolean;
+}
+
 /** An event on the board since a cursor, with its author. A connector with no events gives none. */
 export interface BoardEvent {
   readonly at: string;
@@ -233,7 +240,7 @@ export interface BoardConnector {
   listTracks(): Promise<CliResult<readonly BoardTrack[]>>;
   /** Add a decision item. The value is its id. */
   askDecision(input: DecisionAskInput): Promise<CliResult<string>>;
-  linkDoc(input: DocLinkInput): Promise<CliResult<BoardItem>>;
+  linkDoc(input: DocLinkInput): Promise<CliResult<DocLinked>>;
   /** The local connector has no changes: it gives an empty list. */
   readChanges(cursor: string | null): Promise<CliResult<ChangesRead>>;
 }

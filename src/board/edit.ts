@@ -652,9 +652,10 @@ export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliR
 
 /**
  * Add a path to the `docs` of an item. A path that the item has stays once. A new path is a usage error (exit 2) when the item holds
- * `boardTextLimits.maxItemDocs` paths already; a longer list that a hand edit made is read as it is. The value is the id.
+ * `boardTextLimits.maxItemDocs` paths already; a longer list that a hand edit made is read as it is. The value is true when the
+ * path is new, and false when the item had it and the file stays as it is.
  */
-export const linkDocIn = (doc: BoardDoc, id: string, path: string): CliResult<Edit<string>> => {
+export const linkDocIn = (doc: BoardDoc, id: string, path: string): CliResult<Edit<boolean>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
   const docs = found.value.record[boardKeys.docs];
@@ -662,14 +663,14 @@ export const linkDocIn = (doc: BoardDoc, id: string, path: string): CliResult<Ed
     return failure(`${files.board}: the "${boardKeys.docs}" of ${id} is not a list of text`);
   }
   const current: readonly unknown[] = docs ?? [];
-  if (current.includes(path)) return ok({ top: null, value: id });
+  if (current.includes(path)) return ok({ top: null, value: false });
   if (current.length >= boardTextLimits.maxItemDocs) {
     return usageError(
       `the item ${id} holds ${boardTextLimits.maxItemDocs} docs already, so it takes no more`,
       `Take a path out of the "${boardKeys.docs}" of the item in ${files.board}, then run "${commandText(commandLines.itemDoc)}" again with the new path.`,
     );
   }
-  return ok({ top: withItem(doc, id, withKeys(found.value.record, [[boardKeys.docs, [...current, path]]]).record), value: id });
+  return ok({ top: withItem(doc, id, withKeys(found.value.record, [[boardKeys.docs, [...current, path]]]).record), value: true });
 };
 
 /**

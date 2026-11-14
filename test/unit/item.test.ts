@@ -382,11 +382,14 @@ describe('item doc: link a file to an item', () => {
     expect(repo.textOf(fileNames.board)).toContain(DOC);
   });
 
-  it('makes no second commit for a path that the item holds already, and exits 0', async () => {
+  it('makes no second commit for a path that the item holds already, says so, and exits 0', async () => {
     const repo = await withDoc();
-    valueOf(await run(repo, { words: ['doc', 'B-1', DOC] }));
+    const first = valueOf(await run(repo, { words: ['doc', 'B-1', DOC] }));
+    expect(plainText(first).trimEnd()).toBe('Linked B-1: Item B-1');
     const stored = repo.textOf(fileNames.board);
     const again = valueOf(await run(repo, { words: ['doc', 'B-1', DOC] }));
+    expect(plainText(again).trimEnd()).toBe(`Already linked ${DOC} to B-1.`);
+    expect(again.failed).toBe(false);
     expect(again.json).toMatchObject({ item: { docs: [DOC] } });
     expect(repo.commits).toHaveLength(1);
     expect(repo.textOf(fileNames.board)).toBe(stored);

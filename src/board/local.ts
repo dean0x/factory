@@ -32,6 +32,7 @@ import type {
   ChangesRead,
   DecisionRecordCall,
   DecisionRequestRead,
+  DocLinked,
   ItemMoved,
   ItemRecorded,
   ItemUnassigned,
@@ -444,19 +445,16 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
 
   /**
    * The file checks of a doc link, after the name check: the file must be a plain file of the factory folder, with no link on the
-   * way (a link is a security stop, exit 4), and it holds at most `maxFileBytes` bytes (exit 2). A size that can not be read stops
-   * the link, so the check fails closed.
+   * way (a link is a security stop, exit 4), and it holds at most `maxFileBytes` bytes (exit 2). One look at the file itself gives
+   * its kind and its size, and follows no link. A look that fails stops the link, so the check fails closed.
    */
   const requireDocFile = async (path: string): Promise<CliResult<void>> => {
     const full = join(layout.home, path);
     const linked = await requireNoLinks(deps, layout.home, [full]);
     if (!linked.ok) return linked;
-    const kind = await deps.fs.lstat(full);
-    if (!kind.ok) return kind;
-    const shownPath = JSON.stringify(displayLine(path, maxEchoChars));
-    if (kind.value !== 'file') return usageError(`${shownPath} is not a file of the ${places.folder}`);
-    const info = await deps.fs.statInfo(full);
+    const info = await deps.fs.lstatInfo(full);
     if (!info.ok) return info;
+    const shownPath = JSON.stringify(displayLine(path, maxEchoChars));
     if (info.value === null || info.value.kind !== 'file') return usageError(`${shownPath} is not a file of the ${places.folder}`);
     return info.value.size > maxFileBytes ? usageError(`${shownPath} is larger than ${maxFileBytes} bytes`) : ok(undefined);
   };
@@ -682,7 +680,14 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!path.ok) return path;
       const file = await requireDocFile(path.value);
       if (!file.ok) return file;
-      return itemWrite(commitMessages.linkDoc(input.id), (doc) => linkDocIn(doc, input.id, path.value));
+      return boardWrite<boolean, DocLinked>({
+        message: commitMessages.linkDoc(input.id),
+        edit: (doc) => linkDocIn(doc, input.id, path.value),
+        resultOf: (doc, changed) => {
+          const item = itemIn(doc, input.id);
+          return item.ok ? ok({ item: item.value, changed }) : item;
+        },
+      });
     },
 
     async decisionRequest(id) {

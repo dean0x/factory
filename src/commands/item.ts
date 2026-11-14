@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, ItemRecorded } from '../board/contract.js';
+import type { BoardConnector, BoardItem, DocLinked, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, ItemRecorded } from '../board/contract.js';
 import { checkItemId, checkRecordSetup, docPathIssue, formerWorkersOf } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
 import { followBoard } from '../board/follow.js';
@@ -224,9 +224,9 @@ const stageCopyOf = (item: BoardItem): readonly string[] | null => {
 };
 
 /**
- * The docs of an item, in the stored order. Only a stored entry that is text and passes the doc name check is kept, the same check
- * that the write runs, so a hand edit can not bring a path into the output that the write would refuse. A key that is not a list
- * gives an empty list.
+ * The docs of an item, in the stored order. Only a stored entry that is text and passes the doc name check is kept. This repeats the
+ * name check of the write only: the checks of the file itself (no link, a plain file, the size limit) are the job of the reader of
+ * the path. A key that is not a list gives an empty list.
  */
 const docsOf = (item: BoardItem): readonly string[] => {
   const stored = item.record[boardKeys.docs];
@@ -250,6 +250,12 @@ const itemJson = (action: Subcommand, item: BoardItem): JsonDoc => ({
 
 const itemAnswer = (verb: string, action: Subcommand, item: BoardItem): CommandOutput =>
   answer(`${verb} ${displayLine(item.id)}: ${titleText(item)}`, itemJson(action, item));
+
+/** The line of a doc link: the item as for any write, or one line that says the item held the path already. */
+const linkAnswer = (path: string, linked: DocLinked): CommandOutput =>
+  linked.changed
+    ? itemAnswer('Linked', itemCommands.doc, linked.item)
+    : answer(`Already linked ${displayLine(path)} to ${displayLine(linked.item.id)}.`, itemJson(itemCommands.doc, linked.item));
 
 /** The one line of a move: the id, the part that moved, and its old and new value. A move to the same value says that nothing changed. */
 const moveAnswer = (config: FactoryConfig, move: ItemMove, moved: ItemMoved): CommandOutput => {
@@ -461,7 +467,7 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       return unassign(deps, board, action.id);
     case itemCommands.doc: {
       const linked = await connector.linkDoc({ id: action.id, path: action.path });
-      return linked.ok ? ok(itemAnswer('Linked', action.kind, linked.value)) : linked;
+      return linked.ok ? ok(linkAnswer(action.path, linked.value)) : linked;
     }
     default: {
       const unreachable: never = action;
