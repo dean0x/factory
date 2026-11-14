@@ -20,8 +20,8 @@ import type { BlockTemplate } from '../templates/types.js';
  * which is a copy for people.
  */
 
-/** The faults of a role text, one for each reason in `roleText.reasons`. */
-export type RoleFaultKind = keyof typeof roleText.reasons;
+/** The faults of a role text, one for each reason in `roleText.reasons` except the input of the hook, which no read of the text finds. */
+export type RoleFaultKind = Exclude<keyof typeof roleText.reasons, 'inputNotUsable'>;
 
 /**
  * Why a role text is refused. A text above the cap names its size and its unit, and the characters that the setup text

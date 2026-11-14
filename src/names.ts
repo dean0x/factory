@@ -2035,6 +2035,8 @@ export const roleText = {
     notAccepted: 'role text refused: the setup file is not accepted',
     readFailed: 'role text refused: the setup file cannot be read',
     configNotUsable: 'role text refused: the config is not usable',
+    /** The input of the hook is not usable, so the hook cannot read the session id. Only the hook gives this reason. */
+    inputNotUsable: 'role text refused: the input of the hook is not usable',
   },
   /** The size of a text that is too large and the cap, for the message of a launch, a reset or a check. */
   tooLargeText: (size: number, unit: RoleSizeUnit): string =>

@@ -1696,10 +1696,21 @@ describe('the names of the role text delivery', () => {
     expect(roleText.sourceLine).toContain('setup/roles/worker.md');
   });
 
-  it('has one fixed reason of one line for each of the nine faults, and no two are the same', () => {
+  it('has one fixed reason of one line for each of the nine faults and for the input of the hook, and no two are the same', () => {
     const reasons = Object.values(roleText.reasons);
     expect(Object.keys(roleText.reasons).sort()).toEqual(
-      ['blockMarker', 'configNotUsable', 'link', 'notAccepted', 'notPlainText', 'notUtf8', 'ownerOrMode', 'readFailed', 'tooLarge'].sort(),
+      [
+        'blockMarker',
+        'configNotUsable',
+        'inputNotUsable',
+        'link',
+        'notAccepted',
+        'notPlainText',
+        'notUtf8',
+        'ownerOrMode',
+        'readFailed',
+        'tooLarge',
+      ].sort(),
     );
     expect(new Set(reasons).size).toBe(reasons.length);
     for (const reason of reasons) expect(reason).toMatch(/^[^\r\n]+$/);

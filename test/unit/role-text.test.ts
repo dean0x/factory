@@ -294,7 +294,7 @@ describe('the reason and the refusal of a fault', () => {
 
   it('has one fixed reason for each fault, and the reason of a text that is too large holds no size', () => {
     const reasons = faults.map(roleFaultReason);
-    expect(reasons).toEqual(Object.values(roleText.reasons));
+    expect(reasons).toEqual(Object.values(roleText.reasons).filter((reason) => reason !== roleText.reasons.inputNotUsable));
     expect(roleFaultReason({ kind: 'tooLarge', size: 12_345, unit: 'bytes', free: 2_100 })).not.toContain('12345');
   });
 

@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { failure, type CliResult } from '../cli/errors.js';
+import { failure, type CliError, type CliResult } from '../cli/errors.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
-import { ok } from '../core/result.js';
+import { ok, type Err } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { commands, env, hookNames, lastSeen, roles, roleText, type HookEvent } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
@@ -20,8 +20,8 @@ import { readRoleText, roleFaultReason } from '../workers/role-text.js';
  * Every refusal writes nothing. A person never runs it, and it never fails the session that runs it: the caller turns every
  * result into exit 0.
  * One event prints an output: the `SessionStart` of a worker that has a record. Its context is the role text of the worker, or
- * the fixed refusal text when a check of that text fails. A start, a resume, a clear and a compact all raise that event. The
- * session of the coordinator and every other event of a worker print nothing.
+ * the fixed refusal text when a check of that text fails, or when the input of the hook cannot be used. A start, a resume, a clear
+ * and a compact all raise that event. The session of the coordinator and every other event of a worker print nothing.
  * The checks of the role text are: no link in the path of the setup file, the owner and the mode of the file and its folders,
  * the size cap, the encoding, plain text with no control character, no block marker, the acceptance of the exact text, a read
  * that works, a config that can be used, and no throw in the worker branch. Each fault gives one fixed reason on stderr.
@@ -45,7 +45,8 @@ export const startEvent: HookEvent = 'SessionStart';
 
 /**
  * What a hook gives back. The context is the text that a session gets, or null for a hook that prints nothing. Each problem is
- * a reason that the caller prints as one line on stderr. A problem names no text of a file.
+ * a line that the caller prints on stderr. A reason of the role text is a fixed text with no path and no text of a file. The
+ * line for a failed write of the last-seen line is the message of that failure, which can name a path.
  */
 export interface HookOutcome {
   readonly context: string | null;
@@ -198,6 +199,16 @@ const startOfWorker = async (
 };
 
 /**
+ * The start of a session whose input the hook cannot use. The session id is not known, so the hook records nothing. A session
+ * of a worker still gets the refusal text, because the worker branch must never leave a worker with no text and no refusal.
+ * A fault of the identity, and a session that is not a worker, give the error of the input: such a fault cannot prove a worker.
+ */
+const startWithBadInput = async (deps: Deps, registry: RecipeRegistry, fault: Err<CliError>): Promise<CliResult<HookOutcome>> => {
+  const identity = await sessionIdentityOf(deps, registry);
+  return identity.ok && identity.value.worker !== null ? ok(refusedWith(roleText.reasons.inputNotUsable)) : fault;
+};
+
+/**
  * Record the event as the last-seen line of the session. Outside a factory session (no factory folder in the environment) it
  * does nothing and reads nothing. Otherwise the factory folder must pass the registration check, and the session marker must
  * be the id of the node or the id of a worker in its registry. The hook also records the session as the newest session of its
@@ -206,7 +217,8 @@ const startOfWorker = async (
  * hook reads no file of the factory. An error is the reason that the hook wrote nothing, or that it did not write the pointer,
  * and it prints nothing to stdout.
  * The `SessionStart` of a worker is the one event that gives a context: the role text, or the refusal text. For that event
- * the failure of the record is a problem in the outcome, and no early return.
+ * the failure of the record is a problem in the outcome, and no early return. An input that the hook cannot use gives the
+ * refusal text for that event too, when the identity proves a worker (see `startWithBadInput`).
  */
 export const runHook = async (deps: Deps, args: readonly string[], registry: RecipeRegistry): Promise<CliResult<HookOutcome>> => {
   if (!hasFactoryHome(deps)) return ok(SILENT);
@@ -215,7 +227,7 @@ export const runHook = async (deps: Deps, args: readonly string[], registry: Rec
   if (!isHookEvent(event) || extra.length > 0) return failure(`the command takes one event of: ${hookNames.events.join(', ')}`);
 
   const input = await readInput(deps, event);
-  if (!input.ok) return input;
+  if (!input.ok) return event === startEvent ? startWithBadInput(deps, registry, input) : input;
   if (!recordsState(event, input.value)) return ok(SILENT);
   const { sessionId } = input.value;
 

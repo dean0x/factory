@@ -114,7 +114,7 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
 
 /**
  * The hook that Claude Code runs. `runCli` routes it before the flags are read, and prints its output itself: the
- * `SessionStart` of a worker gives the role text as one JSON object, or the refusal text when a check of the text fails. Every
+ * `SessionStart` of a worker gives the role text as one JSON object, or the refusal text when a check of the text fails or the input cannot be used. Every
  * other event, and every session of the coordinator, prints nothing, and the word `statusline` prints the status line (see
  * `runStatusline`). The table holds it for the help. The run of this entry maps the outcome of the hook to the lines and the
  * warnings of a command, for a caller that does not use the route.

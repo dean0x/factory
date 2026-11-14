@@ -822,6 +822,68 @@ describe('factory hook: the role text of a worker session', () => {
     expect(setupCalls()).toEqual([]);
   });
 
+  describe('an input that the hook cannot use', () => {
+    const BAD_INPUTS = [
+      ['a session id that is not a UUID', payload('SessionStart', { session_id: 'leaky-value-123' })],
+      ['an event name that differs from the argument', payload('SessionStart', { hook_event_name: 'Stop' })],
+      ['an input that is not JSON', 'this is not json'],
+      ['an empty input', ''],
+      ['an input over the byte cap', payload('SessionStart', { source: 'x'.repeat(hookNames.maxStdinBytes) })],
+    ] as const;
+
+    it.each(BAD_INPUTS)(
+      'prints the refusal text and one fixed reason for the SessionStart of a worker with %s, and records no session',
+      async (_name, stdin) => {
+        const deps = await makeStart({ stdin });
+        const before = snapshot(deps);
+        const ran = await ranFor(deps);
+        expect(ran).toEqual({ code: 0, out: [refusedOutput], err: [reasonLine(roleText.reasons.inputNotUsable)] });
+        expect(ran.err.join('')).not.toContain('leaky-value-123');
+        expect(snapshot(deps)).toBe(before);
+      },
+    );
+
+    it.each(BAD_INPUTS)('prints nothing to stdout for the SessionStart of the coordinator with %s', async (_name, stdin) => {
+      const deps = make({ stdin });
+      const before = snapshot(deps);
+      const ran = await ranFor(deps);
+      expect(ran.code).toBe(0);
+      expect(ran.out).toEqual([]);
+      expect(ran.err).toHaveLength(1);
+      expect(ran.err[0]).not.toContain(roleText.reasons.inputNotUsable);
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it.each([
+      ['a slug with no record', { FACTORY_SESSION: 'other-worker' }],
+      ['an id that is not a slug', { FACTORY_SESSION: '../fix-login' }],
+      ['an empty session marker', { FACTORY_SESSION: '' }],
+    ])('prints nothing to stdout for %s: a fault of the identity cannot prove a worker', async (_name, env) => {
+      const deps = await makeStart({ env, stdin: 'this is not json' });
+      const ran = await ranFor(deps);
+      expect(ran.code).toBe(0);
+      expect(ran.out).toEqual([]);
+      expect(ran.err).toHaveLength(1);
+    });
+
+    it('prints nothing to stdout for a worker whose record is a link', async () => {
+      const links: Record<string, string> = {};
+      const deps = await makeStart({ links, stdin: 'this is not json' });
+      links[paths.recordFile] = '/elsewhere/worker-record';
+      expect((await ranFor(deps)).out).toEqual([]);
+    });
+
+    it.each(hookNames.events.filter((event) => event !== 'SessionStart'))(
+      'prints nothing to stdout for %s of a worker with an input that is not JSON',
+      async (event) => {
+        const ran = await ranFor(await makeStart({ stdin: 'this is not json' }), event);
+        expect(ran.code).toBe(0);
+        expect(ran.out).toEqual([]);
+        expect(ran.err).toHaveLength(1);
+      },
+    );
+  });
+
   describe('a check that fails', () => {
     const changed = async (change: (deps: FakeDeps) => void, world: World = {}): Promise<FakeDeps> => {
       const deps = await makeStart(world);
