@@ -1537,8 +1537,7 @@ describe('the working rules of the worker block', () => {
     expect(worker()).toContain('Do not install outside your work copy without an owner go.');
     for (const installClass of [
       'a global package install',
-      'a system package tool such as `brew` or `apt`',
-      'a script that downloads and runs code',
+      'a system package tool such as `brew` or `apt`; a script that downloads and runs code',
       'a change to a shell start file or to the search path',
       'a new Claude Code plugin or MCP server',
       'a change to the Claude Code settings',
@@ -1626,8 +1625,7 @@ describe('the work rules block of the coordinator', () => {
   it('names the same five classes of install as the worker block', () => {
     for (const installClass of [
       'a global package install',
-      'a system package tool such as `brew` or `apt`',
-      'a script that downloads and runs code',
+      'a system package tool such as `brew` or `apt`; a script that downloads and runs code',
       'a change to a shell start file or to the search path',
       'a new Claude Code plugin or MCP server',
       'a change to the Claude Code settings',

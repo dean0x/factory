@@ -30,7 +30,7 @@ export const WORKER_LINES: readonly string[] = [
   '## Limits',
   '',
   '- Claude Code loads the user rules itself. Do not open a file in the user config folder.',
-  '- Do not install outside your work copy without an {{owner}} go. These need a go: a global package install; a system package tool such as `brew` or `apt`;a script that downloads and runs code; a change to a shell start file or to the search path; a new Claude Code plugin or MCP server; a change to the Claude Code settings. An install of a dependency inside your work copy is allowed.',
+  '- Do not install outside your work copy without an {{owner}} go. These need a go: a global package install; a system package tool such as `brew` or `apt`; a script that downloads and runs code; a change to a shell start file or to the search path; a new Claude Code plugin or MCP server; a change to the Claude Code settings. An install of a dependency inside your work copy is allowed.',
   '',
   '## Milestones',
   '',
