@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkFolderSettings,
+  checkTrackedSettings,
   failsOnlyOnSetup,
   hasRootFailure,
   requireNoFailures,
@@ -31,7 +32,7 @@ import {
   values,
 } from '../../src/names.js';
 import type { ApprovalMode } from '../../src/recipes/index.js';
-import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -888,6 +889,14 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       put(deps, folder, JSON.stringify({ permissions: { disableBypassPermissionsMode: 'disable' }, env: { OTHER: '1' } }));
       expect(levelsOf(await scan(deps), checkIds.permissionMode)).not.toContain('fail');
     });
+
+    it('does not fail for a file that turns off every hook: only a work copy must keep its hooks', async () => {
+      const deps = make();
+      put(deps, folder, JSON.stringify({ [claudeSettingKeys.disableAllHooks]: true }));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).not.toContain('fail');
+      expect(requireRootClean(found).ok).toBe(true);
+    });
   });
 
   it.each([
@@ -1047,6 +1056,81 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       const found = await checkFolderSettings({ ...deps, fs: { ...deps.fs, readTextLimited } }, HOME, FOLDER, 'a work copy');
       expect(found.map((entry) => entry.level)).toEqual(['fail']);
       expect(found[0]?.text).toContain('did not read');
+    });
+
+    it('gives a failure for a file that turns off every hook, names the file and the effect, and gives one remedy line', async () => {
+      const deps = make();
+      deps.seed(FILE, JSON.stringify({ [claudeSettingKeys.disableAllHooks]: true }));
+      const found = await check(deps);
+      const stop = found.find((entry) => entry.level === 'fail');
+      expect(stop?.text).toContain('work-copies/web-a/.claude/settings.local.json');
+      expect(stop?.text).toContain(claudeSettingKeys.disableAllHooks);
+      expect(stop?.text).toContain('gets no role text');
+      expect(stop?.remedy).toContain('Remove the setting');
+      expect(stop?.remedy).not.toContain('\n');
+      expect(requireNoFailures(found).ok).toBe(false);
+    });
+
+    it('gives a failure for a project settings file that turns off every hook', async () => {
+      const deps = make();
+      deps.seed(`${FOLDER}/.claude/settings.json`, '// kept by the project\n{"disableAllHooks": true}');
+      const found = await check(deps);
+      expect(found.some((entry) => entry.level === 'fail' && entry.text.includes('work-copies/web-a/.claude/settings.json'))).toBe(true);
+    });
+
+    it('gives no failure for a file that sets the hooks setting to false', async () => {
+      const deps = make();
+      deps.seed(FILE, JSON.stringify({ [claudeSettingKeys.disableAllHooks]: false }));
+      expect(requireNoFailures(await check(deps)).ok).toBe(true);
+    });
+  });
+
+  describe('the check of the settings that the last commit of a clone tracks', () => {
+    const FOLDER = { path: `${HOME}/work-copies/web-a`, presence: 'a work copy' };
+    const hex = (index: number): string => index.toString(16).padStart(40, '0');
+
+    /** Deps whose git holds the given files below `.claude` in its last commit. */
+    const commit = (settings: Readonly<Record<string, string>>): FakeDeps => {
+      const entries = Object.entries(settings);
+      return createFakeDeps({
+        run: (call) => {
+          if (call.args[2] === 'cat-file') {
+            const found = entries.find((_entry, index) => hex(index + 1) === call.args[4]);
+            return found === undefined ? exited(128, '', 'fatal: Not a valid object name\n') : exited(0, found[1]);
+          }
+          if (call.args[2] !== 'ls-tree') return exited(1);
+          if (call.args.at(-1) === '.claude') return exited(0, `040000 tree ${hex(0)}       -\t.claude\0`);
+          return exited(
+            0,
+            entries.map(([name, text], index) => `100644 blob ${hex(index + 1)} ${String(text.length).padStart(7)}\t.claude/${name}\0`).join(''),
+          );
+        },
+      });
+    };
+
+    const tracked = async (settings: Readonly<Record<string, string>>) => {
+      const result = await checkTrackedSettings(commit(settings), HOME, '/w/node/clones/web', FOLDER);
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
+    };
+
+    it('gives a failure for a tracked file that turns off every hook, and names the file and the effect', async () => {
+      const found = await tracked({ 'settings.local.json': JSON.stringify({ [claudeSettingKeys.disableAllHooks]: true }) });
+      const stop = found.findings.find((entry) => entry.level === 'fail');
+      expect(stop?.text).toContain('work-copies/web-a/.claude/settings.local.json');
+      expect(stop?.text).toContain(claudeSettingKeys.disableAllHooks);
+      expect(stop?.text).toContain('gets no role text');
+      expect(requireNoFailures(found.findings).ok).toBe(false);
+    });
+
+    it('checks every tracked settings file, not only the local one', async () => {
+      const found = await tracked({ 'settings.json': '{"disableAllHooks": true}' });
+      expect(found.findings.some((entry) => entry.level === 'fail' && entry.text.includes('.claude/settings.json'))).toBe(true);
+    });
+
+    it('gives no failure for tracked files that keep the hooks on', async () => {
+      const found = await tracked({ 'settings.json': JSON.stringify({ [claudeSettingKeys.disableAllHooks]: false }) });
+      expect(requireNoFailures(found.findings).ok).toBe(true);
     });
   });
 

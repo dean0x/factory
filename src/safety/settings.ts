@@ -51,6 +51,8 @@ export interface SettingsFacts {
   readonly crossSessionInbound: CrossSessionHeldValue | null;
   /** The names of the settings that approve the MCP servers of a project: all of them, or a list. */
   readonly approvesMcp: readonly string[];
+  /** True when the file sets `disableAllHooks` to true, so that a session that reads it runs no hook. */
+  readonly disablesHooks: boolean;
 }
 
 /**
@@ -194,6 +196,12 @@ const heldCrossSession = (parsed: unknown): CrossSessionHeldValue | null => {
   return crossSessionHeldValues.find((held) => held === value) ?? null;
 };
 
+const HOOKS_OFF_PATTERN = new RegExp(`"${escapeRegExp(claudeSettingKeys.disableAllHooks)}"\\s*:\\s*true`);
+
+/** Same two ways as `skipsOf`: the parsed value, and the raw text, so that a parser that reads a file in another way does not hide it. */
+const disablesHooks = (text: string, parsed: unknown): boolean =>
+  valueAt(parsed, [claudeSettingKeys.disableAllHooks]) === true || HOOKS_OFF_PATTERN.test(text);
+
 export const analyzeSettings = (text: string): SettingsFacts => {
   const json = parseJsonText(text);
   const parsed = json.ok ? json.value : undefined;
@@ -210,5 +218,6 @@ export const analyzeSettings = (text: string): SettingsFacts => {
     planMode: valueAt(parsed, [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode]) === planMode,
     crossSessionInbound: heldCrossSession(parsed),
     approvesMcp: approvesMcp(parsed),
+    disablesHooks: disablesHooks(text, parsed),
   };
 };

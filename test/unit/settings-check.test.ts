@@ -350,6 +350,43 @@ describe('the approval of project MCP servers (TP-180)', () => {
   });
 });
 
+describe('the setting that turns off every hook', () => {
+  const hooksOff = (text: string): boolean => analyzeSettings(text).disablesHooks;
+
+  it('is found when the file sets it to true', () => {
+    expect(hooksOff(JSON.stringify({ [claudeSettingKeys.disableAllHooks]: true }))).toBe(true);
+  });
+
+  it('is found also when the file is not valid JSON', () => {
+    const facts = analyzeSettings(`// a comment\n{"${claudeSettingKeys.disableAllHooks}": true,,`);
+    expect(facts.valid).toBe(false);
+    expect(facts.disablesHooks).toBe(true);
+  });
+
+  it('is found when the text writes the key with an escape in its name', () => {
+    expect(hooksOff('{"disableAll\\u0048ooks": true}')).toBe(true);
+  });
+
+  it('is found when the file writes the key twice and the last value is false', () => {
+    expect(hooksOff('{"disableAllHooks": true, "disableAllHooks": false}')).toBe(true);
+  });
+
+  it.each([
+    ['the value false', { [claudeSettingKeys.disableAllHooks]: false }],
+    ['the value as text', { [claudeSettingKeys.disableAllHooks]: 'true' }],
+    ['no setting', {}],
+    ['a hooks entry', { hooks: { SessionStart: [] } }],
+    ['the name inside a value', { note: 'disableAllHooks', other: { text: '"disableAllHooks": true' } }],
+  ])('is not found for %s', (_name, value) => {
+    expect(hooksOff(JSON.stringify(value))).toBe(false);
+  });
+
+  it('is not a permission skip: it has its own fact', () => {
+    const facts = analyzeSettings(JSON.stringify({ [claudeSettingKeys.disableAllHooks]: true }));
+    expect(facts.skips).toEqual([]);
+  });
+});
+
 describe('a text that is not a settings object', () => {
   it.each([
     ['not JSON', 'this is not json'],
@@ -377,6 +414,7 @@ describe('a text that is not a settings object', () => {
       planMode: false,
       crossSessionInbound: null,
       approvesMcp: [],
+      disablesHooks: false,
     });
   });
 });
