@@ -26,6 +26,7 @@ import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash
 import { ok } from '../../src/core/result.js';
 import {
   boardKeys,
+  boardTextLimits,
   commandLines,
   commands,
   commandText,
@@ -34,6 +35,7 @@ import {
   env,
   files as fileNames,
   maxBoardNumber,
+  maxEchoChars,
   markLimits,
   maxFileBytes,
   relayedMarker,
@@ -706,7 +708,7 @@ describe('the local connector: the text of the board file', () => {
     const repo = await repoWith(SAMPLE);
     const added = valueOf(await connectorOf(repo).addItem({ title: 'Brand new', text: 'Words', track: 'docs', fields: { priority: 'P1', type: 'bug', lane: 'w-1' } }));
     expect(added.id).toBe('B-17');
-    expect(Object.keys(added.record)).toEqual(['id', 'title', 'status', 'stage', boardKeys.stageAt, 'track', 'text', 'priority', 'type', 'lane']);
+    expect(Object.keys(added.record)).toEqual(['id', 'title', 'status', 'stage', boardKeys.stageAt, boardKeys.stages, 'track', 'text', 'priority', 'type', 'lane']);
     expect(added.record['priority']).toBe('P1');
   });
 
@@ -1153,6 +1155,315 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
     });
     expect(exitOf(await linked.linkDoc({ id: 'B-1', path: DOC_PATH }))).toBe(4);
     expectUntouched(repo, board);
+  });
+
+  const upperFirst = (text: string): string => text.replace(/^./, (letter) => letter.toUpperCase());
+
+  it.each([
+    ['the local config of the factory folder', fileNames.localConfig],
+    ['the local config in capital letters', fileNames.localConfig.toUpperCase()],
+    ['the local config with a capital first letter', upperFirst(fileNames.localConfig)],
+    ['a file in a folder that starts with a dot', '.hidden/plan.md'],
+    ['a file that starts with a dot', 'docs/.plan.md'],
+    ['a file below a folder that starts with a dot', 'docs/.hidden/plan.md'],
+    ['a file in the orders folder', `${dirs.state}/${dirs.orders}/order.md`],
+  ])('refuses %s with exit 4, a remedy line, and writes nothing, also when the file is there', async (_name, path) => {
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    repo.deps.seed(join(HOME, path), '# Plan\n');
+    const error = errorOf(await link(repo, path));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.hint).toBeTruthy();
+    expectUntouched(repo, board);
+  });
+
+  it('refuses the local config before it looks for the file, so a missing file does not hide the refusal', async () => {
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    expect(exitOf(await link(repo, upperFirst(fileNames.localConfig)))).toBe(4);
+    expectUntouched(repo, board);
+  });
+
+  it('takes a file that has the name of the local config below the factory top', async () => {
+    const repo = await repoWith(boardWith([item('B-1')]));
+    const path = `docs/${fileNames.localConfig}`;
+    repo.deps.seed(join(HOME, path), 'x: 1\n');
+    valueOf(await link(repo, path));
+    expect(valueOf(parseBoard(repo.textOf(fileNames.board) ?? '', QUEUE)).items[0]?.record['docs']).toEqual([path]);
+  });
+
+  it('keeps the message to the cut path: a long part with a dot does not appear whole', async () => {
+    const repo = await repoWith(boardWith([item('B-1')]));
+    const part = `.${'a'.repeat(150)}`;
+    const error = errorOf(await link(repo, `${part}/x.md`));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).not.toContain('a'.repeat(maxEchoChars + 1));
+  });
+
+  it('refuses a path with a zero-width space with exit 2, also when the file is there, and writes nothing', async () => {
+    const path = `docs/design${String.fromCodePoint(0x200b)}.md`;
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    repo.deps.seed(join(HOME, path), '# Design\n');
+    expect(exitOf(await link(repo, path))).toBe(2);
+    expectUntouched(repo, board);
+  });
+
+  it('refuses a file over the size limit with exit 2, and takes a file of exactly the limit', async () => {
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    repo.deps.seed(join(HOME, 'docs/big.md'), 'x'.repeat(maxFileBytes + 1));
+    repo.deps.seed(join(HOME, 'docs/edge.md'), 'x'.repeat(maxFileBytes));
+    expect(exitOf(await link(repo, 'docs/big.md'))).toBe(2);
+    expectUntouched(repo, board);
+    valueOf(await link(repo, 'docs/edge.md'));
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it('stops the link when the size of the file can not be read, and writes nothing', async () => {
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    const full = join(HOME, DOC_PATH);
+    const blind: Deps = {
+      ...repo.deps,
+      fs: { ...repo.deps.fs, statInfo: async (target) => (target === full ? failure('cannot look at the file') : repo.deps.fs.statInfo(target)) },
+    };
+    const blinded = createLocalBoard(blind, LAYOUT, {
+      queueKey: QUEUE,
+      recipe: softwareBoard,
+      config: sampleBoard(),
+      command: commands.start,
+      tracker: values.trackerLocal,
+      node: NODE,
+    });
+    expect(exitOf(await blinded.linkDoc({ id: 'B-1', path: DOC_PATH }))).toBe(1);
+    expectUntouched(repo, board);
+  });
+
+  describe('the most docs of an item', () => {
+    const TEN = Array.from({ length: boardTextLimits.maxItemDocs }, (_, at) => `docs/d${at}.md`);
+
+    it('takes the tenth doc', async () => {
+      const repo = await repoWith(boardWith([item('B-1', { docs: TEN.slice(1) })]));
+      valueOf(await link(repo, DOC_PATH));
+      expect(valueOf(parseBoard(repo.textOf(fileNames.board) ?? '', QUEUE)).items[0]?.record['docs']).toEqual([...TEN.slice(1), DOC_PATH]);
+    });
+
+    it('refuses the eleventh doc with exit 2, names the limit, and writes nothing', async () => {
+      const board = boardWith([item('B-1', { docs: TEN })]);
+      const repo = await repoWith(board);
+      const error = errorOf(await link(repo, DOC_PATH));
+      expect(exitCodeOf[error.kind]).toBe(2);
+      expect(error.message).toContain(String(boardTextLimits.maxItemDocs));
+      expectUntouched(repo, board);
+    });
+
+    it('makes no commit for a path that the full list holds already', async () => {
+      const board = boardWith([item('B-1', { docs: TEN })]);
+      const repo = await repoWith(board);
+      repo.deps.seed(join(HOME, TEN[0] ?? ''), '# Doc\n');
+      valueOf(await link(repo, TEN[0] ?? ''));
+      expectUntouched(repo, board);
+    });
+
+    it('reads a longer list that a hand edit made: a repeat changes nothing and a new path is refused', async () => {
+      const longer = [...TEN, 'docs/e1.md', 'docs/e2.md'];
+      const board = boardWith([item('B-1', { docs: longer })]);
+      const repo = await repoWith(board);
+      repo.deps.seed(join(HOME, 'docs/e2.md'), '# Doc\n');
+      valueOf(await link(repo, 'docs/e2.md'));
+      expectUntouched(repo, board);
+      expect(exitOf(await link(repo, DOC_PATH))).toBe(2);
+      expectUntouched(repo, board);
+    });
+  });
+});
+
+describe('the local connector: the epic and the stages of an item', () => {
+  const EPIC = 'Release two';
+  const stored = (repo: BoardRepo, at = 0): Readonly<Record<string, unknown>> =>
+    valueOf(parseBoard(repo.textOf(fileNames.board) ?? '', QUEUE)).items[at]?.record ?? {};
+
+  it('stores the epic of a new item, trimmed, after the text', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const added = valueOf(await connectorOf(repo).addItem({ title: 'New', text: 'Words', epic: `  ${EPIC}  `, fields: PRIORITY }));
+    expect(added.record[boardKeys.epic]).toBe(EPIC);
+    expect(Object.keys(added.record).slice(-3)).toEqual(['text', boardKeys.epic, 'priority']);
+  });
+
+  it('stores no epic key for an add with no epic', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const added = valueOf(await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY }));
+    expect(Object.hasOwn(added.record, boardKeys.epic)).toBe(false);
+  });
+
+  it('stores a copy of the stage list of the recipe on a new item', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const added = valueOf(await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY }));
+    expect(stagesOf(softwareBoard).length).toBeGreaterThan(1);
+    expect(added.record[boardKeys.stages]).toEqual(stagesOf(softwareBoard));
+    expect(added.record[boardKeys.stages]).not.toBe(stagesOf(softwareBoard));
+    expect(stored(repo)[boardKeys.stages]).toEqual(stagesOf(softwareBoard));
+  });
+
+  it('stores no stages key and no stage for a recipe with no stage list', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const added = valueOf(await connectorOf(repo, { recipe: { queueKey: QUEUE } }).addItem({ title: 'New', fields: PRIORITY }));
+    expect(Object.keys(added.record)).toEqual(['id', 'title', 'status', 'priority']);
+  });
+
+  it.each([
+    ['an empty epic', ' '],
+    ['an epic of 61 characters', 'x'.repeat(boardTextLimits.maxEpicChars + 1)],
+    ['an epic with a line break', 'one\ntwo'],
+    ['an epic with a right-to-left override', `one${String.fromCodePoint(0x202e)}two`],
+    ['an epic with a zero-width space', `one${String.fromCodePoint(0x200b)}two`],
+    ['an epic with a zero-width joiner', `one${String.fromCodePoint(0x200d)}two`],
+  ])('refuses %s with exit 2, names the epic, and changes no file, for an add and for an update', async (_name, epic) => {
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    const connector = connectorOf(repo);
+    const added = errorOf(await connector.addItem({ title: 'New', epic, fields: PRIORITY }));
+    const updated = errorOf(await connector.updateItem('B-1', { epic }));
+    expect([exitCodeOf[added.kind], exitCodeOf[updated.kind]]).toEqual([2, 2]);
+    expect(added.message).toContain(boardKeys.epic);
+    expectUntouched(repo, board);
+  });
+
+  it('takes an epic of 60 characters', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const epic = 'e'.repeat(boardTextLimits.maxEpicChars);
+    expect(valueOf(await connectorOf(repo).addItem({ title: 'New', epic, fields: PRIORITY })).record[boardKeys.epic]).toBe(epic);
+  });
+
+  it('sets the epic of an item that has none, replaces it, and keeps the other keys and their order', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { zeta: 1 })]));
+    const connector = connectorOf(repo);
+    valueOf(await connector.updateItem('B-1', { epic: EPIC }));
+    expect(Object.keys(stored(repo))).toEqual(['id', 'title', 'status', 'zeta', boardKeys.epic]);
+    valueOf(await connector.updateItem('B-1', { epic: 'Release three' }));
+    expect(stored(repo)[boardKeys.epic]).toBe('Release three');
+    expect(repo.commits).toHaveLength(2);
+  });
+
+  it('makes no commit for an update with the epic that the item has', async () => {
+    const board = boardWith([item('B-1', { [boardKeys.epic]: EPIC })]);
+    const repo = await repoWith(board);
+    valueOf(await connectorOf(repo).updateItem('B-1', { epic: EPIC }));
+    expectUntouched(repo, board);
+  });
+
+  it('keeps the epic through an update of another part', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { [boardKeys.epic]: EPIC })]));
+    valueOf(await connectorOf(repo).updateItem('B-1', { title: 'Changed' }));
+    expect(stored(repo)[boardKeys.epic]).toBe(EPIC);
+  });
+
+  it('adds no stages key to an old item that an update or a move changes', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket' })]));
+    const connector = connectorOf(repo);
+    valueOf(await connector.updateItem('B-1', { epic: EPIC }));
+    valueOf(await connector.moveItem('B-1', { stage: 'building' }));
+    expect(Object.hasOwn(stored(repo), boardKeys.stages)).toBe(false);
+  });
+
+  it('keeps the stages of an item through an update and a stage move', async () => {
+    const copy = ['ticket', 'building'];
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket', [boardKeys.stages]: copy })]));
+    const connector = connectorOf(repo);
+    valueOf(await connector.updateItem('B-1', { title: 'Changed' }));
+    valueOf(await connector.moveItem('B-1', { stage: 'review' }));
+    expect(stored(repo)[boardKeys.stages]).toEqual(copy);
+    expect(stored(repo)['stage']).toBe('review');
+  });
+
+  it('checks a move against the stage list of the recipe, not against the stages that the item holds', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket', [boardKeys.stages]: ['ticket', 'zzz'] })]));
+    const connector = connectorOf(repo);
+    expect(exitOf(await connector.moveItem('B-1', { stage: 'zzz' }))).toBe(2);
+    expect(valueOf(await connector.moveItem('B-1', { stage: 'review' })).changed).toBe(true);
+  });
+});
+
+describe('the local connector: the release group of a queue row', () => {
+  const GROUP = 'Spring release';
+  const ROWS = [
+    { name: 'Alpha', items: ['B-1'], release: true, note: 'First', unknown: { nested: [1] } },
+    { name: 'Beta', items: [] },
+  ];
+  const rowsOf = (repo: BoardRepo): readonly Record<string, unknown>[] => valueOf(parseBoard(repo.textOf(fileNames.board) ?? '', QUEUE)).queue;
+  const withRows = async (rows: readonly Record<string, unknown>[] = ROWS): Promise<{ repo: BoardRepo; board: string }> => {
+    const board = boardWith([item('B-1')], { [QUEUE]: rows });
+    return { repo: await repoWith(board), board };
+  };
+
+  it('stores the group on a new row, trimmed, and answers it', async () => {
+    const { repo } = await withRows();
+    const set = valueOf(await connectorOf(repo).setQueueRow({ name: 'Gamma', releaseGroup: `  ${GROUP}  ` }));
+    expect(set.releaseGroup).toBe(GROUP);
+    expect(rowsOf(repo)[2]).toEqual({ name: 'Gamma', items: [], [boardKeys.releaseGroup]: GROUP });
+  });
+
+  it('sets the group of a row, keeps every other key of the row, and the release flag stays', async () => {
+    const { repo } = await withRows();
+    valueOf(await connectorOf(repo).setQueueRow({ name: 'Alpha', releaseGroup: GROUP }));
+    expect(rowsOf(repo)[0]).toEqual({ ...ROWS[0], [boardKeys.releaseGroup]: GROUP });
+    expect(Object.keys(rowsOf(repo)[0] ?? {})).toEqual(['name', 'items', 'release', 'note', 'unknown', boardKeys.releaseGroup]);
+  });
+
+  it('replaces the group of a row', async () => {
+    const { repo } = await withRows([{ name: 'Alpha', items: [], [boardKeys.releaseGroup]: 'Old' }]);
+    const set = valueOf(await connectorOf(repo).setQueueRow({ name: 'Alpha', releaseGroup: GROUP }));
+    expect([set.releaseGroup, rowsOf(repo)[0]?.[boardKeys.releaseGroup]]).toEqual([GROUP, GROUP]);
+  });
+
+  it('keeps the group of a row through a change of another part, and answers it', async () => {
+    const { repo } = await withRows([{ name: 'Alpha', items: [], [boardKeys.releaseGroup]: GROUP }]);
+    const set = valueOf(await connectorOf(repo).setQueueRow({ name: 'Alpha', note: 'Changed' }));
+    expect(set.releaseGroup).toBe(GROUP);
+    expect(rowsOf(repo)[0]?.[boardKeys.releaseGroup]).toBe(GROUP);
+  });
+
+  it('makes no commit for the group that the row has', async () => {
+    const { repo, board } = await withRows([{ name: 'Alpha', items: [], [boardKeys.releaseGroup]: GROUP }]);
+    const set = valueOf(await connectorOf(repo).setQueueRow({ name: 'Alpha', releaseGroup: GROUP }));
+    expect(set.changed).toBe(false);
+    expectUntouched(repo, board);
+  });
+
+  it('answers null for a row with no group', async () => {
+    const { repo } = await withRows();
+    expect(valueOf(await connectorOf(repo).setQueueRow({ name: 'Beta', note: 'N' })).releaseGroup).toBeNull();
+  });
+
+  it('lists the group of each row as text, and as null for a row with no key or a value that is not text', async () => {
+    const { repo } = await withRows([
+      { name: 'Alpha', items: [], [boardKeys.releaseGroup]: GROUP },
+      { name: 'Beta', items: [] },
+      { name: 'Gamma', items: [], [boardKeys.releaseGroup]: 7 },
+    ]);
+    const listed = valueOf(await connectorOf(repo).listQueue());
+    expect(listed.map((row) => row.releaseGroup)).toEqual([GROUP, null, null]);
+  });
+
+  it.each([
+    ['an empty group', ' '],
+    ['a group of 61 characters', 'g'.repeat(boardTextLimits.maxReleaseGroupChars + 1)],
+    ['a group with a line break', 'one\ntwo'],
+    ['a group with a left-to-right embedding', `one${String.fromCodePoint(0x202a)}two`],
+    ['a group with a zero-width space', `one${String.fromCodePoint(0x200b)}two`],
+  ])('refuses %s with exit 2, names the group, and changes no file', async (_name, releaseGroup) => {
+    const { repo, board } = await withRows();
+    const error = errorOf(await connectorOf(repo).setQueueRow({ name: 'Alpha', releaseGroup }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain(boardKeys.releaseGroup);
+    expectUntouched(repo, board);
+  });
+
+  it('takes a group of 60 characters', async () => {
+    const { repo } = await withRows();
+    const releaseGroup = 'g'.repeat(boardTextLimits.maxReleaseGroupChars);
+    expect(valueOf(await connectorOf(repo).setQueueRow({ name: 'Alpha', releaseGroup })).releaseGroup).toBe(releaseGroup);
   });
 });
 
@@ -2551,7 +2862,7 @@ describe('the local connector: the time of the last stage change', () => {
     const at = timeOf(repo);
     const added = valueOf(await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY }));
     expect(added.record[boardKeys.stageAt]).toBe(at);
-    expect(Object.keys(added.record)).toEqual(['id', 'title', 'status', 'stage', boardKeys.stageAt, 'priority']);
+    expect(Object.keys(added.record)).toEqual(['id', 'title', 'status', 'stage', boardKeys.stageAt, boardKeys.stages, 'priority']);
     expect(stageAtOf(repo, added.id)).toBe(at);
   });
 

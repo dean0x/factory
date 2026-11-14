@@ -442,14 +442,23 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   const itemWrite = (message: string, edit: (doc: BoardDoc) => CliResult<Edit<string>>): Promise<CliResult<BoardItem>> =>
     boardWrite({ message, edit, resultOf: itemIn });
 
-  /** The file must be a plain file of the factory folder, with no link on the way. The link is a security stop (exit 4). */
+  /**
+   * The file checks of a doc link, after the name check: the file must be a plain file of the factory folder, with no link on the
+   * way (a link is a security stop, exit 4), and it holds at most `maxFileBytes` bytes (exit 2). A size that can not be read stops
+   * the link, so the check fails closed.
+   */
   const requireDocFile = async (path: string): Promise<CliResult<void>> => {
     const full = join(layout.home, path);
     const linked = await requireNoLinks(deps, layout.home, [full]);
     if (!linked.ok) return linked;
     const kind = await deps.fs.lstat(full);
     if (!kind.ok) return kind;
-    return kind.value === 'file' ? ok(undefined) : usageError(`${JSON.stringify(displayLine(path, maxEchoChars))} is not a file of the ${places.folder}`);
+    const shownPath = JSON.stringify(displayLine(path, maxEchoChars));
+    if (kind.value !== 'file') return usageError(`${shownPath} is not a file of the ${places.folder}`);
+    const info = await deps.fs.statInfo(full);
+    if (!info.ok) return info;
+    if (info.value === null || info.value.kind !== 'file') return usageError(`${shownPath} is not a file of the ${places.folder}`);
+    return info.value.size > maxFileBytes ? usageError(`${shownPath} is larger than ${maxFileBytes} bytes`) : ok(undefined);
   };
 
   return {

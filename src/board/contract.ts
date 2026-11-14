@@ -49,14 +49,17 @@ export interface ItemAddInput {
   readonly title: string;
   readonly text?: string;
   readonly track?: string;
+  /** One line of at most `boardTextLimits.maxEpicChars` characters. A view groups items by it. */
+  readonly epic?: string;
   readonly fields?: FieldValues;
 }
 
-/** The parts of an item that `update` can change. A part that is left out stays as it is. */
+/** The parts of an item that `update` can change. A part that is left out stays as it is. An epic can be set and replaced, never cleared. */
 export interface ItemPatch {
   readonly title?: string;
   readonly text?: string;
   readonly track?: string;
+  readonly epic?: string;
   readonly fields?: FieldValues;
 }
 
@@ -177,8 +180,8 @@ export interface ItemUnassigned {
 }
 
 /**
- * One row of the queue, as the board file shows it. The reader does not check the keys of a row, so a name or a note that is not
- * text reads as null, and an item list that is not a list of text reads as an empty list.
+ * One row of the queue, as the board file shows it. The reader does not check the keys of a row, so a name, a note or a release group
+ * that is not text reads as null, and an item list that is not a list of text reads as an empty list.
  */
 export interface QueueRow {
   /** The place in the queue, counted from 1. */
@@ -186,6 +189,8 @@ export interface QueueRow {
   readonly name: string | null;
   readonly items: readonly string[];
   readonly note: string | null;
+  /** The release group as stored, or null for a row with no group or a group that is not text. */
+  readonly releaseGroup: string | null;
   /** The stored object of the row, with every key in the order of the file. */
   readonly record: Readonly<Record<string, unknown>>;
 }
@@ -198,6 +203,8 @@ export interface QueueRowInput {
   readonly name: string;
   readonly items?: readonly string[];
   readonly note?: string;
+  /** One line of at most `boardTextLimits.maxReleaseGroupChars` characters. */
+  readonly releaseGroup?: string;
   readonly fields?: FieldValues;
   readonly position?: number;
 }
@@ -207,6 +214,8 @@ export interface QueueRowSet {
   readonly name: string;
   readonly position: number;
   readonly items: readonly string[];
+  /** The release group of the row after the write, or null for a row with none. */
+  readonly releaseGroup: string | null;
   readonly created: boolean;
   readonly changed: boolean;
 }
