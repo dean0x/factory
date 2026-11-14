@@ -226,6 +226,8 @@ export const flags = {
   note: 'note',
   position: 'position',
   priority: 'priority',
+  epic: 'epic',
+  releaseGroup: 'release-group',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -634,6 +636,12 @@ export const boardKeys = {
    * and no other write does. It is a reserved field name. A stored value of any other form reads as no time.
    */
   stageAt: 'stage_at',
+  /** The epic of an item: one line of text that a view groups items by. */
+  epic: 'epic',
+  /** The copy of the stage list of the recipe, stored on an item when it is added. An item from before this key has none. */
+  stages: 'stages',
+  /** The release group of a queue row: one line of text that a view groups rows by. */
+  releaseGroup: 'release_group',
 } as const;
 
 /** The keys of the waiting file: the top keys, and the id of a waiting item. */
@@ -761,6 +769,9 @@ export const queueWords = {
   columns: { position: 'NO', name: 'NAME', items: 'ITEMS', note: 'NOTE' },
   itemSeparator: ' ',
   maxCellChars: 60,
+  /** The word of the heading of a release group in the grouped view, and the heading of the rows that have no group. */
+  groupHeading: 'group',
+  ungroupedHeading: 'no group',
 } as const;
 
 /**
@@ -807,6 +818,12 @@ export const boardTextLimits = {
   maxNoteChars: 500,
   maxOptions: 9,
   maxDocPathChars: 200,
+  /** The most characters of the epic of an item. */
+  maxEpicChars: 60,
+  /** The most characters of the release group of a queue row. */
+  maxReleaseGroupChars: 60,
+  /** The most docs that one item holds. A write that would pass it is a usage error. */
+  maxItemDocs: 10,
 } as const;
 
 /**

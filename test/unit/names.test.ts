@@ -6,6 +6,7 @@ import {
   address,
   blockNames,
   boardKeys,
+  boardTextLimits,
   checkIds,
   claudeSettingKeys,
   claudeSettings,
@@ -43,6 +44,7 @@ import {
   powerKeys,
   powerSources,
   program,
+  queueWords,
   relayedMarker,
   requestCommands,
   requestGroups,
@@ -1634,6 +1636,35 @@ describe('the names of the board records', () => {
 
   it('gives the gh time limit that init and the record check of the software recipe share', () => {
     expect(ghTimeoutMs).toBe(10_000);
+  });
+});
+
+describe('the names of the board data for an outside review page', () => {
+  it('names the flag of the epic of an item and the flag of the release group of a queue row', () => {
+    expect(flags.epic).toBe('epic');
+    expect(flags.releaseGroup).toBe('release-group');
+  });
+
+  it('names the keys of the epic, of the stage copy and of the release group', () => {
+    expect(boardKeys.epic).toBe('epic');
+    expect(boardKeys.stages).toBe('stages');
+    expect(boardKeys.releaseGroup).toBe('release_group');
+  });
+
+  it('leaves the names release and kind free for an owner field', () => {
+    expect(reservedFieldNames).not.toContain('release');
+    expect(reservedFieldNames).not.toContain('kind');
+  });
+
+  it('caps an epic and a release group at 60 characters and the docs of one item at 10', () => {
+    expect(boardTextLimits.maxEpicChars).toBe(60);
+    expect(boardTextLimits.maxReleaseGroupChars).toBe(60);
+    expect(boardTextLimits.maxItemDocs).toBe(10);
+  });
+
+  it('gives the grouped queue view a word for the heading of a group and a word for the rows with no group', () => {
+    expect(queueWords.groupHeading).toBe('group');
+    expect(queueWords.ungroupedHeading).toBe('no group');
   });
 });
 
