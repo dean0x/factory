@@ -1,5 +1,5 @@
 /**
- * The plain-words table (decision D-11) and the scan of the docs for old words and jargon.
+ * The plain-words table and the scan of the docs for old words and jargon.
  *
  * Text that a user reads uses the plain word. Code identifiers, config keys, flags and command names stay.
  * `docs/glossary.md` holds the same table, and the plain-words test keeps both equal.
@@ -50,7 +50,7 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
     term: 'state marker',
     plain: 'factory marker',
     scan: 'scanned',
-    note: '`.factory/node.json`; "state file" is not used, because the state folder holds many files, and "node file" is not used, because it does not say which file (D-11)',
+    note: '`.factory/node.json`; "state file" is not used, because the state folder holds many files, and "node file" is not used, because it does not say which file',
   },
   { term: 'root rule', plain: 'registration check', scan: 'scanned', note: '' },
   { term: 'allow list', plain: 'share list', scan: 'scanned', note: 'the factory part of the root `.gitignore`' },
@@ -66,14 +66,14 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
     term: 'trust step',
     plain: 'setup acceptance',
     scan: 'scanned',
-    note: 'the verb is "accept", not "approve"; the acceptance of the setup hash (D-13) is its first part, and FAC-M6 extends it to every setup file; "approval" means only approval points and approval records (D-11)',
+    note: 'the verb is "accept", not "approve"; the acceptance of the setup hash is its first part, and FAC-M6 extends it to every setup file; "approval" means only approval points and approval records',
   },
   { term: 'tracker', plain: 'board', scan: 'by hand', note: 'the key `tracker` stays' },
   {
     term: 'checkouts',
     plain: 'work copies',
     scan: 'by hand',
-    note: 'the folder name is `work-copies` (D-11 replaces D-6 `checkouts`); code identifiers can keep a short internal name, but user text, docs and the folder say `work-copies`; "checkout" is also a common git word, so the row is by hand',
+    note: 'the folder name is `work-copies`; code identifiers can keep a short internal name, but user text, docs and the folder say `work-copies`; "checkout" is also a common git word, so the row is by hand',
   },
   {
     term: 'release scope',
@@ -227,19 +227,19 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
     scan: '-',
     note: 'glossary entry: the kind of work that a factory does',
   },
-  { term: 'setup, layer', plain: 'stay', scan: '-', note: "Dean's own words (F-4, F-16)" },
-  { term: 'message', plain: 'stays', scan: '-', note: 'only for the record from another owner and for a file that `node send` writes into a child inbox (D-6)' },
+  { term: 'setup, layer', plain: 'stay', scan: '-', note: "Dean's own words" },
+  { term: 'message', plain: 'stays', scan: '-', note: 'only for the record from another owner and for a file that `node send` writes into a child inbox' },
   {
     term: 'doctor, `STUCK:`',
     plain: 'stay',
     scan: '-',
     note: 'command name and output marker; the help line and the `STUCK:` line say in plain words what they mean',
   },
-  { term: 'node, owner, project', plain: 'stay', scan: '-', note: "Dean's words (F-1)" },
+  { term: 'node, owner, project', plain: 'stay', scan: '-', note: "Dean's words" },
 ];
 
 /**
- * The eight words that D-59 replaced. `test/helpers/old-words.ts` holds the same list for the scan of `src`, and a unit
+ * The eight old words that the plain words replaced. `test/helpers/old-words.ts` holds the same list for the scan of `src`, and a unit
  * test keeps the two lists equal.
  */
 export const OLD_WORD_LIST = ['lane', 'pack', 'brief', 'cell', 'andon', 'staging', 'inspect', 'ship'] as const;
@@ -329,12 +329,12 @@ export const changelogPartOf = (text: string, version: string): string => {
 };
 
 /**
- * A row of the trace that keeps an old word on purpose, in its quote cell (the second column). The docs review reads this
+ * A row of the trace that keeps an old word on purpose, in its quote cell (the first column). The docs review reads this
  * list.
  */
 export interface AllowedLine {
   readonly file: string;
-  /** The line starts with this text. */
+  /** The line starts with this text: the whole quote cell of the row, with the bar after it. */
   readonly startsWith: string;
   readonly reason: string;
 }
@@ -344,10 +344,14 @@ const OWNER_NOTE =
 
 /** The rows of the docs that keep an old word in the quote cell, each with its reason. */
 export const ALLOWED_LINES: readonly AllowedLine[] = [
-  { file: 'intent-trace.md', startsWith: '| F-1a |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| F-14b |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| V-F-1b |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| V-F-1c |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| Replace "lane" and "pack" with factory words |', reason: OWNER_NOTE },
+  {
+    file: 'intent-trace.md',
+    startsWith: '| "I don\'t like lane, though." and "the thing that you called Andon. I don\'t know that word." |',
+    reason: OWNER_NOTE,
+  },
+  { file: 'intent-trace.md', startsWith: '| Replace "lane" and "pack" |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| "Pack" is not clear from the name or the description |', reason: OWNER_NOTE },
 ];
 
 /** The doc whose entries show the old word of a new word in the form `(was: old word)`. */
@@ -372,11 +376,11 @@ export const TABLE_HEADER = '| Term | Plain word in user text | Scan | Note |';
 /** Removes the code spans of one line: text between backticks, also between double backticks. */
 const withoutCodeSpans = (line: string): string => line.replace(/(`+)[^`]*?\1/g, ' ');
 
-/** Removes the quote cell of a table row: the second column, after the id cell. The line keeps its other cells. */
+/** Removes the quote cell of a table row: the first column. The line keeps its other cells. */
 const withoutQuoteCell = (line: string): string =>
   line
     .split('|')
-    .map((cell, index) => (index === 2 ? ' ' : cell))
+    .map((cell, index) => (index === 1 ? ' ' : cell))
     .join('|');
 
 /** Removes the `(was: old word)` mark of a glossary entry. A mark in another doc, or after the first words, stays. */
