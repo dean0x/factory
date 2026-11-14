@@ -26,7 +26,7 @@ import { captureSink } from '../helpers/sink.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { unknownPort } from '../helpers/unknown-port.js';
-import { busyWith, knownItem, NONE, UNKNOWN } from '../helpers/work-item.js';
+import { busyWith, knownItem, NONE, sampleDisplay, UNKNOWN } from '../helpers/work-item.js';
 
 const HOME = '/w/node';
 const NODE = sampleConfig().core.node.id;
@@ -804,7 +804,11 @@ describe('status: the work items come from the board', () => {
       { id: 'beta', workItem: 'none', idle: 'yes' },
       { id: 'gamma', workItem: 'none', idle: 'yes' },
     ]);
-    expect(jsonOf(output).workers.map((worker) => worker.workItem)).toEqual([busyWith('B-1'), NONE, knownItem(null, { closed: ['B-2'] })]);
+    expect(jsonOf(output).workers.map((worker) => worker.workItem)).toEqual([
+      knownItem('B-1', { display: sampleDisplay('B-1', 'doing') }),
+      NONE,
+      knownItem(null, { closed: ['B-2'] }),
+    ]);
     expect(output.warnings).toEqual([]);
   });
 
@@ -814,7 +818,7 @@ describe('status: the work items come from the board', () => {
     expect(await runCli(['status', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
     expect(JSON.parse(sink.out.join(''))).toMatchObject({
       workers: [
-        { id: 'alpha', workItem: busyWith('B-1'), idle: true },
+        { id: 'alpha', workItem: knownItem('B-1', { display: sampleDisplay('B-1', 'doing') }), idle: true },
         { id: 'beta', workItem: NONE, idle: true },
         { id: 'gamma', workItem: knownItem(null, { closed: ['B-2'] }), idle: true },
       ],

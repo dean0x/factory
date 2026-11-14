@@ -10,13 +10,14 @@ import type { BoardConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { boardKeys, files, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
-import type { WorkItem } from '../../src/workers/work-items.js';
+import type { WorkItem, WorkItemDisplay } from '../../src/workers/work-items.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import { BOARD_PATH, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
 import { HOME, linkAt } from '../helpers/guard-fixture.js';
+import { countReadsOf } from '../helpers/read-count.js';
 import { sampleBoard, sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { stripComments } from '../helpers/source-scan.js';
-import { busyWith, knownItem, NONE, UNKNOWN } from '../helpers/work-item.js';
+import { busyWith, knownItem, NONE, sampleDisplay, UNKNOWN } from '../helpers/work-item.js';
 
 const LOCK_FILE = join(LAYOUT.locksDir, `${stateLock.name}${stateLock.lock.suffix}`);
 
@@ -45,7 +46,7 @@ describe('the work item port of the board', () => {
       owned('B-3', 'other', 'doing'),
     ]);
     expect(await answersOf(repo, ['alpha', 'beta', 'gamma'])).toEqual([
-      ['alpha', busyWith('B-1')],
+      ['alpha', knownItem('B-1', { display: sampleDisplay('B-1', 'doing') })],
       ['beta', knownItem(null, { closed: ['B-2'] })],
       ['gamma', NONE],
     ]);
@@ -60,15 +61,15 @@ describe('the work item port of the board', () => {
       owned('B-5', 'gamma', 'done'),
     ]);
     expect(await answersOf(repo, ['alpha', 'beta', 'gamma'])).toEqual([
-      ['alpha', busyWith('B-2')],
-      ['beta', knownItem('B-3', { closed: ['B-4'] })],
+      ['alpha', knownItem('B-2', { display: sampleDisplay('B-2', 'doing') })],
+      ['beta', knownItem('B-3', { closed: ['B-4'], display: sampleDisplay('B-3', 'blocked') })],
       ['gamma', knownItem(null, { closed: ['B-5'] })],
     ]);
   });
 
   it('counts a state that the setup does not declare as open work', async () => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'archived')]);
-    expect(await answersOf(repo, ['alpha'])).toEqual([['alpha', busyWith('B-1')]]);
+    expect(await answersOf(repo, ['alpha'])).toEqual([['alpha', knownItem('B-1', { display: sampleDisplay('B-1', 'archived') })]]);
   });
 
   it('answers for each id that it is asked about, in the order of the ids', async () => {
@@ -84,7 +85,7 @@ describe('the work item port of the board', () => {
     ]);
     expect(await answersOf(repo, ['alpha', 'alpha-2'])).toEqual([
       ['alpha', NONE],
-      ['alpha-2', busyWith('B-1')],
+      ['alpha-2', knownItem('B-1', { display: sampleDisplay('B-1', 'doing') })],
     ]);
   });
 });
@@ -159,14 +160,26 @@ describe('the work item port of the board: a stage is display data and never pro
     owned('B-3', 'waits', 'open', extra),
   ];
 
-  it.each(STAGES)('leaves a busy worker busy and an idle worker idle for the stage %s', async (stage) => {
+  /** The answers as the evidence alone: the display data is left out, because a stage shows there and nowhere else. */
+  const evidenceOnly = (answers: readonly (readonly [string, WorkItem])[]): [string, WorkItem][] =>
+    answers.map(([id, work]) => [
+      id,
+      work.state === 'known' ? knownItem(work.item, { closed: work.closed, parked: work.parked, mergedPrHeads: work.mergedPrHeads }) : work,
+    ]);
+
+  it.each(STAGES)('leaves the evidence of a busy worker and of an idle worker as it was for the stage %s', async (stage) => {
     const plain = await answersOf(await nodeWith(BOARD({})), ['busy', 'quiet', 'waits']);
     const staged = await answersOf(await nodeWith(BOARD({ stage })), ['busy', 'quiet', 'waits']);
-    expect(staged).toEqual(plain);
-    expect(staged).toEqual([
+    expect(evidenceOnly(staged)).toEqual(evidenceOnly(plain));
+    expect(evidenceOnly(staged)).toEqual([
       ['busy', busyWith('B-1')],
       ['quiet', knownItem(null, { closed: ['B-2'] })],
       ['waits', busyWith('B-3')],
+    ]);
+    expect(staged).toEqual([
+      ['busy', knownItem('B-1', { display: sampleDisplay('B-1', 'doing', { stage }) })],
+      ['quiet', knownItem(null, { closed: ['B-2'] })],
+      ['waits', knownItem('B-3', { display: sampleDisplay('B-3', 'open', { stage }) })],
     ]);
   });
 
@@ -184,6 +197,73 @@ describe('the work item port of the board: a stage is display data and never pro
   });
 });
 
+describe('the work item port of the board: the display data of the item in progress', () => {
+  const STAGE_TIME = '2030-01-02T10:11:12.345Z';
+  const STAGED = { stage: 'building', [boardKeys.stageAt]: STAGE_TIME };
+  /** The display data and nothing else of the work of a worker, or undefined when the work has none. */
+  const displayIn = async (repo: BoardRepo, id: string): Promise<WorkItemDisplay | undefined> => {
+    const work = (await ask(repo.deps, [id])).get(id);
+    return work?.state === 'known' ? work.display : undefined;
+  };
+
+  it('gives the title, the stage, the time of the stage and the status of the open item in a nested display object', async () => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'doing', STAGED)]);
+    expect(await answersOf(repo, ['alpha'])).toEqual([
+      ['alpha', knownItem('B-1', { display: { title: 'Item B-1', stage: 'building', stageAt: STAGE_TIME, status: 'doing' } })],
+    ]);
+  });
+
+  it('shows the item that the port names: the item in progress before another open item', async () => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'open', STAGED), owned('B-2', 'alpha', 'doing', { stage: 'review' })]);
+    expect(await displayIn(repo, 'alpha')).toEqual(sampleDisplay('B-2', 'doing', { stage: 'review' }));
+  });
+
+  it('shows a state that the setup does not declare as the status of the item', async () => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'archived')]);
+    expect(await displayIn(repo, 'alpha')).toEqual(sampleDisplay('B-1', 'archived'));
+  });
+
+  it('gives no display key to a worker with no open item, to a worker that no item names, or to an unknown worker', async () => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'done', STAGED)]);
+    const known = await ask(repo.deps, ['alpha', 'gamma']);
+    expect(known.get('alpha')).not.toHaveProperty('display');
+    expect(known.get('gamma')).not.toHaveProperty('display');
+    const unknown = await boardNode({ board: boardText([owned('B-1', 'alpha', 'doing')], []), config: sampleConfig() });
+    expect((await ask(unknown.deps, ['alpha'])).get('alpha')).not.toHaveProperty('display');
+  });
+
+  it('shows no stage and no stage time for an item that stores neither, with no migration of the board file', async () => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'doing')]);
+    expect(await displayIn(repo, 'alpha')).toEqual({ title: 'Item B-1', stage: null, stageAt: null, status: 'doing' });
+  });
+
+  it('shows a stage that has no stage time with a stage time of null', async () => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'doing', { stage: 'building' })]);
+    expect(await displayIn(repo, 'alpha')).toEqual(sampleDisplay('B-1', 'doing', { stage: 'building' }));
+  });
+
+  it.each<[string, unknown]>([
+    ['a date only', '2030-01-02'],
+    ['a time with an offset', '2030-01-02T10:11:12.345+00:00'],
+    ['a time with no milliseconds', '2030-01-02T10:11:12Z'],
+    ['text that is no time', 'x'.repeat(24)],
+    ['a time that does not exist', '2030-02-31T10:11:12.345Z'],
+    ['a number', 1893579072345],
+    ['a list', [STAGE_TIME]],
+    ['an empty text', ''],
+  ])('reads the stored stage time as null for %s, and the list still answers', async (_name, stored) => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'doing', { stage: 'building', [boardKeys.stageAt]: stored })]);
+    expect(await displayIn(repo, 'alpha')).toEqual(sampleDisplay('B-1', 'doing', { stage: 'building' }));
+  });
+
+  it('comes from the one read of the board file that gives the evidence', async () => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'doing', STAGED)]);
+    const counted = countReadsOf(repo.deps, BOARD_PATH);
+    await ask(counted.deps, ['alpha', 'beta']);
+    expect(counted.count()).toBe(1);
+  });
+});
+
 describe('the work item port of the board: the evidence of closed and parked work', () => {
   const HEAD_A = 'a'.repeat(40);
   const HEAD_B = 'b'.repeat(40);
@@ -196,7 +276,7 @@ describe('the work item port of the board: the evidence of closed and parked wor
       owned('B-4', 'alpha', 'done'),
     ]);
     expect(await answersOf(repo, ['alpha', 'beta'])).toEqual([
-      ['alpha', knownItem('B-2', { closed: ['B-1', 'B-4'] })],
+      ['alpha', knownItem('B-2', { closed: ['B-1', 'B-4'], display: sampleDisplay('B-2', 'doing') })],
       ['beta', knownItem(null, { closed: ['B-3'] })],
     ]);
   });
@@ -211,7 +291,7 @@ describe('the work item port of the board: the evidence of closed and parked wor
     expect(await answersOf(repo, ['alpha', 'beta', 'gamma'])).toEqual([
       ['alpha', knownItem(null, { parked: ['B-1'] })],
       ['beta', knownItem(null, { parked: ['B-1', 'B-3'], closed: ['B-2'] })],
-      ['gamma', knownItem('B-3')],
+      ['gamma', knownItem('B-3', { display: sampleDisplay('B-3', 'doing') })],
     ]);
   });
 
@@ -237,7 +317,10 @@ describe('the work item port of the board: the evidence of closed and parked wor
       owned('B-7', 'alpha', 'done', head(HEAD_A.toUpperCase())),
     ]);
     expect(await answersOf(repo, ['alpha', 'beta'])).toEqual([
-      ['alpha', knownItem('B-4', { closed: ['B-1', 'B-2', 'B-3', 'B-6', 'B-7'], mergedPrHeads: [HEAD_A] })],
+      [
+        'alpha',
+        knownItem('B-4', { closed: ['B-1', 'B-2', 'B-3', 'B-6', 'B-7'], mergedPrHeads: [HEAD_A], display: sampleDisplay('B-4', 'doing') }),
+      ],
       ['beta', knownItem(null, { closed: ['B-5'], mergedPrHeads: [HEAD_B] })],
     ]);
   });
@@ -252,7 +335,7 @@ describe('the work item port of the board: it reads with no lock', () => {
   it('answers while another process holds the state lock, does not wait, and leaves the lock file as it was', async () => {
     const repo = await nodeWith([owned('B-1', 'alpha', 'doing')]);
     repo.deps.seed(LOCK_FILE, '4242\n');
-    expect(await answersOf(repo, ['alpha'])).toEqual([['alpha', busyWith('B-1')]]);
+    expect(await answersOf(repo, ['alpha'])).toEqual([['alpha', knownItem('B-1', { display: sampleDisplay('B-1', 'doing') })]]);
     expect(repo.deps.files.get(LOCK_FILE)).toBe('4242\n');
     expect(repo.deps.sleeps).toEqual([]);
     expect(repo.commits).toEqual([]);
@@ -301,7 +384,7 @@ describe('the work item port of the board: a worker id of 40 characters', () => 
     valueOf(await run(repo, { words: ['add'], title: 'Long id', fields: ['priority=P1', `lane=${LONGEST}`] }));
     valueOf(await run(repo, { words: ['move', 'B-1'], state: 'doing' }));
     expect(JSON.parse(repo.textOf(files.board) ?? '{}').items[0].lane).toBe(LONGEST);
-    expect(await answersOf(repo, [LONGEST])).toEqual([[LONGEST, busyWith('B-1')]]);
+    expect(await answersOf(repo, [LONGEST])).toEqual([[LONGEST, expect.objectContaining(busyWith('B-1'))]]);
   });
 
   it('refuses a worker field value of 41 characters with exit 2 and writes nothing', async () => {

@@ -9,13 +9,15 @@ import { layoutOf } from '../state/layout.js';
 import { unknownItem, type WorkItem, type WorkItemPort } from '../workers/work-items.js';
 import type { BoardItem } from './contract.js';
 import { readBoard } from './files.js';
+import { displayOf } from './item-display.js';
 
 /**
  * The work item port of the local board (design 4.10): what the board says of the work of each worker. The setup names the state
  * of an item that is in progress, the state that closes an item and the owner field that holds the id of a worker. An item is
  * assigned to the worker whose id its worker field holds. The status alone decides open and closed, and the status that the setup
- * names as in progress decides which open item a worker shows. A stage and a track are display data and never proof, so the port
- * reads neither.
+ * names as in progress decides which open item a worker shows. A stage and a track are display data and never proof: neither
+ * decides an item, a list of evidence or a state. The item in progress also gives the display data of the worker (`displayOf`), and
+ * the read of that data is in its own file, so this file reads neither a stage nor a track. A worker with no open item has none.
  *
  * The answer also holds the evidence that a dismiss reads: the closed items of the worker, the items that are not closed and carry
  * the unassign mark of the worker, and the recorded heads of its closed items. Only a fact that the board proves fills a list.
@@ -79,6 +81,7 @@ const headOf = (item: BoardItem): readonly string[] => {
 /**
  * The work item of one worker: its open item in progress, else its first other open item, else none, with its evidence. An item
  * with a status that is not the closed state is open, also when the setup does not declare the status, so the worker has open work.
+ * The display data is there only when the worker has a current item, and it comes from that item of the same read.
  */
 const workItemOf = (assigned: readonly BoardItem[], parked: readonly string[], rules: WorkRules): WorkItem => {
   const open = assigned.filter((item) => item.status !== rules.closed);
@@ -90,6 +93,7 @@ const workItemOf = (assigned: readonly BoardItem[], parked: readonly string[], r
     closed: closed.map((item) => item.id),
     parked,
     mergedPrHeads: closed.flatMap(headOf),
+    ...(current === undefined ? {} : { display: displayOf(current) }),
   };
 };
 
