@@ -1292,6 +1292,37 @@ describe('the local connector: an open request for the owner', () => {
     expect(read.stored).toEqual({ kind: 'record', node: NODE, root: HOME, id: 'D-1', option: 'b', at: AT });
   });
 
+  it('reads a row of four keys against an owner record that holds the hash from before the two new keys', async () => {
+    /** The SHA-256 of the canonical text of `ENTRY`, as an older build stored it. */
+    const olderHash = 'f05b05a0fee4b0db32e437f89268a9e34b557640d9f779274da7cbde438884d9';
+    const repo = await decideRepo({ store: storeOf(storedRecord({ hash: olderHash })) });
+    const read = valueOf(await localOf(repo.deps).decisionRequest('D-1'));
+    expect(read.request).toMatchObject({ openedAt: null, group: null, hash: olderHash });
+    expect(read.stored).toEqual({ kind: 'record', node: NODE, root: HOME, id: 'D-1', option: 'a', at: AT });
+  });
+
+  it('reads a row with the open time and the group, hashes the whole row, and finds a mismatch for the hash of the four keys', async () => {
+    const entry = { ...ENTRY, opened_at: AT, group: 'later' };
+    const repo = await decideRepo({ waiting: waitingOf(entry), store: storeOf(storedRecord()) });
+    const read = valueOf(await localOf(repo.deps).decisionRequest('D-1'));
+    expect(read.request).toMatchObject({ openedAt: AT, group: 'later', canonical: requestTextOf(entry), hash: requestHashOf(requestTextOf(entry)) });
+    expect(read.request.hash).not.toBe(HASH);
+    expect(read.stored).toEqual({ kind: 'mismatch', option: 'a', at: AT });
+  });
+
+  it.each([
+    ['an open time that is not an exact time', 'opened_at', { ...ENTRY, opened_at: '2030-01-02' }],
+    ['a group that is not a word of the list', 'group', { ...ENTRY, group: 'EVIL' }],
+  ])('exits 1 and names the waiting file and the key for %s', async (_name, key, entry) => {
+    const repo = await decideRepo({ waiting: waitingOf(entry) });
+    const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(fileNames.waiting);
+    expect(error.message).toContain(key);
+    expect(error.message).not.toContain('EVIL');
+    expect(repo.commits).toEqual([]);
+  });
+
   it('gives a mismatch with the stored option and time for a record of another request text', async () => {
     const repo = await decideRepo({ store: storeOf(storedRecord({ hash: requestHashOf(requestTextOf(CHANGED_ENTRY)) })) });
     const read = valueOf(await localOf(repo.deps).decisionRequest('D-1'));

@@ -377,6 +377,13 @@ describe('report builder: the document', () => {
     ]);
   });
 
+  it('gives the same keys for a request that holds an open time and a group', async () => {
+    const stored = { ...requestRecord('D-4', 'Pick a name'), opened_at: '2030-01-02T10:11:12.345Z', group: 'later' };
+    const fixture = await fixtureOf({ requests: [stored] });
+    const report = await reportOf(fixture);
+    expect(report.requests).toEqual([{ id: 'D-4', title: 'Pick a name', origin: `${fixture.config.core.node.id}#D-4` }]);
+  });
+
   it('shows each text as one clean line within the text cap', async () => {
     const title = `Line one\nline two ‮evil${'x'.repeat(reportLimits.maxTextChars)}`;
     const report = await reportOf(await fixtureOf({ items: [itemRecord('B-1', { status: 'doing', title })] }));

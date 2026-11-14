@@ -1,5 +1,5 @@
 import type { CliResult } from '../cli/errors.js';
-import type { requestDeciders } from '../names.js';
+import type { requestDeciders, requestGroups } from '../names.js';
 import type { CheckedRecord } from '../recipes/entry.js';
 import type { DecideRequest } from './decide.js';
 
@@ -138,6 +138,9 @@ export interface RequestClosed {
 
 /** Who decided a request that the owner did not answer: a value of `requestDeciders`. The owner answers with `decide`. */
 export type RequestDecider = (typeof requestDeciders)[keyof typeof requestDeciders];
+
+/** The group of a request, set by the asker: a value of `requestGroups`. */
+export type RequestGroup = (typeof requestGroups)[keyof typeof requestGroups];
 
 /**
  * The decision of a request that is not an approval point, and who made it. The text is one line. A relayed settlement passes on an

@@ -60,7 +60,7 @@ const connectorOf = (deps: Deps, tracker: string, command: CommandName = PASSED_
 
 /** The input of a decision record, from a request of the waiting file. The writer is never called by a refused write. */
 const RECORD_CALL: DecisionRecordCall = {
-  request: { id: 'D-1', title: 'Open', question: 'Why?', options: [{ key: 'a', text: 'Yes' }], canonical: '{}', hash: 'f'.repeat(64) },
+  request: { id: 'D-1', title: 'Open', question: 'Why?', options: [{ key: 'a', text: 'Yes' }], openedAt: null, group: null, canonical: '{}', hash: 'f'.repeat(64) },
   option: 'a',
   note: null,
   at: '2030-01-02T03:04:05.678Z',

@@ -89,6 +89,79 @@ describe('the strict read of a request', () => {
     expect(strictOf({ options: [{ key: 'a', text: 'One.', rec: false }] }).options).toEqual([{ key: 'a', text: 'One.' }]);
   });
 
+  const OPENED_AT = '2030-01-02T10:11:12.345Z';
+
+  it('keeps the canonical text and the hash of a row of four keys, and gives no open time and no group', () => {
+    const request = strictOf();
+    expect(request.openedAt).toBeNull();
+    expect(request.group).toBeNull();
+    expect(request.canonical).toBe(
+      '{"request":{"id":"D-3","options":[{"key":"a","rec":true,"text":"Use SQLite."},{"key":"b","text":"Use Postgres."}],"question":"Which database do we use for the queue?","title":"Which database?"},"tag":"factory.decision-request","version":1}',
+    );
+    expect(request.hash).toBe('5dd3bf677d8d1f74b648f6a6d24b92bbf8eb5dfab95f31ae142e544b2b4f0efb');
+  });
+
+  it('gives the open time and the group of a row of six keys, and hashes the whole row', () => {
+    const six = entry({ opened_at: OPENED_AT, group: 'later' });
+    const request = unwrap(strictRequestOf(waitingOf(six), 'D-3'));
+    expect(request.openedAt).toBe(OPENED_AT);
+    expect(request.group).toBe('later');
+    expect(request.canonical).toBe(canonicalOf(six));
+    expect(request.canonical).toContain(`"opened_at":"${OPENED_AT}"`);
+    expect(request.hash).not.toBe(strictOf().hash);
+  });
+
+  it.each(['now', 'later'])('accepts the group %s alone, and the open time alone', (group) => {
+    expect(strictOf({ group }).group).toBe(group);
+    expect(strictOf({ group }).openedAt).toBeNull();
+    expect(strictOf({ opened_at: OPENED_AT }).openedAt).toBe(OPENED_AT);
+    expect(strictOf({ opened_at: OPENED_AT }).group).toBeNull();
+  });
+
+  it.each([
+    ['text', 'EVIL'],
+    ['a number', 5],
+    ['null', null],
+    ['a time without milliseconds', '2030-01-02T10:11:12Z'],
+    ['a time with an offset', '2030-01-02T10:11:12.345+00:00'],
+    ['a time with a lower case z', '2030-01-02T10:11:12.345z'],
+    ['a time that does not exist', '2030-02-30T10:11:12.345Z'],
+    ['a time with a space in front', ' 2030-01-02T10:11:12.34Z'],
+    ['a time of a long year', '+012030-01-02T10:11:12.345Z'],
+  ])('refuses an open time of %s with exit 1, names the key and repeats no value', (_name, openedAt) => {
+    const error = errorOf(strictRequestOf(waitingOf(entry({ opened_at: openedAt })), 'D-3'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(files.waiting);
+    expect(error.message).toContain('opened_at');
+    expect(error.message).not.toContain(String(openedAt));
+    expect(error.hint ?? '').toContain(commandText(commandLines.requestClose));
+  });
+
+  it.each([
+    ['another word', 'EVIL'],
+    ['a word in upper case', 'Now'],
+    ['a word with a space', 'now '],
+    ['a number', 1],
+    ['null', null],
+    ['a list', ['now']],
+  ])('refuses a group of %s with exit 1, names the key and repeats no value', (_name, group) => {
+    const error = errorOf(strictRequestOf(waitingOf(entry({ group })), 'D-3'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(files.waiting);
+    expect(error.message).toContain('group');
+    expect(error.message).not.toContain('EVIL');
+    expect(error.hint ?? '').toContain(commandText(commandLines.requestClose));
+  });
+
+  it('refuses a hand-set key beside the two new keys, with exit 1', () => {
+    const error = errorOf(strictRequestOf(waitingOf(entry({ opened_at: OPENED_AT, group: 'now', extra: 'EVIL' })), 'D-3'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('a key other than');
+    expect(error.message).toContain('opened_at');
+    expect(error.message).toContain('group');
+    expect(error.message).not.toContain('EVIL');
+  });
+
   it('gives exit 1 for a request that is not in the waiting file', () => {
     const error = errorOf(strictRequestOf(waitingOf(entry()), 'D-9'));
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -98,7 +171,7 @@ describe('the strict read of a request', () => {
   const LONG = (length: number): string => 'x'.repeat(length);
 
   const FAULTS: readonly (readonly [string, Entry])[] = [
-    ['a key other than the four', entry({ extra: 'EVIL' })],
+    ['a key outside the allowed keys', entry({ extra: 'EVIL' })],
     ['a key with the name of a proto', JSON.parse('{"id":"D-3","title":"t","question":"q","options":[{"key":"a","text":"x"}],"__proto__":{"a":1}}') as Entry],
     ['an option with another key', entry({ options: [{ key: 'a', text: 'Use SQLite.', extra: 'EVIL' }] })],
     ['no title', { id: 'D-3', question: 'q', options: entry().options }],
@@ -338,6 +411,15 @@ describe('the recheck under the lock', () => {
     expect(error.message).toContain('changed after the prompt');
   });
 
+  it('exits 1 when the group changes after the prompt, because the hash covers the whole row', () => {
+    const six = { opened_at: '2030-01-02T10:11:12.345Z', group: 'now' };
+    const shown = strictOf(six).hash;
+    expect(unwrap(recheckRequest(waitingOf(entry(six)), logOf(), 'D-3', shown)).hash).toBe(shown);
+    const error = errorOf(recheckRequest(waitingOf(entry({ ...six, group: 'later' })), logOf(), 'D-3', shown));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('changed after the prompt');
+  });
+
   it('exits 1 when a moved separator or one more option changes the hash', () => {
     const more = entry({ options: [...(entry()['options'] as unknown[]), { key: 'c', text: 'Use a file.' }] });
     expect(exitCodeOf[errorOf(recheckRequest(waitingOf(more), logOf(), 'D-3', hashNow)).kind]).toBe(1);
@@ -495,6 +577,28 @@ describe('the request block', () => {
     expect(lines).toContain('  a (recommended) (chosen): Use SQLite.');
     expect(lines).toContain('  b: Use Postgres.');
     expect(lines).toContain('Note:     Cheaper to run.');
+  });
+
+  it('shows the open time and the group between the question and the options when the row holds them', () => {
+    const lines = blockOf(strictOf({ opened_at: '2030-01-02T10:11:12.345Z', group: 'later' }), 'a', null);
+    expect(lines).toContain('Opened:   2030-01-02T10:11:12.345Z');
+    expect(lines).toContain('Group:    later');
+    const question = lines.findIndex((line) => line.startsWith('Question:'));
+    expect(lines.slice(question + 1, lines.indexOf('Options:'))).toEqual(['Opened:   2030-01-02T10:11:12.345Z', 'Group:    later']);
+  });
+
+  it('shows the group alone and the open time alone when the row holds one of them', () => {
+    const groupOnly = blockOf(strictOf({ group: 'now' }), 'a', null);
+    expect(groupOnly).toContain('Group:    now');
+    expect(groupOnly.some((line) => line.startsWith('Opened:'))).toBe(false);
+    const openedOnly = blockOf(strictOf({ opened_at: '2030-01-02T10:11:12.345Z' }), 'a', null);
+    expect(openedOnly).toContain('Opened:   2030-01-02T10:11:12.345Z');
+    expect(openedOnly.some((line) => line.startsWith('Group:'))).toBe(false);
+  });
+
+  it('shows neither line for a row of four keys', () => {
+    const lines = blockOf(strictOf(), 'a', null);
+    expect(lines.some((line) => line.startsWith('Opened:') || line.startsWith('Group:'))).toBe(false);
   });
 
   it('marks the chosen option when it is not the recommended one', () => {
