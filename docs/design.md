@@ -224,7 +224,7 @@ factory shutdown                            # stop every session of this factory
 factory restart <worker>                    # restart one worker, and keep its conversation (§4.11)
 factory reboot                              # shut down the whole factory and start it again; each recorded worker resumes (§4.11)
 factory status [--home DIR] [--json]        # each worker with its state, its work item and its unused state; the digest for the owner (§4.11); it writes only the report file (§5.4); the code names the unused column `IDLE` until FAC-M5b
-factory status --usage [--home DIR] [--json]   # the usage view: the token use, the limits and the work counts of the factory, from the token meter package (§4.11, FAC-M5b)
+factory status --usage [--home DIR] [--json]   # the usage view: the usage panel of the live board, from the answer of the token meter package (§4.11, "The usage panel", FAC-M5b)
 factory dismiss <worker> [--yes | --closed] | --unused # end a worker and free its work copy when its work is pushed; a dry run until --yes; --unused lists the unused workers that have no open work, and the owner picks; --closed is the free that the coordinator runs in its own session (§4.11); FAC-M5b names the flag `--unused`, and the code has `--idle` until then
 factory doctor [--fix]                      # check the tools, their versions, the platform, the safety settings, the last-seen notes and the board; FAC-M11 adds the check of each board CLI: present, configured, authorized (§4.15)
 factory upgrade [--dry-run]                 # update the saved state and the parts of the text files that factory writes (§4.5)
@@ -259,7 +259,7 @@ factory decide read [<D-n>] [--from FILE]   # read the answers on the board with
 factory decide <D-n> <option> [--note T]   # the owner enters the decision in a terminal window, for `local`; a hosted kind refuses until FAC-M11 and FAC-M3; the owner store record is the proof, and the decision log and the profile get a display copy (§4.10)
 factory queue set|show                      # the order of the finished work that waits for an approval point; set finds a row by its exact name (§4.10)
 factory watch                               # read the new board changes, the local change feed included, a limited number of times; wake the coordinator (§4.10)
-factory item estimate <id>                  # the token range of one work item, from closed items with measured tokens; NO BASIS when there are too few (§4.11, FAC-M5b)
+factory item estimate <id>                  # the token range of one work item, as the token meter package estimates it; NO BASIS when the package has no basis (§4.11, FAC-M5b)
 
 factory node tree | children | add-child | remove-child | send ID --file FILE   # send puts a task file in the inbox of a child node (§4.12, §5.5)
 factory report [--home DIR] [--json] [--since CURSOR]    # the report of this node: a verdict line, or the digest with --json; it writes the report file for the parent (§5.4); --since exits 2 until the events exist
@@ -1090,7 +1090,40 @@ Software recipe: the stages are `ticket`, `plan-approved`, `building`, `review`,
 - **The epic view.** The board pane groups the epics under the columns In progress, Next, Later and Done (§4.10, "Epics"). Each epic is one line: the title, the project, the priority, a text progress bar of its items by stage, and "done/total". Epics sort by priority, then title.
   - `item list --epic <E-n>` shows the items of one epic with the title, priority, type and stage. They sort by priority, then by the most advanced stage. Done items come last.
   - On the `artifact` page (FAC-M11), the epics are cards. A click on an epic shows the same item list. A click on an item shows the current item panel: documents, type, priority, status, stage, and the issue and PR links.
-- **The estimate.** Each open item in the board pane shows an estimate mark: the token range of `item estimate`, or `NO BASIS`. `status --usage` is the usage view.
+- **The estimate.** Each open item in the board pane shows an estimate mark: the token range of `item estimate` as a part of the Claude week, for example `est. 3-6% of the Claude week`, or `NO BASIS`. The token meter package gives the range. `status --usage` is the usage view.
+
+**The usage panel (FAC-M5b, planned).** `factory status --usage` prints the usage panel. The board pane shows the same panel under the list of the board. The highlights stand above the usage box. The panel follows the line cap of the other views. No part of the panel is in the code now. The code has the board pane (`item list --follow` in the slot) with no estimate mark and no panel.
+
+- **The token meter supplies the data.** The token meter package (`tokenmeter`) collects the token use and adds it up. Factory runs `tokenmeter status` and reads its answer. Factory collects nothing, reads no log of token use and keeps no history file for the panel. It computes only the values in the column "Factory computes" below, from the totals of one answer, and it shows them. The title of a task comes from the board of factory, by the item id. A field that the answer does not have shows `?`, and a value that does not exist shows `-`.
+- **The parts, from the top to the bottom.** Every part is planned. Each table has a thin rule under its header row. The rule drops only with its whole table, or with the task header (step 6 of the line cap).
+
+| Part | What it shows | From the token meter | Factory computes |
+|---|---|---|---|
+| Highlights | Four boxes in a row: Week in, Week out, Month in and Month out (two rows of two when the pane is narrow). Each box covers all subscriptions. | The local week and month rows of `periods`, each with `full`, `current` and the in and out totals of all subscriptions | The lowest, the average and the highest over the full earlier periods, the count of these periods and the place of the average mark on the bar |
+| Title line | `Usage · limit week · updated <time>` | The time of the last count | The time text in the local time zone |
+| Capacity | One line for each subscription: a 7-day bar, the week percent, the time to the reset, a burn bar, the rate per day, the factor against an even use, and the time to the run-out or `(lasts to reset)`. A subscription shows its endpoint when the meter gives one. | The week percent and the reset time of the weekly limit, the burn per hour, the run-out time, the endpoint and the pool mode | The bars, the rate per day (the burn per hour × 24), the factor (the rate per day ÷ 100/7) and the two times from now |
+| Running tasks | One row for each open task with tokens in the current week: the title, `typ / budget` (the expected tokens: the typical cost and the budget of the estimate, each as a part of the Claude week, for example `3% / 7%`) and `% of week` (the range of the estimate as a part of the Claude week, with the subscription label, for example `3-6% Claude`). Under the rows: the queue sum line and the estimate check line. | The tasks with their week tokens, the estimate of each task (basis, low, typical, budget and high percent), the queue sums and the self-check | The texts of the percents (`3%`, `<1%`, `3-6% Claude`, `19%+` for an open range) and the cut of a long title |
+| Tokens by model | The columns week and month. One row for each model, then one total row for each provider and the total row | The model totals and the subscription totals of the current local week and month, each with in and out | The sum in + out of one total. It never adds rows: the total rows are the totals of the meter |
+| In and out | The rows Claude, Codex and total. The columns week in, week out, month in and month out | The subscription totals of the current local week and month, each with in and out | Nothing. It shows the values of the meter |
+| Cache week | One row for each provider and the total row. The columns read, write, uncached, output and hit rate | The raw columns of the totals of the current local week | The hit rate: cache read ÷ (cache read + cache write + uncached), as a whole percent, or `-` when the base is 0 |
+| Coding | The rows PRs merged, lines added and lines deleted. The columns today, week and month | The counts of PRs merged, lines added and lines deleted (planned: the token meter does not count them yet) | Nothing. Factory does not count them. Until the token meter gives the counts, each value shows `-` |
+
+- **The week rule.** Every "week" and "month" of the token tables, the coding table and the highlights is the local calendar week and month. The week starts on the day that `periods.week_start` of the answer names (`mon` to `sun`). The token meter owns this setting, and its default is Sunday. Factory computes no week start and no local period. Only the capacity lines use the limit week: the week of the weekly limit of a subscription, from its reset time. The title says `limit week`, so that the two weeks do not mix.
+- **The highlight bars.** A box looks only at the full earlier periods (`full` true, `current` false). It never shows the current week or month.
+  - With 2 or more such periods, line 1 is the average and the count, for example `avg 1.5B · 4 wk`. Line 2 is the lowest, a bar and the highest, for example `1.0B ░░░░┃░░░░ 2.0B`. The left end of the bar is the lowest, and the right end is the highest. One mark stands at the average. When all values are equal, the mark is in the middle.
+  - With 1 such period, the box shows its number and the count, with no bar.
+  - With none, the box shows `needs full week` or `needs full month`.
+  - An unknown count shows `?`.
+- **No local periods.** When the answer has `periods: null`, every local week and month value shows `?`, and the highlights show no bars. The capacity lines and the task rows show as before.
+- **No answer.** When `tokenmeter status` gives no usable answer, the panel shows one line with the reason, and no number.
+- **The line cap.** When the panel needs more lines than the cap, it drops parts in a fixed order. The frame and the capacity lines never drop. The order is:
+  1. the model rows with no tokens in the week;
+  2. the empty lines;
+  3. the other small model rows, with the smallest week first (the provider total rows and the total row stay);
+  4. the estimate check line;
+  5. the task rows from the bottom up, with one line `and N more` in their place;
+  6. the queue sum line, then the task header;
+  7. the whole tables: Coding, Cache week, In and out, and last the model table.
 
 **Dismiss.** `dismiss` is a dry run by default: it prints what it would end and what it would free, and it changes nothing until the owner confirms. The confirm flag is `--yes`, as for the other commands. It needs no terminal window, and inside a factory session it gives no consent (exit 4); the dry run works there. The one exception is `--closed` for the coordinator (below). The logic is in `src/workers/dismiss.ts`, and the command is in `src/commands/dismiss.ts`. The checks come in this order, and each one comes before any change:
 1. **Path.** The work copy must be the folder `work-copies/<project>/<id>` that the record rule gives, with no link in its path. The real path of the work copy is compared with the real path of `work-copies/` with `path.relative`: a work copy that is not exactly two parts below it, a link, and a clone that lies inside the work copy are a stop (exit 4). Every later step uses this real path. The file `.git` of the work copy must be a plain file whose `gitdir:` line names a folder directly below `worktrees/` in the git folder of the clone, and that folder must name the `.git` file of this work copy back. Any other link is a stop (exit 4), and no git command runs in the work copy. The reads of the head, the changed files and the ignored files take the repo from that git folder and turn the file monitor off. The stash and the commit tests run in the clone, which shares them with every work copy. The primary clone of the project is never changed.
@@ -1585,7 +1618,7 @@ The workspace of today has 42 manual operations on the board, the requests, the 
 | 37 | Show the tracks block of `board.md` and of the page (`tracklib.py`, `render-board.py`) | `factory track list` | `track list` | The tracks view (§4.11, FAC-M5b). |
 | 38 | Show the board pane: `md-view.sh` shows `board.md` with `glow` | The slot of the window view runs `factory item list --follow` | `item list` | The board pane (§4.11, FAC-M5b). |
 | 39 | Show the boxes above the workers table: Waiting on you, Machine (`live_boxes.py`) | `factory request list`, `factory machine` | `item list` for `request list`; `machine` is not a connector operation | The boxes (§4.11, FAC-M5b). |
-| 40 | Collect the token meter every 5 minutes (`usage-collect.sh`, `usage-pass.py`): sync, and the history of each item and worker | The token meter package collects. `factory status --usage` reads the result. No `usage collect` command exists. | Not a connector operation | FAC-M5b. The usage view reads the state history of the local board. |
+| 40 | Collect the token meter every 5 minutes (`usage-collect.sh`, `usage-pass.py`): sync, and the history of each item and worker | The token meter package collects. `factory status --usage` reads the result. No `usage collect` command exists. | Not a connector operation | FAC-M5b. The usage view reads only the answer of the token meter package. |
 | 41 | Show the token estimate on each open item, for example "est. 3-6% of the Claude week" (`boardlib.py`, `live_usage.py`) | `factory item estimate`; `item list` shows the mark | Not a connector operation | FAC-M5b. |
 | 42 | Show the usage block of the live board (`live_usage.py`) | `factory status --usage` | Not a connector operation | FAC-M5b. |
 
