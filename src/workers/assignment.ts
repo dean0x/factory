@@ -3,8 +3,9 @@ import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { workTreeTop } from '../core/git.js';
 import { comparable, isSameOrInside } from '../core/paths.js';
+import { dotRuleReason } from '../core/place-rule.js';
 import { ok } from '../core/result.js';
-import { assignmentSource, commandText, files, places } from '../names.js';
+import { assignmentSource, commandText, places } from '../names.js';
 import { readCheckedFile } from './registry.js';
 
 /**
@@ -90,19 +91,6 @@ const namesBelow = async (
   return ok(null);
 };
 
-/** The reason that the names refuse, or null when the fixed rule lets them pass. */
-const dotRuleReason = (deps: Deps, top: Top, names: readonly string[]): string | null => {
-  const [first] = names;
-  if (top.isFactory && names.length === 1 && first !== undefined && sameName(deps, first, files.localConfig)) {
-    return `${files.localConfig} holds the settings of one person on one machine`;
-  }
-  const orders = assignmentSource.ordersParts;
-  const inOrders =
-    top.isFactory && names.length > orders.length && orders.every((part, index) => sameName(deps, names[index] ?? '', part));
-  const hidden = names.slice(inOrders ? orders.length : 0).find((name) => name.startsWith(assignmentSource.dotMark));
-  return hidden === undefined ? null : `${JSON.stringify(hidden)} starts with a dot`;
-};
-
 /** The check of the place of the file: the top that holds it, and the names below the top. A refusal is exit 4. */
 const placeOf = async (
   deps: Deps,
@@ -123,7 +111,11 @@ const placeOf = async (
     const names = await namesBelow(deps, top, source, refuseLink);
     if (!names.ok) return names;
     if (names.value === null || !sameName(deps, join(top.real, ...names.value), real)) return refuseLink();
-    const reason = dotRuleReason(deps, top, names.value);
+    const reason = dotRuleReason(names.value, {
+      atFactoryTop: top.isFactory,
+      ordersException: true,
+      sameName: (a, b) => sameName(deps, a, b),
+    });
     if (reason !== null) return safetyRefusal(`cannot use ${source}: ${reason}`, copy);
     return ok({ top, names: names.value });
   }

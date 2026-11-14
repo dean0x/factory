@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createStyle,
@@ -839,6 +840,14 @@ describe('the item and track commands in the command line', () => {
     expect(result.out).toMatch(/--field NAME=VALUE\s+With add and update: set a field of the owner on the item/);
   });
 
+  it('shows the doc subcommand and the epic flag in the help of item', async () => {
+    const result = await run(['item', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory item doc ID PATH [--home DIR]');
+    expect(result.out).toContain('[--epic TEXT]');
+    expect(result.out).toMatch(/--epic TEXT\s+With add and update: the epic of the item\./);
+  });
+
   it('names no decide command in the help of item or of track', async () => {
     for (const argv of [['item', '--help'], ['track', '--help']]) {
       expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');
@@ -866,6 +875,38 @@ describe('the item and track commands in the command line', () => {
     expect(listed.code).toBe(0);
     expect(listed.out).toContain('B-1  building  open    P1        bug   -     New');
     expect(repo.commits).toHaveLength(3);
+  });
+
+  it('runs item add with an epic, item update with only an epic, and item doc from the command line', async () => {
+    const repo = await boardNode({ board: boardText([], []) });
+    repo.deps.seed(join(BOARD_HOME, 'docs/plan.md'), '# Plan\n');
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    expect((await runBoard(['item', 'add', '--epic', 'Launch week', '--title', 'New', '--field', 'priority=P1'])).out).toBe('Added B-1: New\n');
+    expect((await runBoard(['item', 'update', 'B-1', '--epic', 'Next release'])).out).toBe('Saved B-1: New\n');
+    expect((await runBoard(['item', 'doc', 'B-1', 'docs/plan.md'])).out).toBe('Linked B-1: New\n');
+    const json = await runBoard(['item', 'doc', 'B-1', 'docs/plan.md', '--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.out)).toMatchObject({ action: 'doc', item: { id: 'B-1', epic: 'Next release', docs: ['docs/plan.md'] } });
+    expect(repo.commits).toHaveLength(3);
+  });
+
+  it('exits 2 for item doc with a missing path, and exits 4 for a path with a dot part', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1')], []) });
+    repo.deps.seed(join(BOARD_HOME, 'docs/.hidden/x.md'), 'x');
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, err: sink.errors.join('') };
+    };
+    expect((await runBoard(['item', 'doc', 'B-1'])).code).toBe(2);
+    const refused = await runBoard(['item', 'doc', 'B-1', 'docs/.hidden/x.md']);
+    expect(refused.code).toBe(4);
+    expect(refused.err).toContain('docs/.hidden/x.md');
+    expect(repo.commits).toEqual([]);
   });
 
   it('runs item list --follow from the command line: a stdout that is not a terminal gets one frame, and the loop ends', async () => {
@@ -937,8 +978,9 @@ describe('the item and track commands in the command line', () => {
     expect(asked.out).toMatch(/--option KEY=TEXT\s+With add: one answer that the owner can give/);
     const queue = await run(['queue', '--help']);
     expect(queue.code).toBe(0);
-    expect(queue.out).toContain('factory queue set NAME [--item ID]... [--note TEXT] [--field NAME=VALUE]... [--position N] [--home DIR]');
+    expect(queue.out).toContain('factory queue set NAME [--item ID]... [--note TEXT] [--release-group TEXT] [--field NAME=VALUE]... [--position N] [--home DIR]');
     expect(queue.out).toMatch(/--position N\s+With set: the place of the row in the queue/);
+    expect(queue.out).toMatch(/--release-group TEXT\s+With set: the group of the row/);
   });
 
   it('names no decide command in the help of request or of queue', async () => {
@@ -991,6 +1033,20 @@ describe('the item and track commands in the command line', () => {
     expect((await runBoard(['queue', 'show'])).out).toMatch(/1\s+Docs\s+B-1\s+true/);
     expect((await runBoard(['request', 'close', 'D-1'])).out).toBe('Closed D-1: Pick\n');
     expect(repo.commits).toHaveLength(3);
+  });
+
+  it('passes the release group flag of queue set to the command, shows the group heading, and refuses the flag on queue show', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1')], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    expect((await runBoard(['queue', 'set', 'Docs', '--release-group', 'Release 2'])).out).toBe('Added row 1 to the queue: Docs\n');
+    expect((await runBoard(['queue', 'show'])).out).toMatch(/\ngroup: Release 2\n1\s+Docs/);
+    const refused = await runBoard(['queue', 'show', '--release-group', 'Release 2']);
+    expect(refused.code).toBe(2);
+    expect(refused.err).toContain('--release-group is not for');
   });
 
   it('passes the later flag of request add to the command, lists the group in the JSON document, and refuses the flag on request list', async () => {
@@ -1065,7 +1121,7 @@ describe('the item and track commands in the command line', () => {
     expect(JSON.parse(queueSink.out.join(''))).toEqual({
       schema: 'factory.queue/v1',
       action: 'set',
-      row: { name: 'Docs', position: 1, items: ['B-1'], created: true, changed: true },
+      row: { name: 'Docs', position: 1, items: ['B-1'], releaseGroup: null, created: true, changed: true },
     });
   });
 
@@ -1077,7 +1133,16 @@ describe('the item and track commands in the command line', () => {
     expect(JSON.parse(sink.out.join(''))).toEqual({
       schema: 'factory.item/v1',
       action: 'add',
-      item: { id: 'B-1', title: 'New', status: 'open', stage: 'ticket', track: null },
+      item: {
+        id: 'B-1',
+        title: 'New',
+        status: 'open',
+        stage: 'ticket',
+        track: null,
+        epic: null,
+        stages: ['ticket', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released'],
+        docs: [],
+      },
     });
   });
 });

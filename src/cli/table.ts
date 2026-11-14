@@ -141,7 +141,7 @@ const recordHelpOf = (registry: RecipeRegistry): { readonly summary: string; rea
   const records = checks.map(({ check }) => check.summary);
   const own = checks.map(({ id, check }) => `In the ${id} ${roles.recipe}: ${check.refHelp}`);
   return {
-    summary: `Add, change, move, close and list the items of the board, ${records.length === 0 ? '' : `${records.join(', ')}, `}and ${unassign}.`,
+    summary: `Add, change, move, close and list the items of the board, link a file to an item, ${records.length === 0 ? '' : `${records.join(', ')}, `}and ${unassign}.`,
     ref:
       `With ${itemCommands.record}: the reference that the check of the ${roles.recipe} reads. ` +
       (own.length === 0 ? `No ${roles.recipe} of this package has a check.` : own.join(' ')),
@@ -531,13 +531,14 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
     name: commands.item,
     summary: recordHelpOf(registry).summary,
     usage: [
-      `${commandText(commandLines.itemAdd)} ${flagText(flags.title)} TEXT [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.itemUpdate)} ID [${flagText(flags.title)} TEXT] [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemAdd)} ${flagText(flags.title)} TEXT [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.epic)} TEXT] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemUpdate)} ID [${flagText(flags.title)} TEXT] [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.epic)} TEXT] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemMove)} ID ${flagText(flags.state)} STATE|${flagText(flags.stage)} STAGE [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemClose)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemList)} [${flagText(flags.all)}] [${flagText(flags.track)} ID] [${flagText(flags.follow)}] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemRecord)} ID ${flagText(flags.ref)} REF [${flagText(flags.project)} PROJECT] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemUnassign)} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemDoc)} ID PATH [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -558,6 +559,13 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
         description:
           `With ${itemCommands.add} and ${itemCommands.update}: the id of the track of the item. With ${itemCommands.list}: show the items of this track only. ` +
           `${commandText(commandLines.trackList)} shows the ids.`,
+      },
+      [flags.epic]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description:
+          `With ${itemCommands.add} and ${itemCommands.update}: the epic of the item. One line of at most ${boardTextLimits.maxEpicChars} characters. ` +
+          'A new text replaces the old one. The epic can not be cleared.',
       },
       [flags.field]: {
         type: 'string',
@@ -609,6 +617,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           title: given.string(flags.title),
           text: given.string(flags.text),
           track: given.string(flags.track),
+          epic: given.string(flags.epic),
           fields: given.strings(flags.field),
           state: given.string(flags.state),
           stage: given.string(flags.stage),
@@ -762,7 +771,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
     name: commands.queue,
     summary: 'Add, change and show the rows of the queue. The queue is the order of the finished work that waits for an approval point.',
     usage: [
-      `${commandText(commandLines.queueSet)} NAME [${flagText(flags.item)} ID]... [${flagText(flags.note)} TEXT] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.position)} N] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.queueSet)} NAME [${flagText(flags.item)} ID]... [${flagText(flags.note)} TEXT] [${flagText(flags.releaseGroup)} TEXT] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.position)} N] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.queueShow)} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
@@ -780,6 +789,13 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
         type: 'string',
         placeholder: 'TEXT',
         description: `With ${queueCommands.set}: a note for the row. One line of at most ${boardTextLimits.maxTextChars} characters.`,
+      },
+      [flags.releaseGroup]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description:
+          `With ${queueCommands.set}: the group of the row. ${commandText(commandLines.queueShow)} lists the rows under one heading for each group. ` +
+          `One line of at most ${boardTextLimits.maxReleaseGroupChars} characters. A new text replaces the old one. The group can not be cleared.`,
       },
       [flags.field]: {
         type: 'string',
@@ -803,6 +819,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           words: given.positionals(),
           items: given.strings(flags.item),
           note: given.string(flags.note),
+          releaseGroup: given.string(flags.releaseGroup),
           fields: given.strings(flags.field),
           position: given.string(flags.position),
         },

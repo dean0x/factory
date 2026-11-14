@@ -7,7 +7,7 @@ import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import { toolNames } from '../../src/core/tools.js';
-import { boardKeys, commandLines, commands, commandText, files as fileNames, stateLock } from '../../src/names.js';
+import { boardKeys, commandLines, commands, commandText, files as fileNames, maxFileBytes, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import type { CheckedRecord, RecipeRegistry, RecordCheck, RecordCheckInput } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
@@ -29,6 +29,7 @@ const BASE: ItemOptions = {
   title: undefined,
   text: undefined,
   track: undefined,
+  epic: undefined,
   fields: [],
   state: undefined,
   stage: undefined,
@@ -293,6 +294,17 @@ describe('item: the words and the flags are checked before the node is read (exi
     ['update with the project flag', { words: ['update', 'B-1'], title: 'x', project: 'web' }, '--project is not for'],
     ['unassign with no id', { words: ['unassign'] }, 'the id of an item'],
     ['unassign with a flag of another subcommand', { words: ['unassign', 'B-1'], ref: '12' }, '--ref is not for'],
+    ['move with the epic flag', { words: ['move', 'B-1'], stage: 'building', epic: 'Launch' }, '--epic is not for'],
+    ['close with the epic flag', { words: ['close', 'B-1'], epic: 'Launch' }, '--epic is not for'],
+    ['list with the epic flag', { words: ['list'], epic: 'Launch' }, '--epic is not for'],
+    ['record with the epic flag', { words: ['record', 'B-1'], ref: '12', epic: 'Launch' }, '--epic is not for'],
+    ['unassign with the epic flag', { words: ['unassign', 'B-1'], epic: 'Launch' }, '--epic is not for'],
+    ['doc with the epic flag', { words: ['doc', 'B-1', 'docs/design.md'], epic: 'Launch' }, '--epic is not for'],
+    ['doc with no argument', { words: ['doc'] }, 'two arguments'],
+    ['doc with an id and no path', { words: ['doc', 'B-1'] }, 'two arguments'],
+    ['doc with a third argument', { words: ['doc', 'B-1', 'docs/design.md', 'docs/more.md'] }, 'two arguments'],
+    ['doc with a flag of another subcommand', { words: ['doc', 'B-1', 'docs/design.md'], title: 'x' }, '--title is not for'],
+    ['doc with the flag to follow', { words: ['doc', 'B-1', 'docs/design.md'], follow: true }, '--follow is not for'],
   ];
 
   it.each(BAD)('%s exits 2 and touches no file', async (_name, overrides, message) => {
@@ -305,6 +317,180 @@ describe('item: the words and the flags are checked before the node is read (exi
     expect(error.hint).toContain(commandText(commands.item));
     expect(touched).toEqual([]);
     expectUntouched(repo, START);
+  });
+});
+
+describe('item add and update with an epic', () => {
+  const EPIC = 'Launch week';
+
+  it('stores the epic on add, shows it in the JSON, and makes one commit', async () => {
+    const repo = await boardNode({ board: START });
+    const output = valueOf(await run(repo, { words: ['add'], title: 'New', epic: EPIC, fields: ['priority=P1'] }));
+    expect(output.json).toMatchObject({ item: { id: 'B-2', epic: EPIC } });
+    expect(repo.textOf(fileNames.board)).toContain(`"epic": "${EPIC}"`);
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it('sets the epic on update with no other flag, and replaces it on a second update', async () => {
+    const repo = await boardNode({ board: START });
+    valueOf(await run(repo, { words: ['update', 'B-1'], epic: EPIC }));
+    expect(repo.textOf(fileNames.board)).toContain(`"epic": "${EPIC}"`);
+    const replaced = valueOf(await run(repo, { words: ['update', 'B-1'], epic: 'Next release' }));
+    expect(replaced.json).toMatchObject({ item: { epic: 'Next release' } });
+    expect(repo.textOf(fileNames.board)).not.toContain(EPIC);
+    expect(repo.commits).toHaveLength(2);
+  });
+
+  it.each([
+    ['a line break', 'Two\nlines'],
+    ['a mark of text direction', `Launch${String.fromCodePoint(0x202e)}`],
+    ['an empty text', ''],
+    ['a text over 60 characters', 'x'.repeat(61)],
+  ])('refuses an epic with %s with exit 2, names the epic, and changes no file', async (_name, epic) => {
+    const repo = await boardNode({ board: START });
+    const added = errorOf(await run(repo, { words: ['add'], title: 'New', epic, fields: ['priority=P1'] }));
+    const updated = errorOf(await run(repo, { words: ['update', 'B-1'], epic }));
+    for (const error of [added, updated]) {
+      expect(exitCodeOf[error.kind]).toBe(2);
+      expect(error.message).toContain('epic');
+    }
+    expectUntouched(repo, START);
+  });
+
+  it('names the epic flag in the flags that update needs one of', async () => {
+    const repo = await boardNode({ board: START });
+    const error = errorOf(await run(repo, { words: ['update', 'B-1'] }));
+    expect(error.message).toContain('--epic');
+  });
+});
+
+describe('item doc: link a file to an item', () => {
+  const DOC = 'docs/design.md';
+
+  const withDoc = async (board: string = START, config?: FactoryConfig): Promise<BoardRepo> => {
+    const repo = await boardNode({ board, ...(config === undefined ? {} : { config }) });
+    repo.deps.seed(join(HOME, DOC), '# Design\n');
+    return repo;
+  };
+
+  it('adds the path to the docs of the item in one commit of the board file, and prints the item with its docs', async () => {
+    const repo = await withDoc();
+    const output = valueOf(await run(repo, { words: ['doc', 'B-1', DOC] }));
+    expect(plainText(output).trimEnd()).toBe('Linked B-1: Item B-1');
+    expect(output.json).toMatchObject({ action: 'doc', item: { id: 'B-1', docs: [DOC] } });
+    expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
+    expect(repo.textOf(fileNames.board)).toContain(DOC);
+  });
+
+  it('makes no second commit for a path that the item holds already, says so, and exits 0', async () => {
+    const repo = await withDoc();
+    const first = valueOf(await run(repo, { words: ['doc', 'B-1', DOC] }));
+    expect(plainText(first).trimEnd()).toBe('Linked B-1: Item B-1');
+    const stored = repo.textOf(fileNames.board);
+    const again = valueOf(await run(repo, { words: ['doc', 'B-1', DOC] }));
+    expect(plainText(again).trimEnd()).toBe(`Already linked ${DOC} to B-1.`);
+    expect(again.failed).toBe(false);
+    expect(again.json).toMatchObject({ item: { docs: [DOC] } });
+    expect(repo.commits).toHaveLength(1);
+    expect(repo.textOf(fileNames.board)).toBe(stored);
+  });
+
+  it('refuses the 11th doc with exit 2, and takes a repeat of one of the ten', async () => {
+    const paths = Array.from({ length: 10 }, (_, at) => `docs/d${at}.md`);
+    const board = boardText([itemRecord('B-1', { stage: 'ticket', docs: paths })], TRACKS);
+    const repo = await withDoc(board);
+    repo.deps.seed(join(HOME, 'docs/d3.md'), 'x');
+    expect(exitOf(await run(repo, { words: ['doc', 'B-1', DOC] }))).toBe(2);
+    expectUntouched(repo, board);
+    valueOf(await run(repo, { words: ['doc', 'B-1', 'docs/d3.md'] }));
+    expectUntouched(repo, board);
+  });
+
+  it.each([
+    ['a part that starts with a dot', 'docs/.hidden/x.md'],
+    ['the local config in capital letters', fileNames.localConfig.toUpperCase()],
+  ])('refuses %s with exit 4 and changes no file', async (_name, path) => {
+    const repo = await withDoc();
+    repo.deps.seed(join(HOME, path), 'x');
+    expect(exitOf(await run(repo, { words: ['doc', 'B-1', path] }))).toBe(4);
+    expectUntouched(repo, START);
+  });
+
+  it.each([
+    ['a path above the factory folder', '../outside.md'],
+    ['an absolute path', '/etc/passwd'],
+    ['a folder', 'docs'],
+    ['a file that is not there', 'docs/none.md'],
+    ['a file over the size limit', 'docs/big.md'],
+  ])('refuses %s with exit 2 and changes no file', async (_name, path) => {
+    const repo = await withDoc();
+    repo.deps.seed(join(HOME, 'docs/big.md'), 'x'.repeat(maxFileBytes + 1));
+    expect(exitOf(await run(repo, { words: ['doc', 'B-1', path] }))).toBe(2);
+    expectUntouched(repo, START);
+  });
+
+  it('refuses an id that is no item with exit 2', async () => {
+    const repo = await withDoc();
+    expect(exitOf(await run(repo, { words: ['doc', 'B-9', DOC] }))).toBe(2);
+    expectUntouched(repo, START);
+  });
+
+  it('refuses a hosted tracker kind with exit 4 and changes no file', async () => {
+    const config = sampleConfigWithBoard();
+    const hosted: FactoryConfig = { ...config, core: { ...config.core, tracker: { kind: 'github', items: 'acme/items', decisions: 'acme/decisions', watch_interval: '5m' } } };
+    const repo = await withDoc(START, hosted);
+    expect(exitOf(await run(repo, { words: ['doc', 'B-1', DOC] }))).toBe(4);
+    expectUntouched(repo, START);
+  });
+});
+
+describe('item: the keys of the item in the JSON', () => {
+  const STAGES = ['ticket', 'review'];
+
+  const itemIn = (output: CommandOutput): Record<string, unknown> => {
+    const item = output.json['item'];
+    if (typeof item !== 'object' || item === null) throw new Error('expected an item object in the JSON');
+    return Object.fromEntries(Object.entries(item));
+  };
+
+  /** The item object of the JSON that `item close B-1` prints, for a board whose first item holds the given keys. */
+  const jsonItemOf = async (extra: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { stage: 'ticket', ...extra })], TRACKS) });
+    return itemIn(valueOf(await run(repo, { words: ['close', 'B-1'] })));
+  };
+
+  it('adds the epic, the stage copy and the docs after the old keys, and keeps the old keys as they were', async () => {
+    const repo = await boardNode({ board: START });
+    const item = itemIn(valueOf(await run(repo, { words: ['add'], title: 'New', fields: ['priority=P1'] })));
+    expect(Object.keys(item)).toEqual(['id', 'title', 'status', 'stage', 'track', 'epic', 'stages', 'docs']);
+    expect(item).toMatchObject({ id: 'B-2', title: 'New', status: 'open', stage: softwareBoard.stages?.[0], track: null });
+    expect(item['epic']).toBeNull();
+    expect(item['stages']).toEqual(softwareBoard.stages);
+    expect(item['docs']).toEqual([]);
+  });
+
+  it('gives no epic, no stage copy and no docs for an item from before the keys', async () => {
+    expect(await jsonItemOf({})).toMatchObject({ epic: null, stages: null, docs: [] });
+  });
+
+  it('gives the stored epic, the stored stage copy and the stored docs', async () => {
+    const item = await jsonItemOf({ epic: 'Launch', stages: STAGES, docs: ['docs/a.md', 'docs/b.md'] });
+    expect(item).toMatchObject({ epic: 'Launch', stages: STAGES, docs: ['docs/a.md', 'docs/b.md'] });
+  });
+
+  it('keeps out of the docs each stored entry that the name check refuses or that is not text, and keeps the order of the rest', async () => {
+    const bidi = String.fromCodePoint(0x202e);
+    const docs = ['docs/a.md', '../outside.md', 'docs/.hidden/b.md', `docs/c${bidi}.md`, 7, '', '/etc/passwd', fileNames.localConfig.toUpperCase(), 'docs/d.md'];
+    expect((await jsonItemOf({ docs }))['docs']).toEqual(['docs/a.md', 'docs/d.md']);
+  });
+
+  it.each([
+    ['an epic that is not text', { epic: 7 }, { epic: null }],
+    ['a stage copy that is not a list', { stages: 'ticket' }, { stages: null }],
+    ['a stage copy with an entry that is not text', { stages: ['ticket', 4] }, { stages: null }],
+    ['a list of docs that is not a list', { docs: 'docs/a.md' }, { docs: [] }],
+  ])('reads %s as no value', async (_name, extra, expected) => {
+    expect(await jsonItemOf(extra)).toMatchObject(expected);
   });
 });
 
