@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
+import { watchPoll } from '../../src/names.js';
 import { boardNode, boardText } from '../helpers/board-node.js';
 import type { FakeDeps } from '../helpers/fake-deps.js';
 import { HOME } from '../helpers/guard-fixture.js';
@@ -14,7 +15,7 @@ import { seedWorkerSession, withWorkerPanes } from '../helpers/worker-session.js
 
 const MINUTE = 60_000;
 const TITLE = 'Build the login page';
-const STALLED_AFTER_MINUTES = 15;
+const STALLED_AFTER_MINUTES = watchPoll.stalledAfterMs / MINUTE;
 
 interface WorkerFacts {
   readonly id: string;

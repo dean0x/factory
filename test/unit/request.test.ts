@@ -140,7 +140,7 @@ describe('request add', () => {
     expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.waiting]]);
   });
 
-  it('stores the time of each add, read from the clock under the lock, so a later add has a later open time', async () => {
+  it('stores the time of each add, so a later add has a later open time', async () => {
     const repo = await boardNode();
     const first = repo.deps.now().toISOString();
     valueOf(await run(repo, ADD));

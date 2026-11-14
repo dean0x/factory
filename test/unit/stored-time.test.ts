@@ -51,7 +51,7 @@ describe('storedTimeOf', () => {
     for (const value of notTimes) expect(storedTimeOf(value), value).toBeNull();
   });
 
-  it('gives null for a text of 24 characters that holds a time and more, or less than a time', () => {
+  it('gives null for a text that is longer or shorter than a time', () => {
     expect(storedTimeOf(`${AT}${AT}`)).toBeNull();
     expect(storedTimeOf(AT.slice(0, -1))).toBeNull();
     expect(storedTimeOf(`${AT}x`)).toBeNull();
