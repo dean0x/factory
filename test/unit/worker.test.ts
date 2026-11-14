@@ -1046,6 +1046,13 @@ describe('worker new: the machine warning', () => {
     expect(made.events).toContain('tmux split-window');
   });
 
+  it('runs the programs of the facts and no program that reads the power', async () => {
+    const made = make();
+    await succeeded(made);
+    expect(made.events).toContain('machine memory_pressure');
+    expect(made.events).not.toContain('machine pmset');
+  });
+
   it('checks the machine after the record, the exclude entry and the settings file, and before the pane', async () => {
     const made = make({ machine: { memory: 'System-wide memory free percentage: 5%\n' } });
     await succeeded(made);
