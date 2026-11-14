@@ -932,7 +932,7 @@ describe('the item and track commands in the command line', () => {
     expect(listed.out).toMatch(/\n {2}queue {2,}\S/);
     const asked = await run(['request', '--help']);
     expect(asked.code).toBe(0);
-    expect(asked.out).toContain('factory request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY] [--home DIR]');
+    expect(asked.out).toContain('factory request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY] [--later] [--home DIR]');
     expect(asked.out).toContain('factory request close ID [--made-by WHO --decision TEXT] [--home DIR]');
     expect(asked.out).toMatch(/--option KEY=TEXT\s+With add: one answer that the owner can give/);
     const queue = await run(['queue', '--help']);
@@ -991,6 +991,26 @@ describe('the item and track commands in the command line', () => {
     expect((await runBoard(['queue', 'show'])).out).toMatch(/1\s+Docs\s+B-1\s+true/);
     expect((await runBoard(['request', 'close', 'D-1'])).out).toBe('Closed D-1: Pick\n');
     expect(repo.commits).toHaveLength(3);
+  });
+
+  it('passes the later flag of request add to the command, lists the group in the JSON document, and refuses the flag on request list', async () => {
+    const repo = await boardNode({ board: boardText([], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    expect((await runBoard(['request', 'add', '--later', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Plan A'])).out).toBe('Added D-1: Pick\n');
+    expect((await runBoard(['request', 'add', '--title', 'Other', '--question', 'Which?', '--option', 'a=Plan A'])).code).toBe(0);
+    const listed = await runBoard(['request', 'list', '--json']);
+    const requests = (JSON.parse(listed.out) as { requests: { id: string; group: string }[] }).requests;
+    expect(requests.map((request) => [request.id, request.group])).toEqual([['D-1', 'later'], ['D-2', 'now']]);
+    const refused = await runBoard(['request', 'list', '--later']);
+    expect(refused.code).toBe(2);
+    expect(refused.err).toContain('--later is not for');
+    const help = await run(['request', '--help']);
+    expect(help.out).toContain('[--recommend KEY] [--later] [--home DIR]');
+    expect(help.out).toMatch(/--later\s+With add: /);
   });
 
   it('closes a request with --made-by and --decision from the command line, and the output line names the decider', async () => {

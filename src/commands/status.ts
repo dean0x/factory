@@ -7,8 +7,8 @@ import { commands, roles, schemaIds, statusWords } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { readNodeFacts, reportDocOf, type NodeFacts } from '../report/build.js';
 import { writeReportFile } from '../report/outbox.js';
-import { shownStateOf, type WorkerStatus } from '../workers/status.js';
-import type { WorkItem, WorkItemPort } from '../workers/work-items.js';
+import { boardRowOf, shownStateOf, type WorkerStatus } from '../workers/status.js';
+import { evidenceOf, type WorkItem, type WorkItemPort } from '../workers/work-items.js';
 import { openBoard } from './board-open.js';
 
 export interface StatusOptions {
@@ -53,7 +53,8 @@ const refreshReport = async (deps: Deps, home: string, facts: NodeFacts): Promis
  * worker) and asks the work item port for the work items. Its one change is the report file, which it writes from the same facts as
  * `report` does (`refreshReport`). With no tmux session of this factory, every worker is stopped. A worker is idle only when its pane
  * lives, its session waits at the prompt and its last event is older than `limits.idle_after`. The work item is shown but it does
- * not set the idle state. The port is a required parameter, so no caller can leave the work items out. Each cell of the table is one
+ * not set the idle state. The port is a required parameter, so no caller can leave the work items out. Each worker of the JSON carries the
+ * `boardRowOf` facts, the same as in `worker list`, and its `workItem` holds the evidence alone (`evidenceOf`). Each cell of the table is one
  * clean line.
  */
 export const runStatus = async (
@@ -84,9 +85,9 @@ export const runStatus = async (
         state: shownStateOf(entry),
         contextPct: entry.contextPct,
         mark: entry.mark,
-        activityAt: entry.activityAt,
-        workItem: entry.workItem,
+        workItem: evidenceOf(entry.workItem),
         idle: entry.idle,
+        ...boardRowOf(entry),
       })),
       invalid,
     },

@@ -22,6 +22,7 @@ import {
   queueLimits,
   relayedMarker,
   requestDeciders,
+  requestGroups,
   requestWords,
   roles,
   trackLimits,
@@ -43,6 +44,7 @@ import type {
   QueueRowSet,
   RequestClosed,
   RequestDecider,
+  RequestGroup,
   RequestSettlement,
   TrackAddInput,
 } from './contract.js';
@@ -198,6 +200,7 @@ export interface CheckedDecision {
   readonly question: string;
   /** The options as the waiting file stores them. */
   readonly options: readonly Stored[];
+  readonly group: RequestGroup;
 }
 
 const optionOf = (option: DecisionAskInput['options'][number]): CliResult<Stored> => {
@@ -236,7 +239,7 @@ export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecisio
     stored.push(record.value);
   }
   if (options.filter((option) => option.rec === true).length > 1) return usageError('only one option can be the recommended one');
-  return ok({ title: title.value, question: question.value, options: stored });
+  return ok({ title: title.value, question: question.value, options: stored, group: input.group ?? requestGroups.now });
 };
 
 /** Why a path can not be linked, as a phrase for a message ("the path ..."), or null. The checks need no file. */
@@ -337,8 +340,11 @@ const withItems = (doc: BoardDoc, items: readonly unknown[]): Stored => ({ ...do
 const withItem = (doc: BoardDoc, id: string, record: Stored): Stored =>
   withItems(doc, doc.items.map((item) => (item.id === id ? record : item.record)));
 
-/** Add the item. The value is its new id: the number after the highest one on the board. */
-export const addItemIn = (doc: BoardDoc, item: NewItem): CliResult<Edit<string>> => {
+/**
+ * Add the item. The value is its new id: the number after the highest one on the board. A new item that has a stage gets `at`, the
+ * exact time of the add, as the time of its stage (`boardKeys.stageAt`).
+ */
+export const addItemIn = (doc: BoardDoc, item: NewItem, at: string): CliResult<Edit<string>> => {
   if (item.track !== undefined) {
     const track = requireTrack(doc, item.track);
     if (!track.ok) return track;
@@ -350,7 +356,7 @@ export const addItemIn = (doc: BoardDoc, item: NewItem): CliResult<Edit<string>>
     [boardKeys.title, item.title],
     [boardKeys.status, item.status],
   ];
-  if (item.stage !== null) entries.push([boardKeys.stage, item.stage]);
+  if (item.stage !== null) entries.push([boardKeys.stage, item.stage], [boardKeys.stageAt, at]);
   if (item.track !== undefined) entries.push([boardKeys.track, item.track]);
   if (item.text !== undefined) entries.push([boardKeys.text, item.text]);
   entries.push(...Object.entries(item.fields));
@@ -393,14 +399,20 @@ export const changeItemIn = (
   return ok({ top: next.changed ? withItem(doc, id, next.record) : null, value: id });
 };
 
-/** Set the state or the stage of an item. The other of the two stays as it is. */
-export const moveItemIn = (doc: BoardDoc, id: string, move: CheckedMove): CliResult<Edit<ItemMoved>> => {
+/**
+ * Set the state or the stage of an item. The other of the two stays as it is. A move that changes the stage sets `at`, the exact
+ * time of the move, as the time of the stage (`boardKeys.stageAt`). A move of the state, and a move to the stage that the item has,
+ * leave the stored time as it is.
+ */
+export const moveItemIn = (doc: BoardDoc, id: string, move: CheckedMove, at: string): CliResult<Edit<ItemMoved>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
   const from = move.key === boardKeys.status ? found.value.status : found.value.stage;
   const moved: ItemMoved = { id, from, to: move.value, changed: from !== move.value };
   if (!moved.changed) return ok({ top: null, value: moved });
-  return ok({ top: withItem(doc, id, withKeys(found.value.record, [[move.key, move.value]]).record), value: moved });
+  const entries: (readonly [string, unknown])[] = [[move.key, move.value]];
+  if (move.key === boardKeys.stage) entries.push([boardKeys.stageAt, at]);
+  return ok({ top: withItem(doc, id, withKeys(found.value.record, entries).record), value: moved });
 };
 
 /** Set the closed state of an item. The stage and every other key stay. The value is the id. */
@@ -473,6 +485,9 @@ const headHolderIn = (doc: BoardDoc, id: string, head: string): string | undefin
  * trusts the recorded head, so one head belongs to one item. This test reads the board under the lock, so it holds against a race.
  * An item that holds the stage, the state and the head already, and that no queue row lists, is a rerun: the edit gives no top object.
  * A rerun of an item that records the head is not tested against the other items, so it stays a success.
+ *
+ * The item gets `at`, the exact time of the record, as the time of its stage (`boardKeys.stageAt`) only when the stored stage differs
+ * from the stage of the check. An item that holds the stage already keeps its stored time, so a rerun changes nothing.
  */
 export const recordCheckedIn = (
   doc: BoardDoc,
@@ -480,6 +495,7 @@ export const recordCheckedIn = (
   id: string,
   checked: CheckedRecord,
   workerName: string | null,
+  at: string,
 ): CliResult<Edit<boolean>> => {
   const target = checkRecordSetup(setup, checked.stage);
   if (!target.ok) return target;
@@ -504,11 +520,13 @@ export const recordCheckedIn = (
       `Check the item and the reference, then run "${commandText(commandLines.itemRecord)} ${id} ${flagText(flags.ref)} ${displayLine(checked.ref, maxEchoChars)}" again.`,
     );
   }
-  const next = withKeys(record, [
+  const entries: (readonly [string, unknown])[] = [
     [boardKeys.status, target.value.closed],
     [boardKeys.stage, target.value.stage],
     [boardKeys.mergedPrHead, checked.head],
-  ]);
+  ];
+  if (record[boardKeys.stage] !== target.value.stage) entries.push([boardKeys.stageAt, at]);
+  const next = withKeys(record, entries);
   const queue = queueWithout(doc, id);
   if (!next.changed && !queue.changed) return ok({ top: null, value: false });
   const top = withItem(doc, id, next.record);
@@ -585,13 +603,15 @@ export const addTrackIn = (doc: BoardDoc, track: TrackAddInput): CliResult<Edit<
 
 /**
  * Add a decision to the waiting file. Its id is the number after the highest `D-n` of the waiting file, of the decision log and of
- * the decision records of the owner (`storeIds`), counted on the texts that were read under the lock. The value is the id.
+ * the decision records of the owner (`storeIds`), counted on the texts that were read under the lock. The row holds the time of the
+ * add (`at`, an exact `toISOString()` time) and the group. The value is the id.
  */
 export const askIn = (
   waiting: WaitingDoc,
   log: DecisionLogDoc,
   decision: CheckedDecision,
   storeIds: readonly string[],
+  at: string,
 ): CliResult<Edit<string> & { readonly top: Stored }> => {
   const id = nextId('D-', [...waiting.items.map((entry) => entry.id), ...log.rows.map((row) => row.id), ...storeIds]);
   if (!id.ok) return id;
@@ -600,6 +620,8 @@ export const askIn = (
     [decisionKeys.title]: decision.title,
     [decisionKeys.question]: decision.question,
     [decisionKeys.options]: decision.options,
+    [decisionKeys.openedAt]: at,
+    [decisionKeys.group]: decision.group,
   };
   return ok({ top: { ...waiting.top, [waitingKeys.items]: [...listAt(waiting.top, waitingKeys.items), stored] }, value: id.value });
 };

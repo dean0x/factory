@@ -22,6 +22,8 @@ import {
   relayedMarker,
   requestCommands,
   requestDeciders,
+  requestGroups,
+  requestRowKeys,
   requestWords,
   roles,
   schemaIds,
@@ -47,6 +49,8 @@ export interface RequestOptions {
   readonly decision: string | undefined;
   /** With close: the coordinator passes on an answer of the owner. It needs `decision` and takes no `decider`. */
   readonly relayed: boolean;
+  /** With add: the asker puts the request in the group `later`. Without it the request is in the group `now`. */
+  readonly later: boolean;
 }
 
 type Subcommand = (typeof requestCommands)[keyof typeof requestCommands];
@@ -64,7 +68,7 @@ const SUBCOMMANDS = Object.values(requestCommands).join(', ');
  * No subcommand changes a request that is open: a request is added once and closed once.
  */
 const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
-  [requestCommands.add]: [flags.title, flags.question, flags.option, flags.recommend],
+  [requestCommands.add]: [flags.title, flags.question, flags.option, flags.recommend, flags.later],
   [requestCommands.list]: [],
   [requestCommands.close]: [flags.madeBy, flags.decision, flags.relayed],
   [requestCommands.log]: [flags.title, flags.madeBy, flags.decision],
@@ -83,6 +87,7 @@ const refuseStrayFlags = (subcommand: Subcommand, options: RequestOptions): CliR
     [flags.madeBy, options.decider !== undefined],
     [flags.decision, options.decision !== undefined],
     [flags.relayed, options.relayed],
+    [flags.later, options.later],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.request} ${subcommand}`)}`);
@@ -155,7 +160,9 @@ const parseAction = (options: RequestOptions): CliResult<Action> => {
         return needsUsage(`${subcommand} needs at least one ${flagText(flags.option)} KEY${requestWords.optionSeparator}TEXT`);
       }
       const parsed = parseOptions(options.options, options.recommend);
-      return parsed.ok ? ok({ kind: subcommand, input: { title: options.title, question: options.question, options: parsed.value } }) : parsed;
+      if (!parsed.ok) return parsed;
+      const group = options.later ? requestGroups.later : requestGroups.now;
+      return ok({ kind: subcommand, input: { title: options.title, question: options.question, options: parsed.value, group } });
     }
     case requestCommands.list: {
       return args.length > 0 ? needsUsage(`${subcommand} takes no argument`) : ok({ kind: subcommand });
@@ -224,7 +231,16 @@ const logAnswer = (id: string, input: DecisionLogInput): CommandOutput =>
 
 const listAnswer = (requests: readonly BoardRequest[]): CommandOutput => ({
   lines: requestView(requests),
-  json: { schema: schemaIds.requestList, requests: requests.map(({ id, title, options }) => ({ id, title, options })) },
+  json: {
+    schema: schemaIds.requestList,
+    requests: requests.map(({ id, title, options, openedAt, group }) => ({
+      id,
+      title,
+      options,
+      [requestRowKeys.openedAt]: openedAt,
+      [requestRowKeys.group]: group,
+    })),
+  },
   warnings: [],
   failed: false,
 });

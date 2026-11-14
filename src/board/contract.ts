@@ -1,5 +1,5 @@
 import type { CliResult } from '../cli/errors.js';
-import type { requestDeciders } from '../names.js';
+import type { requestDeciders, requestGroups } from '../names.js';
 import type { CheckedRecord } from '../recipes/entry.js';
 import type { DecideRequest } from './decide.js';
 
@@ -92,11 +92,15 @@ export interface DecisionOption {
   readonly rec?: boolean;
 }
 
-/** A decision item for the owner: a one-line title and question, and 1 to 9 options. The connector gives it the next `D-n`. */
+/**
+ * A decision item for the owner: a one-line title and question, and 1 to 9 options. The connector gives it the next `D-n` and stores
+ * the time of the add. The group is the urgency that the asker gives; a request with no group is in the group now.
+ */
 export interface DecisionAskInput {
   readonly title: string;
   readonly question: string;
   readonly options: readonly DecisionOption[];
+  readonly group?: RequestGroup;
 }
 
 /** A link from an item to a file of the factory folder: a relative path inside the folder, never a copy. */
@@ -120,12 +124,15 @@ export interface ChangesRead {
 
 /**
  * One request that waits for the owner, as the waiting file shows it. The reader checks the id only, so a title that a hand edit
- * left out is null. The options are the keys of the options, in order.
+ * left out is null. The options are the keys of the options, in order. The open time is null for a row that holds no exact time
+ * (a row from before the key, or a hand edit). A group that is missing or is no word of `requestGroups` reads as `now`.
  */
 export interface BoardRequest {
   readonly id: string;
   readonly title: string | null;
   readonly options: readonly string[];
+  readonly openedAt: string | null;
+  readonly group: RequestGroup;
 }
 
 /** The request that a close took off the waiting file. */
@@ -138,6 +145,9 @@ export interface RequestClosed {
 
 /** Who decided a request that the owner did not answer: a value of `requestDeciders`. The owner answers with `decide`. */
 export type RequestDecider = (typeof requestDeciders)[keyof typeof requestDeciders];
+
+/** The group of a request, set by the asker: a value of `requestGroups`. */
+export type RequestGroup = (typeof requestGroups)[keyof typeof requestGroups];
 
 /**
  * The decision of a request that is not an approval point, and who made it. The text is one line. A relayed settlement passes on an
