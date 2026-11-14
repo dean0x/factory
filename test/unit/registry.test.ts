@@ -74,12 +74,13 @@ const stored = (deps: FakeDeps, id = 'web-search'): unknown => JSON.parse(deps.f
 const snapshot = (deps: FakeDeps): string => JSON.stringify([...deps.files.entries()].sort()) + [...deps.dirs].sort().join(',');
 
 describe('the paths of a worker', () => {
-  it('puts the record, the session pointer and the inbox in a folder named by the id, below the workers folder of the state folder', () => {
+  it('puts the record, the session pointer, the hold word and the inbox in a folder named by the id, below the workers folder of the state folder', () => {
     expect(layoutOf(HOME).workersDir).toBe(WORKERS);
     expect(workerPathsOf(HOME, 'web-search')).toEqual({
       dir: `${WORKERS}/web-search`,
       recordFile: `${WORKERS}/web-search/worker.json`,
       lastSessionFile: `${WORKERS}/web-search/last-session`,
+      holdFile: `${WORKERS}/web-search/hold-word`,
       inboxDir: `${WORKERS}/web-search/inbox`,
     });
   });
