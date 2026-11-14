@@ -9,7 +9,7 @@ import { runInTerminal, scriptForm } from './fake-terminal.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 
 /**
- * No command needs python3, jq or glow (AC-21). The built program runs with a PATH of one folder. The folder holds links to
+ * No command needs python3, jq or glow. The built program runs with a PATH of one folder. The folder holds links to
  * node, git, sh, grep, script and tmux, and to nothing else. `init`, `item`, `track`, `request`, `queue` and `status` must work,
  * and so must `decide` in a fake terminal, and a manual commit that the delete guard reads.
  */

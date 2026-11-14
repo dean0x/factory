@@ -7,7 +7,7 @@ export const MAX_ADDRESS_LENGTH = 4096;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
 /**
- * Check the address of another node. The only form is `file://` and an absolute path on this machine (F-13).
+ * Check the address of another node. The only form is `file://` and an absolute path on this machine.
  * The result is the path. An error names the broken rule and never repeats the address.
  */
 export const checkFileAddress = (value: string): Result<string, string> => {
@@ -37,7 +37,7 @@ export interface ChildTarget {
 
 /**
  * A node as a person types it: a `file://` address, or a path that may be relative to the current folder.
- * The result holds the clean path and the address for it. Any other kind of address is refused (F-13).
+ * The result holds the clean path and the address for it. Any other kind of address is refused.
  */
 export const childTarget = (cwd: string, argument: string): Result<ChildTarget, string> => {
   if (argument === '') return err(`the path of the ${places.folder} is empty`);

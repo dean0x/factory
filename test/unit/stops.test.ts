@@ -34,7 +34,7 @@ const errorOf = (result: CliResult<unknown>): CliError => {
 };
 
 /**
- * The checks of one error with a remedy line (AC-37): the exit code, one reason line and one remedy line. The text that
+ * The checks of one error with a remedy line: the exit code, one reason line and one remedy line. The text that
  * the command prints holds exactly these two lines.
  */
 const expectRemedyLine = (error: CliError, exitCode: number): void => {

@@ -28,7 +28,7 @@ import type { DecisionLogDoc, WaitingDoc } from './files.js';
 import { holdsBreak } from './text.js';
 
 /**
- * The pure steps of `decide` (design 4.10, AC-14, AC-34, AC-35, AC-36, AC-39, AC-42, AC-43). Each step reads texts that the caller
+ * The pure steps of `decide` (design 4.10). Each step reads texts that the caller
  * has read and gives a result: none reads a file, a clock or the owner store. The caller runs them before the prompt and again
  * under the lock.
  *
@@ -39,7 +39,7 @@ import { holdsBreak } from './text.js';
 
 type Stored = Readonly<Record<string, unknown>>;
 
-/** A request that passed the strict read, with its canonical text and the hash of that text (AC-39). */
+/** A request that passed the strict read, with its canonical text and the hash of that text. */
 export interface DecideRequest extends DecisionRecordRequest {
   /** The canonical request text. The log row keeps it as it is, and the owner record hash covers it. */
   readonly canonical: string;
@@ -122,7 +122,7 @@ const optionsOf = (id: string, value: unknown): CliResult<readonly DecisionRecor
 };
 
 /**
- * The request of the waiting file, read strictly (AC-36, AC-42): the id has no leading zero; the entry holds no key beyond the
+ * The request of the waiting file, read strictly: the id has no leading zero; the entry holds no key beyond the
  * four; a title, a question and the text of an option are one line, within their caps, with no character that the display removes;
  * the option keys are tokens and differ; there are 1 to 9 options; at most one is recommended. Each fault is exit 1 that names the
  * waiting file and says to close and add the request when it was not changed. The texts are not trimmed.
@@ -156,7 +156,7 @@ export const strictRequestOf = (waiting: WaitingDoc, id: string): CliResult<Deci
 const textOrNull = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
 /**
- * Where the `D-n` stands (AC-35). A number in both files is exit 1 that names both files. A row with a `by` key is a candidate
+ * Where the `D-n` stands. A number in both files is exit 1 that names both files. A row with a `by` key is a candidate
  * answer, whatever its value, and any other row is a close. A close whose row has the `relayed` key is marked relayed, whatever the
  * value. The row gives its date and its request text and nothing else.
  */
@@ -230,7 +230,7 @@ const CHANGED = `the ${requestWords.request} changed after the prompt`;
 const DECIDE_AGAIN = `Run "${commandText(commands.decide)}" again to see the ${requestWords.request} as it is now.`;
 
 /**
- * The recheck under the lock (AC-14): the state is open, the strict read passes again, and the hash is the hash that the owner saw.
+ * The recheck under the lock: the state is open, the strict read passes again, and the hash is the hash that the owner saw.
  * Any change after the prompt is exit 1, and the request that it gives is the one to record.
  */
 export const recheckRequest = (waiting: WaitingDoc, log: DecisionLogDoc, id: string, hash: string): CliResult<DecideRequest> => {
@@ -244,13 +244,13 @@ export const recheckRequest = (waiting: WaitingDoc, log: DecisionLogDoc, id: str
 
 const LOG_ROOM_REMEDY = `Do not remove rows from ${files.decisionLog}: the log gives the next D-n and the state of each ${requestWords.request}. "${commandText(commands.doctor)}" shows how full the board files are.`;
 
-/** The new text of the decision log must fit in the cap of a file (AC-34). The count is in bytes. */
+/** The new text of the decision log must fit in the cap of a file. The count is in bytes. */
 export const requireLogRoom = (logText: string): CliResult<void> =>
   Buffer.byteLength(logText, 'utf8') > maxFileBytes
     ? failure(`${files.decisionLog} would be larger than the cap of ${maxFileBytes} bytes`, LOG_ROOM_REMEDY)
     : ok(undefined);
 
-/** The note of the owner (AC-43): one line of 1 to 500 characters that the display shows as it is. A bad note is exit 2. The note is not trimmed. */
+/** The note of the owner: one line of 1 to 500 characters that the display shows as it is. A bad note is exit 2. The note is not trimmed. */
 export const checkNote = (text: string): CliResult<string> => {
   const issue = textIssue(text, boardTextLimits.maxNoteChars);
   return issue === null ? ok(text) : usageError(`the note ${issue}`);
@@ -259,7 +259,7 @@ export const checkNote = (text: string): CliResult<string> => {
 const DATE_FORM = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
 /**
- * The row of the decision log for an owner answer (AC-15, AC-39): `item`, `decision` (the option key), `date`, `by` and `request`.
+ * The row of the decision log for an owner answer: `item`, `decision` (the option key), `date`, `by` and `request`.
  * `request` is the canonical text as it is, so a consumer hashes the stored text with no other step. The row is a display copy: the
  * owner record is the proof. The option must be one of the request, and the date is `yyyy-mm-dd`.
  */
@@ -297,7 +297,7 @@ const optionLabel = (option: DecisionRecordOption, chosen: string): string =>
   `  ${option.key}${option.rec === true ? ' (recommended)' : ''}${option.key === chosen ? ' (chosen)' : ''}: `;
 
 /**
- * The block that decide shows before it asks (AC-42): the number, the title, the full question, every option with its key and its
+ * The block that decide shows before it asks: the number, the title, the full question, every option with its key and its
  * text (the recommended one and the chosen one marked) and the note. A long text wraps and no text is cut. Each line starts with
  * `BLOCK_MARK`. The request passed the strict read, so the display shows exactly the text that the hash covers.
  */

@@ -19,7 +19,7 @@ import type { SetupTexts } from '../templates/types.js';
 import { collectSetup, type CollectedSetup } from './init-received.js';
 
 /**
- * The setup acceptance rule of `start`, `upgrade` and `doctor` (design 4.3, F-18f). This module is the one owner of the
+ * The setup acceptance rule of `start`, `upgrade` and `doctor` (design 4.3). This module is the one owner of the
  * check: the subject of the acceptance, its state in the store, the words of each stop, and the accept step that a change
  * allows. The setup text goes into the instructions of the sessions, so it needs the `owner`'s acceptance of its hash.
  * `init` makes the first acceptance. These commands accept a change only on a terminal window, and never a first acceptance.

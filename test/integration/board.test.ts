@@ -100,7 +100,7 @@ describe('the board commands with the delete guard off', () => {
 /** The text that the state lock wait of the product puts in stderr when another process still holds the lock at the end of the wait. */
 const LOCK_HELD_TEXT = 'holds the lock';
 
-/** The most times that a process runs again after it did not get the lock (T-S1, AC-44). */
+/** The most times that a process runs again after it did not get the lock. */
 const MAX_RERUNS = 2;
 
 /** True for a run that failed only because another process held the state lock for the whole wait: exit 1 with the lock text in stderr. */

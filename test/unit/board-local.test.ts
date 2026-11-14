@@ -1145,7 +1145,7 @@ describe('the local connector: a list', () => {
   });
 });
 
-// The decision operations: read an open request, and record the answer of the owner (M5-1b, phase B5a).
+// The decision operations: read an open request, and record the answer of the owner.
 
 const PERSON_ENV = { [env.stateHome]: '/state', [env.userHome]: '/home/me' };
 const DECISIONS_PATH = '/state/factory/owner-decisions.json';

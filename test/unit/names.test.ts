@@ -281,7 +281,7 @@ describe('the limits of the track list', () => {
 });
 
 describe('the role words and the terms', () => {
-  /** The words that decision D-59 replaced in the roles and the terms. */
+  /** The old words that the names of the glossary replaced in the roles and the terms. */
   const REPLACED_WORDS = ['cell', 'andon', 'staging', 'inspect', 'ship'];
   const replacedWord = new RegExp(`(?<![A-Za-z0-9_])(?:${REPLACED_WORDS.join('|')})(?:s|es)?(?![A-Za-z0-9_])`, 'i');
 
@@ -365,12 +365,12 @@ describe('the word desk', () => {
   });
 });
 
-/** The old words and the scanned jargon words (D-11, D-59) that a text holds. */
+/** The old words and the scanned jargon words that a text holds. */
 const plainWordsIn = (text: string): string[] => [...oldWordsIn(text), ...jargonIn(text)];
 
 /**
- * The scan of the old words (D-59) covers: the help text of every command, `package.json`, the templates, the glossary,
- * the files that init writes, and the string literals of every folder of `src`. The scan of the jargon words (D-11) covers
+ * The scan of the old words covers: the help text of every command, `package.json`, the templates, the glossary,
+ * the files that init writes, and the string literals of every folder of `src`. The scan of the jargon words covers
  * the same, apart from `package.json`. It does not cover import paths, comments, the history of the docs, or the mapping
  * tables of design 7 and 7.1, which name the old words on purpose.
  */

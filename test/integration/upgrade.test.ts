@@ -698,7 +698,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
 
   /**
    * Copy the fixture and start the state repository with a first commit. A node that lists a project is not upgraded
-   * (decision D-3 B), so the copy lists none, unless the test asks for the project of the fixture.
+   * (its project sits outside the new folder and has no clone URL), so the copy lists none, unless the test asks for the project of the fixture.
    */
   const prepareOldNode = async (options: { withProject?: boolean } = {}): Promise<string> => {
     await cp(FIXTURE, box.node, { recursive: true });

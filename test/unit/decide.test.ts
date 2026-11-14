@@ -31,7 +31,7 @@ import { HOME, HOOK } from '../helpers/guard-fixture.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
 
-// The decide command (M5-1b, phase B5c): the parse, the owner check, the request block, the question and the record.
+// The decide command: the parse, the owner check, the request block, the question and the record.
 
 const LAYOUT = layoutOf(HOME);
 const LOCK_FILE = join(LAYOUT.locksDir, `${stateLock.name}${stateLock.lock.suffix}`);

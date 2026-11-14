@@ -124,7 +124,7 @@ const wordsOf = (tmux: TmuxLog): readonly string[] => {
 };
 
 /**
- * The launch rule for the last pane that the launch made (TP-11, TP-61). Every launch and resume test that makes a pane asserts
+ * The launch rule for the last pane that the launch made. Every launch and resume test that makes a pane asserts
  * it: a launch that works goes through `launchedBy`, and a launch that fails after the pane starts calls this function itself.
  * It asserts four facts: the program starts in auto mode with no flag that skips the checks; the proxy variable is removed
  * before the program word; the proxy of the argument list is the proxy of the config and never the proxy of the environment;
