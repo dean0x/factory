@@ -2,15 +2,26 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
-import { dirs, hookNames, localSettingsFile, maxFileBytes } from '../../src/names.js';
+import { dirs, hookNames, localSettingsFile, maxFileBytes, roleText } from '../../src/names.js';
 import {
   paneProcessStart,
   requireLineAfterStart,
   requireOwnHooks,
   requireResumeFile,
+  requireRoleDelivery,
   requireSettingsOlderThan,
 } from '../../src/workers/session-checks.js';
 import { createFakeDeps, exited, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import {
+  OWN_SETTINGS_TEXT,
+  seedAcceptedSetup,
+  seedOwnHooks,
+  seedUnacceptedSetup,
+  settingsFileOf,
+  SETUP_WORKER,
+  STATE_ENV,
+} from '../helpers/role-delivery.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 
 const NOW = new Date('2030-01-02T03:04:05.678Z');
 const SECOND = 1000;
@@ -335,5 +346,156 @@ describe('the hook settings of a session folder', () => {
     it('a settings file that is not there is exit 3', async () => {
       expect(codeOf(await requireSettingsOlderThan(make(), olderRequest))).toBe(3);
     });
+  });
+});
+
+describe('the delivery of the role text to a work copy', () => {
+  const HOME = '/h/node';
+  const FOLDER = `${HOME}/work-copies/web/alpha`;
+  const AGAIN_LINE = 'worker resume alpha';
+  const request = { home: HOME, config: sampleConfig(), workerId: 'alpha', workCopy: FOLDER, again: AGAIN_LINE };
+  const make = (): FakeDeps => {
+    const deps = createFakeDeps({ now: NOW, env: STATE_ENV });
+    deps.seedDir(FOLDER);
+    seedOwnHooks(deps, FOLDER);
+    return deps;
+  };
+
+  it('passes for a work copy with every own hook and a node that has no setup text for the worker', async () => {
+    expect((await requireRoleDelivery(make(), request)).ok).toBe(true);
+  });
+
+  it('passes for the setup text that the owner accepted', async () => {
+    const deps = make();
+    seedAcceptedSetup(deps, HOME, 'Write tests first.\n');
+    expect((await requireRoleDelivery(deps, request)).ok).toBe(true);
+  });
+
+  describe('a work copy with no own hook entry', () => {
+    it('is exit 3 for a work copy with no settings file, and names the events that lack', async () => {
+      const deps = make();
+      deps.files.delete(settingsFileOf(FOLDER));
+      const error = errorOf(await requireRoleDelivery(deps, request));
+      expect(exitCodeOf[error.kind]).toBe(3);
+      expect(error.message).toContain('SessionStart');
+    });
+
+    it('puts each command of the remedy on its own line, for the fix and for a work copy that never had the hook', async () => {
+      const deps = make();
+      deps.files.delete(settingsFileOf(FOLDER));
+      const lines = (errorOf(await requireRoleDelivery(deps, request)).hint ?? '').split('\n');
+      expect(lines).toEqual(
+        expect.arrayContaining([
+          'factory upgrade',
+          'factory worker resume alpha',
+          'factory dismiss alpha',
+          'factory worker new alpha --project web',
+        ]),
+      );
+      expect(lines.at(-1)).toBe('Answer yes to the question about the hook settings.');
+    });
+
+    it('names the command of the caller as the command that starts the worker again', async () => {
+      const deps = make();
+      deps.files.delete(settingsFileOf(FOLDER));
+      const lines = (errorOf(await requireRoleDelivery(deps, { ...request, again: 'restart alpha' })).hint ?? '').split('\n');
+      expect(lines).toContain('factory restart alpha');
+      expect(lines).not.toContain('factory worker resume alpha');
+    });
+
+    it('is exit 3 when only the SessionStart entry lacks', async () => {
+      const deps = make();
+      const { SessionStart: _start, ...others } = ownSettingsEntries.hooks;
+      deps.seed(settingsFileOf(FOLDER), JSON.stringify({ hooks: others }));
+      const error = errorOf(await requireRoleDelivery(deps, request));
+      expect(exitCodeOf[error.kind]).toBe(3);
+      expect(error.message).toContain('SessionStart');
+    });
+
+    it('is exit 4 when the settings file is a link', async () => {
+      const deps = createFakeDeps({ now: NOW, env: STATE_ENV, links: { [settingsFileOf(FOLDER)]: '/elsewhere/settings.json' } });
+      deps.seedDir(`${FOLDER}/.claude`);
+      deps.seed('/elsewhere/settings.json', OWN_SETTINGS_TEXT);
+      expect(codeOf(await requireRoleDelivery(deps, request))).toBe(4);
+    });
+
+    it('is refused before the role text is read: a fault of both gives the hook refusal', async () => {
+      const deps = make();
+      deps.files.delete(settingsFileOf(FOLDER));
+      seedUnacceptedSetup(deps, HOME, 'Write tests first.\n');
+      expect(errorOf(await requireRoleDelivery(deps, request)).message).toContain('lack the events');
+    });
+  });
+
+  describe('a role text that a check refuses', () => {
+    it('is exit 4 for a setup text that the owner did not accept, and names the command to run again', async () => {
+      const deps = make();
+      seedUnacceptedSetup(deps, HOME, 'Write tests first.\n');
+      const error = errorOf(await requireRoleDelivery(deps, request));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.hint).toContain('"factory worker resume alpha"');
+    });
+
+    it('is exit 4 for a setup text that changed after the owner accepted it', async () => {
+      const deps = make();
+      seedAcceptedSetup(deps, HOME, 'Write tests first.\n');
+      deps.seed(`${HOME}/${SETUP_WORKER}`, 'Write no tests.\n');
+      expect(codeOf(await requireRoleDelivery(deps, request))).toBe(4);
+    });
+
+    it('is exit 1 for a text above the cap, and names its size and the cap', async () => {
+      const deps = make();
+      seedAcceptedSetup(deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
+      const error = errorOf(await requireRoleDelivery(deps, request));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
+      expect(error.hint).toContain('or fewer');
+    });
+
+    it('is exit 1 for a setup text that holds a block marker', async () => {
+      const deps = make();
+      seedAcceptedSetup(deps, HOME, '<!-- factory:begin worker v1 sha256=00 -->\n');
+      const error = errorOf(await requireRoleDelivery(deps, request));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toBe(roleText.reasons.blockMarker);
+    });
+
+    it('is exit 4 for a setup file that is a link', async () => {
+      const deps = createFakeDeps({ now: NOW, env: STATE_ENV, links: { [`${HOME}/${SETUP_WORKER}`]: '/elsewhere/worker.md' } });
+      deps.seedDir(FOLDER);
+      seedOwnHooks(deps, FOLDER);
+      deps.seed('/elsewhere/worker.md', 'Write tests first.\n');
+      expect(codeOf(await requireRoleDelivery(deps, request))).toBe(4);
+    });
+
+    it('passes the error of an acceptance store that cannot be used, and never reads it as accepted', async () => {
+      const deps = createFakeDeps({ now: NOW });
+      deps.seedDir(FOLDER);
+      seedOwnHooks(deps, FOLDER);
+      expect(errorOf(await requireRoleDelivery(deps, request)).message).toContain('no variable names a state folder');
+    });
+
+    it('never prints the text of the setup file or its path', async () => {
+      const deps = make();
+      seedUnacceptedSetup(deps, HOME, 'SECRET-LINE\n');
+      const error = errorOf(await requireRoleDelivery(deps, request));
+      expect(JSON.stringify(error)).not.toContain('SECRET-LINE');
+      expect(JSON.stringify(error)).not.toContain(`${HOME}/${SETUP_WORKER}`);
+    });
+  });
+});
+
+describe('the remedy option of the own hook check', () => {
+  const FOLDER = '/h/node/work-copies/web/alpha';
+  it('replaces the default remedy for a missing event, and leaves the refusal of a link as it is', async () => {
+    const deps = createFakeDeps({ now: NOW });
+    const missing = errorOf(await requireOwnHooks(deps, { folder: FOLDER, then: 'restart alpha', remedy: 'Do this.' }));
+    expect(missing.hint).toBe('Do this.');
+    const linked = createFakeDeps({ now: NOW, links: { [`${FOLDER}/.claude/settings.local.json`]: '/elsewhere/settings.json' } });
+    linked.seedDir(`${FOLDER}/.claude`);
+    linked.seed('/elsewhere/settings.json', OWN_SETTINGS_TEXT);
+    const link = errorOf(await requireOwnHooks(linked, { folder: FOLDER, then: 'restart alpha', remedy: 'Do this.' }));
+    expect(link.hint).toContain('factory restart alpha');
+    expect(link.hint).not.toBe('Do this.');
   });
 });

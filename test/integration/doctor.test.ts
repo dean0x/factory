@@ -83,9 +83,23 @@ describe('factory doctor (built binary)', () => {
       expect.arrayContaining(['root', 'temp-folder', 'tracker', 'children']),
     );
     expect(document.checks.map((check) => check.id)).not.toContain('home');
-    for (const id of ['root', 'temp-folder', 'tracker', 'children', 'board-size']) {
+    for (const id of ['root', 'temp-folder', 'tracker', 'children', 'board-size', 'role-delivery']) {
       expect(document.checks.find((check) => check.id === id)?.level).toBe('ok');
     }
+  });
+
+  it('fails the role delivery, and exits 1, when the setup text of the worker changed after the owner accepted it', async () => {
+    await initNode();
+    const setupFile = join(box.node, 'setup', 'roles', 'worker.md');
+    await writeFile(setupFile, `${await box.read(setupFile)}A rule that the owner did not accept.\n`);
+    const result = await box.run(['doctor', '--home', box.node, '--json']);
+    expect(result.code).toBe(1);
+    const document = JSON.parse(result.stdout) as { checks: { id: string; level: string; text: string }[] };
+    const found = document.checks.find((entry) => entry.id === 'role-delivery');
+    expect(found?.level).toBe('fail');
+    expect(found?.text).toContain('role text refused: the setup file is not accepted');
+    expect(found?.text).toContain('run "factory doctor" again.');
+    expect(found?.text).not.toContain('A rule that the owner did not accept.');
   });
 
   it('warns, and still exits 0, when a board file reaches 80 percent of the read cap, and names the file', async () => {

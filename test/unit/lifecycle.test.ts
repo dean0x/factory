@@ -4,7 +4,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { activeMachine, env, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
+import { activeMachine, env, marker, roleText, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -20,6 +20,7 @@ import {
 } from '../helpers/fake-deps.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
+import { seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
@@ -61,6 +62,7 @@ const START_AFTER_END = 'The session is ended. Fix the fault, then run "factory 
 
 const BAD_SETTINGS = JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://other.example' } });
 const WARNING_SETTINGS = JSON.stringify({ ...ownSettingsEntries, permissions: { allow: ['Bash'] } });
+const HOOKS_OFF = JSON.stringify({ ...ownSettingsEntries, disableAllHooks: true });
 
 interface WorkerSpec {
   /**
@@ -90,6 +92,8 @@ interface Setup {
   readonly config?: FactoryConfig;
   readonly claudeFile?: string;
   readonly hookSettings?: string;
+  /** How the factory folder came to this machine. Default: no origin, which counts as received. */
+  readonly origin?: 'own' | 'received';
   /** A terminal window with this answer to the question about the hook settings. Default: no terminal window. */
   readonly answer?: string;
   /** The mark of the active machine: of this machine, or of another one. Default: no mark. */
@@ -180,7 +184,7 @@ const markText = (machine: string): string =>
 const seedWorker = async (deps: FakeDeps, id: Id, spec: WorkerSpec): Promise<void> => {
   must(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${COPIES}/${id}`, branch: `worker/${id}` }));
   deps.seedDir(`${COPIES}/${id}`);
-  if (spec.settings !== undefined) deps.seed(`${COPIES}/${id}/.claude/settings.local.json`, spec.settings);
+  deps.seed(`${COPIES}/${id}/.claude/settings.local.json`, spec.settings ?? OWN_SETTINGS);
   if (spec.event === null) return;
   deps.seed(workerPathsOf(HOME, id).lastSessionFile, `${SESSION[id]}\n`);
   const marker = spec.marker === undefined ? id : spec.marker;
@@ -262,7 +266,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   deps.seed(`${COORDINATOR}/CLAUDE.md`, setup.claudeFile ?? claudeFileText(config));
   deps.seed(SETTINGS_FILE, setup.hookSettings ?? OWN_SETTINGS);
   for (const project of config.recipe.projects) deps.seedDir(`${HOME}/${project.path}`);
-  registerRoot(deps, HOME, config.core.node.id);
+  registerRoot(deps, HOME, config.core.node.id, [], setup.origin);
   for (const id of worked) await seedWorker(deps, id, specs[id] ?? {});
   if (setup.coordinatorResumes === true) {
     must(await writeCoordinatorSession(deps, HOME, COORDINATOR_SESSION));
@@ -381,6 +385,15 @@ describe('shutdown', () => {
     expect(output.failed).toBe(false);
     expect(output.json).toMatchObject({ schema: schemaIds.shutdown, running: false, workers: [] });
     expectNothingStopped(made);
+  });
+
+  it('still ends the workers and the session when the role text of a worker is refused: no worker starts again', async () => {
+    const made = await make({ workers: { alpha: {}, beta: { settings: HOOKS_OFF } } });
+    seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    const output = await succeeded(shutdown(made));
+    expect(made.deps.terminated).toEqual(expect.arrayContaining([PID.alpha, PID.beta]));
+    expect(countOf(made, 'kill-session')).toBe(1);
+    expect(output.failed).toBe(false);
   });
 
   it.each([
@@ -865,6 +878,71 @@ describe('restart', () => {
     });
   });
 
+  describe('the role text of the worker', () => {
+    it('exits 4 and stops nothing for a work copy whose settings turn off every hook', async () => {
+      const made = await make({ workers: { alpha: { settings: HOOKS_OFF }, beta: {} } });
+      const error = await failed(restart(made, 'alpha'));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toContain('turns off every hook');
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+    });
+
+    it('exits 3 and stops nothing for a work copy with no own hook entry, and names each command on its own line', async () => {
+      const made = await make({ workers: { alpha: {}, beta: {} } });
+      made.deps.files.delete(`${COPIES}/alpha/.claude/settings.local.json`);
+      const error = await failed(restart(made, 'alpha'));
+      expect(exitCodeOf[error.kind]).toBe(3);
+      expect(error.hint?.split('\n')).toEqual(expect.arrayContaining(['factory upgrade', 'factory restart alpha', 'factory dismiss alpha']));
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+    });
+
+    it('exits 4 and stops nothing for a setup text that the owner did not accept, and names the restart as the command to run again', async () => {
+      const made = await make();
+      seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+      const error = await failed(restart(made, 'alpha'));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.hint).toContain('"factory restart alpha"');
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+    });
+
+    it('exits 1 and stops nothing for a text above the cap, and names its size and the cap', async () => {
+      const made = await make();
+      seedAcceptedSetup(made.deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
+      const error = await failed(restart(made, 'alpha'));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
+      expectNothingStopped(made);
+    });
+
+    it('exits 4 and stops nothing in your own factory folder for an accepted setup text that holds a block marker', async () => {
+      const made = await make({ origin: 'own' });
+      seedAcceptedSetup(made.deps, HOME, `Write tests first.\n<!-- ${marker.prefix}${marker.begin} rules v1 -->\n`);
+      const error = await failed(restart(made, 'alpha'));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+    });
+
+    it('exits 1 and stops nothing in a received factory folder for an accepted setup text that holds a block marker', async () => {
+      const made = await make({ origin: 'received' });
+      seedAcceptedSetup(made.deps, HOME, `Write tests first.\n<!-- ${marker.prefix}${marker.begin} rules v1 -->\n`);
+      const error = await failed(restart(made, 'alpha'));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+    });
+
+    it('stops nothing for a worker that has no pane when its role text is refused', async () => {
+      const made = await make({ workers: { alpha: { pane: 'none' } } });
+      seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+      expect(exitCodeOf[(await failed(restart(made, 'alpha'))).kind]).toBe(4);
+      expect(countOf(made, 'split-window')).toBe(0);
+    });
+  });
+
   it('says that the worker stopped and did not start again when its new session writes no line, and names the retry', async () => {
     const made = await make({ program: () => undefined });
     const error = await failed(restart(made, 'alpha'));
@@ -981,6 +1059,35 @@ describe('reboot', () => {
       expect(exitCodeOf[error.kind]).toBe(4);
       expect(error.hint).toContain('Remove the setting');
       expectNothingStopped(made);
+    });
+
+    it('exits 4 and stops nothing when the settings of one work copy turn off every hook', async () => {
+      const made = await make({ workers: { alpha: {}, beta: { settings: HOOKS_OFF }, gamma: {} } });
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toContain('turns off every hook');
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+
+    it('exits 3 and stops nothing when one work copy has no own hook entry', async () => {
+      const made = await make();
+      made.deps.files.delete(`${COPIES}/gamma/.claude/settings.local.json`);
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(3);
+      expect(error.hint?.split('\n')).toEqual(expect.arrayContaining(['factory upgrade', 'factory reboot', 'factory dismiss gamma']));
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+
+    it('exits 4 and stops nothing when the setup text of the worker is not accepted, and names the reboot as the command to run again', async () => {
+      const made = await make();
+      seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.hint).toContain('"factory reboot"');
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
     });
 
     it('exits 2 and stops nothing when the command runs in the pane of a worker', async () => {

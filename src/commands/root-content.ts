@@ -472,6 +472,8 @@ interface SettingsSource {
   readonly display: string;
   /** The place for the warning that a settings file is there, or null where a settings file is normal. */
   readonly presence: string | null;
+  /** True for the work copy of a worker, whose session must keep its hooks. A file there that turns off every hook or sets the state folder is a failure. */
+  readonly requiresHooks: boolean;
 }
 
 const isSettingsName = (name: string): boolean => name.startsWith(claudeSettings.prefix) && name.endsWith(claudeSettings.suffix);
@@ -534,7 +536,7 @@ const settingsOfFolder = async (
   deps: Deps,
   home: string,
   userFolder: string | null,
-  folder: { readonly path: string; readonly presence: string | null },
+  folder: { readonly path: string; readonly presence: string | null; readonly requiresHooks: boolean },
 ): Promise<FolderSettings> => {
   const id = checkIds.permissionMode;
   const settingsFolder = join(folder.path, dirs.claude);
@@ -559,6 +561,7 @@ const settingsOfFolder = async (
       absolute: join(settingsFolder, name),
       display: homeRelative(home, join(settingsFolder, name)),
       presence: folder.presence,
+      requiresHooks: folder.requiresHooks,
     })),
     findings: settings.length > MAX_SETTINGS_FILES ? [tooManySettings(id, shown)] : [],
   };
@@ -568,8 +571,10 @@ const settingsOfFolder = async (
  * One settings file: its failures and warnings. A setting that skips the permission prompts, a variable with the prefix of
  * the program in the env values and a setting of the proxy or the credential of the session are failures. A setting that
  * runs a command is a failure where a settings file is not expected (`presence` is set), and a warning in the factory folder
- * itself. The warning that a settings file is there is not given for a file that holds exactly the entries that the program
- * writes (`isOwnSettingsText`); every other finding stays for such a file.
+ * itself. A setting that turns off every hook, and a variable of the state folder or the home folder in the env values, are
+ * failures where the session must keep its hooks (`requiresHooks` is set). The
+ * warning that a settings file is there is not given for a file that holds exactly the entries that the program writes
+ * (`isOwnSettingsText`); every other finding stays for such a file.
  */
 const judgeSettings = (source: SettingsSource, text: string): readonly RootFinding[] => {
   const id = checkIds.permissionMode;
@@ -583,6 +588,12 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
       ? []
       : [`sets the proxy or the credential of the session in its env values (${facts.movesTraffic.join(', ')})`]),
     ...(source.presence !== null && facts.runsCommands.length > 0 ? [`runs a command through ${commandNames}`] : []),
+    ...(source.requiresHooks && facts.disablesHooks
+      ? [`turns off every hook (${claudeSettingKeys.disableAllHooks}), so the ${roles.worker} gets no role text`]
+      : []),
+    ...(source.requiresHooks && facts.movesState.length > 0
+      ? [`sets a variable of the state folder of the user in its env values (${facts.movesState.join(', ')}), so the ${roles.worker} gets no role text`]
+      : []),
   ];
   const keepStatusLine =
     source.presence !== null && facts.runsCommands.includes(claudeSettingKeys.statusLine) ? KEEP_STATUS_LINE : '';
@@ -681,7 +692,8 @@ const unreadFindings = (unread: readonly string[]): readonly RootFinding[] =>
  * The failures and warnings for the settings files of one session folder, for the work copy of a worker (design 4.4): the
  * same judgment as the scan of the root, with the same stops for a link and for a file that can not be read. `home` is the
  * factory folder that the shown paths are relative to, and `presence` names the place for the warning that a settings file is
- * there. The settings file that the program writes itself gives no warning. The check only reads.
+ * there. The settings file that the program writes itself gives no warning. A file that turns off every hook is a failure here
+ * and not in the scan of the root. The check only reads.
  */
 export const checkFolderSettings = async (
   deps: Deps,
@@ -689,7 +701,7 @@ export const checkFolderSettings = async (
   folder: string,
   presence: string,
 ): Promise<readonly RootFinding[]> => {
-  const found = await settingsOfFolder(deps, home, userClaudeFolderOf(deps), { path: folder, presence });
+  const found = await settingsOfFolder(deps, home, userClaudeFolderOf(deps), { path: folder, presence, requiresHooks: true });
   const judged = await judgeSources(deps, found.sources);
   return withoutRepeats([...found.findings, ...judged.findings, ...unreadFindings(judged.unread)]);
 };
@@ -712,9 +724,9 @@ const trackedText = async (deps: Deps, clone: string, entry: TreeEntry): Promise
 /**
  * The failures and warnings for the settings files that the last commit of `clone` tracks in its settings folder. A new work
  * tree of the clone starts from that commit, so the result is what `checkFolderSettings` gives for `folder` after the checkout:
- * the same judgment, with the same stops for a link and for a file that can not be read. A command that makes the work copy calls
- * this first, so a stop comes before the work copy exists. Git is read, and no call of the file system names `folder`, which may
- * not exist yet. A clone that git can not read is a failure.
+ * the same judgment (a file that turns off every hook is a failure too), with the same stops for a link and for a file that can
+ * not be read. A command that makes the work copy calls this first, so a stop comes before the work copy exists. Git is read, and
+ * no call of the file system names `folder`, which may not exist yet. A clone that git can not read is a failure.
  */
 export const checkTrackedSettings = async (
   deps: Deps,
@@ -754,7 +766,7 @@ export const checkTrackedSettings = async (
       unread.push(`${shownPath(display)} (${child.mode === LINK_MODE ? 'a link' : 'cannot be read'})`);
       continue;
     }
-    findings.push(...judgeSettings({ absolute, display, presence: folder.presence }, text));
+    findings.push(...judgeSettings({ absolute, display, presence: folder.presence, requiresHooks: true }, text));
     if (name === localSettingsFile) localText = text;
   }
   return ok({ findings: withoutRepeats([...findings, ...unreadFindings(unread)]), localText });
@@ -774,9 +786,9 @@ export const scanSettings = async (
 ): Promise<readonly RootFinding[]> => {
   const userFolder = userClaudeFolderOf(deps);
   const folders = [
-    { path: home, presence: null },
-    { path: join(home, dirs.coordinator), presence: `the ${roles.coordinator} folder` },
-    ...projectPaths.map((path) => ({ path: join(home, path), presence: 'a project folder' })),
+    { path: home, presence: null, requiresHooks: false },
+    { path: join(home, dirs.coordinator), presence: `the ${roles.coordinator} folder`, requiresHooks: false },
+    ...projectPaths.map((path) => ({ path: join(home, path), presence: 'a project folder', requiresHooks: false })),
   ];
   const sources = new Map<string, SettingsSource>();
   const findings: RootFinding[] = [];
@@ -795,7 +807,7 @@ export const scanSettings = async (
       continue;
     }
     if (kind.value === 'link') unreadTracked.push(`${shownPath(path)} (a link)`);
-    else if (kind.value === 'file') sources.set(absolute, { absolute, display: path, presence: null });
+    else if (kind.value === 'file') sources.set(absolute, { absolute, display: path, presence: null, requiresHooks: false });
   }
   const judged = await judgeSources(deps, sources.values());
   return withoutRepeats([...findings, ...judged.findings, ...unreadFindings([...unreadTracked, ...judged.unread])]);

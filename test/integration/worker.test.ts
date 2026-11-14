@@ -312,6 +312,22 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(await workerPanes()).toHaveLength(1);
   });
 
+  it('exits 4 for a tracked settings file that turns off every hook, and makes no work copy, branch or record', async () => {
+    const clone = await startedNode();
+    await mkdir(join(clone, '.claude'), { recursive: true });
+    await writeFile(join(clone, '.claude', 'settings.local.json'), '{"disableAllHooks":true}\n');
+    expect((await box.git(clone, ['add', '-f', '.claude/settings.local.json'])).code).toBe(0);
+    expect((await box.git(clone, ['commit', '-q', '-m', 'track the settings'])).code).toBe(0);
+    const before = await treeOf(box.node);
+
+    const result = await workerNew('alpha', '--project', 'web', '--yes');
+    expect(result.code, result.stderr).toBe(4);
+    expect(result.stderr).toContain('turns off every hook');
+    expect(await treeOf(box.node)).toEqual(before);
+    expect((await box.git(clone, ['rev-parse', '--verify', '--quiet', 'refs/heads/worker/alpha'])).code).not.toBe(0);
+    expect(await workerPanes()).toHaveLength(1);
+  });
+
   it('exits 2 with no terminal window and no yes flag, and writes nothing', async () => {
     await startedNode();
     const before = await treeOf(box.node);

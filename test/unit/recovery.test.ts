@@ -3,13 +3,14 @@ import { failure } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { launchConfirm, tmuxNames } from '../../src/names.js';
+import { launchConfirm, roleText, tmuxNames } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { chooseProxy, newProxyAnswers, sessionProxyWish } from '../../src/workers/launch.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { coordinatorResumeOf, noPaneWarning, recoverWorkers, workersWithoutPane, type RecoveryReport } from '../../src/workers/recovery.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
+import { seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup, STATE_ENV } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
@@ -98,7 +99,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   const { handler, log } = tmuxHandler({ sessions: { demo: HOME }, ...setup.tmux });
   const events: string[] = [];
   const base = createFakeDeps({
-    env: { PATH: '/bin' },
+    env: { PATH: '/bin', ...STATE_ENV },
     run: (call) => {
       events.push(`tmux ${call.args[0]}`);
       return handler(call);
@@ -117,6 +118,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   for (const id of setup.workers ?? IDS) {
     must(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${COPIES}/${id}`, branch: `worker/${id}` }));
     deps.seedDir(`${COPIES}/${id}`);
+    seedOwnHooks(deps, `${COPIES}/${id}`);
     const pointer = setup.pointers !== undefined && id in setup.pointers ? setup.pointers[id] : SESSION[id];
     if (pointer === null || pointer === undefined) continue;
     deps.seed(workerPathsOf(HOME, id).lastSessionFile, `${pointer}\n`);
@@ -367,6 +369,62 @@ describe('the recovery of the workers: the settings of the work copy', () => {
   it('accepts the settings file that the program writes itself', async () => {
     const own = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
     const made = await make({ settings: { alpha: own, beta: own, gamma: own } });
+    expect((await recovered(made)).resumed).toEqual(['alpha', 'beta', 'gamma']);
+    expect(made.deps.warned).toEqual([]);
+  });
+});
+
+describe('the recovery of the workers: the role text of each worker', () => {
+  const hooksOff = JSON.stringify({ ...ownSettingsEntries, disableAllHooks: true });
+  const settingsOf = (id: string): string => `${COPIES}/${id}/.claude/settings.local.json`;
+  const stoppedNothing = (made: Made): void => {
+    expect(made.deps.terminated).toEqual([]);
+    expect(made.tmux.commands().filter((command) => command.startsWith('kill-'))).toEqual([]);
+  };
+
+  it('starts no pane for a work copy whose settings turn off every hook, warns with the effect, and goes on', async () => {
+    const made = await make({ settings: { beta: hooksOff } });
+    expect(await recovered(made)).toEqual({ resumed: ['alpha', 'gamma'], skipped: [], failed: ['beta'] });
+    expect(made.deps.warned).toHaveLength(1);
+    expect(made.deps.warned[0]).toContain('beta');
+    expect(made.deps.warned[0]).toContain('turns off every hook');
+    expect(workersOf(made)).toEqual(['alpha', 'gamma']);
+    stoppedNothing(made);
+  });
+
+  it('starts no pane for a work copy with no own hook entry, and the warning names each command on its own line', async () => {
+    const made = await make();
+    made.deps.files.delete(settingsOf('gamma'));
+    expect(await recovered(made)).toEqual({ resumed: ['alpha', 'beta'], skipped: [], failed: ['gamma'] });
+    const [warning = ''] = made.deps.warned;
+    expect(warning).toContain('gamma');
+    expect(warning.split('\n')).toEqual(expect.arrayContaining(['factory upgrade', 'factory worker resume gamma', 'factory dismiss gamma']));
+    expect(workersOf(made)).toEqual(['alpha', 'beta']);
+    stoppedNothing(made);
+  });
+
+  it('starts no worker when the setup text is not accepted: one warning for each worker, and the report names all of them', async () => {
+    const made = await make();
+    seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    expect(await recovered(made)).toEqual({ resumed: [], skipped: [], failed: ['alpha', 'beta', 'gamma'] });
+    expect(made.deps.warned).toHaveLength(3);
+    for (const [index, id] of IDS.entries()) expect(made.deps.warned[index]).toContain(`${id} did not start again`);
+    expect(made.deps.warned[0]).toContain(roleText.reasons.notAccepted);
+    expect(splits(made)).toBe(0);
+    stoppedNothing(made);
+  });
+
+  it('starts no worker for a text above the cap, and names its size and the cap', async () => {
+    const made = await make();
+    seedAcceptedSetup(made.deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
+    expect((await recovered(made)).failed).toEqual(['alpha', 'beta', 'gamma']);
+    expect(made.deps.warned[0]).toMatch(/the role text has \d+ characters, and the cap is 9000 characters/);
+    expect(splits(made)).toBe(0);
+  });
+
+  it('starts every worker for the setup text that the owner accepted', async () => {
+    const made = await make();
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\n');
     expect((await recovered(made)).resumed).toEqual(['alpha', 'beta', 'gamma']);
     expect(made.deps.warned).toEqual([]);
   });

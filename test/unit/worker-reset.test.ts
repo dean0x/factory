@@ -5,7 +5,7 @@ import { hookSettingsPlaceOf, ownSettingsEntries } from '../../src/core/claude-s
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { launchArgv } from '../../src/launch/argv.js';
-import { maxFileBytes, resetConfirm, schemaIds, tmuxNames, type HookEvent, type ResetKind } from '../../src/names.js';
+import { maxFileBytes, resetConfirm, roleText, schemaIds, tmuxNames, type HookEvent, type ResetKind } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { parseReset, resetOutput, resetWorker, type ResetOutcome } from '../../src/workers/reset.js';
@@ -13,6 +13,7 @@ import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { summonWorker } from '../../src/workers/slot.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { seedAcceptedSetup, seedUnacceptedSetup, SETUP_WORKER } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
@@ -429,6 +430,58 @@ describe('the process, the settings and the push (refusals 9 to 12)', () => {
   });
 });
 
+describe('the role text of the worker is checked before the push and before the keys', () => {
+  const KINDS = ['clear', 'compact'] as const;
+  const SETUP_FILE = `${HOME}/${SETUP_WORKER}`;
+  const againOf = (kind: ResetKind): string => `run "factory worker reset ${WORKER} --${kind}" again.`;
+
+  it.each(KINDS)('a setup text that the owner did not accept is exit 4 for a %s, and the remedy runs the reset again', async (kind) => {
+    const world = await make();
+    seedUnacceptedSetup(world.deps, HOME, 'Write tests first.\n');
+    const error = await refused(world, 'Accept', kind);
+    expect(codeOf(error)).toBe(4);
+    expect(error.message).toBe(roleText.reasons.notAccepted);
+    expect(error.hint).toContain(againOf(kind));
+  });
+
+  it('a text above the cap is exit 1, and the refusal names its size and the cap', async () => {
+    const world = await make();
+    seedAcceptedSetup(world.deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
+    const error = await refused(world, 'Shorten');
+    expect(codeOf(error)).toBe(1);
+    expect(error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
+    expect(error.hint).toContain(againOf('clear'));
+  });
+
+  it('a setup file that is a link is exit 4', async () => {
+    const world = await make({ links: { [SETUP_FILE]: '/elsewhere/worker.md' } });
+    const error = await refused(world, 'Fix the link');
+    expect(codeOf(error)).toBe(4);
+    expect(error.message).toBe(roleText.reasons.link);
+  });
+
+  it('prints no text of the setup file', async () => {
+    const world = await make();
+    seedUnacceptedSetup(world.deps, HOME, 'SECRET-LINE\n');
+    expect(JSON.stringify(errorOf(await world.reset()))).not.toContain('SECRET-LINE');
+  });
+
+  it('refuses before the fetch of the push check', async () => {
+    const gitCalls: string[] = [];
+    const world = await make({ atGit: (call) => void gitCalls.push(call.args.join(' ')) });
+    seedUnacceptedSetup(world.deps, HOME, 'Write tests first.\n');
+    await refused(world, 'Accept');
+    expect(gitCalls).toEqual([]);
+  });
+
+  it('passes a setup text that the owner accepted, and types the line', async () => {
+    const world = await make();
+    seedAcceptedSetup(world.deps, HOME, 'Write tests first.\n');
+    valueOf(await world.reset('clear', withProgram(world.deps, world.tmux, atWait(1, writesLine('SessionStart', NEW_SESSION, true)))));
+    expect(world.tmux.typed().map((key) => key.text)).toContain('/clear');
+  });
+});
+
 describe('the refusals of the path checks speak the words of reset', () => {
   const AGAIN = `Run "${AGAIN_CLEAR}" again.`;
 
@@ -680,6 +733,9 @@ describe('the order of the checks', () => {
     world.deps.mtimes.set(SETTINGS_FILE, NOW);
     expect(await next()).toContain('changed after the session started');
     world.deps.mtimes.set(SETTINGS_FILE, NOW - HOUR);
+    seedUnacceptedSetup(world.deps, HOME, 'Write tests first.\n');
+    expect(await next()).toContain(roleText.reasons.notAccepted);
+    world.deps.files.delete(`${HOME}/${SETUP_WORKER}`);
     expect(await next()).toContain('is not pushed');
     world.setGit({});
     expect(await next()).toContain(RESUME_FILE);

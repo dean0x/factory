@@ -6,6 +6,7 @@ import { isRecord } from '../migrate/inspect.js';
 import {
   capitalize,
   claudeSettingKeys,
+  commands,
   commandText,
   dirs,
   files,
@@ -361,7 +362,8 @@ const shownChange = (file: string, lines: readonly string[]): string =>
 export const declinedHookText = (file: string, command: CommandText, session: HookSession = hookSessions.coordinator): string => {
   const worker = session === hookSessions.workCopy;
   const later = worker
-    ? `To add the settings, end the ${roles.worker} and run "${commandText(command)}" again for a new ${roles.worker}. Answer yes.`
+    ? `The ${roles.worker} gets no role text, so its launch stops. To add the settings, dismiss the ${roles.worker} with "${commandText(commands.dismiss)} ID". ` +
+      `Then run "${commandText(command)}" again for a new ${roles.worker} and answer yes.`
     : `To add the settings later, run "${commandText(command)}" again and answer yes.`;
   return (
     `The hook settings in ${file} stay as they are, so Claude Code does not call the hook. ` +

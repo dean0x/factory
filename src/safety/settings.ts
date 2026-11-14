@@ -12,6 +12,7 @@ import {
   permissionSkipList,
   planMode,
   settingsCommandType,
+  stateEnvNames,
   trafficEnvNames,
   type CrossSessionHeldValue,
   type PermissionSkip,
@@ -37,6 +38,8 @@ export interface SettingsFacts {
   readonly changesFactoryEnv: boolean;
   /** The `env` variables of the file that set the proxy or the credential of the session, in the order of the list. */
   readonly movesTraffic: readonly string[];
+  /** The `env` variables of the file that set the state folder or the home folder of the user, in the order of the list. */
+  readonly movesState: readonly string[];
   /** The settings of the file that run a command, except the hook and the status line that the program writes. */
   readonly runsCommands: readonly string[];
   /** The allow rules that cover a whole tool, or every command of `lock run`. At most `MAX_LISTED_RULES`, each cut at `MAX_RULE_CHARS`. */
@@ -51,6 +54,8 @@ export interface SettingsFacts {
   readonly crossSessionInbound: CrossSessionHeldValue | null;
   /** The names of the settings that approve the MCP servers of a project: all of them, or a list. */
   readonly approvesMcp: readonly string[];
+  /** True when the file sets `disableAllHooks` to true, so that a session that reads it runs no hook. */
+  readonly disablesHooks: boolean;
 }
 
 /**
@@ -194,6 +199,12 @@ const heldCrossSession = (parsed: unknown): CrossSessionHeldValue | null => {
   return crossSessionHeldValues.find((held) => held === value) ?? null;
 };
 
+const HOOKS_OFF_PATTERN = new RegExp(`"${escapeRegExp(claudeSettingKeys.disableAllHooks)}"\\s*:\\s*true`);
+
+/** Same two ways as `skipsOf`: the parsed value, and the raw text, so that a parser that reads a file in another way does not hide it. */
+const disablesHooks = (text: string, parsed: unknown): boolean =>
+  valueAt(parsed, [claudeSettingKeys.disableAllHooks]) === true || HOOKS_OFF_PATTERN.test(text);
+
 export const analyzeSettings = (text: string): SettingsFacts => {
   const json = parseJsonText(text);
   const parsed = json.ok ? json.value : undefined;
@@ -203,6 +214,7 @@ export const analyzeSettings = (text: string): SettingsFacts => {
     skips: skipsOf(text, parsed),
     changesFactoryEnv: envPrefixIn(text, parsed, env.factoryPrefix),
     movesTraffic: envNamesIn(text, parsed, trafficEnvNames),
+    movesState: envNamesIn(text, parsed, stateEnvNames),
     runsCommands: runsCommands(text, parsed),
     wholeToolRules: rules.filter(allowsEveryUse).slice(0, MAX_LISTED_RULES).map(shown),
     narrowRules: rules.filter((rule) => !allowsEveryUse(rule)).slice(0, MAX_LISTED_RULES).map(shown),
@@ -210,5 +222,6 @@ export const analyzeSettings = (text: string): SettingsFacts => {
     planMode: valueAt(parsed, [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode]) === planMode,
     crossSessionInbound: heldCrossSession(parsed),
     approvesMcp: approvesMcp(parsed),
+    disablesHooks: disablesHooks(text, parsed),
   };
 };

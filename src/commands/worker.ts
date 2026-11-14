@@ -49,6 +49,7 @@ import { readOwnLastSeen } from '../workers/last-seen.js';
 import type { BoundPane } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, requireRecord, workCopyOf, writeWorkerRecord } from '../workers/registry.js';
 import { parseReset, resetOutput, resetWorker } from '../workers/reset.js';
+import { requireRoleText } from '../workers/role-text.js';
 import { readWorkerPanes, summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { watchOutput, watchWorkers } from '../workers/watch.js';
@@ -298,7 +299,8 @@ const gitKeptHint = (error: CliError, plan: NewWorkerPlan): CliError =>
  * 4. the exclude entry of the clone for the settings file of the work copy;
  * 5. the settings file of the work copy, with the question for the consent when a terminal window can ask;
  * 6. the warning about the machine, which never stops the command;
- * 7. the launch, which checks the settings files of the work copy before it starts the pane.
+ * 7. the launch, which checks the settings files of the work copy and the delivery of the role text before it starts the pane: a
+ *    work copy with no own hook (a no to the question) is refused there, and the work copy, the branch and the record stay.
  * A failure after step 1 keeps what exists and names the steps that remove the worker by hand.
  */
 const makeWorker = async (
@@ -371,6 +373,9 @@ const runNew = async (
   // The question itself comes after the work copy exists, when a terminal can ask.
   const tracked = await requireCleanTrackedSettings(deps, home, plan.value.clone, plan.value.workCopy);
   if (!tracked.ok) return tracked;
+  // A role text that no session could get stops the command here, so that no work copy, no branch and no record are made for it.
+  const role = await requireRoleText(deps, { home, config, retry: newLine(id, options.project) });
+  if (!role.ok) return role;
   const consent = await requireHookConsent(deps, hookRequestOf(plan.value.workCopy, options.yes), tracked.value.localText);
   if (!consent.ok) return consent;
 

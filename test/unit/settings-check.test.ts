@@ -167,6 +167,35 @@ describe('the env variables that set the proxy or the credential of the session'
   });
 });
 
+describe('the env variables that set the state folder or the home folder of the user', () => {
+  const stateNames = [env.stateHome, env.userHome];
+
+  it.each(stateNames.map((name) => [name] as const))('finds %s in the env values', (name) => {
+    expect(analyzeSettings(JSON.stringify({ env: { [name]: '/x' } })).movesState).toEqual([name]);
+  });
+
+  it('finds a name in other letter case, and every name of one file in the order of the list', () => {
+    const facts = analyzeSettings(JSON.stringify({ env: { home: '/x', [env.stateHome]: '/y' } }));
+    expect(facts.movesState).toEqual([env.stateHome, env.userHome]);
+  });
+
+  it.each([
+    ['another variable', { env: { OTHER: '1' } }],
+    ['a name that only starts like the home variable', { env: { HOME_BASE: '/x' } }],
+    ['the name in a value', { env: { OTHER: env.userHome } }],
+    ['the name outside env', { hooks: { env: { [env.stateHome]: '/x' } } }],
+    ['no env', {}],
+  ])('finds nothing for %s', (_name, value) => {
+    expect(analyzeSettings(JSON.stringify(value)).movesState).toEqual([]);
+  });
+
+  it('finds a name in a file that is not valid JSON, and in a file that writes the env key twice', () => {
+    expect(analyzeSettings(`{"env": {"${env.stateHome}": "/x"},`).movesState).toEqual([env.stateHome]);
+    const repeated = `{"env": {"${env.userHome}": "/x"}, "env": {"OTHER": "1"}}`;
+    expect(analyzeSettings(repeated).movesState).toEqual([env.userHome]);
+  });
+});
+
 describe('the settings that run a command', () => {
   const hookOf = (command: string): unknown => ({ SessionStart: [{ hooks: [{ type: 'command', command }] }] });
 
@@ -350,6 +379,43 @@ describe('the approval of project MCP servers', () => {
   });
 });
 
+describe('the setting that turns off every hook', () => {
+  const hooksOff = (text: string): boolean => analyzeSettings(text).disablesHooks;
+
+  it('is found when the file sets it to true', () => {
+    expect(hooksOff(JSON.stringify({ [claudeSettingKeys.disableAllHooks]: true }))).toBe(true);
+  });
+
+  it('is found also when the file is not valid JSON', () => {
+    const facts = analyzeSettings(`// a comment\n{"${claudeSettingKeys.disableAllHooks}": true,,`);
+    expect(facts.valid).toBe(false);
+    expect(facts.disablesHooks).toBe(true);
+  });
+
+  it('is found when the text writes the key with an escape in its name', () => {
+    expect(hooksOff('{"disableAll\\u0048ooks": true}')).toBe(true);
+  });
+
+  it('is found when the file writes the key twice and the last value is false', () => {
+    expect(hooksOff('{"disableAllHooks": true, "disableAllHooks": false}')).toBe(true);
+  });
+
+  it.each([
+    ['the value false', { [claudeSettingKeys.disableAllHooks]: false }],
+    ['the value as text', { [claudeSettingKeys.disableAllHooks]: 'true' }],
+    ['no setting', {}],
+    ['a hooks entry', { hooks: { SessionStart: [] } }],
+    ['the name inside a value', { note: 'disableAllHooks', other: { text: '"disableAllHooks": true' } }],
+  ])('is not found for %s', (_name, value) => {
+    expect(hooksOff(JSON.stringify(value))).toBe(false);
+  });
+
+  it('is not a permission skip: it has its own fact', () => {
+    const facts = analyzeSettings(JSON.stringify({ [claudeSettingKeys.disableAllHooks]: true }));
+    expect(facts.skips).toEqual([]);
+  });
+});
+
 describe('a text that is not a settings object', () => {
   it.each([
     ['not JSON', 'this is not json'],
@@ -370,6 +436,7 @@ describe('a text that is not a settings object', () => {
       skips: [],
       changesFactoryEnv: false,
       movesTraffic: [],
+      movesState: [],
       runsCommands: [],
       wholeToolRules: [],
       narrowRules: [],
@@ -377,6 +444,7 @@ describe('a text that is not a settings object', () => {
       planMode: false,
       crossSessionInbound: null,
       approvesMcp: [],
+      disablesHooks: false,
     });
   });
 });
