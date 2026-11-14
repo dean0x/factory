@@ -1,10 +1,10 @@
 import { holdsBlockMarker } from '../blocks/managed.js';
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import { removedByDisplay } from '../cli/output.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { accessFaultOf } from '../core/access.js';
 import type { CheckedFault, Deps } from '../core/deps.js';
-import { ok } from '../core/result.js';
+import { ok, type Err } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { acceptedEntryOf, entryOfText, type ManifestEntry } from '../core/setup-acceptance.js';
 import { blockNames, commands, roleText, setupFileOf, type RoleSizeUnit } from '../names.js';
@@ -201,7 +201,7 @@ const remedyOf = (fault: RoleFault, retry: string): string => {
  * the owner did not accept are a security stop (exit 4). Every other fault is an error (exit 1). The message names the
  * fault, and a text that is too large names its size and the cap. The remedy line names one fix and the command to run again.
  */
-export const roleFaultRefusal = (fault: RoleFault, context: RoleRemedyContext): CliResult<never> => {
+export const roleFaultRefusal = (fault: RoleFault, context: RoleRemedyContext): Err<CliError> => {
   const message = fault.kind === 'tooLarge' ? roleText.tooLargeText(fault.size, fault.unit) : roleFaultReason(fault);
   const remedy = remedyOf(fault, context.retry);
   return SECURITY_FAULTS.has(fault.kind) ? safetyRefusal(message, remedy) : failure(message, remedy);

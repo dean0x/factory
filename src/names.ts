@@ -1996,6 +1996,12 @@ export type RoleSizeUnit = 'bytes' | 'characters';
 
 const ROLE_TEXT_MAX_CHARS = 9_000;
 
+/** The event whose own hook gives a session of a worker its role text. */
+const ROLE_START_EVENT = 'SessionStart' satisfies HookEvent;
+
+/** The remedy for a work copy whose hook settings hold some own hooks: `upgrade` adds the rest, and `resume` starts the worker again. */
+const upgradeThen = (resume: string): string => `Run "${commandText(commands.upgrade)}", then "${resume}".`;
+
 /**
  * The role text that a session of a worker gets at its start (`hook SessionStart`): the cap, the fixed lines and the
  * fixed reasons. The text is the package worker rules and the text that the owner accepted in the setup folder, and it is
@@ -2036,6 +2042,31 @@ export const roleText = {
       `Shorten ${setupFileOf(blockNames.setupWorker)} to ${free} characters or fewer, then run "${retry}" again.`,
     correct: (retry: string): string => `Correct the text of ${setupFileOf(blockNames.setupWorker)}, then run "${retry}" again.`,
     config: (retry: string): string => `Run "${commandText(commands.doctor)}" and fix what it reports, then run "${retry}" again.`,
+  },
+  /**
+   * The words of the doctor check of the role delivery (`checkIds.roleDelivery`). The line counts the work copies that hold the
+   * hook, gives the size of the role text, and names in words where the acceptance of the setup text is kept. Each finding
+   * gives one remedy.
+   */
+  doctor: {
+    startEvent: ROLE_START_EVENT,
+    /** The line of a node that has no worker file: it has no role text to deliver. */
+    noWorkerFile: `this layer has no ${roles.worker} file, so no role text is delivered`,
+    hooks: (withHook: number, copies: number): string => `${ROLE_START_EVENT} hook in ${withHook} of ${copies} work copies`,
+    size: (chars: number): string => `role text ${chars} of ${ROLE_TEXT_MAX_CHARS} characters`,
+    acceptance: `The acceptance of the setup text is recorded in ${files.setupAcceptances}, in the ${program} folder of the state folder of the user.`,
+    /** A work copy whose hook settings lack the own hook of the start event. */
+    gap: (id: string): string => `${id}: the hook settings of the work copy hold no ${ROLE_START_EVENT} hook, so its session gets no role text.`,
+    /** A work copy whose hook settings file is a link: the check reads nothing through it. */
+    linkGap: (id: string): string => `${id}: the hook settings file of the work copy is a link, and the check does not read it.`,
+    remedies: {
+      /** Some own hooks are there. `upgrade` adds the missing ones. `resume` is the command that starts the worker again. */
+      upgrade: upgradeThen,
+      /** No own hook is there: `upgrade` leaves such a work copy as it is, so only a new worker asks for the hook settings. */
+      recreate: (dismiss: string, create: string): string =>
+        `Run "${dismiss}", then "${create}", and answer yes to the question about the hook settings.`,
+      link: (id: string, resume: string): string => `Replace the hook settings file of ${id} with a plain file. ${upgradeThen(resume)}`,
+    },
   },
   /**
    * The remedy for a work copy whose hook settings lack an own event, so that its session would get no role text. Each command
