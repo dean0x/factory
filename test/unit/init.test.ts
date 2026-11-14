@@ -186,12 +186,12 @@ describe('init: the files', () => {
       value: {
         schema_version: STATE_SCHEMA_VERSION,
         created_with: FACTORY_VERSION,
-        blocks: { coordinator: 6, safety: 2, worker: 4, setup: 1, 'setup-worker': 1 },
+        blocks: { coordinator: 6, safety: 2, 'work-rules': 1, worker: 5, setup: 1, 'setup-worker': 1 },
       },
     });
   });
 
-  it('writes the managed blocks: coordinator, safety and setup in coordinator/CLAUDE.md, worker and setup-worker in roles/worker.md', async () => {
+  it('writes the managed blocks: coordinator, safety, work-rules and setup in coordinator/CLAUDE.md, worker and setup-worker in roles/worker.md', async () => {
     const { deps } = setup();
     await runInit(deps, options());
     const claude = parseBlocks(deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '');
@@ -199,6 +199,7 @@ describe('init: the files', () => {
     expect(claude.ok && claude.value.map((block) => [block.name, verifyBlock(block)])).toEqual([
       ['coordinator', 'intact'],
       ['safety', 'intact'],
+      ['work-rules', 'intact'],
       ['setup', 'intact'],
     ]);
     expect(worker.ok && worker.value.map((block) => [block.name, verifyBlock(block)])).toEqual([
@@ -247,7 +248,7 @@ describe('init: the files', () => {
     const text = deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '';
     expect(text.startsWith('# My rules\n\nBe kind.\n\n')).toBe(true);
     const parsed = parseBlocks(text);
-    expect(parsed.ok && parsed.value.map((block) => block.name)).toEqual(['coordinator', 'safety', 'setup']);
+    expect(parsed.ok && parsed.value.map((block) => block.name)).toEqual(['coordinator', 'safety', 'work-rules', 'setup']);
   });
 
   it('creates the home folder when it does not exist', async () => {
@@ -660,13 +661,13 @@ describe('init: the layer and the recipe', () => {
     return parsed.ok ? parsed.value.map((block) => block.name) : [];
   };
 
-  it('makes a node on layer 1 by default, with the coordinator, safety and worker blocks', async () => {
+  it('makes a node on layer 1 by default, with the coordinator, safety, work rules and worker blocks', async () => {
     const { deps } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
     const config = await loadConfig(deps, HOME);
     expect(config.ok && config.value.core.node.layer).toBe(1);
     expect(config.ok && config.value.recipe.id).toBe('software');
-    expect(claudeBlocks(deps)).toEqual(['coordinator', 'safety', 'setup']);
+    expect(claudeBlocks(deps)).toEqual(['coordinator', 'safety', 'work-rules', 'setup']);
     expect(files(deps)).toContain('.factory/roles/worker.md');
   });
 
@@ -679,7 +680,7 @@ describe('init: the layer and the recipe', () => {
     expect(files(deps)).toContain('.factory/roles/worker.md');
     expect(files(deps)).toContain('.factory/node.json');
     const state = await loadState(deps, HOME);
-    expect(state.ok && state.value.blocks).toEqual({ manager: 3, safety: 2, worker: 4, setup: 1, 'setup-worker': 1 });
+    expect(state.ok && state.value.blocks).toEqual({ manager: 3, safety: 2, worker: 5, setup: 1, 'setup-worker': 1 });
     const statuses = await inspectBlocks(deps, HOME, layer2Blocks);
     expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact', 'intact', 'intact']);
   });
@@ -694,7 +695,7 @@ describe('init: the layer and the recipe', () => {
     expect(claudeBlocks(deps)).toEqual(['safety', 'setup']);
     expect(files(deps)).toContain('.factory/roles/worker.md');
     const state = await loadState(deps, HOME);
-    expect(state.ok && state.value.blocks).toEqual({ safety: 2, worker: 4, setup: 1, 'setup-worker': 1 });
+    expect(state.ok && state.value.blocks).toEqual({ safety: 2, worker: 5, setup: 1, 'setup-worker': 1 });
     expect(result.value.warnings).toContain('Layer 3 has no role template: CLAUDE.md holds the safety block only.');
     expect(result.value.json['warnings']).toEqual(result.value.warnings);
   });
@@ -2941,7 +2942,7 @@ describe('init: the setup texts and the link rule', () => {
     const { deps } = setup();
     deps.seed(SETUP, 'Our team rules.\nSecond rule.\n');
     expect((await runInit(deps, options())).ok).toBe(true);
-    expect(blockNamesIn(deps, CLAUDE)).toEqual(['coordinator', 'safety', 'setup']);
+    expect(blockNamesIn(deps, CLAUDE)).toEqual(['coordinator', 'safety', 'work-rules', 'setup']);
     expect(bodyOf(deps, CLAUDE, 'setup')?.trimEnd()).toBe('Our team rules.\nSecond rule.');
     expect(deps.files.get(SETUP)).toBe('Our team rules.\nSecond rule.\n');
   });
@@ -2968,11 +2969,11 @@ describe('init: the setup texts and the link rule', () => {
     deps.seed(SETUP, '\n\n');
     deps.seed(SETUP_WORKER, '');
     expect((await runInit(deps, options())).ok).toBe(true);
-    expect(blockNamesIn(deps, CLAUDE)).toEqual(['coordinator', 'safety']);
+    expect(blockNamesIn(deps, CLAUDE)).toEqual(['coordinator', 'safety', 'work-rules']);
     expect(blockNamesIn(deps, WORKER)).toEqual(['worker']);
     expect(deps.files.get(SETUP)).toBe('\n\n');
     const state = await loadState(deps, HOME);
-    expect(state.ok && Object.keys(state.value.blocks).sort()).toEqual(['coordinator', 'safety', 'worker']);
+    expect(state.ok && Object.keys(state.value.blocks).sort()).toEqual(['coordinator', 'safety', 'work-rules', 'worker']);
   });
 
   it('renders the worker setup block into the worker file of a node on layer 2, and writes no worker setup file text into CLAUDE.md', async () => {

@@ -1395,7 +1395,7 @@ describe('upgrade: managed blocks', () => {
     ]);
 
     const statuses = await inspectBlocks(deps, HOME, withBlock('coordinator', 'New coordinator text.'));
-    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact', 'intact', 'intact']);
+    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact', 'intact', 'intact', 'intact']);
   });
 
   it('copies the config, CLAUDE.md and the state folder into the backup first, and not the old backups', async () => {
@@ -1532,12 +1532,13 @@ describe('upgrade: managed blocks', () => {
     const { deps } = await makeNode();
     deps.files.delete(CLAUDE);
     deps.dirs.delete(`${HOME}/coordinator`);
-    const output = success(await upgrade(deps, currentSpec, { overwrite: ['coordinator', 'safety'] }));
+    const output = success(await upgrade(deps, currentSpec, { overwrite: ['coordinator', 'safety', 'work-rules'] }));
     expect(deps.dirs.has(`${HOME}/coordinator`)).toBe(true);
     const after = text(deps, CLAUDE);
     expect(after).toContain(`<!-- factory:begin coordinator v${versionOf('coordinator')} sha256=`);
     expect(after).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
     expect(after).toContain(`<!-- factory:begin setup v${versionOf('setup')} sha256=`);
+    expect(after).toContain(`<!-- factory:begin work-rules v${versionOf('work-rules')} sha256=`);
     expect(output.warnings).toEqual([]);
     expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
   });
@@ -1547,7 +1548,7 @@ describe('upgrade: managed blocks', () => {
     const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['nope'] }));
     expect(error.kind).toBe('usage');
     expect(error.message).toContain('unknown block nope');
-    expect(error.hint).toBe('The blocks are: coordinator, safety, worker, setup, setup-worker.');
+    expect(error.hint).toBe('The blocks are: coordinator, safety, work-rules, worker, setup, setup-worker.');
   });
 
   it('fails when a block has a newer version than the template', async () => {
@@ -1879,6 +1880,7 @@ describe('upgrade: the blocks of a layer', () => {
     expect(lineTexts(output).filter((line) => line.startsWith('block '))).toEqual([
       `block coordinator: version ${versionOf('coordinator')} is current`,
       `block safety: version ${versionOf('safety')} is current`,
+      `block work-rules: version ${versionOf('work-rules')} is current`,
       `block worker: version ${versionOf('worker')} is current`,
       `block setup: version ${versionOf('setup')} is current`,
       `block setup-worker: version ${versionOf('setup-worker')} is current`,
@@ -1901,6 +1903,7 @@ describe('upgrade: the blocks of a layer', () => {
     expect(blocksOfState(deps)).toEqual({
       manager: managerVersion,
       safety: versionOf('safety'),
+      'work-rules': versionOf('work-rules'),
       worker: versionOf('worker'),
       setup: versionOf('setup'),
       'setup-worker': versionOf('setup-worker'),
@@ -1942,6 +1945,7 @@ describe('upgrade: the blocks of a layer', () => {
     expect(blocksOfState(deps)).toEqual({
       coordinator: versionOf('coordinator'),
       safety: versionOf('safety'),
+      'work-rules': versionOf('work-rules'),
       worker: versionOf('worker'),
       setup: versionOf('setup'),
       'setup-worker': versionOf('setup-worker'),
@@ -4353,7 +4357,7 @@ describe('upgrade: render a changed block again', () => {
   });
 });
 
-describe('upgrade: the role texts of worker version 4 and coordinator version 6', () => {
+describe('upgrade: the role texts of worker version 5 and coordinator version 6', () => {
   /** Put an earlier version of the block `name` into the file, with a text of its own, and record that version. */
   const makeOlder = (deps: FakeDeps, path: string, name: string, version: number): void => {
     const parsed = parseBlocks(text(deps, path));
@@ -4367,31 +4371,31 @@ describe('upgrade: the role texts of worker version 4 and coordinator version 6'
   };
 
   it('writes the new blocks over the earlier versions, and then shows them as current', async () => {
-    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([4, 6]);
+    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([5, 6]);
     const { deps } = await makeNode();
-    makeOlder(deps, WORKER, 'worker', 3);
+    makeOlder(deps, WORKER, 'worker', 4);
     makeOlder(deps, CLAUDE, 'coordinator', 5);
 
     const output = success(await upgrade(deps));
 
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 3 to 4', 'block coordinator: version 5 to 6']));
-    expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v4 sha256=');
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 4 to 5', 'block coordinator: version 5 to 6']));
+    expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v5 sha256=');
     expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v6 sha256=');
     expect(text(deps, CLAUDE)).not.toContain('The coordinator text of an earlier version.');
     expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
     const state = parseJsonText(text(deps, NODE_JSON));
-    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 6, worker: 4 } });
+    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 6, worker: 5 } });
     await deps.fs.remove(`${HOME}/.factory/backups`);
     expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
   });
 
   it('shows the earlier versions as older in a dry run, and changes no file', async () => {
     const { deps } = await makeNode();
-    makeOlder(deps, WORKER, 'worker', 3);
+    makeOlder(deps, WORKER, 'worker', 4);
     makeOlder(deps, CLAUDE, 'coordinator', 5);
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 3 to 4', 'block coordinator: version 5 to 6']));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 4 to 5', 'block coordinator: version 5 to 6']));
     expect(snapshot(deps)).toEqual(before);
   });
 });

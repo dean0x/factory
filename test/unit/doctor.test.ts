@@ -229,7 +229,7 @@ describe('doctor: blocks', () => {
     expect(checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks))).toMatchObject({
       id: 'blocks',
       level: 'ok',
-      text: '5 managed blocks are intact',
+      text: '6 managed blocks are intact',
     });
   });
 
@@ -340,9 +340,9 @@ describe('doctor: the blocks of a layer', () => {
 
   const nodeBlocks = async (deps: FakeDeps) => checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
 
-  it('checks the coordinator, safety, worker and setup blocks of a node on layer 1', async () => {
+  it('checks the coordinator, safety, work rules, worker and setup blocks of a node on layer 1', async () => {
     const deps = await initialized();
-    expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '5 managed blocks are intact' });
+    expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '6 managed blocks are intact' });
   });
 
   it('warns that the role block does not match when the layer was changed by hand', async () => {
@@ -410,7 +410,7 @@ describe('doctor: the blocks of a layer', () => {
     it('checks the blocks against the owner text when no record backs the value', async () => {
       const deps = await initialized();
       delegateInLocalFile(deps);
-      expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '5 managed blocks are intact' });
+      expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '6 managed blocks are intact' });
     });
 
     it('checks the blocks against the owner text when a record file lies inside the folder only', async () => {
