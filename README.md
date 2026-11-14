@@ -36,6 +36,7 @@ You need:
 | `factory dismiss ID` | End a worker and free its work copy, when its work is pushed. It is a dry run until `--yes`. `factory dismiss --idle` lists the idle workers that have no open work, and you pick which to dismiss. `factory dismiss ID --closed` is the one free that the coordinator runs in its own session. See "Dismiss a worker". |
 | `factory worker new ID --project PROJECT [--assignment FILE]` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. `--assignment` copies a task file to the assignment folder of the worker. See "Make a worker" and "Give work to a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy`, `waits` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
+| `factory worker mark ID parked\|on-hold\|none` | Set the hold word of a worker, `parked` or `on-hold`, or clear it with `none`. It writes only the hold file of the worker. See "List the workers". |
 | `factory worker reset ID --clear` or `--compact` | Type `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and check that it happened. See "Give work to a worker". |
 | `factory worker watch [ID]... [--ready ID]... [--since TIME]` | Check the workers every 30 seconds, at most 2,880 times (24 hours). It exits at the first report: a finish of a worker, a pane that ended, a dialog that waits, a worker that looks stalled, or a worker of `--ready` that is ready after a block. It writes only its run marker, and only a run in the coordinator pane takes it. See "Give work to a worker". |
 | `factory self reset` | Queue a `/compact` for the coordinator itself, after it wrote its resume notes. See "Give work to a worker". |
@@ -306,7 +307,7 @@ factory worker list --json
 
 A folder of `.factory/workers/` with no valid record is named in a warning, and the other workers are listed. If one pane has a worker mark that is not a worker id, the list skips that pane. If two panes carry the mark of one worker, the list shows the first live pane and warns with both ids. A tmux session of the same name that belongs to another factory folder stops the command with exit code 4. The list takes a last-seen line only when it belongs to the worker, with the same checks as `worker stop` and `worker resume` (see "Resume a worker"). A line with no session marker, a line of another session, and a session that the pointer of another worker names all show `unknown` and `?`. A last-seen line is still a hint, not proof of the state of the program.
 
-`worker list --json` prints the object `factory.worker-list/v1` with the keys `schema`, `home`, `running`, `workers` and `invalid`. Each worker holds `id`, `project`, `pane`, `dead`, `state`, `contextPct` and `mark`. `state` is the raw state of the last hook event. `contextPct` is the number of the context percent, or null. `mark` is the context mark (`PREPARE` or `MAX`), or null. It is no mark of a parked or held worker. Each worker also holds the ten keys of the worker row, and `status --json` holds the same ten keys with the same values:
+`worker list --json` prints the object `factory.worker-list/v1` with the keys `schema`, `home`, `running`, `workers` and `invalid`. Each worker holds `id`, `project`, `pane`, `dead`, `state`, `contextPct` and `mark`. `state` is the raw state of the last hook event. `contextPct` is the number of the context percent, or null. `mark` is the context mark (`PREPARE` or `MAX`), or null. It is not the hold word. Each worker also holds the eleven keys of the worker row, and `status --json` holds the same eleven keys with the same values:
 
 | Key | Meaning |
 | --- | --- |
@@ -316,8 +317,17 @@ A folder of `.factory/workers/` with no valid record is named in a warning, and 
 | `sessionState` | The state of the last hook event, as in the column `STATE`: `at prompt`, `busy`, `waits` or `unknown`. It is the same word in both commands, also when the pane is not live. |
 | `activityAt` | The newer of the time of the last hook event and the time of the last context percent, as a UTC time such as `2030-01-02T03:04:05.678Z`. It is null when no time is known. |
 | `stalled` | `true` only when all three hold: the pane is live, `sessionState` is `busy`, and `activityAt` is older than 15 minutes. A time that is missing, that does not parse or that is in the future never gives `true`. A time that is exactly 15 minutes old does not give `true` either. |
+| `hold` | The hold word of `worker mark`: `parked`, `on-hold`, or `none` for a worker with no hold word. It is null only when the hold file of the worker can not be read, and a warning names the worker. The owner or the coordinator sets it. No hook sets it, and it is no approval. |
 
 `stalled` is a hint. A long tool call writes no hook event, so a worker in such a call reads as stalled. `worker watch` keeps its own rule for a busy worker.
+
+```sh
+factory worker mark ID parked
+factory worker mark ID on-hold
+factory worker mark ID none
+```
+
+`worker mark` sets the hold word of a worker, and `none` clears it. The worker must have a record, else the command exits with code 2. It writes only `.factory/workers/ID/hold-word`, so the mark stays on this machine. The key `hold` of the worker row shows the word. A hold word gives no consent and counts for no approval.
 
 ### Show the status
 
@@ -341,7 +351,7 @@ The work item comes from the local board (see "Use the local board"). A worker g
 
 The text, the `--json` object and the exit code of `status` do not depend on the report file, with one case: a link at the report file, at its folder or at `.factory/` gives exit code 4. Any other fault of the write gives one warning, `the report file was not written: REASON`, and the exit code stays as it is. A board that cannot be read gives that warning too. A node with no `.factory/` folder gets no file.
 
-`status --json` prints the object `factory.status/v1` with the keys `schema`, `home`, `running`, `workers` and `invalid`. Each worker holds `id`, `project`, `pane`, `dead`, `state`, `contextPct`, `mark`, `workItem`, `idle` and the ten keys of the worker row (see "List the workers"). `state` is `stopped` for a worker with no live pane, and `sessionState` keeps the raw state of the last hook event. `workItem` holds the evidence of the board and nothing else: `state` (`known` or `unknown`) and, for a known work item, `item`, `closed`, `parked` and `mergedPrHeads`. The ten keys of the worker row are `itemId`, `itemTitle`, `itemStatus`, `stage`, `stageAt`, `parkedCount`, `paneLive`, `sessionState`, `activityAt` and `stalled`. Their null rules, their word sets and the rule of `stalled` are the same as in "List the workers". The title, the stage and the stage time of the item are in the worker row only. They are display data and never proof, so no check of factory reads them.
+`status --json` prints the object `factory.status/v1` with the keys `schema`, `home`, `running`, `workers` and `invalid`. Each worker holds `id`, `project`, `pane`, `dead`, `state`, `contextPct`, `mark`, `workItem`, `idle` and the eleven keys of the worker row (see "List the workers"). `state` is `stopped` for a worker with no live pane, and `sessionState` keeps the raw state of the last hook event. `workItem` holds the evidence of the board and nothing else: `state` (`known` or `unknown`) and, for a known work item, `item`, `closed`, `parked` and `mergedPrHeads`. The eleven keys of the worker row are `itemId`, `itemTitle`, `itemStatus`, `stage`, `stageAt`, `parkedCount`, `paneLive`, `sessionState`, `activityAt`, `stalled` and `hold`. Their null rules, their word sets and the rule of `stalled` are the same as in "List the workers". The title, the stage and the stage time of the item are in the worker row only. They are display data and never proof, so no check of factory reads them.
 
 ### Show the report
 
@@ -424,11 +434,11 @@ The promise holds these keys and forms:
 
 - **Stage time.** An item holds `stage_at`, the time of its last stage change, as an exact UTC time with milliseconds, such as `2030-01-02T03:04:05.678Z`. `item add`, `item move --stage` and `item record` write it, and only when the stage changes. A change of the status keeps it. A stored value in any other form reads as null. An item from before this version has no `stage_at`.
 - **Request time and group.** A request in `waiting.json` holds `opened_at`, an exact UTC time of the same form, and `group`, which is `now` or `later`. The asker, which is the coordinator, sets the group when it adds the request. The group is the urgency of the asker. It is no decision of the owner. A request from before this version has neither key. A view reads null for its time and `now` for its group.
-- **Closed word sets.** `group` is `now` or `later`. `sessionState` is `at prompt`, `busy`, `waits` or `unknown`. The power source is `ac`, `battery` or `unknown` (see "Machine").
+- **Closed word sets.** `group` is `now` or `later`. `sessionState` is `at prompt`, `busy`, `waits` or `unknown`. `hold` is `parked`, `on-hold` or `none`. The power source is `ac`, `battery` or `unknown` (see "Machine").
 - **Null.** A null `stageAt` or `openedAt` means a row from before this version, or a stored value in a wrong form. A null item key in a worker row means that the worker has no work item, or that the board does not give the work items.
 - **The source.** `worker list --json` is the source of the worker rows for a view outside the core, and `status --json` holds the same row keys. `request list --json` is the source of the waiting requests. The waiting count of a view includes all open requests, in both groups.
-- **Facts and no final state word.** Factory gives facts. A view makes its own state words from `paneLive`, `sessionState`, `stalled` and the item keys. `stalled` is a hint (see "List the workers").
-- **Known gaps.** Factory records no fact that a worker stopped after an error. Factory has no parked or on-hold mark for a worker. Issue 49 of the public factory repository tracks that mark (https://github.com/dean0x/factory/issues/49). The key `mark` is the context mark and is not that mark. `itemStatus` and `parkedCount` are plain facts of the board. They promise no Parked or On hold meaning.
+- **Facts and no final state word.** Factory gives facts. A view makes its own state words from `paneLive`, `sessionState`, `stalled`, `hold` and the item keys. `stalled` is a hint (see "List the workers").
+- **Known gaps.** Factory records no fact that a worker stopped after an error. The key `mark` is the context mark and is not the hold word. The hold word is in the key `hold`. `itemStatus` and `parkedCount` are plain facts of the board. They promise no Parked or On hold meaning.
 - **Text.** A title is text of the owner. A command that writes a title refuses a title that holds a line break, a control character or a mark of text direction, with exit code 2. A command that prints a title removes the hidden characters from it. In `--json` output, a string value keeps its line breaks, and `itemStatus` and `stage` go out as they are stored. A view must escape every string value of the JSON for its own output, not only the title.
 
 ### Answer a decision

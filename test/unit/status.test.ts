@@ -11,7 +11,7 @@ import { ok } from '../../src/core/result.js';
 import type { PaneRow } from '../../src/launch/tmux.js';
 import { files, maxDisplayWidth, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
-import { layoutOf } from '../../src/state/layout.js';
+import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession, type LastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord, type WorkerRecord } from '../../src/workers/registry.js';
 import { boardRowOf, buildStatus, type LineRead, type StatusInput } from '../../src/workers/status.js';
@@ -77,6 +77,7 @@ describe('status: the builder', () => {
     panes: [paneOf('alpha')],
     lines: new Map(),
     workItems: new Map(),
+    holds: new Map(),
     now: NOW,
     idleAfterMinutes: 120,
     limits: sampleConfig().core.limits,
@@ -217,6 +218,14 @@ describe('status: the builder', () => {
         expect(built.entries[0]).toMatchObject({ state: 'unknown', contextPct: null, mark: null });
         expect(built.warnings).toEqual([]);
       }
+    });
+
+    it('gives the hold of the read, none with no read, and null with a warning for a hold file that cannot be read', () => {
+      expect(firstOf(inputOf()).entry.hold).toBe('none');
+      expect(firstOf(inputOf({ holds: new Map([['alpha', { kind: 'hold', hold: 'on-hold' }]]) })).entry.hold).toBe('on-hold');
+      const faulted = firstOf(inputOf({ holds: new Map([['alpha', { kind: 'fault', reason: 'cannot stat: EIO' }]]) }));
+      expect(faulted.entry.hold).toBeNull();
+      expect(faulted.warnings).toEqual(['cannot read the hold word of the worker alpha: cannot stat: EIO']);
     });
 
     it('names the worker and the reason in a warning for a line that cannot be read', () => {
@@ -546,6 +555,7 @@ interface JsonWorker {
   readonly paneLive: boolean;
   readonly sessionState: string;
   readonly stalled: boolean;
+  readonly hold: string | null;
 }
 
 const jsonOf = (output: CommandOutput) =>
@@ -654,10 +664,17 @@ describe('status: the table', () => {
           paneLive: true,
           sessionState: 'busy',
           stalled: false,
+          hold: 'none',
         },
       ],
       invalid: [],
     });
+  });
+
+  it('shows the hold word of worker mark in status --json, and none for a worker with no mark', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }, { id: 'beta' }] });
+    made.deps.seed(workerPathsOf(HOME, 'alpha').holdFile, 'parked\n');
+    expect(jsonOf(await statusOf(made)).workers.map((worker) => worker.hold)).toEqual(['parked', 'none']);
   });
 
   it('gives no final state word: the state key stays the shown state and the row adds the raw session state', async () => {
@@ -1062,6 +1079,7 @@ describe('status: the work items come from the board', () => {
       sessionState: 'at prompt',
       activityAt: expect.any(String),
       stalled: false,
+      hold: 'none',
     });
   });
 
