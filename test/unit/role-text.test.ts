@@ -9,6 +9,7 @@ import { workerFileTemplatesFor } from '../../src/templates/index.js';
 import {
   composeRoleText,
   readRoleText,
+  requireRoleText,
   roleFaultReason,
   roleFaultRefusal,
   type RoleFault,
@@ -327,5 +328,37 @@ describe('the reason and the refusal of a fault', () => {
       expect(refusal.error.message).not.toContain(HOME);
       expect(refusal.error.hint ?? '').not.toContain(HOME);
     }
+  });
+});
+
+describe('requireRoleText', () => {
+  const retry = 'factory worker new alpha --project web';
+  const require = (deps: Deps) => requireRoleText(deps, { home: HOME, config, retry });
+
+  it('passes for a text that every check accepts', async () => {
+    expect(await require(worldOf())).toEqual({ ok: true, value: undefined });
+  });
+
+  it('refuses a text that the owner did not accept (exit 4) and names the command to run again', async () => {
+    const result = await require(worldOf({ accepted: null }));
+    if (result.ok) throw new Error('expected a refusal');
+    expect(exitCodeFor(result.error)).toBe(4);
+    expect(result.error.message).toBe(roleText.reasons.notAccepted);
+    expect(result.error.hint).toContain(`"${retry}"`);
+  });
+
+  it('refuses a text above the cap (exit 1) and names its size and the cap', async () => {
+    const result = await require(worldOf({ text: `${'x'.repeat(FREE + 1)}\n` }));
+    if (result.ok) throw new Error('expected a refusal');
+    expect(exitCodeFor(result.error)).toBe(1);
+    expect(result.error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
+  });
+
+  it('keeps the error of an acceptance store that cannot be used', async () => {
+    const deps = createFakeDeps();
+    deps.seedDir(HOME);
+    const result = await require(deps);
+    if (result.ok) throw new Error('expected an error');
+    expect(result.error.message).toContain('no variable names a state folder');
   });
 });

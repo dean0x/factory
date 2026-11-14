@@ -206,3 +206,18 @@ export const roleFaultRefusal = (fault: RoleFault, context: RoleRemedyContext): 
   const remedy = remedyOf(fault, context.retry);
   return SECURITY_FAULTS.has(fault.kind) ? safetyRefusal(message, remedy) : failure(message, remedy);
 };
+
+/**
+ * The pre-check of a launch and of a new worker: a role text that every check accepts is `ok`, and a fault is the refusal of
+ * `roleFaultRefusal` for `retry`, the command that a person runs again after the fix. A store of acceptances that cannot be used
+ * keeps its own error. The call reads the text and drops it, so it changes nothing.
+ */
+export const requireRoleText = async (
+  deps: Deps,
+  input: { readonly home: string; readonly config: FactoryConfig; readonly retry: string },
+): Promise<CliResult<void>> => {
+  const { home, config, retry } = input;
+  const read = await readRoleText(deps, { home, config });
+  if (!read.ok) return read;
+  return read.value.kind === 'ok' ? ok(undefined) : roleFaultRefusal(read.value.fault, { retry });
+};

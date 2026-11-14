@@ -2037,6 +2037,22 @@ export const roleText = {
     correct: (retry: string): string => `Correct the text of ${setupFileOf(blockNames.setupWorker)}, then run "${retry}" again.`,
     config: (retry: string): string => `Run "${commandText(commands.doctor)}" and fix what it reports, then run "${retry}" again.`,
   },
+  /**
+   * The remedy for a work copy whose hook settings lack an own event, so that its session would get no role text. Each command
+   * stands on its own line. The first two add the own entries and start the worker again. The next two are for a work copy that
+   * never had the hook: only a new worker asks the question about the hook settings. The last line is a sentence, so a text that
+   * a caller adds after it cannot read as part of a command.
+   */
+  hookRemedy: (steps: { readonly again: string; readonly dismiss: string; readonly create: string }): string =>
+    [
+      'Run these commands, one after the other:',
+      commandText(commands.upgrade),
+      steps.again,
+      'If the work copy has no factory hook, the worker gets no role text. Run these commands instead:',
+      steps.dismiss,
+      steps.create,
+      'Answer yes to the question about the hook settings.',
+    ].join('\n'),
 } as const;
 
 /**

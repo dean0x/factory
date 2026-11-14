@@ -1,11 +1,14 @@
+import { basename, dirname } from 'node:path';
 import { notReady, safetyRefusal, type CliResult } from '../cli/errors.js';
+import type { FactoryConfig } from '../config/schema.js';
 import { hookSettingsPlaceOf, missingHookEvents } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
-import { commands, commandText, maxFileBytes, paneElapsed } from '../names.js';
+import { commandLines, commands, commandText, flags, flagText, maxFileBytes, paneElapsed, roleText } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import { readCheckedFile, type NamedPath } from './registry.js';
+import { requireRoleText } from './role-text.js';
 
 /**
  * The checks that `worker reset` and `self reset` share before they type a line into a session pane. Each check stands alone and
@@ -105,6 +108,8 @@ export interface SettingsRequest {
   readonly folder: string;
   /** The command that starts the session again, without the program name: for example `restart alpha` or `reboot`. */
   readonly then: string;
+  /** The remedy line for a missing hook event. Absent: run `upgrade`, then the command in `then`. */
+  readonly remedy?: string;
 }
 
 export interface SettingsAgeRequest extends SettingsRequest {
@@ -142,8 +147,40 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Pro
   if (missing.length === 0) return ok(undefined);
   return notReady(
     `the hook settings ${file.path} lack the events: ${missing.join(', ')}`,
-    `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
+    request.remedy ?? `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
   );
+};
+
+export interface RoleDeliveryRequest {
+  /** The node home, the root of the config repo: an absolute path. */
+  readonly home: string;
+  readonly config: FactoryConfig;
+  readonly workerId: string;
+  /** The work copy of the worker: `work-copies/<project>/<id>` of the node home, which the caller has checked. */
+  readonly workCopy: string;
+  /** The command that starts the worker again after a fix, without the program name: for example `worker resume alpha` or `reboot`. */
+  readonly again: string;
+}
+
+/**
+ * A worker that starts must get its role text at its session start. Two things must hold before any pane starts and before any
+ * worker stops, and the first fault is the answer: the hook settings of the work copy hold the own command of every hook event
+ * (`requireOwnHooks`: exit 3 for a missing entry, exit 4 for a link), and the role text passes every check (`requireRoleText`).
+ * The remedy of a missing entry names each command on its own line, for the fix and for a work copy that never had the hook.
+ * Nothing is written, and no session is asked: the launch does not wait for the first session start, so this check is the point
+ * where a launch fails closed.
+ */
+export const requireRoleDelivery = async (deps: Deps, request: RoleDeliveryRequest): Promise<CliResult<void>> => {
+  const { home, config, workerId, workCopy, again } = request;
+  const project = basename(dirname(workCopy));
+  const remedy = roleText.hookRemedy({
+    again: commandText(again),
+    dismiss: `${commandText(commands.dismiss)} ${workerId}`,
+    create: `${commandText(commandLines.workerNew)} ${workerId} ${flagText(flags.project)} ${project}`,
+  });
+  const hooks = await requireOwnHooks(deps, { folder: workCopy, then: again, remedy });
+  if (!hooks.ok) return hooks;
+  return requireRoleText(deps, { home, config, retry: commandText(again) });
 };
 
 /**
