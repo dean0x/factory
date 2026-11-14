@@ -27,9 +27,9 @@ export const isHookRoute = (argv: readonly string[]): boolean => argv[0] === com
 /**
  * The hook of Claude Code. It never fails the session that runs it, so every path exits 0: the route comes before the
  * check of the platform and before the flags. A refusal or a failure of any kind, a throw included, becomes one line on
- * stderr. The `SessionStart` of a worker prints one JSON object with its role text, or the refusal text, in one write to
- * stdout, and each problem of the hook is one line on stderr. Every other event prints nothing to stdout. The word
- * `statusline` prints the status line.
+ * stderr. The `SessionStart` of a worker prints one JSON object with its role text, or the refusal text when a check of the
+ * text fails, in one write to stdout, and each problem of the hook is one line on stderr. Every other event, and every
+ * session of the coordinator, prints nothing to stdout. The word `statusline` prints the status line.
  */
 const runHookRoute = async (words: readonly string[], deps: Deps, sink: Sink, registry: RecipeRegistry): Promise<number> => {
   const note = (reason: string): string => `${program} ${commands.hook}: ${printable(reason).replace(/\s+/g, ' ')}\n`;

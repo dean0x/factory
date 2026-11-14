@@ -22,6 +22,9 @@ import { readRoleText, roleFaultReason } from '../workers/role-text.js';
  * One event prints an output: the `SessionStart` of a worker that has a record. Its context is the role text of the worker, or
  * the fixed refusal text when a check of that text fails. A start, a resume, a clear and a compact all raise that event. The
  * session of the coordinator and every other event of a worker print nothing.
+ * The checks of the role text are: no link in the path of the setup file, the owner and the mode of the file and its folders,
+ * the size cap, the encoding, plain text with no control character, no block marker, the acceptance of the exact text, a read
+ * that works, a config that can be used, and no throw in the worker branch. Each fault gives one fixed reason on stderr.
  */
 
 const keys = hookNames.inputKeys;
@@ -38,7 +41,7 @@ const isHookEvent = (word: string | undefined): word is HookEvent => hookNames.e
 const typedEvent: HookEvent = 'Notification';
 
 /** The event that gives a worker its role text. */
-const startEvent: HookEvent = 'SessionStart';
+export const startEvent: HookEvent = 'SessionStart';
 
 /**
  * What a hook gives back. The context is the text that a session gets, or null for a hook that prints nothing. Each problem is
