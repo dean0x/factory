@@ -865,6 +865,9 @@ export const reservedFieldNames: readonly string[] = [
   boardKeys.mergedPrHead,
   boardKeys.unassignedFrom,
   boardKeys.stageAt,
+  boardKeys.epic,
+  boardKeys.stages,
+  boardKeys.releaseGroup,
 ];
 
 /** The most workers that the list of former workers of one item (`boardKeys.unassignedFrom`) holds. */

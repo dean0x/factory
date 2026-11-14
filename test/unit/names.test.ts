@@ -1711,6 +1711,14 @@ describe('the names of the data for a view outside the core', () => {
     expect(duplicatesOf(reservedFieldNames)).toEqual([]);
   });
 
+  it('reserves the epic, the stage copy and the release group keys, so that no owner field can take their names', () => {
+    for (const key of [boardKeys.epic, boardKeys.stages, boardKeys.releaseGroup]) {
+      expect(reservedFieldNames).toContain(key);
+    }
+    expect(reservedFieldNames).not.toContain('release');
+    expect(duplicatesOf(reservedFieldNames)).toEqual([]);
+  });
+
   it('names the open time and the group of a request, the two groups, and the flag of the later group', () => {
     expect(decisionKeys.openedAt).toBe('opened_at');
     expect(decisionKeys.group).toBe('group');
