@@ -157,7 +157,9 @@ type QueueEntry = string | QueueRow;
 
 /**
  * The entries of a queue with at least one group: the rows of each group under the heading of the group, the groups in the order in
- * which their first rows appear, then the rows with no group under their own heading. A row keeps its stored place in its cell.
+ * which their first rows appear, then the rows with no group under their own heading. A row keeps its stored place in its cell. The
+ * groups are told apart by the text that the heading shows, so two stored groups that differ only by a hidden character share one
+ * heading.
  */
 const groupedEntries = (rows: readonly QueueRow[]): readonly QueueEntry[] => {
   const byGroup = new Map<string, QueueRow[]>();
@@ -167,11 +169,12 @@ const groupedEntries = (rows: readonly QueueRow[]): readonly QueueEntry[] => {
       ungrouped.push(row);
       continue;
     }
-    const members = byGroup.get(row.releaseGroup);
-    if (members === undefined) byGroup.set(row.releaseGroup, [row]);
+    const shownGroup = clean(row.releaseGroup, queueWords.maxCellChars);
+    const members = byGroup.get(shownGroup);
+    if (members === undefined) byGroup.set(shownGroup, [row]);
     else members.push(row);
   }
-  const groups = [...byGroup].flatMap(([group, members]): QueueEntry[] => [`${queueWords.groupHeading}: ${clean(group, queueWords.maxCellChars)}`, ...members]);
+  const groups = [...byGroup].flatMap(([group, members]): QueueEntry[] => [`${queueWords.groupHeading}: ${group}`, ...members]);
   return ungrouped.length === 0 ? groups : [...groups, queueWords.ungroupedHeading, ...ungrouped];
 };
 

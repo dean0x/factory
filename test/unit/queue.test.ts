@@ -424,6 +424,20 @@ describe('queue show: the rows under the heading of their release group', () => 
     expect(headingsOf(text.trimEnd().split('\n'))).toEqual(['group: Re lease']);
   });
 
+  it('puts the rows of two stored groups that differ only by a hidden character under one heading', async () => {
+    const hidden = String.fromCodePoint(0x200b);
+    const repo = await nodeWith([grouped('One', 'Beta'), grouped('Two', 'Alpha'), grouped('Three', `Be${hidden}ta`)]);
+    const lines = linesOf(await run(repo, { words: ['show'] }));
+    expect(headingsOf(lines)).toEqual(['group: Beta', 'group: Alpha']);
+    expect(lines.slice(2).map((line) => (HEADING.test(line) ? line : line.split(/ {2,}/).slice(0, 2).join('|')))).toEqual([
+      'group: Beta',
+      '1|One',
+      '3|Three',
+      'group: Alpha',
+      '2|Two',
+    ]);
+  });
+
   it('holds 30 rows in 5 groups to 20 lines, counts the headings in the lines of the table, and says how many rows are not shown', async () => {
     const names = ['Delta', 'Alpha', 'Echo', 'Bravo', 'Charlie'];
     const repo = await nodeWith(Array.from({ length: 30 }, (_, at) => grouped(`Row ${at + 1}`, names[at % names.length])));
