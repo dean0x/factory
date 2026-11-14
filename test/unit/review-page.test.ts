@@ -4,16 +4,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
 import { files } from '../../src/names.js';
-import { boardNode } from '../helpers/board-node.js';
+import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
 import { HOME } from '../helpers/guard-fixture.js';
 import { captureSink } from '../helpers/sink.js';
 
 /**
- * The exit check of the board data for an outside review page, item card half. The test sets the board up through the command line,
- * and then it reads one thing only: the text of `board.json`, with `JSON.parse`. From that text it builds the card of an item: the
- * epic, a strip of the stages with the current stage, and the docs. The test imports nothing from the board source, and the card
- * code is in this file and not in `src/`, because a view lives outside the core.
+ * The exit check of the board data for an outside review page, item card half. The test sets the board up through the command line, or
+ * with a board file of an older version. Then it reads one thing only: the text of `board.json`, with `JSON.parse`. From that text it
+ * builds the card of an item: the epic, a strip of the stages with the current stage, and the docs that pass the name check. The test
+ * imports nothing from the board source, and the card code is in this file and not in `src/`, because a view lives outside the core.
  */
 
 const TITLE = 'Build the login page';
@@ -47,12 +47,27 @@ const mustRun = async (repo: BoardRepo, argv: readonly string[]): Promise<void> 
 /** The items of the board file, read from its text alone. */
 const itemsOf = (repo: BoardRepo): readonly StoredItem[] => (JSON.parse(repo.textOf(files.board) ?? '') as { items: StoredItem[] }).items;
 
-/** The card of a view. An item with none of the new keys gives no epic, an empty strip and no docs. */
+const MAX_DOC_PATH_CHARS = 200;
+const HIDDEN_OR_BACKSLASH = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\\]/u;
+
+/**
+ * The name check that the README gives to `docs`, as a view applies it: a plain relative path of at most 200 characters, with no
+ * hidden character, no backslash, no part that starts with a dot, and not `factory.local.yaml` in any letter case. It reads the text
+ * and no file. The file checks are the job of a view too, but this card never reads a file.
+ */
+const passesNameCheck = (path: string): boolean =>
+  path.length > 0 &&
+  path.length <= MAX_DOC_PATH_CHARS &&
+  !HIDDEN_OR_BACKSLASH.test(path) &&
+  path.split('/').every((part) => part !== '' && !part.startsWith('.')) &&
+  path.toLowerCase() !== 'factory.local.yaml';
+
+/** The card of a view. An item with none of the new keys gives no epic, an empty strip and no docs. A path that fails the name check is not shown. */
 const cardOf = (item: StoredItem): Card => ({
   title: item.title,
   epic: item.epic ?? null,
   strip: (item.stages ?? []).map((name) => ({ name, current: name === item.stage })),
-  docs: item.docs ?? [],
+  docs: (item.docs ?? []).filter(passesNameCheck),
 });
 
 const currentOf = (card: Card): string[] => card.strip.filter((entry) => entry.current).map((entry) => entry.name);
@@ -87,9 +102,29 @@ describe('the card of an item, from the text of board.json alone', () => {
     expect(currentOf(after)).toEqual(['review']);
   });
 
-  it('gives a card with no epic, an empty strip and no docs for an item that has none of the new keys', () => {
-    const card = cardOf({ id: 'B-1', title: TITLE, stage: 'building' });
-    expect(card).toEqual({ title: TITLE, epic: null, strip: [], docs: [] });
+  it('gives a card with no epic, an empty strip and no docs for an old item that a command moves', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { title: TITLE, stage: 'building' })]) });
+    await mustRun(repo, ['item', 'move', 'B-1', '--stage', 'review']);
+    const [item] = itemsOf(repo);
+    expect(item?.stage).toBe('review');
+    expect(cardOf(item as StoredItem)).toEqual({ title: TITLE, epic: null, strip: [], docs: [] });
+  });
+
+  it('leaves a stored doc path out of the card when the path fails the name check of the README', async () => {
+    const failing = [
+      '/etc/plan.md',
+      '../outside.md',
+      'docs/../plan.md',
+      '.factory/roles/worker.md',
+      'docs/.draft.md',
+      'Factory.Local.YAML',
+      'docs\\plan.md',
+      'docs/pl​an.md',
+      `docs/${'a'.repeat(200)}.md`,
+    ];
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { title: TITLE, docs: [DOC, ...failing] })]) });
+    await mustRun(repo, ['item', 'move', 'B-1', '--stage', 'review']);
+    expect(cardOf(itemsOf(repo)[0] as StoredItem).docs).toEqual([DOC]);
   });
 });
 
