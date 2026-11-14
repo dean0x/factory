@@ -756,6 +756,27 @@ describe('factory hook: the role text of a worker session', () => {
     expect(calls.filter((call) => call.includes(DECOY_FILE))).toEqual([]);
   });
 
+  it('prints no text of a decoy file that the inbox variable, the project folder variable or a field of the input names', async () => {
+    const DECOYS = '/decoy';
+    const deps = await makeStart({
+      cwd: `${DECOYS}/cwd`,
+      env: { FACTORY_INBOX: `${DECOYS}/inbox`, CLAUDE_PROJECT_DIR: `${DECOYS}/project` },
+      stdin: payload('SessionStart', { cwd: `${DECOYS}/cwd`, transcript_path: `${DECOYS}/transcript.jsonl`, source: `${DECOYS}/source.md` }),
+    });
+    const decoyFiles = [
+      `${DECOYS}/inbox/assignment.md`,
+      `${DECOYS}/project/${REL}`,
+      `${DECOYS}/cwd/${REL}`,
+      `${DECOYS}/transcript.jsonl`,
+      `${DECOYS}/source.md`,
+    ];
+    for (const file of decoyFiles) deps.seed(file, 'DECOY TEXT');
+    const calls: string[] = [];
+    const ran = await ranFor(withFsWatch(deps, (method, path) => calls.push(`${method} ${path}`)));
+    expect(ran).toEqual({ code: 0, out: [outputOf(textOf(SETUP))], err: [] });
+    expect(calls.filter((call) => call.includes(DECOYS))).toEqual([]);
+  });
+
   it('prints nothing to stdout for the SessionStart of the coordinator, and reads no setup file', async () => {
     const deps = make({ stdin: payload('SessionStart') });
     deps.seed(SETUP_FILE, SETUP);

@@ -136,6 +136,10 @@ describe('readRoleText: the text of an accepted setup file', () => {
     expect(await read(deps)).toMatchObject({ ok: true, value: { kind: 'ok' } });
   });
 
+  it('leaves at least 2000 characters of the cap free for the setup text, after the package worker rules', () => {
+    expect(FREE).toBeGreaterThanOrEqual(2_000);
+  });
+
   it('gives a text of exactly the cap, and refuses a text of one more character', async () => {
     const atCap = await read(worldOf({ text: 'x'.repeat(FREE) }));
     expect(atCap).toMatchObject({ ok: true, value: { kind: 'ok', chars: roleText.maxChars } });

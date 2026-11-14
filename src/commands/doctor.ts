@@ -563,6 +563,10 @@ const hookGapOf = (record: WorkerRecord, settings: HookSettingsRead): string | n
   return `${words.gap(record.id)} ${none ? words.remedies.recreate(dismiss, create) : words.remedies.upgrade(resume)}`;
 };
 
+/** The finding for a work copy whose hook settings the check cannot read, with its one remedy. */
+const unreadGapOf = (record: WorkerRecord, reason: string): string =>
+  `${roleText.doctor.unreadGap(record.id, reason)} ${roleText.doctor.remedies.unread(record.id)}`;
+
 /** What the role text adds to the line of the role delivery: the level, the words about the text, and the remedy lines. */
 interface RolePart {
   readonly level: CheckLevel;
@@ -581,9 +585,10 @@ const rolePartOf = (read: CliResult<RoleRead>): RolePart => {
 /**
  * The path from the setup text of the workers to their sessions, in one line: the work copies whose hook settings hold the own start
  * hook, the size of the role text against its cap, and in words where the acceptance of the setup text is kept. A zero count of workers
- * is ok, and so is a layer with no worker file. A fault of the role text fails the check. A work copy with no start hook warns. Each
- * finding gives one remedy. The list of the workers holds at most `workerRecord.maxEntries` records, so the loop is bounded. The check
- * reads and writes nothing else, and it follows no link.
+ * is ok, and so is a layer with no worker file. A fault of the role text fails the check. A work copy with no start hook warns, and so
+ * does a work copy whose hook settings the check cannot read: that fault never hides a fault of the role text. Each finding gives one
+ * remedy. The list of the workers holds at most `workerRecord.maxEntries` records, so the loop is bounded. The check reads and writes
+ * nothing else, and it reads no hook settings file that is a link.
  */
 export const checkRoleDelivery = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
   const id = checkIds.roleDelivery;
@@ -595,8 +600,7 @@ export const checkRoleDelivery = async (deps: Deps, home: string, state: DocStat
   const gaps: string[] = [];
   for (const record of listed.value.workers) {
     const settings = await readHookSettings(deps, workCopyOf(home, record.project, record.id));
-    if (!settings.ok) return notChecked(id, settings.error.message);
-    const gap = hookGapOf(record, settings.value);
+    const gap = settings.ok ? hookGapOf(record, settings.value) : unreadGapOf(record, settings.error.message);
     if (gap !== null) gaps.push(gap);
   }
   const copies = listed.value.workers.length;

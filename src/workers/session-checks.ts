@@ -11,7 +11,8 @@ import { readCheckedFile, type NamedPath } from './registry.js';
 import { requireRoleText } from './role-text.js';
 
 /**
- * The checks that `worker reset` and `self reset` share before they type a line into a session pane. Each check stands alone and
+ * The checks that `worker reset` and `self reset` share before they type a line into a session pane, and the check of the role text
+ * delivery that a launch, a restart and a reboot run before any pane starts (`requireRoleDelivery`). Each check stands alone and
  * returns a `CliResult`: a session that is not ready is exit 3, and a link where a plain file must be is exit 4. A command that
  * names `again` gets it back in the remedy line, as the command to run again after the fix (without the program name).
  */

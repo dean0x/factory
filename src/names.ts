@@ -2059,6 +2059,8 @@ export const roleText = {
     gap: (id: string): string => `${id}: the hook settings of the work copy hold no ${ROLE_START_EVENT} hook, so its session gets no role text.`,
     /** A work copy whose hook settings file is a link: the check reads nothing through it. */
     linkGap: (id: string): string => `${id}: the hook settings file of the work copy is a link, and the check does not read it.`,
+    /** A work copy whose hook settings the check cannot read. `reason` is the read fault. */
+    unreadGap: (id: string, reason: string): string => `${id}: the hook settings of the work copy are not checked (${reason}).`,
     remedies: {
       /** Some own hooks are there. `upgrade` adds the missing ones. `resume` is the command that starts the worker again. */
       upgrade: upgradeThen,
@@ -2066,6 +2068,7 @@ export const roleText = {
       recreate: (dismiss: string, create: string): string =>
         `Run "${dismiss}", then "${create}", and answer yes to the question about the hook settings.`,
       link: (id: string, resume: string): string => `Replace the hook settings file of ${id} with a plain file. ${upgradeThen(resume)}`,
+      unread: (id: string): string => `Make the hook settings of ${id} readable, then run "${commandText(commands.doctor)}" again.`,
     },
   },
   /**

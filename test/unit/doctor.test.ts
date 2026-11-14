@@ -2618,6 +2618,40 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     expect(result.text).toContain('Run "factory dismiss alpha"');
   });
 
+  describe('a work copy whose hook settings cannot be read', () => {
+    /** The same files, with a read fault on the settings folder of this work copy. */
+    const unreadable = (deps: FakeDeps, workCopy: string): FakeDeps => ({
+      ...deps,
+      fs: {
+        ...deps.fs,
+        lstat: async (path) => (path.startsWith(`${workCopy}/.claude`) ? failure('the folder cannot be read') : deps.fs.lstat(path)),
+      },
+    });
+
+    it('warns, counts the copy out, and gives one remedy', async () => {
+      const deps = await initialized();
+      seedOwnHooks(deps, await withWorker(deps, 'alpha'));
+      const beta = await withWorker(deps, 'beta');
+      seedOwnHooks(deps, beta);
+      const result = await check(unreadable(deps, beta));
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('SessionStart hook in 1 of 2 work copies');
+      expect(result.text).toContain('beta: the hook settings of the work copy are not checked (the folder cannot be read).');
+      expect(result.text).toContain('Make the hook settings of beta readable, then run "factory doctor" again.');
+    });
+
+    it('still fails for a role text fault', async () => {
+      const deps = await initialized();
+      const alpha = await withWorker(deps, 'alpha');
+      seedOwnHooks(deps, alpha);
+      seedUnacceptedSetup(deps, HOME, SETUP_TEXT);
+      const result = await check(unreadable(deps, alpha));
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('role text refused: the setup file is not accepted');
+      expect(result.text).toContain('alpha: the hook settings of the work copy are not checked');
+    });
+  });
+
   it('is ok for a layer with no worker file, and reads no work copy', async () => {
     const deps = await initialized();
     const config = await inspectConfig(deps, HOME);
