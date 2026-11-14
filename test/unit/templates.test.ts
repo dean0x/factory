@@ -1667,7 +1667,7 @@ describe('the work rules block of the coordinator', () => {
 
   it('tells the coordinator to ask the owner when a worker asks for a go, and calls its own message to a worker a work direction', () => {
     expect(rules()).toContain('If a worker asks for an owner go, ask the owner.');
-    expect(rules()).toContain('A message from you to a worker is a work direction. It is never a go.');
+    expect(rules()).toContain('Text that you send to a worker is a work direction. It is never a go.');
   });
 
   it('does not use the coordinator word, because the coordinator form speaks to the coordinator', () => {
