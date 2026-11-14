@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { visibleText } from '../../src/cli/output.js';
 import {
   acceptanceState,
+  acceptedEntryOf,
   acceptPromptText,
   acceptSetup,
   askSetupAcceptance,
@@ -947,5 +948,79 @@ describe('setup acceptance: what the store says about a set of files', () => {
     const deps = person();
     deps.seed(STORE, 'not json');
     expect(await acceptanceState(deps, { root: ROOT, node: NODE, hash: 'x' })).toMatchObject({ ok: false });
+  });
+});
+
+describe('setup acceptance: the accepted entry of one file', () => {
+  const WORKER_TEXT = 'Keep each change small.\n';
+
+  const seededWith = async (node = NODE): Promise<FakeDeps> => {
+    const deps = person();
+    deps.seed(`${ROOT}/${WORKER_SETUP}`, WORKER_TEXT);
+    const collected = await collect(deps, [SETUP, WORKER_SETUP]);
+    await recordSetupAcceptance(deps, inputOf(collected, { node }));
+    return deps;
+  };
+
+  it('gives the entry of the path from the acceptance of this folder and node id', async () => {
+    const deps = await seededWith();
+    expect(await acceptedEntryOf(deps, { root: ROOT, node: NODE, path: WORKER_SETUP })).toEqual({
+      ok: true,
+      value: entryOf(WORKER_SETUP, WORKER_TEXT),
+    });
+  });
+
+  it('gives no entry when the store holds no acceptance', async () => {
+    const deps = person();
+    expect(await acceptedEntryOf(deps, { root: ROOT, node: NODE, path: WORKER_SETUP })).toEqual({ ok: true, value: null });
+  });
+
+  it('gives no entry for a path that the acceptance does not hold', async () => {
+    const deps = await seededWith();
+    expect(await acceptedEntryOf(deps, { root: ROOT, node: NODE, path: 'setup/other.md' })).toEqual({ ok: true, value: null });
+  });
+
+  it('gives no entry for another node id, also when an acceptance of the folder exists under a different id', async () => {
+    const deps = await seededWith('old');
+    expect(await acceptedEntryOf(deps, { root: ROOT, node: 'new', path: WORKER_SETUP })).toEqual({ ok: true, value: null });
+  });
+
+  it('gives no entry for another folder', async () => {
+    const deps = await seededWith();
+    deps.seedDir('/w/second');
+    expect(await acceptedEntryOf(deps, { root: '/w/second', node: NODE, path: WORKER_SETUP })).toEqual({ ok: true, value: null });
+  });
+
+  it('finds the store from the variables of the session that asks, and a session with another store has no entry', async () => {
+    const deps = await seededWith();
+    const content = deps.files.get(STORE) ?? '';
+    const other = person({ env: { XDG_STATE_HOME: '/elsewhere', HOME: '/home/me' } });
+    other.seed(STORE, content);
+    other.seed(`${ROOT}/${WORKER_SETUP}`, WORKER_TEXT);
+    expect(await acceptedEntryOf(other, { root: ROOT, node: NODE, path: WORKER_SETUP })).toEqual({ ok: true, value: null });
+  });
+
+  it('is an error, and not an entry or a missing entry, when the store cannot be read', async () => {
+    const deps = person();
+    deps.seed(STORE, 'not json');
+    expect(await acceptedEntryOf(deps, { root: ROOT, node: NODE, path: WORKER_SETUP })).toMatchObject({ ok: false });
+  });
+
+  it.each([
+    ['a file that a group may write', STORE, 'mode'],
+    ['a folder that other users may write', FOLDER, 'mode'],
+    ['a file that another user owns', STORE, 'owner'],
+  ])('is an error for %s', async (_name, path, kind) => {
+    const deps = await seededWith();
+    if (kind === 'mode') deps.modes.set(path, 0o666);
+    else deps.owners.set(path, 2000);
+    expect(await acceptedEntryOf(deps, { root: ROOT, node: NODE, path: WORKER_SETUP })).toMatchObject({ ok: false });
+  });
+
+  it('writes nothing', async () => {
+    const deps = await seededWith();
+    const before = new Map(deps.files);
+    await acceptedEntryOf(deps, { root: ROOT, node: NODE, path: WORKER_SETUP });
+    expect(deps.files).toEqual(before);
   });
 });

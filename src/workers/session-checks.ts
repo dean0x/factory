@@ -1,14 +1,18 @@
+import { basename, dirname } from 'node:path';
 import { notReady, safetyRefusal, type CliResult } from '../cli/errors.js';
+import type { FactoryConfig } from '../config/schema.js';
 import { hookSettingsPlaceOf, missingHookEvents } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
-import { commands, commandText, maxFileBytes, paneElapsed } from '../names.js';
+import { commandLines, commands, commandText, flags, flagText, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import { readCheckedFile, type NamedPath } from './registry.js';
+import { requireRoleText } from './role-text.js';
 
 /**
- * The checks that `worker reset` and `self reset` share before they type a line into a session pane. Each check stands alone and
+ * The checks that `worker reset` and `self reset` share before they type a line into a session pane, and the check of the role text
+ * delivery that a launch, a restart and a reboot run before any pane starts (`requireRoleDelivery`). Each check stands alone and
  * returns a `CliResult`: a session that is not ready is exit 3, and a link where a plain file must be is exit 4. A command that
  * names `again` gets it back in the remedy line, as the command to run again after the fix (without the program name).
  */
@@ -105,6 +109,8 @@ export interface SettingsRequest {
   readonly folder: string;
   /** The command that starts the session again, without the program name: for example `restart alpha` or `reboot`. */
   readonly then: string;
+  /** The remedy line for a missing hook event. Absent: run `upgrade`, then the command in `then`. */
+  readonly remedy?: string;
 }
 
 export interface SettingsAgeRequest extends SettingsRequest {
@@ -122,28 +128,82 @@ const settingsPartsOf = (folder: string): { readonly folders: readonly NamedPath
 };
 
 /**
- * The hook settings file of the session folder must hold the own command of every hook event of the fixed list, with the own matcher
- * where an event needs one (`missingHookEvents`). A file that is missing, not JSON, not an object, above the limit or of the wrong
- * kind counts every event as missing (exit 3, and the remedy is `upgrade`, then the command in `then`). A link is exit 4.
+ * What the hook settings file of a session folder holds, for a check: the hook events that lack the own command, or the link that
+ * stops the read. A file that is missing, not JSON, not an object, above the limit or of the wrong kind counts every event as missing.
  */
-export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Promise<CliResult<void>> => {
-  const { folders, file } = settingsPartsOf(request.folder);
+export type HookSettingsRead =
+  | { readonly state: 'plain'; readonly file: string; readonly missing: readonly HookEvent[] }
+  | { readonly state: 'link'; readonly file: string; readonly reason: string };
+
+/**
+ * Read the hook settings file of the session folder and name the events that lack the own command, with the own matcher where an
+ * event needs one (`missingHookEvents`). A link in the path is never followed. The read changes nothing.
+ */
+export const readHookSettings = async (deps: Deps, folder: string): Promise<CliResult<HookSettingsRead>> => {
+  const { folders, file } = settingsPartsOf(folder);
   const read = await readCheckedFile(deps, folders, file, maxFileBytes);
   if (!read.ok) return read;
   const found = read.value;
-  if (found.state === 'invalid' && found.cause === 'link') {
+  if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason });
+  const json = found.state === 'text' ? parseJsonText(found.text) : null;
+  return ok({ state: 'plain', file: file.path, missing: missingHookEvents(json !== null && json.ok ? json.value : undefined) });
+};
+
+/**
+ * The hook settings file of the session folder must hold the own command of every hook event of the fixed list (`readHookSettings`).
+ * A file that lacks an event is exit 3, and the remedy is `upgrade`, then the command in `then`. A link is exit 4.
+ */
+export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Promise<CliResult<void>> => {
+  const settings = await readHookSettings(deps, request.folder);
+  if (!settings.ok) return settings;
+  const found = settings.value;
+  if (found.state === 'link') {
     return safetyRefusal(
-      `cannot use ${file.path}: ${found.reason}`,
+      `cannot use ${found.file}: ${found.reason}`,
       `Replace the link with a plain file. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
     );
   }
-  const json = found.state === 'text' ? parseJsonText(found.text) : null;
-  const missing = missingHookEvents(json !== null && json.ok ? json.value : undefined);
-  if (missing.length === 0) return ok(undefined);
+  if (found.missing.length === 0) return ok(undefined);
   return notReady(
-    `the hook settings ${file.path} lack the events: ${missing.join(', ')}`,
-    `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
+    `the hook settings ${found.file} lack the events: ${found.missing.join(', ')}`,
+    request.remedy ?? `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
   );
+};
+
+export interface RoleDeliveryRequest {
+  /** The node home, the root of the config repo: an absolute path. */
+  readonly home: string;
+  readonly config: FactoryConfig;
+  readonly workerId: string;
+  /** The work copy of the worker: `work-copies/<project>/<id>` of the node home, which the caller has checked. */
+  readonly workCopy: string;
+  /** The command that starts the worker again after a fix, without the program name: for example `worker resume alpha` or `reboot`. */
+  readonly again: string;
+}
+
+/**
+ * The commands that give a worker a new work copy with the hook settings: dismiss the worker, then make it again for its project. Only
+ * `worker new` asks the question about the hook settings. Each command is without the program name, as `commandText` takes it.
+ */
+export const startOverCommands = (workerId: string, project: string): { readonly dismiss: string; readonly create: string } => ({
+  dismiss: `${commandText(commands.dismiss)} ${workerId}`,
+  create: `${commandText(commandLines.workerNew)} ${workerId} ${flagText(flags.project)} ${project}`,
+});
+
+/**
+ * A worker that starts must get its role text at its session start. Two things must hold before any pane starts and before any
+ * worker stops, and the first fault is the answer: the hook settings of the work copy hold the own command of every hook event
+ * (`requireOwnHooks`: exit 3 for a missing entry, exit 4 for a link), and the role text passes every check (`requireRoleText`).
+ * The remedy of a missing entry names each command on its own line, for the fix and for a work copy that never had the hook.
+ * Nothing is written, and no session is asked: the launch does not wait for the first session start, so this check is the point
+ * where a launch fails closed.
+ */
+export const requireRoleDelivery = async (deps: Deps, request: RoleDeliveryRequest): Promise<CliResult<void>> => {
+  const { home, config, workerId, workCopy, again } = request;
+  const remedy = roleText.hookRemedy({ again: commandText(again), ...startOverCommands(workerId, basename(dirname(workCopy))) });
+  const hooks = await requireOwnHooks(deps, { folder: workCopy, then: again, remedy });
+  if (!hooks.ok) return hooks;
+  return requireRoleText(deps, { home, config, retry: commandText(again) });
 };
 
 /**

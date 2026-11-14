@@ -40,6 +40,7 @@ import {
   files,
   flags,
   flagText,
+  hookNames,
   homeIndex,
   keys,
   lessonLimits,
@@ -47,6 +48,7 @@ import {
   overwriteCommand,
   places,
   program,
+  roleText,
   roles,
   schemaIds,
   setupBlockNames,
@@ -63,8 +65,11 @@ import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
 import { readSetupFile, readSetupTexts } from '../state/setup-text.js';
-import { blockInputOf, blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
-import { workerHasId } from '../workers/registry.js';
+import { blockInputOf, blockTemplatesFor, roleBlockRenames, workerFileTemplatesFor } from '../templates/index.js';
+import { resumeLine } from '../workers/launch.js';
+import { listWorkerRecords, workCopyOf, workerHasId, type WorkerRecord } from '../workers/registry.js';
+import { readRoleText, roleFaultRefusal, type RoleRead } from '../workers/role-text.js';
+import { readHookSettings, startOverCommands, type HookSettingsRead } from '../workers/session-checks.js';
 import { leftoverTempFolders, tempFolderWarning } from './init-home.js';
 import { unsharedReasonOf, unsharedWarning } from './project-url.js';
 import { hasRootFailure, rootCheckResults, scanRoot } from './root-content.js';
@@ -546,6 +551,70 @@ export const checkSetupText = async (deps: Deps, home: string): Promise<CheckRes
       );
 };
 
+/**
+ * The finding for a work copy that a launch refuses, with its one remedy. It names each hook event that lacks the own hook, from
+ * the same list that the launch check reads (`requireOwnHooks`), so the check and the launch agree. Null when its hook settings
+ * hold the hook of every event.
+ */
+const hookGapOf = (record: WorkerRecord, settings: HookSettingsRead): string | null => {
+  const words = roleText.doctor;
+  const resume = commandText(resumeLine(record.id));
+  if (settings.state === 'link') return `${words.linkGap(record.id)} ${words.remedies.link(record.id, resume)}`;
+  if (settings.missing.length === 0) return null;
+  // No own hook at all: `upgrade` leaves such a work copy as it is, because its owner said no to the hook.
+  const none = settings.missing.length === hookNames.events.length;
+  const { dismiss, create } = startOverCommands(record.id, record.project);
+  return `${words.gap(record.id, settings.missing)} ${none ? words.remedies.recreate(dismiss, create) : words.remedies.upgrade(resume)}`;
+};
+
+/** The finding for a work copy whose hook settings the check cannot read, with its one remedy. */
+const unreadGapOf = (record: WorkerRecord, reason: string): string =>
+  `${roleText.doctor.unreadGap(record.id, reason)} ${roleText.doctor.remedies.unread(record.id)}`;
+
+/** What the role text adds to the line of the role delivery: the level, the words about the text, and the remedy lines. */
+interface RolePart {
+  readonly level: CheckLevel;
+  readonly role: string;
+  readonly remedy: readonly string[];
+}
+
+const refusedPart = (error: CliError): RolePart => ({ level: 'fail', role: error.message, remedy: error.hint === undefined ? [] : [error.hint] });
+
+const rolePartOf = (read: CliResult<RoleRead>): RolePart => {
+  if (!read.ok) return refusedPart(read.error);
+  if (read.value.kind === 'ok') return { level: 'ok', role: roleText.doctor.size(read.value.chars), remedy: [] };
+  return refusedPart(roleFaultRefusal(read.value.fault, { retry: commandText(commands.doctor) }).error);
+};
+
+/**
+ * The path from the setup text of the workers to their sessions, in one line: the work copies whose hook settings hold the own hook
+ * of every event that a launch needs, the size of the role text against its cap, and in words where the acceptance of the setup text
+ * is kept. A zero count of workers is ok, and so is a layer with no worker file. A fault of the role text fails the check. A work copy
+ * that lacks the own hook of any event warns, and names the events, with the same rule as the launch. A work copy whose hook settings
+ * the check cannot read warns too: that fault never hides a fault of the role text. Each finding gives one remedy. The list of the
+ * workers holds at most `workerRecord.maxEntries` records, so the loop is bounded. The check reads and writes nothing else, and it
+ * reads no hook settings file that is a link.
+ */
+export const checkRoleDelivery = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+  const id = checkIds.roleDelivery;
+  if (state.kind !== 'valid') return notChecked(id, `${files.config} is not valid`);
+  const config = state.value;
+  if (workerFileTemplatesFor(config, null).length === 0) return check(id, 'ok', roleText.doctor.noWorkerFile);
+  const listed = await listWorkerRecords(deps, home);
+  if (!listed.ok) return failedFrom(id, listed.error);
+  const gaps: string[] = [];
+  for (const record of listed.value.workers) {
+    const settings = await readHookSettings(deps, workCopyOf(home, record.project, record.id));
+    const gap = settings.ok ? hookGapOf(record, settings.value) : unreadGapOf(record, settings.error.message);
+    if (gap !== null) gaps.push(gap);
+  }
+  const copies = listed.value.workers.length;
+  const part = rolePartOf(await readRoleText(deps, { home, config }));
+  const level = part.level === 'ok' && gaps.length > 0 ? 'warn' : part.level;
+  const text = [`${roleText.doctor.hooks(copies - gaps.length, copies)}; ${part.role}.`, ...part.remedy, ...gaps, roleText.doctor.acceptance];
+  return check(id, level, text.join(' '));
+};
+
 export const checkProxyEnv = (deps: Deps): CheckResult => {
   const value = deps.env[env.proxyBaseUrl];
   return value === undefined || value === ''
@@ -781,6 +850,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     nodeId,
     blocks,
     setupText,
+    roleDelivery,
     children,
     instructionFileCheck,
     proxies,
@@ -799,6 +869,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkNodeId(deps, home, config),
     checkNodeBlocks(deps, home, config),
     checkSetupText(deps, home),
+    checkRoleDelivery(deps, home, config),
     checkChildren(deps, home, config, registry),
     checkInstructionFiles(deps, home),
     hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config),
@@ -822,6 +893,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     nodeId,
     blocks,
     setupText,
+    roleDelivery,
     checkRoles(config),
     checkTracker(config),
     children,

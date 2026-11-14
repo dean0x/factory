@@ -7,7 +7,7 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { launchConfirm, maxFileBytes, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -24,6 +24,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { runWorker } from '../helpers/package-registry.js';
+import { SETUP_WORKER, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
@@ -848,14 +849,23 @@ describe('worker new: the consent for the hook settings', () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  it('goes on without the settings file after a no, names the effect on the worker, and still starts the pane', async () => {
+  it('fails closed after a no: the launch stops with exit 3 before any pane, names the lost role text, and keeps the work copy and the record', async () => {
     const made = make({ tty: true, prompt: () => ok('n') });
-    const output = await succeeded(made, { yes: false });
+    const error = await failed(made, { yes: false });
     expect(made.deps.files.has(SETTINGS_FILE)).toBe(false);
-    expect(made.deps.warned.join('\n')).toContain('last-seen record of the worker');
-    expect(made.deps.warned.join('\n')).toContain('end the worker and run "factory worker new" again for a new worker');
-    expect(made.events).toContain('tmux split-window');
-    expect(output.json).toMatchObject({ pane: FIRST_NEW_PANE });
+    const warned = made.deps.warned.join('\n');
+    expect(warned).toContain('last-seen record of the worker');
+    expect(warned).toContain('gets no role text');
+    expect(warned).toContain('dismiss the worker with "factory dismiss ID"');
+    expect(warned).toContain('run "factory worker new" again for a new worker and answer yes');
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain('lack the events');
+    expect(error.hint?.split('\n')).toEqual(
+      expect.arrayContaining(['factory upgrade', 'factory worker resume alpha', 'factory dismiss alpha', 'factory worker new alpha --project web']),
+    );
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.deps.files.has(RECORD)).toBe(true);
+    expect(made.deps.dirs.has(COPY)).toBe(true);
   });
 
   it('counts the yes flag inside a factory session for a work copy that has no settings file', async () => {
@@ -983,6 +993,105 @@ describe('worker new: the settings that the clone tracks stop the command before
     const output = await succeeded(made);
     expect(output.json).toMatchObject({ pane: FIRST_NEW_PANE });
     expect(made.deps.files.get('/w/node/work-copies/web/alpha/.claude/settings.json')).toBe('{"permissions":{"allow":["Read"]}}\n');
+  });
+});
+
+describe('worker new: the role text of the new worker stops the command before the work copy exists', () => {
+  const HOOKS_OFF = '{"disableAllHooks":true}\n';
+
+  it('stops with exit 4 for a tracked local settings file that turns off every hook, and makes no work copy, record or branch', async () => {
+    const made = make({ checkout: HOOKS_OFF });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('work-copies/web/alpha/.claude/settings.local.json');
+    expect(error.message).toContain('turns off every hook');
+    expectNothingChanged(made);
+  });
+
+  it('stops with exit 4 for a tracked project settings file that turns off every hook, and makes no work copy, record or branch', async () => {
+    const made = make({ head: [{ path: '.claude/settings.json', text: HOOKS_OFF }] });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('work-copies/web/alpha/.claude/settings.json');
+    expect(error.message).toContain('turns off every hook');
+    expectNothingChanged(made);
+  });
+
+  it('stops with exit 4 for a setup text that the owner did not accept, and makes no work copy, record or branch', async () => {
+    const made = make();
+    seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toBe(roleText.reasons.notAccepted);
+    expect(error.hint).toContain('"factory worker new alpha --project web"');
+    expect(new Map(made.deps.files).has(RECORD)).toBe(false);
+    expect(made.events).not.toContain('git worktree-add');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.deps.dirs.has(COPY)).toBe(false);
+  });
+
+  it.each(['own', 'received'] as const)('stops with exit 1 in a %s factory folder for a text above the cap, names its size and the cap, and makes no work copy, record or branch', async (origin) => {
+    const made = make({ origin });
+    seedAcceptedSetup(made.deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
+    expect(made.deps.files.has(RECORD)).toBe(false);
+    expect(made.events).not.toContain('git worktree-add');
+    expect(made.deps.dirs.has(COPY)).toBe(false);
+  });
+
+  it('stops with exit 1 in a received factory folder for a setup text that holds a block marker, and makes no work copy, record or branch', async () => {
+    const made = make({ origin: 'received' });
+    seedAcceptedSetup(made.deps, HOME, '<!-- factory:begin worker v1 sha256=00 -->\n');
+    expect(exitCodeOf[(await failed(made)).kind]).toBe(1);
+    expect(made.events).not.toContain('git worktree-add');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.deps.files.has(RECORD)).toBe(false);
+    expect(made.deps.dirs.has(COPY)).toBe(false);
+  });
+
+  it.each([
+    ['holds a block marker', '<!-- factory:begin worker v1 sha256=00 -->\n'],
+    ['holds a control character', 'Write tests first.\u0007\n'],
+    ['holds a hidden character', 'Write tests first.ㅤ\n'],
+    ['is above the bound of the setup text', 'x'.repeat(maxSetupTextBytes + 1)],
+  ])('stops with exit 4 in your own factory folder for a setup text that %s, and makes no work copy, record or branch', async (_fault, text) => {
+    const made = make({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, text);
+    expect(exitCodeOf[(await failed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('git worktree-add');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.deps.files.has(RECORD)).toBe(false);
+    expect(made.deps.dirs.has(COPY)).toBe(false);
+  });
+
+  it('asks no question about the hook settings and writes nothing for a refused role text', async () => {
+    const asked: string[] = [];
+    const made = make({
+      tty: true,
+      prompt: (question) => {
+        asked.push(question);
+        return ok('y');
+      },
+    });
+    seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    await failed(made, { yes: false });
+    expect(asked).toEqual([]);
+    expect(made.deps.files.has(SETTINGS_FILE)).toBe(false);
+  });
+
+  it('prints no text of the setup file', async () => {
+    const made = make();
+    seedUnacceptedSetup(made.deps, HOME, 'SECRET-LINE\n');
+    expect(JSON.stringify(await failed(made))).not.toContain('SECRET-LINE');
+  });
+
+  it('starts the worker for the setup text that the owner accepted', async () => {
+    const made = make();
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    await succeeded(made);
+    expect(made.events).toContain('tmux split-window');
   });
 });
 
@@ -1905,5 +2014,75 @@ describe('worker stop and resume: a record that is not the record of its worker 
     const made = await withWorkers();
     expect(await resumed(made)).toMatchObject({ failed: false });
     expect(made.tmux.panes().at(-1)).toMatchObject({ cwd: COPY });
+  });
+});
+
+describe('worker resume: the code of a refused role text after the root checks', () => {
+  const SETUP_FILE = layoutOf(HOME).setupWorkerFile;
+
+  it('exits 1 for an accepted text above the cap, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, `${'x'.repeat(roleText.maxChars - 500)}\n`);
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for a setup text that the owner did not accept', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedUnacceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for a link as the setup file', async () => {
+    const made = await withWorkers({ origin: 'own', links: { [SETUP_FILE]: '/elsewhere/worker.md' } });
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for an accepted setup text that holds a block marker, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, `Write tests first.\n<!-- ${marker.prefix}${marker.begin} rules v1 -->\n`);
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for an accepted setup text that holds a control character, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\u0007\n');
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for a setup file that another user owns, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    made.deps.owners.set(`${HOME}/${SETUP_WORKER}`, (made.deps.uid ?? 0) + 1);
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for a setup file that a group can write, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\n');
+    made.deps.modes.set(`${HOME}/${SETUP_WORKER}`, 0o664);
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for an accepted setup text that holds a hidden character, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'Write tests first.\u3164\n');
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('exits 4 for an accepted setup text above the bound of the setup text, and starts no pane', async () => {
+    const made = await withWorkers({ origin: 'own' });
+    seedAcceptedSetup(made.deps, HOME, 'x'.repeat(maxSetupTextBytes + 1));
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+    expect(made.events).not.toContain('tmux split-window');
   });
 });

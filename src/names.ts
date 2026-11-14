@@ -367,6 +367,8 @@ export const claudeSettingKeys = {
   env: 'env',
   hooks: 'hooks',
   statusLine: 'statusLine',
+  /** The setting that turns off every hook of a session, so that the role text never reaches it. */
+  disableAllHooks: 'disableAllHooks',
   approveAllMcp: 'enableAllProjectMcpServers',
   approveMcpList: 'enabledMcpjsonServers',
   /** The setting that tells a session what to do with the input of other sessions: accept it, hold it for approval, or refuse it. */
@@ -531,6 +533,13 @@ export const trafficEnvNames = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_CUSTOM_HEADERS',
 ] as const;
+
+/**
+ * The `env` variables of a settings file that set the state folder or the home folder of the user. The hook of a worker finds
+ * the factory list in the state folder of the user, so a work copy must not set either of these: the hook would not find the
+ * worker, and the worker would get no role text.
+ */
+export const stateEnvNames = [env.stateHome, env.userHome] as const;
 
 /** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
 export const maxFileBytes = 1_048_576;
@@ -1132,6 +1141,11 @@ export const hookNames = {
   events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact', 'Notification', 'PreToolUse'],
   /** The only keys that the hook reads from the input of Claude Code. Every other key of the input is dropped unread. */
   inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name', notificationType: 'notification_type' },
+  /**
+   * The keys of the one JSON object that the hook prints for the start of a worker session: `hookSpecificOutput` holds
+   * `hookEventName` and `additionalContext`. The hooks page of Claude Code (https://code.claude.com/docs/en/hooks) names them.
+   */
+  output: { hookSpecificOutput: 'hookSpecificOutput', hookEventName: 'hookEventName', additionalContext: 'additionalContext' },
   notificationTypes,
   /** The events whose own group in the settings has a matcher, with that matcher. The `Notification` matcher lists `notificationTypes`, parted by `|`. */
   matchers: { Notification: notificationTypes.join('|') },
@@ -1988,6 +2002,8 @@ export const checkIds = {
   permissionMode: 'permission-mode',
   /** What the root repo tracks and what git ignores. */
   rootRepo: 'root-repo',
+  /** The path from the setup text of the workers to their sessions: the hook, the role text, and the work copies. */
+  roleDelivery: 'role-delivery',
   /** The tracked text files of the root: tokens, `file` URLs and user folder paths. */
   rootFiles: 'root-files',
   /** The folder of each project: it resolves inside the root and not into a folder that the root keeps. */
@@ -2020,6 +2036,8 @@ export const blockNames = {
   setup: 'setup',
   /** The text of `setup/roles/worker.md`, in the worker file. */
   setupWorker: 'setup-worker',
+  /** The working rules of the coordinator, as a block of its own in the coordinator `CLAUDE.md`. */
+  workRules: 'work-rules',
 } as const;
 
 /** The blocks whose text a person writes in the setup folder. A missing one is added by `upgrade`. */
@@ -2033,6 +2051,103 @@ export const setupFileOf = (block: string): string =>
 
 /** The most bytes of a setup text that `init` and `upgrade` render into a session instruction file. A larger file is refused. */
 export const maxSetupTextBytes = 65_536;
+
+/** The unit of the size that a refusal of a role text that is too large names. */
+export type RoleSizeUnit = 'bytes' | 'characters';
+
+const ROLE_TEXT_MAX_CHARS = 9_000;
+
+/** The remedy for a work copy whose hook settings hold some own hooks: `upgrade` adds the rest, and `resume` starts the worker again. */
+const upgradeThen = (resume: string): string => `Run "${commandText(commands.upgrade)}", then "${resume}".`;
+
+/**
+ * The role text that a session of a worker gets at its start (`hook SessionStart`): the cap, the fixed lines and the
+ * fixed reasons. The text is the package worker rules and the text that the owner accepted in the setup folder, and it is
+ * never cut: a text above `maxChars`, the source line included, is refused. The hook prints `refusal` when a check fails
+ * and one text of `reasons` on its error output, and never text of a file, a path or the text of an error. The messages
+ * of the launch, reset and doctor checks use the same reasons, with a remedy line that names the fix.
+ */
+export const roleText = {
+  maxChars: ROLE_TEXT_MAX_CHARS,
+  /** The text between two parts of the role text. */
+  joiner: '\n\n',
+  /** The first line of the role text. */
+  sourceLine: `Source: the ${roles.worker} rules of the ${program} package, and the setup text in ${setupFileOf(blockNames.setupWorker)} that the ${roles.owner} accepted.`,
+  /** The text that a session gets when a check fails. */
+  refusal: `The ${program} role text did not arrive. Do no work. Tell the ${roles.coordinator}.`,
+  /** One reason for each fault, as the hook prints it on its error output. */
+  reasons: {
+    link: 'role text refused: a link is in the path of the setup file',
+    ownerOrMode: 'role text refused: the setup file or its folder has the wrong owner or mode',
+    tooLarge: 'role text refused: the text is larger than the cap',
+    notUtf8: 'role text refused: the setup file is not UTF-8 text',
+    notPlainText: 'role text refused: the setup file is not plain text',
+    blockMarker: 'role text refused: the setup file holds a block marker',
+    notAccepted: 'role text refused: the setup file is not accepted',
+    readFailed: 'role text refused: the setup file cannot be read',
+    configNotUsable: 'role text refused: the config is not usable',
+    /** The input of the hook is not usable, so the hook cannot read the session id. Only the hook gives this reason. */
+    inputNotUsable: 'role text refused: the input of the hook is not usable',
+  },
+  /** The size of a text that is too large and the cap, for the message of a launch, a reset or a check. */
+  tooLargeText: (size: number, unit: RoleSizeUnit): string =>
+    `the role text has ${size} ${unit}, and the cap is ${ROLE_TEXT_MAX_CHARS} characters`,
+  /** The remedy lines. `retry` is the command that the refusal stopped, as a person types it. */
+  remedies: {
+    path: (retry: string): string =>
+      `Fix the link, the owner or the mode of ${setupFileOf(blockNames.setupWorker)} and of its folders, then run "${retry}" again.`,
+    accept: (retry: string): string =>
+      `Accept ${setupFileOf(blockNames.setupWorker)} in a terminal window outside a ${places.session}: run "${commandText(commands.init)}" for a first acceptance, or "${commandText(commands.upgrade)}" after a change. Then run "${retry}" again.`,
+    shorten: (free: number, retry: string): string =>
+      `Shorten ${setupFileOf(blockNames.setupWorker)} to ${free} characters or fewer, then run "${retry}" again.`,
+    correct: (retry: string): string => `Correct the text of ${setupFileOf(blockNames.setupWorker)}, then run "${retry}" again.`,
+    config: (retry: string): string => `Run "${commandText(commands.doctor)}" and fix what it reports, then run "${retry}" again.`,
+  },
+  /**
+   * The words of the doctor check of the role delivery (`checkIds.roleDelivery`). The line counts the work copies that hold the
+   * own hook of every event that a launch needs, gives the size of the role text, and names in words where the acceptance of the
+   * setup text is kept. Each finding gives one remedy.
+   */
+  doctor: {
+    /** The line of a node that has no worker file: it has no role text to deliver. */
+    noWorkerFile: `this layer has no ${roles.worker} file, so no role text is delivered`,
+    hooks: (withHooks: number, copies: number): string => `every hook event in ${withHooks} of ${copies} work copies`,
+    size: (chars: number): string => `role text ${chars} of ${ROLE_TEXT_MAX_CHARS} characters`,
+    acceptance: `The acceptance of the setup text is recorded in ${files.setupAcceptances}, in the ${program} folder of the state folder of the user.`,
+    /** A work copy whose hook settings lack the own hook of these events: the launch of the worker refuses the same work copy. */
+    gap: (id: string, events: readonly HookEvent[]): string =>
+      `${id}: the hook settings of the work copy lack the hook of these events: ${events.join(', ')}. The worker does not start until they are in place.`,
+    /** A work copy whose hook settings file is a link: the check reads nothing through it. */
+    linkGap: (id: string): string => `${id}: the hook settings file of the work copy is a link, and the check does not read it.`,
+    /** A work copy whose hook settings the check cannot read. `reason` is the read fault. */
+    unreadGap: (id: string, reason: string): string => `${id}: the hook settings of the work copy are not checked (${reason}).`,
+    remedies: {
+      /** Some own hooks are there. `upgrade` adds the missing ones. `resume` is the command that starts the worker again. */
+      upgrade: upgradeThen,
+      /** No own hook is there: `upgrade` leaves such a work copy as it is, so only a new worker asks for the hook settings. */
+      recreate: (dismiss: string, create: string): string =>
+        `Run "${dismiss}", then "${create}", and answer yes to the question about the hook settings.`,
+      link: (id: string, resume: string): string => `Replace the hook settings file of ${id} with a plain file. ${upgradeThen(resume)}`,
+      unread: (id: string): string => `Make the hook settings of ${id} readable, then run "${commandText(commands.doctor)}" again.`,
+    },
+  },
+  /**
+   * The remedy for a work copy whose hook settings lack an own event, so that its session would get no role text. Each command
+   * stands on its own line. The first two add the own entries and start the worker again. The next two are for a work copy that
+   * never had the hook: only a new worker asks the question about the hook settings. The last line is a sentence, so a text that
+   * a caller adds after it cannot read as part of a command.
+   */
+  hookRemedy: (steps: { readonly again: string; readonly dismiss: string; readonly create: string }): string =>
+    [
+      'Run these commands, one after the other:',
+      commandText(commands.upgrade),
+      steps.again,
+      'If the work copy has no factory hook, the worker gets no role text. Run these commands instead:',
+      steps.dismiss,
+      steps.create,
+      'Answer yes to the question about the hook settings.',
+    ].join('\n'),
+} as const;
 
 /**
  * The names of a FAC-M1 node (schema 1) that schema 2 does not use. Only the migrations from schema 1 read them.

@@ -28,7 +28,13 @@ import {
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { softwareStages } from '../../src/recipes/software/board.js';
 import { prCommands, prFlags, standingRoutines } from '../../src/recipes/software/words.js';
-import { blockInputOf, blockTemplatesFor, fileTemplates, roleBlockRenames } from '../../src/templates/index.js';
+import {
+  blockInputOf,
+  blockTemplatesFor,
+  fileTemplates,
+  roleBlockRenames,
+  workerFileTemplatesFor,
+} from '../../src/templates/index.js';
 import { coordinatorValuesFor, fillTemplate, workerValuesFor } from '../../src/templates/fill.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import {
@@ -1466,5 +1472,39 @@ describe('the text follows the effective modes', () => {
     await recordDelegation(deps, { root, node: config.core.node.id, point: 'merge', mode: owner });
     const bodies = await bodiesFor(deps);
     expect(bodies.safety).toContain('A merge waits for the go of the owner');
+  });
+});
+
+describe('the worker file templates of a config (workerFileTemplatesFor)', () => {
+  const config = sampleConfig();
+  const worker = 'Text for every worker.\n';
+  const workerFileTemplates = (modes: ApprovalModes, text: string | null): readonly BlockTemplate[] =>
+    blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: text }, modes)).filter(
+      (template) => template.target === 'workerFile',
+    );
+
+  it('gives the worker block, then the setup worker block with the text as it is', () => {
+    const templates = workerFileTemplatesFor(config, worker);
+    expect(summary(templates)).toEqual([
+      ['worker', 4, 'workerFile'],
+      ['setup-worker', 1, 'workerFile'],
+    ]);
+    expect(templates[1]?.body).toBe(worker);
+  });
+
+  it('gives the worker block alone when the setup text is absent', () => {
+    expect(workerFileTemplatesFor(config, null).map((template) => template.name)).toEqual(['worker']);
+  });
+
+  it('holds no template of the coordinator file', () => {
+    const names = workerFileTemplatesFor(config, worker).map((template) => template.name);
+    expect(names).not.toContain('coordinator');
+    expect(names).not.toContain('safety');
+  });
+
+  it('gives the same bodies for the owner mode and for a delegated mode of every approval point', () => {
+    const given = workerFileTemplatesFor(config, worker);
+    expect(workerFileTemplates(softwareOwnerModes, worker)).toEqual(given);
+    expect(workerFileTemplates(allDelegated, worker)).toEqual(given);
   });
 });
