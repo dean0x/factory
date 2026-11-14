@@ -223,7 +223,7 @@ Each finding gives its location, its confidence and its sources. Each finding al
 13. src/commands/upgrade.ts:155-156 (70%, setup and upgrade). gitStep stops git after 15 seconds. If git stops after it writes the commit, abort restores the old files, but HEAD keeps the upgrade commit. Fix: record HEAD before the commit. Restore the files only when HEAD did not move.
 14. src/commands/init.ts:394, 434 (70%, setup and upgrade). An interrupted init leaves a folder named .factory.tmp-<pid>. The next init and doctor refuse, and the message does not say what the folder is. Fix: name leftover staging folders in the refusal, or remove one whose process is not running.
 
-## Setup and upgrade code (D-51 A)
+## Setup and upgrade code
 
 Each file lists its findings from all five reviews. "No finding" means that no review raised an item for the file.
 
