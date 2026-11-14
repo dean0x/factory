@@ -2,6 +2,7 @@ import { join, resolve } from 'node:path';
 import { linesOutsideBlocks, parseBlocks } from '../blocks/managed.js';
 import {
   inspectBlocks,
+  isAddedAsNewBlock,
   isBlockRecorded,
   isSafetyStop,
   NO_PENDING_FILES,
@@ -404,8 +405,9 @@ const describeBlockProblem = (status: BlockStatus, recorded: ReadonlySet<string>
     case 'edited':
       return [{ text: `${name} (${where})`, remedy: editedRemedy(name) }];
     case 'missing': {
-      // `upgrade` adds a setup block and a block that the state never recorded. A block that the state records was removed.
-      const upgradeAdds = setupBlockNames.includes(name) || !isBlockRecorded(recorded, name);
+      // `upgrade` adds a setup block, and a block that the state never recorded when its file is there. It never adds the
+      // safety block. A block that the state records was removed.
+      const upgradeAdds = setupBlockNames.includes(name) || isAddedAsNewBlock(status, isBlockRecorded(recorded, name));
       return [{ text: `${name} (${where})`, remedy: upgradeAdds ? UPGRADE_REMEDY : `Run "${overwriteCommand(name)}" to add it.` }];
     }
     case 'malformed':

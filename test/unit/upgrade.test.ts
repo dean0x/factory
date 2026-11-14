@@ -4492,6 +4492,15 @@ describe('upgrade: a block that the node state never recorded', () => {
       expect(planBlock(missing('setup', false), false, true).action).toBe('add');
       expect(planBlock(missing('setup', false), false, false).action).toBe('add');
     });
+
+    it('skips a missing safety block that the state never recorded, also when its file is there', () => {
+      expect(planBlock(missing('safety', false), false, false).action).toBe('skip-missing');
+    });
+
+    it('adds a missing safety block when the owner names it', () => {
+      expect(planBlock(missing('safety', false), true, false).action).toBe('add');
+      expect(planBlock(missing('safety', true), true, true).action).toBe('add');
+    });
   });
 
   describe('the recorded names', () => {
@@ -4560,6 +4569,40 @@ describe('upgrade: a block that the node state never recorded', () => {
       blocks: expect.arrayContaining([{ name: WORK_RULES, action: 'skip-missing', from: null, to: versionOf(WORK_RULES), renamedFrom: null }]),
     });
     expect(snapshot(deps)).toEqual(before);
+  });
+
+  describe('a safety block that the file lacks and the state never recorded', () => {
+    const makeUnrecordedSafetyNode = async (): Promise<FakeDeps> => {
+      const { deps } = await makeNode();
+      cutBlock(deps, CLAUDE, 'safety');
+      forget(deps, 'safety');
+      return deps;
+    };
+    const warning = 'block safety is missing. Run "factory upgrade --overwrite safety" to add it.';
+
+    it('stays missing on a plain upgrade, with a warning that names the overwrite command', async () => {
+      const deps = await makeUnrecordedSafetyNode();
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps));
+      expect(output.warnings).toEqual([warning]);
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('stays missing on a plain upgrade in a session', async () => {
+      const deps = await makeUnrecordedSafetyNode();
+      const before = text(deps, CLAUDE);
+      const inSession = { ...deps, env: { ...deps.env, FACTORY_SESSION: 'demo' } };
+      const output = success(await upgrade(inSession));
+      expect(output.warnings).toEqual([warning]);
+      expect(text(deps, CLAUDE)).toBe(before);
+    });
+
+    it('is added when the owner names it', async () => {
+      const deps = await makeUnrecordedSafetyNode();
+      const output = success(await upgrade(deps, currentSpec, { overwrite: ['safety'] }));
+      expect(lineTexts(output)).toContain(`block safety: add version ${versionOf('safety')}`);
+      expect(blockNamesOf(deps, CLAUDE)).toContain('safety');
+    });
   });
 
   describe('a block that got a new name', () => {

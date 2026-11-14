@@ -8,9 +8,10 @@ import {
   sha256Hex,
   verifyBlock,
 } from '../../src/blocks/managed.js';
-import { inspectBlocks, safetyStateOf } from '../../src/blocks/status.js';
+import { inspectBlocks, isAddedAsNewBlock, safetyStateOf, type BlockStatus } from '../../src/blocks/status.js';
 import { blockNames } from '../../src/names.js';
 import { blockInputOf, safetyTemplateFor } from '../../src/templates/index.js';
+import type { BlockTemplate } from '../../src/templates/types.js';
 import { noSetupTexts, softwareOwnerModes } from '../helpers/blocks.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
@@ -238,5 +239,35 @@ describe('safetyStateOf', () => {
 
   it('is malformed when the markers of the file are broken', async () => {
     expect(await stateWith('<!-- factory:begin safety v2 sha256=zz -->\n')).toBe('malformed');
+  });
+});
+
+describe('isAddedAsNewBlock', () => {
+  const safety = safetyTemplateFor(sampleConfig(), softwareOwnerModes);
+  const rules = { ...safety, name: 'work-rules' };
+  const FILE = '/w/node/coordinator/CLAUDE.md';
+  const missing = (template: BlockTemplate, fileAbsent: boolean): BlockStatus => ({ kind: 'missing', template, file: FILE, fileAbsent });
+
+  it('is true for a missing block that the state never recorded, when its file is there', () => {
+    expect(isAddedAsNewBlock(missing(rules, false), false)).toBe(true);
+  });
+
+  it('is false for a block that the state records', () => {
+    expect(isAddedAsNewBlock(missing(rules, false), true)).toBe(false);
+  });
+
+  it('is false when the file of the block is not there', () => {
+    expect(isAddedAsNewBlock(missing(rules, true), false)).toBe(false);
+  });
+
+  it('is false for the safety block, whether or not the state records it', () => {
+    expect(isAddedAsNewBlock(missing(safety, false), false)).toBe(false);
+    expect(isAddedAsNewBlock(missing(safety, false), true)).toBe(false);
+  });
+
+  it('is false for a block that the file holds', () => {
+    const block = parseBlocks(`${rendered('work-rules', 1, 'Text.')}\n`);
+    if (!block.ok || block.value[0] === undefined) throw new Error('no block');
+    expect(isAddedAsNewBlock({ kind: 'intact', template: rules, file: FILE, block: block.value[0] }, false)).toBe(false);
   });
 });

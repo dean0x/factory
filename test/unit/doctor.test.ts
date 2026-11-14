@@ -286,6 +286,34 @@ describe('doctor: blocks', () => {
       expect(result.text).not.toContain('--overwrite work-rules');
     });
 
+    it('names the overwrite command when the state never recorded the block and its file is not there', async () => {
+      const deps = await initialized();
+      deps.files.delete(CLAUDE_MD);
+      const result = checkBlocks(
+        await inspectBlocks(deps, HOME, layer1Blocks),
+        new Set(allNames.filter((name) => name !== 'work-rules')),
+      );
+      expect(result.text).toContain('work-rules (missing');
+      expect(result.text).toContain('Run "factory upgrade --overwrite work-rules" to add it.');
+    });
+
+    it('names the overwrite command for a safety block that the state never recorded', async () => {
+      const deps = await initialized();
+      const text = deps.files.get(CLAUDE_MD) ?? '';
+      const parsed = parseBlocks(text);
+      const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === 'safety') : undefined;
+      expect(block).toBeDefined();
+      if (block !== undefined) deps.files.set(CLAUDE_MD, `${text.slice(0, block.start)}${text.slice(block.end)}`);
+      const result = checkBlocks(
+        await inspectBlocks(deps, HOME, layer1Blocks),
+        new Set(allNames.filter((name) => name !== 'safety')),
+      );
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('safety (missing');
+      expect(result.text).toContain('Run "factory upgrade --overwrite safety" to add it.');
+      expect(result.text).not.toContain('Run "factory upgrade".');
+    });
+
     it('keeps the overwrite command when the state records the block', async () => {
       const deps = await initialized();
       cutWorkRules(deps);

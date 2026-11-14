@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { parseBlocks, sha256Hex } from '../blocks/managed.js';
-import { renamedFromOf, type BlockStatus } from '../blocks/status.js';
+import { isAddedAsNewBlock, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
@@ -406,9 +406,10 @@ export const planBlock = (status: BlockStatus, overwrite: boolean, recorded = tr
     case 'missing': {
       // The setup text is written to be rendered, so a block of it that is not there yet is added to a file that is there.
       // A block that the state never recorded is new in this version of the package, so it is added to a file that is there too.
+      // The safety block is not added this way: only the owner adds it, outside a session.
       // A block that the state records, and that the file lacks, was removed by the owner: only a person who names it adds it.
-      const isNew = setupBlockNames.includes(template.name) || !recorded;
-      const add = overwrite || (isNew && !status.fileAbsent);
+      const setupAdds = setupBlockNames.includes(template.name) && !status.fileAbsent;
+      const add = overwrite || setupAdds || isAddedAsNewBlock(status, recorded);
       return { template, status, action: add ? 'add' : 'skip-missing', from: null };
     }
     case 'intact':

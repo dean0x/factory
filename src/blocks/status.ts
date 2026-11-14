@@ -56,6 +56,14 @@ export const isBlockRecorded = (recorded: ReadonlySet<string> | null, name: stri
   recorded === null || recorded.has(name);
 
 /**
+ * True when a plain `upgrade` adds the block, because the node state never recorded it: the block is missing from a
+ * file that is there, so it is new in this version of the package. A setup block has its own rule, which a caller applies
+ * first. The safety block is never one: only the owner adds it, with `--overwrite`, outside a session.
+ */
+export const isAddedAsNewBlock = (status: BlockStatus, recorded: boolean): boolean =>
+  status.kind === 'missing' && !status.fileAbsent && !recorded && status.template.name !== blockNames.safety;
+
+/**
  * What the safety block is, against the text that the package renders for the node. Only an equal block needs no action.
  * A block that is intact but different is rendered again. An edited, a missing and a malformed block stop a launch: the
  * safety rules are a security boundary.
