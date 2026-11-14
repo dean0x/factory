@@ -334,6 +334,17 @@ const storePathOf = async (deps: Deps, root: string): Promise<CliResult<string>>
 const forRoot = (deps: Deps, records: readonly AcceptanceRecord[], root: string): readonly AcceptanceRecord[] =>
   records.filter((record) => comparable(deps, record.root) === comparable(deps, root));
 
+/** The records of the store that belong to this real folder, under any node id. A store that cannot be used is an error. */
+const recordsOfFolder = async (deps: Deps, root: string): Promise<CliResult<readonly AcceptanceRecord[]>> => {
+  const real = await deps.fs.realpath(root);
+  if (!real.ok) return real;
+  const path = await storePathOf(deps, real.value);
+  if (!path.ok) return path;
+  const records = await readAcceptances(deps, path.value);
+  if (!records.ok) return failure(`The setup acceptances cannot be used: ${records.error}`);
+  return ok(forRoot(deps, records.value, real.value));
+};
+
 const newestOf = (records: readonly AcceptanceRecord[]): AcceptanceRecord | null =>
   records.reduce<AcceptanceRecord | null>(
     (newest, record) => (newest === null || Date.parse(record.at) >= Date.parse(newest.at) ? record : newest),
@@ -354,17 +365,29 @@ export const acceptanceState = async (
   deps: Deps,
   input: { readonly root: string; readonly node: string; readonly hash: string },
 ): Promise<CliResult<AcceptanceState>> => {
-  const real = await deps.fs.realpath(input.root);
-  if (!real.ok) return real;
-  const path = await storePathOf(deps, real.value);
-  if (!path.ok) return path;
-  const records = await readAcceptances(deps, path.value);
-  if (!records.ok) return failure(`The setup acceptances cannot be used: ${records.error}`);
-  const here = forRoot(deps, records.value, real.value);
-  const newest = newestOf(here);
+  const here = await recordsOfFolder(deps, input.root);
+  if (!here.ok) return here;
+  const newest = newestOf(here.value);
   if (newest === null) return ok({ state: 'none' });
-  const match = here.find((record) => record.node === input.node && record.hash === input.hash);
+  const match = here.value.find((record) => record.node === input.node && record.hash === input.hash);
   return ok(match === undefined ? { state: 'changed', record: newest } : { state: 'accepted', record: match });
+};
+
+/**
+ * The entry that the acceptance of this real folder and this node id holds for one file, or null when the store holds
+ * no acceptance for the pair or the acceptance has no entry for the path. The match is on the real folder and the node
+ * id only, and a record under another node id never answers: the store keeps one record for each pair. A store that
+ * cannot be used is an error, never null, so a caller never reads it as "accepted" or as "not accepted". The store is
+ * found from the variables of the session that asks. The call writes nothing.
+ */
+export const acceptedEntryOf = async (
+  deps: Deps,
+  input: { readonly root: string; readonly node: string; readonly path: string },
+): Promise<CliResult<ManifestEntry | null>> => {
+  const here = await recordsOfFolder(deps, input.root);
+  if (!here.ok) return here;
+  const record = here.value.find((candidate) => candidate.node === input.node);
+  return ok(record?.manifest.find((entry) => entry.path === input.path) ?? null);
 };
 
 /** The set that the owner accepts: the root, the node id, the path of the setup file, the files and the reason. */
