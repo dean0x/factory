@@ -1,6 +1,6 @@
 import { dirname, join, relative } from 'node:path';
 import { fileOfTarget, renamedFromOf } from '../blocks/status.js';
-import { appendBlocks, parseBlocks, renderBlock, replaceBlock, type ParsedBlock } from '../blocks/managed.js';
+import { appendBlocks, insertBlocksBefore, parseBlocks, renderBlock, replaceBlock, type ParsedBlock } from '../blocks/managed.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { GIT_ENTRY, initRootRepo } from '../core/git.js';
@@ -8,7 +8,18 @@ import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
 import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
-import { commands, commandText, dirs, files, localFileModes, program, rootRepo, stateKeys, type CommandName } from '../names.js';
+import {
+  commands,
+  commandText,
+  dirs,
+  files,
+  localFileModes,
+  program,
+  rootRepo,
+  setupBlockNames,
+  stateKeys,
+  type CommandName,
+} from '../names.js';
 import { sharedRootPaths } from '../state/files.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import type { BlockPlan, FilePlan, LocalPlan, MovePlan } from './plan.js';
@@ -31,7 +42,7 @@ const readIfFile = async (deps: Deps, path: string): Promise<CliResult<string | 
   return kind.value === 'file' ? deps.fs.readText(path) : ok(null);
 };
 
-/** The new text of a file that holds managed blocks. */
+/** The new text of a file that holds managed blocks. A block that the run adds goes before the setup block of the file. */
 const editBlockFile = (text: string, changes: readonly BlockPlan[]): CliResult<string> => {
   const parsed = parseBlocks(text);
   if (!parsed.ok) return parsed;
@@ -56,8 +67,22 @@ const editBlockFile = (text: string, changes: readonly BlockPlan[]): CliResult<s
       text,
     );
 
-  const added = changes.filter((change) => change.action === 'add').map((change) => rendered.get(change.template.name) ?? '');
-  return ok(added.length === 0 ? replaced : appendBlocks(replaced, added));
+  const added = changes.filter((change) => change.action === 'add');
+  const renderedOf = (plans: readonly BlockPlan[]): string[] => plans.map((plan) => rendered.get(plan.template.name) ?? '');
+  const isSetup = (plan: BlockPlan): boolean => setupBlockNames.includes(plan.template.name);
+  const addedRoleBlocks = renderedOf(added.filter((plan) => !isSetup(plan)));
+  const addedSetupBlocks = renderedOf(added.filter(isSetup));
+  if (added.length === 0) return ok(replaced);
+
+  // A block that is new goes before the setup block, which holds the text of the owner and comes last. A file with no setup
+  // block gets the new blocks at its end, and a setup block that this run adds comes after them.
+  const after = parseBlocks(replaced);
+  if (!after.ok) return after;
+  const setupBlock = after.value.find((block) => setupBlockNames.includes(block.name));
+  const inserted =
+    setupBlock !== undefined && addedRoleBlocks.length > 0 ? insertBlocksBefore(replaced, setupBlock, addedRoleBlocks) : replaced;
+  const appended = [...(setupBlock === undefined ? addedRoleBlocks : []), ...addedSetupBlocks];
+  return ok(appended.length === 0 ? inserted : appendBlocks(inserted, appended));
 };
 
 /**

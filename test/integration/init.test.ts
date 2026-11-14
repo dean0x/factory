@@ -587,12 +587,27 @@ describe('factory init: the home rules (built binary)', () => {
     },
   );
 
+  it('makes a node on layer 1 with the work rules block between the safety block and the setup block, and doctor accepts it', async () => {
+    const result = await box.run(initArgs([]));
+    expect(result.code).toBe(0);
+    const claude = await box.read(join(box.node, 'coordinator', 'CLAUDE.md'));
+    const begin = (name: string): number => claude.indexOf(`<!-- factory:begin ${name} v`);
+    expect(begin('work-rules')).toBeGreaterThan(begin('safety'));
+    expect(begin('setup')).toBeGreaterThan(begin('work-rules'));
+    const worker = await box.read(join(box.node, '.factory', 'roles', 'worker.md'));
+    expect(worker).not.toContain('factory:begin work-rules');
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(0);
+    expect(doctor.stdout).toContain('6 managed blocks are intact');
+  });
+
   it('makes a node on layer 2 with the manager block and a worker file, and doctor accepts it', async () => {
     const result = await box.run(initArgs(['--layer', '2']));
     expect(result.code).toBe(0);
     const claude = await box.read(join(box.node, 'coordinator', 'CLAUDE.md'));
     expect(claude).toContain('factory:begin manager');
     expect(claude).not.toContain('factory:begin coordinator');
+    expect(claude).not.toContain('factory:begin work-rules');
     const worker = await box.read(join(box.node, '.factory', 'roles', 'worker.md'));
     expect(worker).toContain('The manager is the single contact of the owner.');
     const doctor = await box.run(['doctor', '--home', box.node]);
@@ -608,6 +623,7 @@ describe('factory init: the home rules (built binary)', () => {
     expect(claude).toContain('factory:begin safety');
     expect(claude).not.toContain('factory:begin coordinator');
     expect(claude).not.toContain('factory:begin manager');
+    expect(claude).not.toContain('factory:begin work-rules');
     expect(existsSync(join(box.node, '.factory', 'roles', 'worker.md'))).toBe(true);
 
     const doctor = await box.run(['doctor', '--home', box.node]);

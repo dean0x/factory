@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { parseBlocks, sha256Hex } from '../blocks/managed.js';
-import { renamedFromOf, type BlockStatus } from '../blocks/status.js';
+import { isAddedAsNewBlock, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
@@ -135,8 +135,8 @@ export const planLocal = async (
   return access.value.kind === 'absent' ? requireInit() : planFile(deps, layout.localConfigFile, upgrade.local);
 };
 
-/** The config as it is after the migrations. A failing migration stops the upgrade here. */
-const migratedFile = (plan: FilePlan, file: UpgradeFile): CliResult<unknown> => {
+/** The value of a file as it is after the migrations. A failing migration stops the upgrade here. */
+export const migratedFile = (plan: FilePlan, file: UpgradeFile): CliResult<unknown> => {
   const migrated = plan.kind === 'migrate' ? runMigrations(plan.raw, plan.steps) : ok(plan.raw);
   return migrated.ok ? migrated : failure(`${file.spec.file}: ${migrated.error.message}`);
 };
@@ -394,14 +394,22 @@ export const planFiles = async (
   return ok({ moves, replaces });
 };
 
-export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan => {
+/**
+ * Plan one block. `recorded` says whether the node state records the block. A caller that does not read the state keeps
+ * the default, which counts every block as recorded.
+ */
+export const planBlock = (status: BlockStatus, overwrite: boolean, recorded = true): BlockPlan => {
   const { template } = status;
   switch (status.kind) {
     case 'malformed':
       return { template, status, action: 'refuse-other', from: null, reason: `${status.file}: ${status.message}` };
     case 'missing': {
       // The setup text is written to be rendered, so a block of it that is not there yet is added to a file that is there.
-      const add = overwrite || (setupBlockNames.includes(template.name) && !status.fileAbsent);
+      // A block that the state never recorded is new in this version of the package, so it is added to a file that is there too.
+      // The safety block is not added this way: only the owner adds it, outside a session.
+      // A block that the state records, and that the file lacks, was removed by the owner: only a person who names it adds it.
+      const setupAdds = setupBlockNames.includes(template.name) && !status.fileAbsent;
+      const add = overwrite || setupAdds || isAddedAsNewBlock(status, recorded);
       return { template, status, action: add ? 'add' : 'skip-missing', from: null };
     }
     case 'intact':

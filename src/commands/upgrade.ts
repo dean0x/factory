@@ -1,5 +1,12 @@
 import { join, relative } from 'node:path';
-import { fileOfTarget, inspectBlocks, renamedFromOf, type BlockStatus } from '../blocks/status.js';
+import {
+  fileOfTarget,
+  inspectBlocks,
+  isBlockRecorded,
+  recordedBlockNames,
+  renamedFromOf,
+  type BlockStatus,
+} from '../blocks/status.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { printable, type CommandOutput, type OutLine } from '../cli/output.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
@@ -64,6 +71,7 @@ import {
 } from '../upgrade/apply.js';
 import {
   isChange,
+  migratedFile,
   planBlock,
   planBlockSet,
   planBoardQueueKey,
@@ -84,6 +92,7 @@ import {
 } from '../upgrade/plan.js';
 import { applyHookSettings, hookPlanLines, planHookSettings } from '../upgrade/hook-settings.js';
 import { specFor, type UpgradeSpec } from '../upgrade/spec.js';
+import { roleTextSizeWarning } from '../workers/role-text.js';
 import { acceptReason, checkRootSetup, settleSetup } from './setup-check.js';
 
 export interface UpgradeOptions {
@@ -343,8 +352,14 @@ export const runUpgrade = async (
   const named = (status: BlockStatus): boolean =>
     options.overwrite.some((name) => name === status.template.name || name === renamedFromOf(status));
   const pending = { moves: files.moves, renames };
+  // The state decides which missing block is new and which one the owner removed. A state that fails to migrate stops the
+  // run later, when its text is made, so here it only leaves the record unknown.
+  const migratedState = migratedFile(state.value, upgrade.state);
+  const recorded = migratedState.ok ? recordedBlockNames(migratedState.value, renames) : null;
   const blocks = settleSetupBlocks(
-    (await inspectBlocks(deps, home, blockSet.value.templates, pending)).map((status) => planBlock(status, named(status))),
+    (await inspectBlocks(deps, home, blockSet.value.templates, pending)).map((status) =>
+      planBlock(status, named(status), isBlockRecorded(recorded, status.template.name)),
+    ),
   );
 
   const refused = refusalOf(blocks);
@@ -384,11 +399,16 @@ export const runUpgrade = async (
   const localText = localFileText(config.value, local.value, upgrade);
   if (!localText.ok) return localText;
 
+  // A role text above the cap is a warning only: the run writes its files, and a worker refuses the text until it is shorter.
+  const roleSizeWarning = roleTextSizeWarning(blockSet.value.templates, commandText(commands.upgrade));
+  const roleSizeWarnings = roleSizeWarning === null ? [] : [roleSizeWarning];
+
   const lines: OutLine[] = [
     ...planLines(config.value, local.value, state.value, files, stateGitignore.value, boardKey.value, guard.value, root.value, blocks, upgrade),
     ...resumeLines(changes),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
     ...setup.value.warnings.map((text): OutLine => ({ level: 'warn', text })),
+    ...roleSizeWarnings.map((text): OutLine => ({ level: 'warn', text })),
   ];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
   const summary = {

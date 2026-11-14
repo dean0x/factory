@@ -1,6 +1,7 @@
 import type { Deps } from '../core/deps.js';
 import type { BlockRename } from '../migrate/files.js';
-import { blockNames } from '../names.js';
+import { isRecord } from '../migrate/inspect.js';
+import { blockNames, stateKeys } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import type { BlockTemplate, BlockTarget } from '../templates/types.js';
 import { parseBlocks, verifyBlock, type ParsedBlock } from './managed.js';
@@ -36,6 +37,31 @@ export const NO_PENDING_FILES: PendingFiles = { moves: [], renames: [] };
 /** The old name of a block that the file holds under it, or undefined. */
 export const renamedFromOf = (status: BlockStatus): string | undefined =>
   status.kind === 'intact' || status.kind === 'edited' ? status.renamedFrom : undefined;
+
+/**
+ * The names of the blocks that the node state records, or null when the state holds no usable map of them. A block counts
+ * as recorded when its own name is in the map, or when the map holds a name that the block replaced (`renames`). A caller
+ * that gets null counts every block as recorded.
+ */
+export const recordedBlockNames = (raw: unknown, renames: readonly BlockRename[]): ReadonlySet<string> | null => {
+  if (!isRecord(raw)) return null;
+  const blocks = raw[stateKeys.blocks];
+  if (!isRecord(blocks)) return null;
+  const own = Object.keys(blocks);
+  return new Set([...own, ...renames.filter((rename) => own.includes(rename.from)).map((rename) => rename.to)]);
+};
+
+/** True when the node state records the block, or when it is not known which blocks it records. */
+export const isBlockRecorded = (recorded: ReadonlySet<string> | null, name: string): boolean =>
+  recorded === null || recorded.has(name);
+
+/**
+ * True when a plain `upgrade` adds the block, because the node state never recorded it: the block is missing from a
+ * file that is there, so it is new in this version of the package. A setup block has its own rule, which a caller applies
+ * first. The safety block is never one: only the owner adds it, with `--overwrite`, outside a session.
+ */
+export const isAddedAsNewBlock = (status: BlockStatus, recorded: boolean): boolean =>
+  status.kind === 'missing' && !status.fileAbsent && !recorded && status.template.name !== blockNames.safety;
 
 /**
  * What the safety block is, against the text that the package renders for the node. Only an equal block needs no action.

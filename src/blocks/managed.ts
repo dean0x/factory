@@ -117,6 +117,18 @@ export const linesOutsideBlocks = (text: string, blocks: readonly ParsedBlock[])
     .filter((line) => line !== '');
 };
 
+/** The line breaks that `head` needs at its end, so that a blank line keeps it apart from a block after it. */
+const gapAfter = (head: string): string => {
+  if (head.trim() === '' || head.endsWith('\n\n')) return '';
+  return head.endsWith('\n') ? '\n' : '\n\n';
+};
+
+/** Add rendered blocks before `block`. The text around them stays as it is, and a blank line keeps them apart. */
+export const insertBlocksBefore = (text: string, block: ParsedBlock, rendered: readonly string[]): string => {
+  const head = text.slice(0, block.start);
+  return `${head}${gapAfter(head)}${rendered.join('\n\n')}\n\n${text.slice(block.start)}`;
+};
+
 /** Add rendered blocks at the end of the text. The text before them stays as it is. */
 export const appendBlocks = (text: string, rendered: readonly string[]): string => {
   const joined = rendered.join('\n\n');
