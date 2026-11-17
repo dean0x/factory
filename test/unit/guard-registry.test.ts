@@ -119,9 +119,9 @@ describe('the guards of a recipe', () => {
     expect(idsOf(software.guards).filter((id) => taken.has(id))).toEqual([]);
   });
 
-  it('leaves every core and software guard unwired until its text can follow a value', () => {
-    for (const guard of [...software.guards, ...guardsFor(publishRecipe)]) {
-      expect(guard.wired, guard.id).toBe(false);
+  it('wires only the install guard when its text can follow a value', () => {
+    for (const guards of [software.guards, guardsFor(publishRecipe)]) {
+      expect(guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([guardIds.installRules]);
     }
   });
 

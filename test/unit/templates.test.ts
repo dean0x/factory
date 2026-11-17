@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
 import { isSlug } from '../../src/config/primitives.js';
 import { effectiveModes, recordDelegation } from '../../src/core/owner-record.js';
+import { allOn } from '../../src/guards/effective.js';
+import type { GuardValues } from '../../src/guards/types.js';
 import {
   boardKeys,
   commandLines,
@@ -13,6 +16,8 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
+  guardValues,
   keys,
   lessonLimits,
   messageHeader,
@@ -27,6 +32,7 @@ import {
 } from '../../src/names.js';
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { softwareStages } from '../../src/recipes/software/board.js';
+import { WORKER_LINES } from '../../src/recipes/software/roles/worker.js';
 import { prCommands, prFlags, standingRoutines } from '../../src/recipes/software/words.js';
 import {
   blockInputOf,
@@ -35,8 +41,9 @@ import {
   roleBlockRenames,
   workerFileTemplatesFor,
 } from '../../src/templates/index.js';
-import { coordinatorValuesFor, fillTemplate, workerValuesFor } from '../../src/templates/fill.js';
-import type { BlockTemplate } from '../../src/templates/types.js';
+import { coordinatorValuesFor, fillTemplate, linesFor, workerValuesFor, type TextPart } from '../../src/templates/fill.js';
+import type { BlockInput, BlockTemplate } from '../../src/templates/types.js';
+import { WORK_RULES_LINES } from '../../src/templates/work-rules.js';
 import {
   allBlocks,
   blockInput,
@@ -62,6 +69,141 @@ const texts: readonly (readonly [string, string])[] = [
   ...delegatedBlocks.map((template) => [`block ${template.name} with delegated points`, template.body] as const),
   ...Object.entries(fileTemplates).map(([name, text]) => [`file ${name}`, text] as const),
 ];
+
+describe('guarded text parts', () => {
+  const group: TextPart = { guards: ['first', 'second'], lines: ['group line', ''] };
+  const parts: readonly TextPart[] = ['# Heading', { guards: [], lines: ['always'] }, group, 'last'];
+
+  it.each<readonly [string, GuardValues, readonly string[]]>([
+    ['all on', { first: 'on', second: 'on' }, ['group line', '']],
+    ['one on', { first: 'off', second: 'on' }, ['group line', '']],
+    ['absent id', { first: 'off' }, ['group line', '']],
+    ['all absent', allOn, ['group line', '']],
+    ['all off', { first: 'off', second: 'off' }, []],
+  ])('keeps unguarded lines and selects a group with %s', (_label, guards, selected) => {
+    expect(linesFor(parts, guards)).toEqual(['# Heading', 'always', ...selected, 'last']);
+  });
+});
+
+const textGuardIds = ['approval-merge', 'approval-release', guardIds.resumeRoutines, guardIds.installRules] as const;
+const guardRenderSets: readonly (readonly [string, GuardValues])[] = [
+  ['all on', allOn],
+  ['all off', Object.fromEntries(textGuardIds.map((id) => [id, guardValues.off]))],
+  ...textGuardIds.flatMap((selected) => [
+    [
+      `${selected} off alone`,
+      Object.fromEntries(textGuardIds.map((id) => [id, id === selected ? guardValues.off : guardValues.on])),
+    ] as const,
+    [
+      `${selected} on alone`,
+      Object.fromEntries(textGuardIds.map((id) => [id, id === selected ? guardValues.on : guardValues.off])),
+    ] as const,
+  ]),
+];
+const withGuards = (layer: number, guards: GuardValues): BlockInput => blockInput(layer, { guards });
+
+const withoutInstallLine = (body: string): string =>
+  body
+    .split('\n')
+    .filter((line) => !line.startsWith('- Do not install outside'))
+    .join('\n');
+
+describe.each([1, 2])('guard values in layer %i templates', (layer) => {
+  it.each(guardRenderSets)('changes only the install line for %s', (_label, guards) => {
+    const baseline = blockTemplatesFor(blockInput(layer));
+    const expected = baseline.map((block) => ({
+      ...block,
+      body: guards[guardIds.installRules] === guardValues.off ? withoutInstallLine(block.body) : block.body,
+    }));
+    expect(blockTemplatesFor(withGuards(layer, guards))).toEqual(expected);
+  });
+});
+
+it('keeps the base text and block versions when every guard is on', () => {
+  expect(
+    [1, 2].map((layer) =>
+      blockTemplatesFor(withGuards(layer, allOn)).map(({ name, version, target, body }) => ({
+        name,
+        version,
+        target,
+        hash: createHash('sha256').update(body).digest('hex'),
+      })),
+    ),
+  ).toMatchInlineSnapshot(`
+    [
+      [
+        {
+          "hash": "298a69630a73a6d7120827ca6dda887658b5f96afddd131530ff47a4e8705114",
+          "name": "coordinator",
+          "target": "claudeFile",
+          "version": 6,
+        },
+        {
+          "hash": "03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41",
+          "name": "safety",
+          "target": "claudeFile",
+          "version": 2,
+        },
+        {
+          "hash": "3eeed8b66b1b2fa0d093e01fb1cfc7acf24cd1cc1357adad2ae141666fe30261",
+          "name": "work-rules",
+          "target": "claudeFile",
+          "version": 1,
+        },
+        {
+          "hash": "efd421639502a2c494bf8f5a4b40adb739b7a20517b3446845d0184c198c78cf",
+          "name": "worker",
+          "target": "workerFile",
+          "version": 5,
+        },
+      ],
+      [
+        {
+          "hash": "c7c524b8baf3459ac3610e338354e1d45bcdc055f65a9e6e325060bc17772bf7",
+          "name": "manager",
+          "target": "claudeFile",
+          "version": 3,
+        },
+        {
+          "hash": "03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41",
+          "name": "safety",
+          "target": "claudeFile",
+          "version": 2,
+        },
+        {
+          "hash": "55d529e35e679f212fe67dc5b934b9c938b74130ff07f6c13ae88ecf1b6f0214",
+          "name": "worker",
+          "target": "workerFile",
+          "version": 5,
+        },
+      ],
+    ]
+  `);
+});
+
+it('keeps the exported all-on lines for the worker and work rules', () => {
+  const templates = blockTemplatesFor(withGuards(1, allOn));
+  expect(templates.find((block) => block.name === 'worker')?.body).toBe(
+    fillTemplate(WORKER_LINES, workerValuesFor(blockInput(0))),
+  );
+  expect(templates.find((block) => block.name === 'work-rules')?.body).toBe(
+    fillTemplate(WORK_RULES_LINES, coordinatorValuesFor(blockInput(1))),
+  );
+});
+
+it('passes guard values through the config block input', () => {
+  const guards: GuardValues = { [guardIds.installRules]: guardValues.off };
+  const input = blockInputOf(sampleConfig(), { coordinator: null, worker: null }, softwareOwnerModes, guards);
+  expect(input.guards).toBe(guards);
+  expect(blockTemplatesFor(input).find((block) => block.name === 'work-rules')?.body).not.toContain('- Do not install outside');
+});
+
+it('passes guard values through the worker file templates and keeps the setup text', () => {
+  const templates = workerFileTemplatesFor(sampleConfig(), 'Setup text.', { [guardIds.installRules]: guardValues.off });
+  expect(templates.map((block) => block.name)).toEqual(['worker', 'setup-worker']);
+  expect(templates[0]?.body).not.toContain('- Do not install outside');
+  expect(templates[1]?.body).toBe('Setup text.');
+});
 
 const MAX_WORDS_PER_SENTENCE = 25;
 
@@ -1385,6 +1527,7 @@ describe('what the blocks depend on, from the config (blockInputOf)', () => {
       layer: 2,
       nodeId: config.core.node.id,
       modes: softwareOwnerModes,
+      guards: allOn,
       ownerPrefix: config.core.owner.prefix,
       limits: { contextPreparePct: 20, contextMaxPct: 35 },
       setup: { coordinator: 'A.\n', worker: null },

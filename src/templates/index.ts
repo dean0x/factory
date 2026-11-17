@@ -1,14 +1,16 @@
 import { COORDINATOR_LAYER, WORKER_LAYER, type FactoryConfig } from '../config/schema.js';
+import { allOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import type { BlockRename } from '../migrate/files.js';
 import { blockNames } from '../names.js';
 import { approvalLines, ownerModes, type ApprovalModes, type RecipeEntry } from '../recipes/index.js';
 import { PROFILE_INDEX_LINES, PROFILE_README_LINES } from './decision-profile.js';
-import { coordinatorValuesFor, fillTemplate } from './fill.js';
+import { coordinatorValuesFor, fillTemplate, linesFor } from './fill.js';
 import { ROADMAPS_README_LINES } from './roadmaps.js';
 import { safetyLines } from './safety.js';
 import { SETUP_COORDINATOR_LINES, SETUP_WORKER_LINES } from './setup.js';
 import type { BlockInput, BlockTemplate, SetupTexts } from './types.js';
-import { WORK_RULES_LINES } from './work-rules.js';
+import { WORK_RULES_PARTS } from './work-rules.js';
 
 /**
  * The safety block belongs to the core. Every role gets it. Its approval point lines follow the modes, the recipe adds
@@ -29,17 +31,20 @@ const workRulesFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.workRules,
   version: 1,
   target: 'claudeFile',
-  body: fillTemplate(WORK_RULES_LINES, coordinatorValuesFor(input)),
+  body: fillTemplate(linesFor(WORK_RULES_PARTS, input.guards), coordinatorValuesFor(input)),
 });
 
 const NO_SETUP: SetupTexts = { coordinator: null, worker: null };
 
 /**
- * The safety block as this package renders it for the config and the effective modes. The setup texts do not change it,
+ * The safety block as this package renders it for the config, effective modes and guard values. The setup texts do not change it,
  * so a caller that checks the safety block alone needs none.
  */
-export const safetyTemplateFor = (config: FactoryConfig, modes: ApprovalModes): BlockTemplate =>
-  safetyFor(blockInputOf(config, NO_SETUP, modes));
+export const safetyTemplateFor = (
+  config: FactoryConfig,
+  modes: ApprovalModes,
+  guards: GuardValues = allOn,
+): BlockTemplate => safetyFor(blockInputOf(config, NO_SETUP, modes, guards));
 
 /** The block of a setup text, or none when the text is absent or empty. The body is the text as it is. */
 const setupBlock = (name: string, target: BlockTemplate['target'], text: string | null): readonly BlockTemplate[] =>
@@ -76,20 +81,30 @@ export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] =
  * worker block, then the setup worker block when the text is not absent. No text of the worker file follows the approval
  * modes, so the function applies the modes of the owner and a caller reads no mode.
  */
-export const workerFileTemplatesFor = (config: FactoryConfig, setupWorker: string | null): readonly BlockTemplate[] =>
+export const workerFileTemplatesFor = (
+  config: FactoryConfig,
+  setupWorker: string | null,
+  guards: GuardValues = allOn,
+): readonly BlockTemplate[] =>
   blockTemplatesFor(
-    blockInputOf(config, { coordinator: null, worker: setupWorker }, ownerModes(config.entry.approvalPoints)),
+    blockInputOf(config, { coordinator: null, worker: setupWorker }, ownerModes(config.entry.approvalPoints), guards),
   ).filter((template) => template.target === 'workerFile');
 
 /**
- * What the blocks of a node depend on, from its config, its setup texts and the effective mode of each approval point.
+ * What the blocks of a node depend on: its config, setup texts, effective approval modes and effective guard values.
  * The text names the proof of a point only when its effective mode is `delegated`.
  */
-export const blockInputOf = (config: FactoryConfig, setup: SetupTexts, modes: ApprovalModes): BlockInput => ({
+export const blockInputOf = (
+  config: FactoryConfig,
+  setup: SetupTexts,
+  modes: ApprovalModes,
+  guards: GuardValues = allOn,
+): BlockInput => ({
   recipe: config.entry,
   layer: config.core.node.layer,
   nodeId: config.core.node.id,
   modes,
+  guards,
   ownerPrefix: config.core.owner.prefix,
   limits: {
     contextPreparePct: config.core.limits.context_prepare_pct,

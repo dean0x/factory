@@ -1,6 +1,6 @@
 import { guardIds, guardKeys, guardKinds, keys, places, roles } from '../names.js';
 import type { RecipeEntry } from '../recipes/entry.js';
-import { guardOf } from './build.js';
+import { guardOf, wiredGuard } from './build.js';
 import { coreGuardRows } from './core-rows.js';
 import type { Guard, GuardDefinition, GuardRow, RowSite } from './types.js';
 
@@ -162,10 +162,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'Work conduct',
     'Sessions follow the rules of conduct for commands, refusals and reports.',
   ),
-  guardOf(
-    guardIds.installRules,
-    'Install rules',
-    `A session installs nothing outside its own folder without a go of the ${owner}.`,
+  wiredGuard(
+    guardOf(
+      guardIds.installRules,
+      'Install rules',
+      `A session installs nothing outside its own folder without a go of the ${owner}.`,
+    ),
   ),
 ];
 

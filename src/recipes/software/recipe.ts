@@ -1,11 +1,11 @@
 import { blockNames, layers } from '../../names.js';
-import { coordinatorValuesFor, fillTemplate, workerValuesFor } from '../../templates/fill.js';
+import { coordinatorValuesFor, fillTemplate, linesFor, workerValuesFor } from '../../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../../templates/types.js';
 import { approvalLines, type RecipeRoles } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
 import { coordinatorLines } from './roles/coordinator.js';
 import { MANAGER_LINES } from './roles/manager.js';
-import { WORKER_LINES } from './roles/worker.js';
+import { WORKER_PARTS } from './roles/worker.js';
 
 type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeof blockNames.manager;
 
@@ -18,7 +18,7 @@ const workerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.worker,
   version: 5,
   target: 'workerFile',
-  body: fillTemplate(WORKER_LINES, workerValuesFor(input)),
+  body: fillTemplate(linesFor(WORKER_PARTS, input.guards), workerValuesFor(input)),
 });
 
 /** The manager block lives in the coordinator folder, so its paths are written from that folder. */
