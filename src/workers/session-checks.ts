@@ -119,7 +119,7 @@ export interface SettingsAgeRequest extends SettingsRequest {
   readonly start: number;
 }
 
-/** The checked parts of the hook settings file of a session folder: the `.claude` folder, then the file. */
+/** Check the session folder, its `.claude` folder and the hook settings file, in that order. Do not check parent folders. */
 const settingsPartsOf = (folder: string): { readonly folders: readonly NamedPath[]; readonly file: NamedPath } => {
   const place = hookSettingsPlaceOf(folder);
   return {
@@ -130,7 +130,8 @@ const settingsPartsOf = (folder: string): { readonly folders: readonly NamedPath
 
 /**
  * The hook events that lack the own command and the idle value of a parsed settings file. An absent file has no own hook.
- * A file that does not parse, exceeds the limit or has the wrong kind has its own state. A link stops the read.
+ * A file that does not parse, exceeds the limit or has the wrong kind has its own state.
+ * A link at the session folder, its `.claude` folder or the file stops the read. Parent folders are not checked.
  */
 export type HookSettingsRead =
   | {
@@ -141,18 +142,19 @@ export type HookSettingsRead =
       readonly hasOwnHook: boolean;
     }
   | { readonly state: 'not-parsed'; readonly file: string }
-  | { readonly state: 'link'; readonly file: string; readonly reason: string };
+  | { readonly state: 'link'; readonly file: string; readonly reason: string; readonly part: 'file' | 'folder' };
 
 /**
  * Read the hook settings file of the session folder and name the events that lack the own command, with the own matcher where an
- * event needs one (`missingHookEvents`). A link in the path is never followed. The read changes nothing.
+ * event needs one (`missingHookEvents`). Refuse a link at the session folder, its `.claude` folder or the file.
+ * Parent folders are not checked. The read changes nothing.
  */
 export const readHookSettings = async (deps: Deps, folder: string): Promise<CliResult<HookSettingsRead>> => {
   const { folders, file } = settingsPartsOf(folder);
   const read = await readCheckedFile(deps, folders, file, maxFileBytes);
   if (!read.ok) return read;
   const found = read.value;
-  if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason });
+  if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason, part: found.part });
   if (found.state === 'invalid') return ok({ state: 'not-parsed', file: file.path });
   if (found.state === 'absent') {
     return ok({ state: 'plain', file: file.path, missing: hookNames.events, idleCompaction: null, hasOwnHook: false });
@@ -183,10 +185,9 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Pro
   if (!settings.ok) return settings;
   const found = settings.value;
   if (found.state === 'link') {
-    const kind = found.reason === 'the hook settings file is a link' ? 'file' : 'folder';
     return safetyRefusal(
       `cannot use ${found.file}: ${found.reason}`,
-      `Replace the link with a plain ${kind}. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
+      `Replace the link with a plain ${found.part}. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
     );
   }
   const missing = found.state === 'not-parsed' ? hookNames.events : found.missing;

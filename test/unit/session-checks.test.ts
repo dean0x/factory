@@ -363,7 +363,7 @@ describe('the hook settings of a session folder', () => {
     const deps = make({ links: { [path]: '/elsewhere/settings' } });
     deps.seed(FILE, JSON.stringify(ownSettingsEntries));
     const readHookDeps = { ...deps, fs: { ...deps.fs, readTextLimited: async () => failure('unexpected read') } };
-    expect(valueOf(await readHookSettings(readHookDeps, FOLDER))).toMatchObject({ state: 'link' });
+    expect(valueOf(await readHookSettings(readHookDeps, FOLDER))).toMatchObject({ state: 'link', part: kind });
     const refusal = errorOf(await requireOwnHooks(readHookDeps, request));
     expect(exitCodeOf[refusal.kind]).toBe(4);
     expect(refusal.hint).toBe(`Replace the link with a plain ${kind}. Run "factory upgrade", then "factory restart alpha".`);

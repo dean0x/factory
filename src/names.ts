@@ -2163,8 +2163,8 @@ export const roleText = {
     /** A work copy whose hook settings lack the own hook of these events: the launch of the worker refuses the same work copy. */
     gap: (id: string, events: readonly HookEvent[]): string =>
       `${id}: the hook settings of the work copy lack the hook of these events: ${events.join(', ')}. The worker does not start until they are in place.`,
-    /** A work copy whose hook settings file is a link: the check reads nothing through it. */
-    linkGap: (id: string): string => `${id}: the hook settings file of the work copy is a link, and the check does not read it.`,
+    /** A work copy with a link at the session folder, its `.claude` folder or the hook settings file. */
+    linkGap: (id: string, part: 'file' | 'folder'): string => `${id}: the hook settings ${part} of the work copy is a link, and the check does not read it.`,
     /** A work copy whose hook settings the check cannot read. `reason` is the read fault. */
     unreadGap: (id: string, reason: string): string => `${id}: the hook settings of the work copy are not checked (${reason}).`,
     remedies: {
@@ -2173,7 +2173,7 @@ export const roleText = {
       /** No own hook is there: `upgrade` leaves such a work copy as it is, so only a new worker asks for the hook settings. */
       recreate: (dismiss: string, create: string): string =>
         `Run "${dismiss}", then "${create}", and answer yes to the question about the hook settings.`,
-      link: (id: string, resume: string): string => `Replace the hook settings file of ${id} with a plain file. ${upgradeThen(resume)}`,
+      link: (id: string, resume: string, part: 'file' | 'folder'): string => `Replace the hook settings ${part} of ${id} with a plain ${part}. ${upgradeThen(resume)}`,
       unread: (id: string): string => `Make the hook settings of ${id} readable, then run "${commandText(commands.doctor)}" again.`,
     },
   },
