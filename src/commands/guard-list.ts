@@ -32,6 +32,7 @@ const valueOf = (guard: Guard, loaded: boolean): ListedGuard => ({
 });
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
+const fail = (line: string): OutLine => ({ level: 'fail', text: line });
 const cleanCells = (cells: readonly string[]): readonly string[] => cells.map((cell) => displayLine(cell));
 
 const guardCells = (guard: ListedGuard): readonly string[] => cleanCells([
@@ -88,9 +89,12 @@ export const runGuardList = async (
   if (family !== undefined && !guards.some((guard) => guard.id === family)) {
     return usageError(guardListWords.unknownFamily(displayLine(family)));
   }
-  const errors = loaded.ok ? [] : [text(renderError(loaded.error).split('\n')[0] ?? '')];
+  const errors = loaded.ok ? [] : [fail(renderError(loaded.error).split('\n')[0] ?? '')];
   const cap = options.all ? undefined : maxGuardListLines - errors.length;
   const off = guards.filter((guard) => guard.value === guardValues.off);
+  const countLine = loaded.ok
+    ? guardListWords.countLine(off.length, guards.length, off.filter((guard) => guard.harm).length)
+    : guardListWords.unknownCountLine(guards.length);
   const table = family === undefined
     ? [...guards].sort(orderOf).map(guardCells)
     : rows.filter((row) => row.guard === family).map(rowCells);
@@ -101,11 +105,12 @@ export const runGuardList = async (
       ...errors,
       ...tableLines(cleanCells(Object.values(columns)), shown),
       ...(shown.length < table.length ? [text(guardListWords.moreLine(table.length - shown.length))] : []),
-      ...(family === undefined ? [text(guardListWords.countLine(off.length, guards.length, off.filter((guard) => guard.harm).length))] : []),
+      ...(family === undefined ? [text(countLine)] : []),
     ],
     json: {
       schema: schemaIds.guardList,
       home,
+      error: loaded.ok ? null : loaded.error,
       guards,
       rows,
       unmatched: [],

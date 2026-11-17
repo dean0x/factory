@@ -2354,6 +2354,8 @@ export const guardListWords = {
   moreLine: (count: number): string => `and ${count} more: run with ${flagText(flags.all)} or ${flagText(flags.json)}`,
   countLine: (off: number, total: number, harm: number): string =>
     `${off} of ${total} guards are off. ${harm} of them have the mark ${harmMark}.`,
+  unknownCountLine: (total: number): string =>
+    `The off count is unknown for ${total} guards. The off count with the mark ${harmMark} is unknown.`,
 } as const;
 
 /**

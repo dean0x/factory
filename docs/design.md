@@ -1294,7 +1294,7 @@ In this version, every guard is `on`, on new nodes and existing nodes. No guard 
 
 The default table has the columns `GUARD`, `VALUE`, `DEFAULT`, `H` and `SET IN`. `DEFAULT` is the value for a new node. `SET IN` names the place of the current value. In this version, `VALUE` and `DEFAULT` are `on`, and `SET IN` is `no key`.
 
-The default view has at most 20 lines, with at most 17 guard lines. A more line gives the count of guards that do not fit. The last line counts all guards, the guards that are off, and those off guards that have `H`.
+The default view has at most 20 lines, with at most 17 guard lines. A more line gives the count of guards that do not fit. The last line counts all guards, the guards that are off, and those off guards that have `H`. If the config does not load, the last line states that both off counts are unknown.
 
 | Flag | What it does |
 |---|---|
@@ -1302,6 +1302,8 @@ The default view has at most 20 lines, with at most 17 guard lines. A more line 
 | `--family NAME` | Show the rows of the guard with this id, with columns `ROW`, `KIND`, `H` and `KEEPS SAFE`. |
 | `--json` | Print every guard and every row under schema id `factory.guard-list/v1`, with no table cap. |
 | `--home DIR` | Read the node in this factory folder. |
+
+The JSON `error` field is `null` when the config loads; otherwise, it holds the load error.
 
 The common flags `--quiet` and `--no-color` also apply. An unknown family exits with code 2. When the config loads, the list exits with code 0. When the config does not load, the first line shows the load error, and the guard values show `unknown`. The list then exits with the code of the load error.
 

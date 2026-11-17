@@ -5,9 +5,9 @@ import { loadConfig } from '../../src/config/load.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { guardRowsFor, guardsFor } from '../../src/guards/registry.js';
 import { dirs, files, guardIds, guardListWords, schemaIds } from '../../src/names.js';
-import { recipes, type RecipeRegistry } from '../../src/recipes/index.js';
+import { recipes, type RecipeEntry, type RecipeRegistry } from '../../src/recipes/index.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
-import { publishRecipe, publishRegistry, twoRecipeRegistry } from '../helpers/publish-recipe.js';
+import { publishRecipe, twoRecipeRegistry } from '../helpers/publish-recipe.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
@@ -73,6 +73,32 @@ describe('guard list', () => {
     expect(lines.at(-1)).toBe(guardListWords.countLine(0, guardsFor(recipes[0]).length, 0));
   });
 
+  it('shows marked off guards, unmarked off guards and on guards in that order, with their counts', async () => {
+    const recipe: RecipeEntry = {
+      ...publishRecipe,
+      guards: [
+        { id: 'unmarked-off', name: 'Unmarked', keepsSafe: 'Sample data stays safe.', newNode: 'on', whenMissing: 'off', related: [] },
+        { id: 'sample-on', name: 'On', keepsSafe: 'Sample data stays safe.', newNode: 'on', whenMissing: 'on', related: [] },
+        { id: 'marked-off', name: 'Marked', keepsSafe: 'Sample data stays private.', newNode: 'on', whenMissing: 'off', related: [] },
+      ],
+      guardRows: [
+        { id: 'unmarked-row', guard: 'unmarked-off', name: 'Sample data stays safe.', applies: 'Sample', kind: 'text', harm: false, sites: [] },
+        { id: 'on-row', guard: 'sample-on', name: 'Sample data stays safe.', applies: 'Sample', kind: 'text', harm: false, sites: [] },
+        { id: 'marked-row', guard: 'marked-off', name: 'Sample data stays private.', applies: 'Sample', kind: 'text', harm: true, sites: [] },
+      ],
+    };
+    const result = await run(make(publishingConfig()), ['--all'], [recipe]);
+    const lines = linesOf(result.out);
+    expect(result.code).toBe(0);
+    expect(lines.slice(1, -1).map((line) => rowCells(lines[0] ?? '', line))).toEqual([
+      ['marked-off', 'off', 'on', 'H', 'no key'],
+      ['unmarked-off', 'off', 'on', '', 'no key'],
+      ...guardsFor(publishRecipe).map((guard) => [guard.id, 'on', guard.newNode, guard.harm ? 'H' : '', 'no key']),
+      ['sample-on', 'on', 'on', '', 'no key'],
+    ]);
+    expect(lines.at(-1)).toBe(guardListWords.countLine(2, 31, 1));
+  });
+
   it('takes the guards and the count from the recipe of the config', async () => {
     const result = await run(make(publishingConfig()), ['--all'], twoRecipeRegistry);
     expect(result.code).toBe(0);
@@ -88,6 +114,7 @@ describe('guard list', () => {
     expect(doc).toEqual({
       schema: schemaIds.guardList,
       home: HOME,
+      error: null,
       guards: guardsFor(recipes[0]).map((guard) => ({ ...guard, value: 'on', source: 'missing', since: null })),
       rows: guardRowsFor(recipes[0]),
       unmatched: [],
@@ -169,10 +196,57 @@ describe('guard list', () => {
     expect(result?.code).toBe(1);
   });
 
-  it('uses the default recipe when the config does not name one', async () => {
+  it('shows the load error with quiet', async () => {
     const deps = make();
-    deps.seed(`${HOME}/${files.config}`, 'schema: [');
-    const result = await run(deps, ['--all', '--json'], publishRegistry);
+    deps.seed(`${HOME}/${files.localConfig}`, 'schema: [');
+    const loaded = await loadConfig(deps, HOME, recipes);
+    expect(loaded.ok).toBe(false);
+    if (loaded.ok) return;
+    const result = await run(deps, ['--quiet']);
+    expect(result.code).toBe(1);
+    expect(result.out).toBe(`[FAIL] error: ${loaded.error.message}\n`);
+  });
+
+  it('gives the exact load error in JSON', async () => {
+    const deps = make();
+    deps.seed(`${HOME}/${files.localConfig}`, 'schema: [');
+    const loaded = await loadConfig(deps, HOME, recipes);
+    expect(loaded.ok).toBe(false);
+    if (loaded.ok) return;
+    const result = await run(deps, ['--json']);
+    expect(result.code).toBe(1);
+    expect(result.err).toBe('');
+    const doc: unknown = JSON.parse(result.out);
+    expect(doc).toEqual({
+      schema: schemaIds.guardList,
+      home: HOME,
+      error: loaded.error,
+      guards: guardsFor(recipes[0]).map((guard) => ({ ...guard, value: 'unknown', source: 'missing', since: null })),
+      rows: guardRowsFor(recipes[0]),
+      unmatched: [],
+      loosened: [],
+    });
+  });
+
+  it('shows an unknown off count when the config does not load', async () => {
+    const deps = make();
+    deps.seed(`${HOME}/${files.localConfig}`, 'schema: [');
+    const result = await run(deps);
+    expect(result.code).toBe(1);
+    expect(linesOf(result.out).at(-1)).toBe('The off count is unknown for 31 guards. The off count with the mark H is unknown.');
+  });
+
+  it.each([
+    ['the config does not parse', 'schema: ['],
+    ['the config is not an object', '- sample\n'],
+    ['the config has no recipe', 'schema: 2\n'],
+    ['the recipe is not an object', 'schema: 2\nrecipe: plain\n'],
+    ['the recipe id is not a string', 'schema: 2\nrecipe: {id: 42}\n'],
+    ['the recipe id is unknown', 'schema: 2\nrecipe: {id: unknown-recipe}\n'],
+  ])('uses the first recipe when %s', async (_name, config) => {
+    const deps = make();
+    deps.seed(`${HOME}/${files.config}`, config);
+    const result = await run(deps, ['--all', '--json'], [publishRecipe, ...recipes]);
     expect(result.code).toBe(1);
     const doc: unknown = JSON.parse(result.out);
     expect(doc).toMatchObject({
