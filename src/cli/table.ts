@@ -1,6 +1,7 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { boardWorkItems } from '../board/work-items.js';
 import { boardDecisionLog } from '../commands/board-open.js';
+import { runBoard } from '../commands/board.js';
 import { runDecide } from '../commands/decide.js';
 import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
@@ -28,6 +29,7 @@ import { ok } from '../core/result.js';
 import {
   assignmentSource,
   boardTextLimits,
+  boardWords,
   commandLines,
   commands,
   commandText,
@@ -493,6 +495,16 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
     usage: `${commandText(commands.machine)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
     run: (given, deps) => runMachine(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.board,
+    summary: boardWords.summary,
+    usage: `${commandText(commands.board)} [${flagText(flags.home)} DIR] [${flagText(flags.width)} N]`,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.width]: { type: 'string', placeholder: 'N', description: boardWords.widthDescription },
+    },
+    run: (given, deps) => runBoard(deps, { home: given.string(flags.home), width: given.string(flags.width), json: given.bool(flags.json) }, registry, boardWorkItems(registry)),
   },
   {
     name: commands.upgrade,

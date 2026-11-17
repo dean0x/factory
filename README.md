@@ -53,6 +53,7 @@ You need:
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. `queue set` takes `--release-group TEXT`, and `queue show` lists the rows under one heading for each group. See "Use the local board". |
 | `factory doctor` | Run 31 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
+| `factory board [--home DIR] [--width N] [--json]` | Show requests, workers, open items, the queue and machine facts. Text width is 40 to 120 characters, with 120 as the default. `--json` prints `factory.board/v1` and ignores width. A section that cannot be read is `null`, with its reason in `faults`. Other sections remain visible. It changes nothing. |
 | `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
 | `factory pr watch PR [--head SHA] [--project ID]` | Watch the checks of one pull request at one head, with up to 60 reads, 60 seconds apart. It exits with code 0 only when every check passed. It never merges, and a pass is no approval. See "Watch a pull request". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |

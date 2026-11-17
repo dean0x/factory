@@ -2,6 +2,8 @@
 
 ## 0.2.0 (not released)
 
+- Add `factory board`: one text view of requests, workers, open items, the queue and machine facts. `--width` sets the text width. `--json` prints `factory.board/v1`, with section faults and a cap of 500 open items.
+
 Renames
 
 - The word `lane` is now `worker`. The word `pack` is now `recipe`. One named way to run a recipe is a setup, and its config key is `recipe.variant`. The word `brief` is now `assignment`. The tmux pane option is `@worker`.
