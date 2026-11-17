@@ -119,13 +119,16 @@ export const preparePrivateFolder = async (deps: Deps, path: string): Promise<Re
 };
 
 /** The bounds of the lock file beside a per-user file. */
-const userFileLock: LockPolicy = {
+export const userFileLock: LockPolicy = {
   attempts: privateFile.lockAttempts,
   waitMs: privateFile.lockWaitMs,
   staleMs: privateFile.lockStaleMs,
   takeoverSuffix: privateFile.takeoverSuffix,
   mode: privateFile.fileMode,
 };
+
+/** The lock file beside a per-user file. */
+export const userFileLockPath = (path: string): string => `${path}${privateFile.lockSuffix}`;
 
 /**
  * Take the lock file beside the file. The lock file is new, so only one process holds it. A stale lock is taken over. The
@@ -202,7 +205,7 @@ export const changePrivateFile = async (
 ): Promise<Result<void, PrivateChangeError>> => {
   const folder = await preparePrivateFolder(deps, path);
   if (!folder.ok) return notSaved(folder.error.message);
-  const lockPath = `${path}${privateFile.lockSuffix}`;
+  const lockPath = userFileLockPath(path);
   const locked = await takeUserFileLock(deps, lockPath);
   if (!locked.ok) return notSaved(locked.error);
 

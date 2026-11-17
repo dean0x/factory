@@ -13,9 +13,9 @@ import { parseJsonText } from '../state/load.js';
 import { accessFaultCore } from './access.js';
 import type { Deps, LinkInfo } from './deps.js';
 import { inFactorySession } from './factory-session.js';
-import { freeLock, holdsLock, takeAgeLock, type LockPolicy } from './file-lock.js';
+import { freeLock, holdsLock, takeAgeLock } from './file-lock.js';
 import { comparable, isSameOrInsideFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
-import { userStatePlaceOf, type StateFilePlace } from './private-file.js';
+import { userFileLock, userFileLockPath, userStatePlaceOf, type StateFilePlace } from './private-file.js';
 import { err, ok, type Result } from './result.js';
 
 /** Guard records always require their own input and output terminals, outside either session type. */
@@ -100,14 +100,6 @@ export const readGuardStore = async (deps: Deps, path: string): Promise<Result<r
   return records.ok ? records : err(guardRecordWords.readFault(path, records.error));
 };
 
-const storeLock: LockPolicy = {
-  attempts: privateFile.lockAttempts,
-  waitMs: privateFile.lockWaitMs,
-  staleMs: privateFile.lockStaleMs,
-  takeoverSuffix: privateFile.takeoverSuffix,
-  mode: privateFile.fileMode,
-};
-
 export type GuardStoreChange = (records: readonly GuardRecord[]) => Result<readonly GuardRecord[], string>;
 
 const changedText = (deps: Deps, records: readonly GuardRecord[]): Result<string, string> => {
@@ -153,8 +145,8 @@ export const changeGuardStore = async (deps: Deps, path: string, change: GuardSt
     if (!checked.ok) return checked;
     if (!checked.value) return err(guardRecordWords.badFolder);
   }
-  const lockPath = `${path}${privateFile.lockSuffix}`;
-  const locked = await takeAgeLock(deps, lockPath, storeLock);
+  const lockPath = userFileLockPath(path);
+  const locked = await takeAgeLock(deps, lockPath, userFileLock);
   if (!locked.ok) return locked;
   if (locked.value.kind !== 'taken') return err(locked.value.kind === 'link' ? guardRecordWords.lockLink : guardRecordWords.lockBusy);
   const written = await writeLockedStore(deps, path, lockPath, locked.value.token, change);
@@ -186,7 +178,7 @@ const guardPlaceOf = async (deps: Deps, root: string): Promise<CliResult<GuardPl
 };
 
 export interface GuardChange {
-  readonly guard: Pick<GuardDefinition, 'id' | 'wired'>;
+  readonly guard: Pick<GuardDefinition, typeof keys.id | 'wired'>;
   readonly value: GuardValue;
 }
 
@@ -250,7 +242,7 @@ export const recordPrefix = async (
 
 export interface GuardReadState extends GuardRules {
   readonly record: boolean;
-  readonly prefix: GuardRecord['prefix'];
+  readonly prefix: GuardRecord[typeof keys.prefix];
   readonly fault: string | null;
 }
 

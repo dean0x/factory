@@ -1907,7 +1907,7 @@ describe('the names of the guards', () => {
     expect(files.guardRecords).toBe('guard-records.json');
     expect(guardRecords).toEqual({
       schema: 1,
-      keys: { schema: 'schema', records: 'records', node: 'node', root: 'root', id: 'id', value: 'value', prefix: 'prefix', at: 'at' },
+      keys: { schema: 'schema', records: 'records', node: 'node', root: 'root', id: 'id', value: 'value', values: 'values', prefix: 'prefix', hash: 'hash', at: 'at' },
       maxRecords: 1_000,
       maxBytes: maxFileBytes,
     });

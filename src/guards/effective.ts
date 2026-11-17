@@ -1,5 +1,5 @@
 import type { ProxyConfig } from '../config/schema.js';
-import { guardStartWords, guardValues } from '../names.js';
+import { guardStartWords, guardValues, keys } from '../names.js';
 import type { Guard, GuardState, GuardValue, GuardValues } from './types.js';
 
 /** An absent value means on. This constant has no file or environment dependency. */
@@ -26,7 +26,7 @@ export interface GuardFacts {
   readonly record?: GuardRecord | null;
   readonly loadError?: boolean;
   readonly fault?: string | null;
-  readonly proxies?: readonly Pick<ProxyConfig, 'id' | 'on_fail'>[];
+  readonly proxies?: readonly Pick<ProxyConfig, typeof keys.proxy.id | typeof keys.proxy.onFail>[];
 }
 
 export interface GuardRules {

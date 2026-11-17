@@ -2384,11 +2384,11 @@ export const guardRecordWords = {
   noPlace: 'The guard store has no place: no variable names a state folder.',
   inside: 'The guard store must be outside the factory and Claude Code folders.',
   placeRemedy: `Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,
-  duplicate: 'The guard store holds two records for one node and root.',
+  duplicate: 'The guard store holds two records for one node and factory folder.',
   recordCap: `The guard store cannot exceed ${guardRecords.maxRecords} records. Run "${commandText(commands.doctor)}".`,
   byteCap: `The guard store cannot exceed ${guardRecords.maxBytes} bytes. Run "${commandText(commands.doctor)}".`,
   badPrefix: `The ${keys.root.owner}.${keys.owner.prefix} text must not contain a hidden character.`,
-  adapterRequired: 'The file adapter has no always-on guard store methods.',
+  adapterRequired: 'The file system has no always-on guard store methods.',
   badFolder: 'The guard store folder must be a plain folder of this user, with no group or other write access.',
   badFile: 'The guard store must be a plain file of this user, with no group or other write access.',
   badOpen: 'The guard store open failed its file checks.',
@@ -2399,7 +2399,7 @@ export const guardRecordWords = {
   invalidStore: 'The guard store does not match its schema.',
   readFault: (path: string, reason: string): string => `The guard store ${path} cannot be read: ${reason}. Run "${commandText(commands.doctor)}".`,
   writeFault: (reason: string): string => `The guard store cannot be changed: ${reason}. Run "${commandText(commands.doctor)}".`,
-  invalidChange: 'The guard change has no valid node, root or value.',
+  invalidChange: 'The guard change has no valid node, factory folder or value.',
   unreadableRemedy: `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to recover the guard store.`,
 } as const;
 
