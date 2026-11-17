@@ -1209,6 +1209,38 @@ describe('factory upgrade of the hook settings (built binary)', () => {
     expect(again.stdout).toContain('Nothing to upgrade.');
   });
 
+  it('with --yes, it adds idleCompaction false to both session files and has nothing to do on a second run', async () => {
+    await initNode();
+    const coordinatorFile = join(box.node, 'coordinator', '.claude', 'settings.local.json');
+    const current = JSON.parse(await box.read(coordinatorFile)) as Record<string, unknown>;
+    expect(current).toHaveProperty('idleCompaction', false);
+    const older = jsonText(Object.fromEntries(Object.entries(current).filter(([key]) => key !== 'idleCompaction')));
+    const copyFile = join(box.node, 'work-copies', 'web', WORKER_ID, '.claude', 'settings.local.json');
+    await mkdir(join(box.node, 'work-copies', 'web', WORKER_ID, '.claude'), { recursive: true });
+    await writeFile(coordinatorFile, older);
+    await writeFile(copyFile, older);
+    await writeRecord();
+
+    const dry = await box.run(['upgrade', '--home', box.node, '--dry-run', '--json']);
+    expect(dry.code).toBe(0);
+    expect(JSON.parse(dry.stdout)).toMatchObject({ changed: true, dryRun: true, hookSettings: [coordinatorFile, copyFile] });
+    expect(await box.read(coordinatorFile)).toBe(older);
+    expect(await box.read(copyFile)).toBe(older);
+
+    const result = await box.run(['upgrade', '--home', box.node, '--yes', '--json']);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ changed: true, hookSettings: [coordinatorFile, copyFile] });
+    for (const file of [coordinatorFile, copyFile]) {
+      const written: unknown = JSON.parse(await box.read(file));
+      expect(written).toHaveProperty('idleCompaction', false);
+      expect(written).toEqual(current);
+    }
+
+    const again = await box.run(['upgrade', '--home', box.node, '--yes', '--json']);
+    expect(again.code).toBe(0);
+    expect(JSON.parse(again.stdout)).toMatchObject({ changed: false, hookSettings: [] });
+  });
+
   it('with no terminal and no --yes, it writes no hook settings, warns with the remedy and exits 0', async () => {
     await initNode();
     const coordinatorFile = join(box.node, 'coordinator', '.claude', 'settings.local.json');
