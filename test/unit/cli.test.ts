@@ -104,6 +104,29 @@ describe('runCli', () => {
   });
 });
 
+describe('the guard command in the command line', () => {
+  it('lists guard in the main help', async () => {
+    const result = await run(['--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toMatch(/^ {2}guard\s+\S/m);
+  });
+
+  it.each([['help', 'guard'], ['guard', '--help']])('shows the list command and its flags for %s %s', async (...argv) => {
+    const result = await run(argv);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Usage: factory guard list [--all] [--family NAME] [--home DIR]');
+    for (const flag of ['--all', '--family NAME', '--home DIR', '--json']) expect(result.out).toContain(flag);
+    expect(result.out).not.toMatch(/factory guard (?:set|confirm)/);
+  });
+
+  it.each([[[]], [['set']], [['list', 'extra']]])('refuses invalid guard arguments %j before any file read', async (words) => {
+    const result = await run(['guard', ...words]);
+    expect(result.code).toBe(2);
+    expect(result.out).toBe('');
+    expect(result.err).toContain('factory guard list');
+  });
+});
+
 describe('the refusal on Windows', () => {
   const runOn = async (os: string, argv: readonly string[]) => {
     const sink = captureSink();

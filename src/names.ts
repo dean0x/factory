@@ -2328,11 +2328,19 @@ export const guardKeys = { local: 'guards', shared: 'shared_guards' } as const;
 /** The mark of a guard, or a row of it, that can harm the machine, the data or the accounts when it is off. */
 export const harmMark = 'H';
 
+/** The default list leaves room for its heading, more line and count line. */
+export const maxGuardListLines = 17;
+
 /**
  * The words of `guard list`: the titles of the columns, the value of a guard that the list can not read, the words of the
  * place of a value, the line that tells how many lines the view leaves out, and the line that counts the guards that are off.
  */
 export const guardListWords = {
+  summary: 'Show the guards and what each one keeps safe.',
+  allHelp: 'Show every guard or every row of one family.',
+  familyHelp: 'Show the rows of the guard with this id.',
+  argumentsError: `${commandText(commandLines.guardList)} takes no argument.`,
+  unknownFamily: (id: string): string => `${commandText(commandLines.guardList)}: unknown family "${id}".`,
   columns: { guard: 'GUARD', value: 'VALUE', default: 'DEFAULT', harm: harmMark, setIn: 'SET IN' },
   familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
   unknown: 'unknown',
