@@ -1,5 +1,7 @@
 import { commandLines, commands, flags, flagText, guardIds, places, requestWords, roles } from '../names.js';
 import { at, codeRow, textRow } from './build.js';
+import { contentGuardRows } from './content-rows.js';
+import { sessionGuardRows } from './session-rows.js';
 import type { GuardRow } from './types.js';
 
 const { coordinator, node, owner, worker } = roles;
@@ -503,10 +505,13 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
   codeRow({
     id: 'safe-write',
     guard: guardIds.fileLinkSafety,
-    name: 'A write in a folder takes a plain file name and follows no link, and a create never replaces a file',
+    name: `A write takes a plain file name and follows no link. A create never replaces a file. A hold write makes no folder again after a dismiss removes the ${worker} folder.`,
     applies: 'Every write of a file of the program',
     harm: true,
-    sites: at('src/core/safe-write.ts', 'requireNoLink', 'realFolderOf', 'writeInFolder', 'createInFolder'),
+    sites: [
+      ...at('src/core/safe-write.ts', 'requireNoLink', 'realFolderOf', 'writeInFolder', 'createInFolder'),
+      ...at('src/workers/hold.ts', 'writeHold'),
+    ],
   }),
   codeRow({
     id: 'atomic-write-target',
@@ -665,6 +670,14 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
       ...at('src/migrate/config.ts', 'refuseProjects', 'checkChildren'),
       ...at('src/migrate/state.ts', 'stateSchema1To2'),
     ],
+  }),
+  codeRow({
+    id: 'hold-file-removal',
+    guard: guardIds.fileLinkSafety,
+    name: `The removal of the hold file of a ${worker} follows no link: a link at the folder of all ${worker}s, at the folder of the ${worker} or at the file is a security stop, and nothing is removed`,
+    applies: commandLines.workerMark,
+    harm: true,
+    sites: at('src/workers/hold.ts', 'clearHold', 'writeHold'),
   }),
 ];
 
@@ -964,4 +977,6 @@ export const coreGuardRows: readonly GuardRow[] = [
   ...gitSafetyRows,
   ...hookRuntimeRows,
   ...launchCommandRows,
+  ...sessionGuardRows,
+  ...contentGuardRows,
 ];

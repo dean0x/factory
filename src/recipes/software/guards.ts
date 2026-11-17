@@ -2,21 +2,19 @@ import { at, codeRow, guardOf, textRow } from '../../guards/build.js';
 import type { GuardDefinition, GuardRow } from '../../guards/types.js';
 import { commandLines, guardIds, keys, roles } from '../../names.js';
 import { softwareApprovalPoints } from './approval.js';
+import { CONFIG_FILE, COORDINATOR_FILE, SAFETY_FILE, WORKER_FILE, WORK_RULES_FILE, softwareGuardIds } from './guard-parts.js';
+import { softwareRuleRows } from './rule-rows.js';
+
+export { softwareGuardIds } from './guard-parts.js';
 
 /**
- * The guards of the software recipe and the rows of the registry that cite a file of it. The ids live here, like the ids of the
- * approval points: a guard for each approval point, and the rules for a push and a pull request. The recipe also holds the rows
- * of a guard of the core that cite a role text or a config parser of the recipe, because the core registry imports nothing from it.
+ * The guards of the software recipe and the rows of the registry that cite a file of it. A guard for each approval point, and the
+ * rules for a push and a pull request. The recipe also holds the rows of a guard of the core that cite a role text or a config
+ * parser of the recipe, because the core registry imports nothing from it.
  */
 
 const { coordinator, owner, worker } = roles;
 const [mergePoint, releasePoint] = softwareApprovalPoints;
-
-export const softwareGuardIds = {
-  approvalMerge: `approval-${mergePoint.id}`,
-  approvalRelease: `approval-${releasePoint.id}`,
-  prRules: 'pr-rules',
-} as const;
 
 export const softwareGuards: readonly GuardDefinition[] = [
   guardOf(
@@ -39,11 +37,6 @@ export const softwareGuards: readonly GuardDefinition[] = [
   ),
 ];
 
-const COORDINATOR_FILE = 'src/recipes/software/roles/coordinator.ts';
-const WORKER_FILE = 'src/recipes/software/roles/worker.ts';
-const SAFETY_FILE = 'src/templates/safety.ts';
-const WORK_RULES_FILE = 'src/templates/work-rules.ts';
-const CONFIG_FILE = 'src/recipes/software/config.ts';
 const APPROVAL_FILES = [
   ...at('src/recipes/software/approval.ts', 'softwareApprovalPoints'),
   ...at('src/recipes/entry.ts', 'approvalLines'),
@@ -272,4 +265,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
     harm: true,
     sites: at(COORDINATOR_FILE, 'workerSectionLines'),
   }),
+
+  // Machine limits to install rules.
+  ...softwareRuleRows,
 ];
