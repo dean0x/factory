@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hasTmux, isAlive, LIFECYCLE_CASE_MS, useLab, waitUntilEnded } from './lifecycle-lab.js';
+import { loadNote } from './load.js';
 
 if (!hasTmux) console.warn('shutdown.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
@@ -26,7 +27,7 @@ describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server)
     expect(result.stdout).toContain('Ended the tmux session demo.');
 
     expect(await lab.hasSession('demo')).toBe(false);
-    for (const pid of pids) expect(await waitUntilEnded(pid)).toBe(true);
+    for (const pid of pids) expect(await waitUntilEnded(pid), loadNote()).toBe(true);
     expect(await lab.hasSession('bystander')).toBe(true);
     expect(isAlive(bystander)).toBe(true);
     expect((await lab.box.git(lab.stateOf(), ['ls-files', '--', MARK_FILE])).stdout.trim()).toBe('');

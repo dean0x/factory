@@ -7,6 +7,7 @@ import { files, program } from '../../src/names.js';
 import { stateRel } from '../../src/state/layout.js';
 import { runInTerminal, scriptForm } from './fake-terminal.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { scaled } from './load.js';
 
 /**
  * No command needs python3, jq or glow. The built program runs with a PATH of one folder. The folder holds links to
@@ -21,11 +22,11 @@ const TOOLS = ['node', 'git', 'sh', 'grep', 'script', 'tmux'] as const;
 const ABSENT_TOOLS = ['python3', 'python', 'jq', 'glow'] as const;
 
 /** The time that a case may take: `init`, a run of the program for each command, and the git commands. */
-const CASE_MS = 120_000;
-const PROBE_MS = 20_000;
+const CASE_MS = scaled(120_000);
+const PROBE_MS = scaled(20_000);
 /** The bounds of a run in the fake terminal: the wait for one prompt and the whole run. */
-const PROMPT_MS = 15_000;
-const TOTAL_MS = 90_000;
+const PROMPT_MS = scaled(15_000);
+const TOTAL_MS = scaled(90_000);
 
 /** The path of a program on the PATH of this process, or null. The node of this process is the node of the test. */
 const findTool = (name: string): string | null => {

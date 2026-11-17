@@ -252,6 +252,10 @@ Pull requests and the role lines
 - The coordinator keeps its lessons in `.factory/lessons.md`, at most 40 entries and 32768 bytes. An entry is three lines that start with `Rule:`, `Why:` and `How:`, and only the coordinator writes the file. A lesson is data: it grants no approval and no delegation, and it overrides no rule. No text of `gh`, a pull request or an issue goes into an entry.
 - `factory doctor` fails the new check `lessons` when `.factory/lessons.md` is a link or not a plain file, is larger than 32768 bytes, or holds more than 40 entries. A missing file is no fault, and the check never changes the file.
 
+Guards
+
+- `factory guard list` shows the guards, their values, their defaults and the harm mark `H`. `--all` shows every guard, and `--family NAME` shows the rows of one guard. `--json` prints every guard and row. The list only reads. Every guard is on, and neither config file has a guard key in this version.
+
 Platforms and help
 
 - On native Windows, every command exits with code 1 and prints the hint to use WSL. macOS and Linux are the supported systems. `factory start` needs tmux 3.0 or newer and `claude` on the PATH.

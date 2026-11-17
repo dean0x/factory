@@ -21,6 +21,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **session reset** (was: changeover): A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state.
 - **queue** (was: staging): A queue is the order of the finished work that waits for an approval point, first item first.
 - **check** (was: inspect): A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.
+- **guard**: A guard is a group of code checks and rule texts that keep one thing safe. The guard list shows each guard.
 - **work item**: A work item is one unit of work on the board.
 - **track**: A track is a named stream of work with its own roadmap. A worker is not a track.
 - **stage**: A stage is where a work item is on the board. It is not a step of the work cycle. It is never an approval.

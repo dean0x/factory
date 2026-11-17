@@ -3,6 +3,7 @@ import type { RecipeEntry } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
 import { softwareBoard } from './board.js';
 import { softwareRecipeSchema } from './config.js';
+import { softwareGuardRows, softwareGuards } from './guards.js';
 import { prCommandFor } from './pr-watch.js';
 import { softwareRecordCheck } from './record.js';
 import { softwareRoles } from './recipe.js';
@@ -14,7 +15,7 @@ import {
   softwareWordList,
 } from './words.js';
 
-/** The software recipe: its block parser, its approval points, its words, its roles, its board, its record check and its commands. */
+/** The software recipe: its block parser, its approval points, its words, its roles, its board, its record check, its commands and its guards. */
 export const softwareRecipe: RecipeEntry = {
   id: values.recipes[0],
   schema: softwareRecipeSchema,
@@ -29,4 +30,6 @@ export const softwareRecipe: RecipeEntry = {
   board: softwareBoard,
   recordCheck: softwareRecordCheck,
   commands: (host) => [prCommandFor(host)],
+  guards: softwareGuards,
+  guardRows: softwareGuardRows,
 };

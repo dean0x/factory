@@ -5,14 +5,15 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
 import { runInTerminal, scriptGate, type Exchange } from './fake-terminal.js';
 import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
+import { scaled } from './load.js';
 
 const gate = scriptGate();
 if (gate === 'skip') console.warn('The case of init.test.ts that needs a fake terminal is skipped: the program script is not installed.');
 
 /** The bounds of a run in the fake terminal: the wait for one prompt, the whole run, and the time limit of the case. */
-const PROMPT_MS = 15_000;
-const TOTAL_MS = 90_000;
-const CASE_MS = 120_000;
+const PROMPT_MS = scaled(15_000);
+const TOTAL_MS = scaled(90_000);
+const CASE_MS = scaled(120_000);
 
 let box: Sandbox;
 

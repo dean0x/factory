@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
+import { loadNote, scaled } from './load.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -13,8 +14,8 @@ const hasTmux = major >= 3;
 if (!hasTmux) console.warn('start.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
 const POLL_STEP_MS = 100;
-const POLL_STEPS = 100;
-const STOP_STEPS = 30;
+const POLL_STEPS = scaled(100);
+const STOP_STEPS = scaled(30);
 const LAUNCH_PROXY_URL = 'http://127.0.0.1:9';
 /** A fake value for the one setting of the user that the launch keeps among the variables that start with CLAUDE. */
 const FAKE_CONFIG_DIR = '/fake/claude-config';
@@ -44,7 +45,7 @@ const fakeClaude = (dir: string): string =>
 
 const tmux = (args: readonly string[]): Promise<RunResult> =>
   new Promise((resolve) => {
-    execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: 20_000 }, (error, stdout, stderr) => {
+    execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: scaled(20_000) }, (error, stdout, stderr) => {
       resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr });
     });
   });
@@ -58,7 +59,7 @@ const waitForFile = async (name: string): Promise<string> => {
     if (text !== '') return text;
     await sleep(POLL_STEP_MS);
   }
-  throw new Error(`the file ${name} did not appear`);
+  throw new Error(`the file ${name} did not appear ${loadNote()}`);
 };
 
 /** Wait for the file of the fake claude. */
@@ -692,7 +693,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
 });
 
 /** The time limit of a case that makes workers and starts the session again: the setup takes seconds, and a resume waits up to 10 seconds. */
-const RECOVERY_CASE_MS = 180_000;
+const RECOVERY_CASE_MS = scaled(180_000);
 const SESSIONS = {
   alpha: '5d8e2c1a-7f3b-4a96-8c4d-0e1f2a3b4c5d',
   beta: '7a1b9c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
@@ -758,7 +759,7 @@ const waitForLaunches = async (marker: string, count: number): Promise<void> => 
     if (text.split('\n').filter((line) => line !== '').length >= count) return;
     await sleep(POLL_STEP_MS);
   }
-  throw new Error(`the program did not run ${count} times with the marker ${marker}`);
+  throw new Error(`the program did not run ${count} times with the marker ${marker} ${loadNote()}`);
 };
 
 /** The last launch with this session marker obeys the rule of every launch, though the tmux server holds a proxy (`LAUNCH_PROXY_URL`). */

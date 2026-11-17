@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { withoutTmux, type Sandbox } from './harness.js';
+import { loadNote, scaled } from './load.js';
 
 /**
  * A fake terminal for the tests of a command that asks questions. The program `script` that comes with the OS gives the command
@@ -72,8 +73,8 @@ export interface TerminalResult {
   readonly screen: string;
 }
 
-const PROMPT_MS = 15_000;
-const TOTAL_MS = 90_000;
+const PROMPT_MS = scaled(15_000);
+const TOTAL_MS = scaled(90_000);
 /** The step of the loop that reads the screen. */
 const STEP_MS = 25;
 /** Output that ends in a prompt shape and stays the same for this long is a prompt that the helper does not know. */
@@ -274,14 +275,14 @@ export const runInTerminal = async (
           continue;
         }
         if (promptSince !== null && Date.now() - promptSince > promptMs) {
-          return fail(`the prompt ${expected.prompt} did not show in ${promptMs} ms`);
+          return fail(`the prompt ${expected.prompt} did not show in ${promptMs} ms ${loadNote()}`);
         }
       }
       if (PROMPT_SHAPE.test(shown) && Date.now() - seen.changedAt >= QUIET_MS) {
         return fail(`the command shows a prompt that no exchange names (${collapse(shown).trim().slice(-200)})`);
       }
     }
-    return fail(`the command did not end in ${totalMs} ms`);
+    return fail(`the command did not end in ${totalMs} ms ${loadNote()}`);
   } catch (error) {
     failed = true;
     throw error;

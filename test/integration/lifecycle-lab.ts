@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, expect } from 'vitest';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
+import { loadNote, scaled } from './load.js';
 
 /**
  * The setup that the files of `shutdown`, `restart`, `reboot` and `status` share: a throw-away node, a separate tmux server, a fake program
@@ -14,8 +15,8 @@ const [tmuxMajor = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number
 export const hasTmux = tmuxMajor >= 3;
 
 const POLL_STEP_MS = 100;
-const POLL_STEPS = 100;
-const STOP_STEPS = 30;
+const POLL_STEPS = scaled(100);
+const STOP_STEPS = scaled(30);
 /** A fake value for the one setting of the user that the launch keeps among the variables that start with CLAUDE. */
 const FAKE_CONFIG_DIR = '/fake/claude-config';
 /** A proxy in the environment of the tmux server. A launch must remove it, so that the program never sees it. */
@@ -26,7 +27,7 @@ const LAB_PROXY_URL = 'http://127.0.0.1:9';
  * (`stopPoll`), and a launch waits up to 10 seconds for its new session (`launchConfirm`). The limit of the suite (30 seconds) can
  * not cover the bounded waits of one case.
  */
-export const LIFECYCLE_CASE_MS = 240_000;
+export const LIFECYCLE_CASE_MS = scaled(240_000);
 
 export const SESSIONS = {
   alpha: '5d8e2c1a-7f3b-4a96-8c4d-0e1f2a3b4c5d',
@@ -175,7 +176,7 @@ export const useLab = (): Lab => {
 
   const tmux = (args: readonly string[]): Promise<RunResult> =>
     new Promise((resolve) => {
-      execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: 20_000 }, (error, stdout, stderr) => {
+      execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: scaled(20_000) }, (error, stdout, stderr) => {
         resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr });
       });
     });
@@ -227,7 +228,7 @@ export const useLab = (): Lab => {
       if (text !== '') return text;
       await sleep(POLL_STEP_MS);
     }
-    throw new Error(`the file ${name} did not appear`);
+    throw new Error(`the file ${name} did not appear ${loadNote()}`);
   };
 
   const factory = (command: string, rest: readonly string[] = [], env: Readonly<Record<string, string>> = {}): Promise<RunResult> =>
