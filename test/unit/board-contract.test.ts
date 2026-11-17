@@ -42,12 +42,13 @@ describe('board section contracts', () => {
     const { schema: _schema, home: _home, ...machineFacts } = docOf(machine.json);
     expect(board.json).toMatchObject({
       schema: 'factory.board/v1', home: BOARD_HOME,
-      requests: docOf(requests.json)['requests'],
-      queue: docOf(queue.json)['rows'],
-      workers: docOf(workers.json)['workers'],
-      machine: machineFacts,
       faults: [],
     });
+    const boardFacts = docOf(board.json);
+    expect(boardFacts['requests']).toEqual(docOf(requests.json)['requests']);
+    expect(boardFacts['queue']).toEqual(docOf(queue.json)['rows']);
+    expect(boardFacts['workers']).toEqual(docOf(workers.json)['workers']);
+    expect(boardFacts['machine']).toEqual(machineFacts);
   });
 
   it.each([40, 100, 120])('uses exactly the section command text at width %s', async (width) => {
