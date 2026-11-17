@@ -32,6 +32,7 @@ import {
   trackLimits,
   waitingKeys,
   workerFieldGuard,
+  type CommandText,
 } from '../names.js';
 import type { CheckedRecord, RecipeBoard } from '../recipes/entry.js';
 import { isPlainPath } from '../state/board-commit.js';
@@ -293,7 +294,7 @@ const requestDocsOf = (input: readonly string[]): CliResult<readonly string[]> =
   if (input.length > boardTextLimits.maxRequestDocs) return usageError(`a ${requestWords.request} holds at most ${boardTextLimits.maxRequestDocs} docs`);
   const paths = new Set<string>();
   for (const path of input) {
-    const checked = checkDocPath(path);
+    const checked = checkDocPath(path, commandLines.requestAdd);
     if (!checked.ok) return checked;
     if (paths.has(path)) return usageError(`the doc path ${shown(path)} is used twice`);
     paths.add(path);
@@ -372,7 +373,7 @@ export const docPathIssue = (path: string): DocPathIssue | null => {
   return place === null ? null : { kind: 'place', reason: `is refused: ${displayLine(place, maxEchoChars)}` };
 };
 
-export const checkDocPath = (path: string): CliResult<string> => {
+export const checkDocPath = (path: string, again: CommandText): CliResult<string> => {
   const issue = docPathIssue(path);
   if (issue === null) return ok(path);
   const message = `the path ${shown(path)} ${issue.reason}`;
@@ -380,7 +381,7 @@ export const checkDocPath = (path: string): CliResult<string> => {
     ? usageError(message)
     : safetyRefusal(
         message,
-        `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}. Then repeat the command with that file.`,
+        `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}. Then run "${commandText(again)}" again with that file.`,
       );
 };
 

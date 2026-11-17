@@ -973,7 +973,7 @@ describe('the item and track commands in the command line', () => {
     expect(listed.out).toMatch(/\n {2}queue {2,}\S/);
     const asked = await run(['request', '--help']);
     expect(asked.code).toBe(0);
-    expect(asked.out).toContain('factory request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY] [--later] [--home DIR]');
+    expect(asked.out).toContain('factory request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY] [--kind KIND] [--field LABEL=TEXT]... [--why KEY=TEXT]... [--doc PATH]... [--later] [--home DIR]');
     expect(asked.out).toContain('factory request close ID [--made-by WHO --decision TEXT] [--home DIR]');
     expect(asked.out).toMatch(/--option KEY=TEXT\s+With add: one answer that the owner can give/);
     const queue = await run(['queue', '--help']);
@@ -1065,7 +1065,7 @@ describe('the item and track commands in the command line', () => {
     expect(refused.code).toBe(2);
     expect(refused.err).toContain('--later is not for');
     const help = await run(['request', '--help']);
-    expect(help.out).toContain('[--recommend KEY] [--later] [--home DIR]');
+    expect(help.out).toContain('[--recommend KEY] [--kind KIND] [--field LABEL=TEXT]... [--why KEY=TEXT]... [--doc PATH]... [--later] [--home DIR]');
     expect(help.out).toMatch(/--later\s+With add: /);
   });
 

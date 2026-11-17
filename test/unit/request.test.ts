@@ -912,14 +912,13 @@ describe('request doc', () => {
     const repo = await OPEN();
     const before = filesOf(repo);
     const results = [
-      await run(repo, { ...ADD, docs: [path] }),
-      await link(inPane(repo.deps, '%0'), ['doc', 'D-1', path]),
-    ];
-    for (const result of results) {
+      ['factory request add', await run(repo, { ...ADD, docs: [path] })],
+      ['factory request doc', await link(inPane(repo.deps, '%0'), ['doc', 'D-1', path])],
+    ] as const;
+    for (const [command, result] of results) {
       const error = errorOf(result);
       expect(exitCodeOf[error.kind]).toBe(4);
-      expect(error.hint).toContain('Then repeat the command with that file.');
-      expect(error.hint).not.toContain('item doc');
+      expect(error.hint).toBe(`Link a file whose path has no part that starts with a dot. Do not link the factory.local.yaml of the factory folder. Then run "${command}" again with that file.`);
     }
     expect(filesOf(repo)).toEqual(before);
     expect(repo.commits).toEqual([]);

@@ -7,6 +7,7 @@ import { decisionIdsOf, decisionPlaceOf, readDecisionProof, type DecisionPlace, 
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import {
+  commandLines,
   commands,
   commandText,
   dirs,
@@ -604,7 +605,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const valid = checkRequestId(input.id);
       if (!valid.ok) return valid;
-      const path = checkDocPath(input.path);
+      const path = checkDocPath(input.path, commandLines.requestDoc);
       if (!path.ok) return path;
       const file = await requireDocFile(path.value);
       if (!file.ok) return file;
@@ -709,7 +710,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const valid = checkItemId(input.id);
       if (!valid.ok) return valid;
-      const path = checkDocPath(input.path);
+      const path = checkDocPath(input.path, commandLines.itemDoc);
       if (!path.ok) return path;
       const file = await requireDocFile(path.value);
       if (!file.ok) return file;
