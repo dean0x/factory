@@ -35,7 +35,7 @@ At the prompt of a Claude Code terminal session, run:
 
 Accept the marketplace with `y`, then select the install scope. Set the `command` option if factory is not on the PATH.
 Run `/board` to open the pane. By default, the mod opens no pane until you ask.
-The mod ships from this repo, not in the npm package.
+The mod comes from this repo, not from the npm package.
 See [the mod guide](plugins/factory-board/README.md) for the options and update steps.
 
 ## Commands
