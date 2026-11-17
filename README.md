@@ -51,6 +51,7 @@ You need:
 | `factory track add ID --name TEXT [--roadmap]`, `factory track list` | Add a track to the board, or list the tracks. A track is a named stream of work. See "Use the local board". |
 | `factory request add\|list\|close\|log` | Put a question for the owner in the waiting file, list the open requests, close one with no answer, with a decision of the coordinator or a delegate, or with an answer of the owner that the coordinator passes on, or log a decision that no request asked for. See "Use the local board". |
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. `queue set` takes `--release-group TEXT`, and `queue show` lists the rows under one heading for each group. See "Use the local board". |
+| `factory guard list` | Show the guards, their values, their defaults and the harm mark `H`. `--all` shows every guard. `--family NAME` shows the rows of one guard. `--json` prints every guard and row. It only reads. See "Guards" in `docs/design.md`. |
 | `factory doctor` | Run 31 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
