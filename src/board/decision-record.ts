@@ -103,9 +103,11 @@ export const decisionRecordPath = (input: DecisionRecordPathInput): CliResult<st
   return ok(join(stateRel.profileDecisions, name));
 };
 
-/** The line of the option list: the key, the text, and the marks. */
-const optionLine = (option: DecisionRecordOption, chosen: string): string =>
-  `- ${option.key}: ${jsonText(option.text)}${option.rec === true ? ' (recommended)' : ''}${option.key === chosen ? ' (chosen)' : ''}`;
+/** The option text and marks, then the reason of the asker when present. This reason is not the owner note. */
+const optionLines = (option: DecisionRecordOption, chosen: string): readonly string[] => [
+  `- ${option.key}: ${jsonText(option.text)}${option.rec === true ? ' (recommended)' : ''}${option.key === chosen ? ' (chosen)' : ''}`,
+  ...(option.why === undefined ? [] : [`  Why (asker): ${jsonText(option.why)}`]),
+];
 
 /** Every input that the record shows, checked: the shown form of the node and of every option key never needs an escape. */
 const checkedInput = (input: DecisionRecordInput): CliResult<void> => {
@@ -160,10 +162,12 @@ export const buildDecisionRecord = (input: DecisionRecordInput): CliResult<Decis
     '',
     `Title: ${jsonText(request.title)}`,
     `Question: ${jsonText(request.question)}`,
+    ...(request.kind === null ? [] : [`Kind: ${jsonText(request.kind)}`]),
+    ...(request.fields ?? []).map((field) => `Field: ${jsonText(field.label)}: ${jsonText(field.text)}`),
     '',
     '## Options',
     '',
-    ...request.options.map((each) => optionLine(each, option)),
+    ...request.options.flatMap((each) => optionLines(each, option)),
     '',
     '## Choice',
     '',

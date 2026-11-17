@@ -511,6 +511,21 @@ describe('decide: a yes answer records the answer', () => {
     expect(storedRecords(repo)).toEqual([storedRecord({ hash: requestHashOf(textOf(entry)) })]);
   });
 
+  it('copies kind, fields and each asker why to the profile without doc paths or a false owner reason', async () => {
+    const entry = {
+      ...ENTRY, kind: 'command', fields: [{ label: 'Scope', text: 'Queue' }], docs: ['docs/queue.md'],
+      options: [{ key: 'a', text: 'Plan A', why: 'Less work.' }],
+    };
+    const repo = await nodeOf({ waiting: waitingOf(entry) });
+    valueOf(await decide(atTerminal(repo).deps));
+    const text = repo.textOf(RECORD_PATH) ?? '';
+    expect(text).toContain('Kind: "command"');
+    expect(text).toContain('Field: "Scope": "Queue"');
+    expect(text).toContain('- a: "Plan A" (chosen)\n  Why (asker): "Less work."');
+    expect(text).toContain('## Reason\n\nThe owner gave no reason.');
+    expect(text).not.toContain('docs/queue.md');
+  });
+
   it('refuses repeated request docs before the prompt and leaves the store and board unchanged', async () => {
     const repo = await nodeOf({ waiting: waitingOf({ ...ENTRY, docs: ['docs/a.md', 'docs/a.md'] }) });
     const before = new Map(repo.deps.files);

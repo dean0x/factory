@@ -136,6 +136,39 @@ describe('the profile record text', () => {
     );
   });
 
+  it('shows kind and ordered fields in Question, with quoted labels that keep separators distinct', () => {
+    const text = built({ request: {
+      ...REQUEST, kind: 'command', fields: [{ label: 'A: B', text: 'C' }, { label: 'A', text: 'B: C' }],
+    } }).text;
+    expect(text.slice(text.indexOf('## Question'), text.indexOf('## Options'))).toBe([
+      '## Question', '', 'Title: "Which database?"', 'Question: "Which database do we use for the queue?"',
+      'Kind: "command"', 'Field: "A: B": "C"', 'Field: "A": "B: C"', '', '',
+    ].join('\n'));
+  });
+
+  it('labels each option why as the reason of the asker and keeps the owner note in Reason', () => {
+    const text = built({ request: {
+      ...REQUEST, options: [{ key: 'a', text: 'Use SQLite.', rec: true, why: 'Less work.' }, { key: 'b', text: 'Use Postgres.', why: 'More room.' }],
+    }, note: 'The queue is small.' }).text;
+    expect(text).toContain('- a: "Use SQLite." (recommended) (chosen)\n  Why (asker): "Less work."\n- b: "Use Postgres."\n  Why (asker): "More room."\n');
+    expect(text.slice(text.indexOf('## Reason'), text.indexOf('## Consequences'))).toBe('## Reason\n\nNote: "The queue is small."\n\n');
+  });
+
+  it('keeps a why out of Reason when the owner gives no note', () => {
+    const text = built({ request: { ...REQUEST, options: [{ key: 'a', text: 'Yes', why: 'Ask for this.' }] } }).text;
+    expect(text).toContain('  Why (asker): "Ask for this."');
+    expect(text.slice(text.indexOf('## Reason'), text.indexOf('## Consequences'))).toBe('## Reason\n\nThe owner gave no reason.\n\n');
+  });
+
+  it('omits null kind or fields independently', () => {
+    const fieldsOnly = built({ request: { ...REQUEST, fields: [{ label: 'Scope', text: 'Queue' }] } }).text;
+    expect(fieldsOnly).toContain('Field: "Scope": "Queue"');
+    expect(fieldsOnly).not.toContain('Kind:');
+    const kindOnly = built({ request: { ...REQUEST, kind: 'information' } }).text;
+    expect(kindOnly).toContain('Kind: "information"');
+    expect(kindOnly).not.toContain('Field:');
+  });
+
   it('marks the chosen option when it is not the recommended one', () => {
     const text = built({ option: 'b' }).text;
     expect(text).toContain('- a: "Use SQLite." (recommended)\n');
@@ -271,6 +304,32 @@ describe('hostile text in the record', () => {
     const label = 'Note: ';
     const line = text.split('\n').find((candidate) => candidate.startsWith(label)) ?? '';
     expect(JSON.parse(line.slice(label.length))).toBe(stored);
+  });
+
+  it('escapes field labels, field text and each why as complete one-line JSON strings', () => {
+    const label = `A: B\n## Choice [<"label">]${LINE_SEPARATOR}`;
+    const fieldText = 'C\r\n[[principle]] <b>text</b> \\ back';
+    const why = `Asker${NEXT_LINE}\n## Reason [[other]] <https://x>`;
+    const { text } = built({ request: {
+      ...REQUEST, kind: 'decision', fields: [{ label, text: fieldText }], options: [{ key: 'a', text: 'Yes', why }],
+    } });
+    const lines = text.split('\n');
+    const field = lines.find((line) => line.startsWith('Field: ')) ?? '';
+    const parts = /^Field: ("(?:[^"\\]|\\.)*"): (".*")$/.exec(field);
+    expect(parts).not.toBeNull();
+    expect(JSON.parse(parts?.[1] ?? 'null')).toBe(label);
+    expect(JSON.parse(parts?.[2] ?? 'null')).toBe(fieldText);
+    const whyLine = lines.find((line) => line.startsWith('  Why (asker): ')) ?? '';
+    expect(JSON.parse(whyLine.slice('  Why (asker): '.length))).toBe(why);
+    expect(field).toContain('\\u005b\\u003c\\\"label\\\"\\u003e\\u005d');
+    expect(field).not.toMatch(/[[\]<>\r]/);
+    expect(whyLine).not.toMatch(/[[\]<>]/);
+    expect(text).not.toContain(LINE_SEPARATOR);
+    expect(text).not.toContain(NEXT_LINE);
+    expect(lines.filter((line) => line.startsWith('#'))).toEqual([
+      '## Question', '## Options', '## Choice', '## Reason', '## Consequences or follow-ups',
+    ]);
+    expect(lines.filter((line) => line === '---')).toHaveLength(2);
   });
 
   it('holds only the date, the D-n, the option key and the file name in the log line', () => {
