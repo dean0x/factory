@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
 import { files } from '../../src/names.js';
@@ -60,6 +61,59 @@ describe('board', () => {
     ]);
   });
 
+  it.each(['requests', 'workers', 'board', 'machine', 'power', 'all'] as const)('limits a slow %s read to its own sections', async (source) => {
+    const deps = await boardFixture();
+    const waits: { readonly ms: number; readonly signal: AbortSignal | undefined; readonly expire: () => void }[] = [];
+    deps.sleep = (ms, signal?: AbortSignal) => new Promise<void>((resolve) => {
+      waits.push({ ms, signal, expire: resolve });
+      signal?.addEventListener('abort', () => resolve(), { once: true });
+    });
+    const run = deps.run;
+    const slowPrograms: Readonly<Record<string, string | undefined>> = { workers: 'tmux', machine: 'df', power: 'pmset' };
+    deps.run = (command, args, options) => source === 'all' || command === slowPrograms[source] ? new Promise(() => {}) : run(command, args, options);
+    const lstat = deps.fs.lstat;
+    const slowPaths: Readonly<Record<string, string | undefined>> = { requests: join(layoutOf(BOARD_HOME).stateDir, files.waiting), board: boardPath };
+    deps.fs.lstat = (path) => path === slowPaths[source] || (source === 'all' && Object.values(slowPaths).includes(path))
+      ? new Promise(() => {}) : lstat(path);
+    let finished = false;
+    const pending = boardCommand(deps, ['board', '--json']).then((result) => { finished = true; return result; });
+    await yieldTurn();
+    deps.advance(3000);
+    waits.forEach((wait) => wait.expire());
+    await yieldTurn();
+    expect(finished).toBe(true);
+    const result = await pending;
+    const sections: Readonly<Record<string, readonly string[]>> = {
+      requests: ['requests'], workers: ['workers'], board: ['workers', 'items', 'queue'], machine: ['machine'], power: ['machine'],
+      all: ['requests', 'workers', 'items', 'queue', 'machine'],
+    };
+    const hidden = sections[source] ?? [];
+    expect(result.code).toBe(source === 'all' ? 1 : 0);
+    expect(result.json).toEqual({
+      ...expected,
+      ...Object.fromEntries(hidden.map((section) => [section, null])),
+      faults: hidden.map((section) => ({ section, error: 'Section read timed out.' })),
+    });
+    expect(waits).toHaveLength(5);
+    expect(waits.every((wait) => wait.ms === 3000 && wait.signal?.aborted)).toBe(true);
+  });
+
+  it('caps each process call below the shortest pane time limit and cancels the deadline waits', async () => {
+    const deps = await boardFixture();
+    const signals: (AbortSignal | undefined)[] = [];
+    deps.sleep = (_, signal?: AbortSignal) => new Promise<void>((resolve) => {
+      signals.push(signal);
+      signal?.addEventListener('abort', () => resolve(), { once: true });
+    });
+    const result = await boardCommand(deps, ['board']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('\n\nMachine\n');
+    expect(deps.calls).toContainEqual(expect.objectContaining({ command: 'tmux', timeoutMs: 3000 }));
+    expect(deps.calls.every((call) => call.timeoutMs !== undefined && call.timeoutMs <= 3000)).toBe(true);
+    expect(signals).toHaveLength(5);
+    expect(signals.every((signal) => signal?.aborted)).toBe(true);
+  });
+
   it('prints a heading and a fault line for a section that cannot be read', async () => {
     const deps = await boardFixture();
     deps.seed(join(layoutOf(BOARD_HOME).stateDir, files.waiting), '{');
@@ -87,10 +141,10 @@ describe('board', () => {
 
   it('cuts text lines to the minimum width and removes hidden characters', async () => {
     const deps = await boardFixture();
-    deps.seed(boardPath, boardText([itemRecord('B-1', { title: `Long\u001b[31m\n\t${'x'.repeat(100)}` })]));
+    deps.seed(boardPath, boardText([itemRecord('B-1', { title: `\u001b[31m\n\tLong${'x'.repeat(100)}` })]));
     const result = await boardCommand(deps, ['board', '--width', '40']);
     expect(result.code).toBe(0);
-    expect(result.stdout).not.toContain('\u001b');
+    expect(result.stdout.split('\n').find((line) => line.startsWith('(no track)'))).toBe('(no track)  1      B-1 no stage: [31m  L');
     expect(result.stdout.split('\n').every((line) => line.length <= 40)).toBe(true);
   });
 

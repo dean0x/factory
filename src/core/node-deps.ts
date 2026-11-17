@@ -813,7 +813,13 @@ export const createNodeDeps = (): Deps => ({
     }
   },
   now: () => new Date(),
-  sleep: (ms) => wait(ms),
+  sleep: async (ms, signal) => {
+    try {
+      await wait(ms, undefined, { signal });
+    } catch (error: unknown) {
+      if (!signal?.aborted) throw error;
+    }
+  },
   platform: { os: process.platform, nodeVersion: process.version },
   cwd: process.cwd(),
   pid: process.pid,

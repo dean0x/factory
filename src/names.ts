@@ -806,6 +806,9 @@ export const boardDocKeys = {
 export const boardWords = {
   minWidth: 40,
   maxItems: 500,
+  /** Leave time for startup and output inside the pane's shortest process limit of five seconds. */
+  sectionTimeoutMs: 3_000,
+  lateSection: 'Section read timed out.',
   widthPattern: /^[0-9]+$/,
   headings: { requests: requestWords.requests, workers: 'Workers', items: 'Board', queue: 'Queue', machine: 'Machine' },
   fault: 'Cannot read this section',

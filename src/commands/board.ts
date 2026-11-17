@@ -1,7 +1,7 @@
 import { declaredFields, itemTarget, rowTarget } from '../board/fields.js';
 import { displayOf } from '../board/item-display.js';
 import { boardView, queueView, requestView } from '../board/list-view.js';
-import { usageError, type CliResult } from '../cli/errors.js';
+import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
@@ -56,6 +56,29 @@ const readItems = async (board: OpenBoard) => {
   return tracks.ok ? ok({ items: items.value, tracks: tracks.value }) : tracks;
 };
 
+/** A section and all its process calls share one deadline. Cancel its timer on every exit. */
+const readInTime = async <T>(deps: Deps, read: (timed: Deps) => Promise<CliResult<T>>): Promise<CliResult<T>> => {
+  const controller = new AbortController();
+  const deadline = deps.now().getTime() + boardWords.sectionTimeoutMs;
+  const timed: Deps = {
+    ...deps,
+    run: (command, args, options) => {
+      const remaining = deadline - deps.now().getTime();
+      if (controller.signal.aborted || remaining <= 0) return Promise.resolve(failure(boardWords.lateSection));
+      return deps.run(command, args, { ...options, timeoutMs: Math.min(remaining, options?.timeoutMs ?? remaining) });
+    },
+  };
+  const late = deps.sleep(boardWords.sectionTimeoutMs, controller.signal).then(() => failure(boardWords.lateSection));
+  try {
+    return await Promise.race([
+      read(timed).then((result) => deps.now().getTime() >= deadline ? failure(boardWords.lateSection) : result),
+      late,
+    ]);
+  } finally {
+    controller.abort();
+  }
+};
+
 /** Read each section without a lock. A fault hides that section, not the facts of the other sections. */
 export const runBoard = async (
   deps: Deps,
@@ -70,13 +93,15 @@ export const runBoard = async (
   const board = opened.value;
   const { home, config, connector } = board;
   const rowFields = declaredFields(config.core.board, rowTarget);
-  const [requests, workers, items, queue, report, power] = await Promise.all([
-    connector.listRequests(),
-    readStatus(deps, { home, config, workItems }),
-    readItems(board),
-    connector.listQueue(),
-    gatherMachine(deps, home, config.core.limits),
-    readPower(deps),
+  const [requests, workers, items, queue, machine] = await Promise.all([
+    readInTime(deps, () => connector.listRequests()),
+    readInTime(deps, (timed) => readStatus(timed, { home, config, workItems })),
+    readInTime(deps, () => readItems(board)),
+    readInTime(deps, () => connector.listQueue()),
+    readInTime(deps, async (timed) => {
+      const [report, power] = await Promise.all([gatherMachine(timed, home, config.core.limits), readPower(timed)]);
+      return ok({ report, power });
+    }),
   ]);
   const sections: readonly Section[] = [
     sectionOf(boardDocKeys.requests, requests, (rows) => ({ facts: requestRowsOf(rows), lines: requestView(rows) })),
@@ -86,7 +111,7 @@ export const runBoard = async (
       lines: boardView({ ...read, board: config.entry.board, fields: declaredFields(config.core.board, itemTarget), all: false }),
     })),
     sectionOf(boardDocKeys.queue, queue, (rows) => ({ facts: queueRowsJsonOf(rows, rowFields), lines: queueView({ rows, fields: rowFields }) })),
-    sectionOf(boardDocKeys.machine, ok(report), (facts) => ({ facts: machineFactsOf(facts, power), lines: machineOutput(home, facts, power).lines })),
+    sectionOf(boardDocKeys.machine, machine, ({ report, power }) => ({ facts: machineFactsOf(report, power), lines: machineOutput(home, report, power).lines })),
   ];
   const lines = sections.flatMap((section, index): readonly OutLine[] => [
     ...(index === 0 ? [] : [{ level: 'text' as const, text: '' }]),
