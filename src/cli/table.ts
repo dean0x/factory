@@ -49,6 +49,7 @@ import {
   requestCommands,
   requestDeciders,
   requestGroups,
+  requestKinds,
   requestWords,
   roles,
   schemaIds,
@@ -663,13 +664,14 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
     name: commands.request,
     summary:
       `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, close a ${requestWords.request} with no answer or with a decision that the ${requestDeciders.coordinator} or a ${requestDeciders.delegate} made, ` +
-      `close a ${requestWords.request} to pass on an answer of the ${roles.owner}, or log a decision that no ${requestWords.request} asked for.`,
+      `close a ${requestWords.request} to pass on an answer of the ${roles.owner}, log a decision that no ${requestWords.request} asked for, or link a file to an open ${requestWords.request}.`,
     usage: [
-      `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.later)}] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.kind)} KIND] [${flagText(flags.field)} LABEL=TEXT]... [${flagText(flags.why)} KEY=TEXT]... [${flagText(flags.doc)} PATH]... [${flagText(flags.later)}] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestList)} [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestClose)} ID [${flagText(flags.madeBy)} WHO ${flagText(flags.decision)} TEXT] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestClose)} ID ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestLog)} ${flagText(flags.title)} TEXT ${flagText(flags.madeBy)} WHO ${flagText(flags.decision)} TEXT [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestDoc)} ID PATH [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -698,6 +700,42 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
         type: 'string',
         placeholder: 'KEY',
         description: `With ${requestCommands.add}: the key of the answer that you recommend.`,
+      },
+      [flags.kind]: {
+        type: 'string',
+        placeholder: 'KIND',
+        description:
+          `With ${requestCommands.add}: ${Object.values(requestKinds).join('|')}. Default: ${requestKinds.decision}. ` +
+          `Every kind needs 1 to ${boardTextLimits.maxOptions} options and uses the same answer and close rules.`,
+      },
+      [flags.field]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'LABEL=TEXT',
+        description:
+          `With ${requestCommands.add}: a free label and its text, not a field of the ${roles.owner}. ` +
+          `Repeat at most ${boardTextLimits.maxRequestFields} times, in order, with no repeated label. ` +
+          `The label has 1 to ${boardTextLimits.maxFieldLabelChars} characters; the text has 1 to ${boardTextLimits.maxFieldTextChars}. ` +
+          `Use one line with no hidden character. Split at the first equals sign.`,
+      },
+      [flags.why]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'KEY=TEXT',
+        description:
+          `With ${requestCommands.add}: the asker's reason for the option with this key. ` +
+          `Each key must name an ${flagText(flags.option)} and can appear only once. ` +
+          `Use one line of 1 to ${boardTextLimits.maxWhyChars} characters with no hidden character. Split at the first equals sign.`,
+      },
+      [flags.doc]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'PATH',
+        description:
+          `With ${requestCommands.add}: link a file path, not its text. Repeat at most ${boardTextLimits.maxRequestDocs} times with no repeated path. ` +
+          `Use a relative path inside the ${program} folder, with no dot part, no link and no ${files.localConfig}. ` +
+          `For an open ${requestWords.request}, use ${commandText(commandLines.requestDoc)} ID PATH in the pane of the ${roles.coordinator}. ` +
+          `Both forms need a local tracker. A repeated ${requestCommands.doc} action makes no commit.`,
       },
       [flags.later]: {
         type: 'boolean',
@@ -739,6 +777,10 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           words: given.positionals(),
           title: given.string(flags.title),
           question: given.string(flags.question),
+          kind: given.string(flags.kind),
+          fields: given.strings(flags.field),
+          whys: given.strings(flags.why),
+          docs: given.strings(flags.doc),
           options: given.strings(flags.option),
           recommend: given.string(flags.recommend),
           decider: given.string(flags.madeBy),

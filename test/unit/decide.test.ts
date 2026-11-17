@@ -484,7 +484,7 @@ describe('decide: a yes answer records the answer', () => {
 
   it('records the answer for a request that request add wrote in the group later, and shows its open time and group in the request block', async () => {
     const repo = await nodeOf({ waiting: waitingOf() });
-    const add = { home: HOME, words: ['add'], title: 'Pick a plan', question: 'Which plan do we build?', options: ['a=Plan A', 'b=Plan B'], recommend: 'a', decider: undefined, decision: undefined, relayed: false, later: true };
+    const add = { home: HOME, words: ['add'], title: 'Pick a plan', question: 'Which plan do we build?', options: ['a=Plan A', 'b=Plan B'], recommend: 'a', decider: undefined, decision: undefined, relayed: false, later: true, kind: undefined, fields: [], whys: [], docs: [] };
     valueOf(await runRequest(repo.deps, add, recipes));
     const opened = repo.deps.now().toISOString();
     valueOf(await decide(atTerminal(repo).deps));
@@ -645,7 +645,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
       during.lock = repo.deps.files.has(LOCK_FILE);
       during.added = await runRequest(
         repo.deps,
-        { home: HOME, words: ['add'], title: 'Second', question: 'Which?', options: ['a=Yes'], recommend: undefined, decider: undefined, decision: undefined, relayed: false, later: false },
+        { home: HOME, words: ['add'], title: 'Second', question: 'Which?', options: ['a=Yes'], recommend: undefined, decider: undefined, decision: undefined, relayed: false, later: false, kind: undefined, fields: [], whys: [], docs: [] },
         recipes,
       );
       return ok('y');
