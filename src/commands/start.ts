@@ -5,6 +5,7 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import type { FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
 import type { AttachedEnd, Deps } from '../core/deps.js';
+import { inFactorySession } from '../core/factory-session.js';
 import { gitVersionProblem, requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
@@ -370,7 +371,7 @@ const goOnWithoutValue = async (
   settings: HookSettingsRequest,
   stopped: Err<CliError>,
 ): Promise<CliResult<HookSettingsOutcome>> => {
-  if (stopped.error.kind !== 'usage' || (deps.stdinIsTTY && deps.stdoutIsTTY)) return stopped;
+  if (stopped.error.kind !== 'usage' || (deps.stdinIsTTY && deps.stdoutIsTTY) || (settings.yes && inFactorySession(deps))) return stopped;
   const planned = await ensureHookSettings(deps, { ...settings, dryRun: true });
   if (!planned.ok || planned.value.kind !== 'would-write' || !planned.value.onlyIdleCompaction) return stopped;
   deps.warn(
