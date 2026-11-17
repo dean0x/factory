@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { scaled } from './load.js';
 
 export const DIST = join(__dirname, '..', '..', 'dist', 'factory.js');
 
@@ -40,7 +41,7 @@ const exec = (
   input?: string,
 ): Promise<RunResult> =>
   new Promise((resolve) => {
-    const child = execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: 60_000 }, (error, stdout, stderr) => {
+    const child = execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: scaled(60_000) }, (error, stdout, stderr) => {
       // A spawn error, a timeout or a signal has no numeric exit code. -1 is a value that no test expects.
       const code = error === null ? 0 : typeof error.code === 'number' ? error.code : -1;
       resolve({ code, stdout, stderr });

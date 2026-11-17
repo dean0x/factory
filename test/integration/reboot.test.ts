@@ -2,6 +2,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { expectLaunchRule, hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded, type Marker } from './lifecycle-lab.js';
+import { loadNote } from './load.js';
 
 if (!hasTmux) console.warn('reboot.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
@@ -33,7 +34,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server)',
     );
     expect(result.stdout).toContain('Resumed the workers: alpha, beta.');
 
-    for (const fact of before) expect(await waitUntilEnded(fact.pid)).toBe(true);
+    for (const fact of before) expect(await waitUntilEnded(fact.pid), loadNote()).toBe(true);
     expect(await lab.hasSession('demo')).toBe(true);
     expect(resumeIdOf(await lab.argvOf('demo'))).toBe(SESSIONS.demo);
     expect(resumeIdOf(await lab.argvOf('alpha'))).toBe(SESSIONS.alpha);
@@ -59,7 +60,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server)',
     expect(result.stdout).toContain('Kept the session demo and the coordinator pane.');
     expect(result.stdout).toContain('Resumed the workers: alpha, beta.');
 
-    for (const fact of before) expect(await waitUntilEnded(fact.pid)).toBe(true);
+    for (const fact of before) expect(await waitUntilEnded(fact.pid), loadNote()).toBe(true);
     expect(await lab.hasSession('demo')).toBe(true);
     expect(await lab.coordinatorPane()).toBe(coordinator);
     expect(await lab.launchCount('demo')).toBe(1);
