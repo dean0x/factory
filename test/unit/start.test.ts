@@ -1058,7 +1058,7 @@ describe('start:the hook settings of the coordinator', () => {
     const valueLine = '  idleCompaction: set to false (session.idle_compaction in factory.yaml)';
     const skipNotice =
       `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
-      'Run "factory upgrade --yes" to write it. The session starts as before.';
+      'Run "factory upgrade" in a terminal window, or add --yes. The session starts as before.';
     const configFor = (idle: boolean): FactoryConfig => {
       const base = sampleConfig();
       return { ...base, core: { ...base.core, session: { ...base.core.session, idle_compaction: idle } } };
@@ -1126,6 +1126,24 @@ describe('start:the hook settings of the coordinator', () => {
       expect(writes).toEqual([]);
       expect(deps.prompts).toEqual([]);
       expect(deps.warned).toEqual([skipNotice]);
+      expect(launched(tmux)).toBe(true);
+    });
+
+    it.each(['own', 'received'] as const)('starts in an %s root inside a session with no terminal and names a usable remedy', async (origin) => {
+      const { deps, tmux } = make({ origin, hookSettings: oldText, env: { [env.session]: 'demo' } });
+      const writes: string[] = [];
+      const watched = withFsWatch(deps, (method, path) => {
+        if (WRITE_CALLS.includes(method) && path.startsWith(`${COORDINATOR}/.claude`)) writes.push(method);
+      });
+      await succeeded(watched);
+      expect(deps.files.get(SETTINGS_FILE)).toBe(oldText);
+      expect(writes).toEqual([]);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.warned).toEqual([
+        `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
+          'Run "factory upgrade" outside the factory session, or in a terminal window and answer the question. The session starts as before.',
+      ]);
+      expect(deps.warned.join('\n')).not.toContain('--yes');
       expect(launched(tmux)).toBe(true);
     });
 

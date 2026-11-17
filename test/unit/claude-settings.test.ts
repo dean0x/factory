@@ -1338,6 +1338,47 @@ describe('hook settings: the idle compaction value', () => {
     expect(deps.files.get(FILE)).toBe(NO_KEY);
   });
 
+  it.each([false, true])('reports an unwritten idle-only change without a terminal, in session: %s', async (inSession) => {
+    const log: string[] = [];
+    const deps = makeDeps({ inSession, log });
+    deps.seed(FILE, NO_KEY);
+    const before = snapshot(deps);
+    const reads: string[] = [];
+    const watched = withFsWatch(logged(deps, log), (method, path) => {
+      if (method === 'readTextLimited' && path === FILE) reads.push(path);
+    });
+    const result = await ensureHookSettings(watched, request(), 'report');
+    expect(result).toEqual(ok({ kind: 'no-consent', file: FILE, onlyIdleCompaction: true }));
+    expect(reads).toEqual([FILE]);
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.prompts).toEqual([]);
+    expect(log).toEqual([]);
+  });
+
+  it.each([
+    ['hook', JSON.stringify({ statusLine: EXPECTED_ENTRIES.statusLine })],
+    ['status line', JSON.stringify({ hooks: EXPECTED_ENTRIES.hooks })],
+  ])('refuses a %s change without a terminal even when an idle-only change can be reported', async (_name, text) => {
+    const log: string[] = [];
+    const deps = makeDeps({ log });
+    deps.seed(FILE, text);
+    const before = snapshot(deps);
+    expect(errorOf(await ensureHookSettings(logged(deps, log), request(), 'report')).kind).toBe('usage');
+    expect(snapshot(deps)).toBe(before);
+    expect(log).toEqual([]);
+  });
+
+  it.each([false, true])('refuses yes inside a session even when an idle-only change can be reported, terminal: %s', async (tty) => {
+    const deps = makeDeps({ inSession: true, tty });
+    deps.seed(FILE, NO_KEY);
+    const error = errorOf(await ensureHookSettings(deps, request({ yes: true }), 'report'));
+    expect(error.kind).toBe('usage');
+    expect(error.hint).toContain('--yes gives no consent inside a factory session');
+    expect(deps.files.get(FILE)).toBe(NO_KEY);
+    expect(deps.prompts).toEqual([]);
+    expect(deps.warned).toEqual([]);
+  });
+
   it('with the yes flag inside a factory session, on a file that exists: exit 2 and nothing written', async () => {
     const deps = makeDeps({ inSession: true, tty: true });
     deps.seed(FILE, NO_KEY);
@@ -1367,7 +1408,7 @@ describe('hook settings: the idle compaction value', () => {
         return deps.prompt(question);
       },
     };
-    const error = errorOf(await ensureHookSettings(logged(asking, log), request()));
+    const error = errorOf(await ensureHookSettings(logged(asking, log), request(), 'report'));
     expect(error.kind).toBe('failure');
     expect(error.message).toContain('changed while the question waited');
     expect(deps.files.get(FILE)).toBe(changed);

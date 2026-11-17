@@ -553,7 +553,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     const result = await startFactory();
     expect(result.code, result.stderr).toBe(0);
     expect(result.stderr.trim().split('\n')).toHaveLength(1);
-    expect(result.stderr).toContain('factory upgrade --yes');
+    expect(result.stderr).toContain('Run "factory upgrade" in a terminal window, or add --yes.');
     expect(await readFile(settingsFileOf(), 'utf8')).toBe(text);
     expect((await stat(settingsFileOf())).mtimeMs).toBe(before.mtimeMs);
     expect(await waitForLaunch()).toEqual(['launched']);

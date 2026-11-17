@@ -1,16 +1,15 @@
 import { resolve } from 'node:path';
-import { failure, type CliError, type CliResult } from '../cli/errors.js';
+import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { declinedHookText, ensureHookSettings, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
+import { declinedHookText, ensureHookSettings, noConsentRemedy, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
 import type { AttachedEnd, Deps } from '../core/deps.js';
-import { inFactorySession } from '../core/factory-session.js';
 import { gitVersionProblem, requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { err, ok, type Err } from '../core/result.js';
+import { err, ok } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
 import { toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
@@ -361,27 +360,6 @@ const startSession = async (deps: Deps, id: string, steps: readonly TmuxArgs[]):
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 
 /**
- * The stop of the settings writer for want of consent, when the change holds only the idle compaction value. An unattended
- * restart has no terminal window to ask, and the hooks and the status line are in place, so it must not stop for the value
- * alone. The call writes nothing, prints one line that names the command that writes the value, and returns the change as
- * not written. Any other stop, and a change with a hook line or a status line line, stays the stop `stopped`.
- */
-const goOnWithoutValue = async (
-  deps: Deps,
-  settings: HookSettingsRequest,
-  stopped: Err<CliError>,
-): Promise<CliResult<HookSettingsOutcome>> => {
-  if (stopped.error.kind !== 'usage' || (deps.stdinIsTTY && deps.stdoutIsTTY) || (settings.yes && inFactorySession(deps))) return stopped;
-  const planned = await ensureHookSettings(deps, { ...settings, dryRun: true });
-  if (!planned.ok || planned.value.kind !== 'would-write' || !planned.value.onlyIdleCompaction) return stopped;
-  deps.warn(
-    `The value of ${idleCompactionKeyPath} is not written to ${planned.value.file}, because no terminal window can ask. ` +
-      `Run "${commandText(commands.upgrade)} ${flagText(flags.yes)}" to write it. The session starts as before.`,
-  );
-  return planned;
-};
-
-/**
  * Makes sure that the hook settings of the coordinator are in place, with the consent rules of `start`. A no on a terminal
  * window goes on without the hook and prints the notice. `command` is the command that asks, and the remedy of a stop names it.
  * With no terminal window and no consent, a change of the idle compaction value alone does not stop the command.
@@ -401,8 +379,14 @@ const settleHook = async (
     session: hookSessions.coordinator,
     ...request,
   };
-  const hook = await ensureHookSettings(deps, settings);
-  if (!hook.ok) return goOnWithoutValue(deps, settings, hook);
+  const hook = await ensureHookSettings(deps, settings, 'report');
+  if (!hook.ok) return hook;
+  if (hook.value.kind === 'no-consent') {
+    deps.warn(
+      `The value of ${idleCompactionKeyPath} is not written to ${hook.value.file}, because no terminal window can ask. ` +
+        `${noConsentRemedy(deps, { ...settings, command: commands.upgrade }, true)} The session starts as before.`,
+    );
+  }
   if (hook.value.kind === 'declined') deps.warn(declinedHookText(hook.value, request.command));
   return hook;
 };

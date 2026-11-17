@@ -1250,8 +1250,24 @@ describe('reboot', () => {
       expect(made.deps.prompts).toEqual([]);
       expect(made.deps.warned).toEqual([
         `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
-          'Run "factory upgrade --yes" to write it. The session starts as before.',
+          'Run "factory upgrade" in a terminal window, or add --yes. The session starts as before.',
       ]);
+    });
+
+    it('reboots with a session marker and no terminal, keeps settings and names a usable remedy', async () => {
+      const made = await make({ origin, hookSettings: oldSettings });
+      const marked = { ...made, deps: { ...made.deps, env: { ...made.deps.env, [env.session]: NODE } } };
+      const output = await succeeded(reboot(marked));
+      expect(output.json).toMatchObject({ started: true, workers: { resumed: [...IDS], skipped: [], failed: [] } });
+      expect(countOf(made, 'new-session')).toBe(1);
+      expect(made.deps.files.get(SETTINGS_FILE)).toBe(oldSettings);
+      expect(made.events).not.toContain(`write ${SETTINGS_FILE}`);
+      expect(made.deps.prompts).toEqual([]);
+      expect(made.deps.warned).toEqual([
+        `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
+          'Run "factory upgrade" outside the factory session, or in a terminal window and answer the question. The session starts as before.',
+      ]);
+      expect(made.deps.warned.join('\n')).not.toContain('--yes');
     });
 
     it.each([false, true])('writes the config value %s after consent and before any session stops', async (idle) => {
