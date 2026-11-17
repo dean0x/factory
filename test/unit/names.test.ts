@@ -24,6 +24,13 @@ import {
   guardIds,
   guardKinds,
   guardListWords,
+  guardRecords,
+  guardSetWords,
+  guardConfirmWords,
+  guardRecordWords,
+  guardStartWords,
+  guardDoctorWords,
+  guardDenyWords,
   guardValues,
   harmMark,
   heavyLock,
@@ -181,6 +188,7 @@ const WORD_NAMES = [
  */
 const TEXT_NAMES = [
   ...flat(files),
+  guardListWords.notSettable,
   schema1.protocolFile,
   dirs.state,
   dirs.claude,
@@ -1893,6 +1901,68 @@ describe('the names of the guards', () => {
     expect(harmMark).toBe('H');
     expect(schemaIds.guardList).toBe(`${program}.guard-list/v1`);
     expect(terms).toContain('guard');
+  });
+
+  it('names the guard store with its own schema, keys and fixed limits', () => {
+    expect(files.guardRecords).toBe('guard-records.json');
+    expect(guardRecords).toEqual({
+      schema: 1,
+      keys: { schema: 'schema', records: 'records', node: 'node', root: 'root', id: 'id', value: 'value', prefix: 'prefix', at: 'at' },
+      maxRecords: 1_000,
+      maxBytes: maxFileBytes,
+    });
+    expect(maxFileBytes).toBe(1_048_576);
+    expect(checkIds.guards).toBe('guards');
+    expect(schemaIds.guardSet).toBe(`${program}.guard-set/v1`);
+    expect(schemaIds.guardConfirm).toBe(`${program}.guard-confirm/v1`);
+  });
+
+  it('gives unknown and unsettable ids separate messages that name the list', () => {
+    expect(guardSetWords.unknownId('old-id')).toBe('Unknown guard "old-id". Run "factory guard list".');
+    expect(guardSetWords.notSettable(guardIds.workConduct)).toBe(
+      `Guard "${guardIds.workConduct}" is not settable in this version. Run "factory guard list".`,
+    );
+    expect(guardListWords.notSettable).toBe('not settable in this version');
+    expect(guardSetWords.summary).toBe('Set one guard in the local file.');
+    expect(guardConfirmWords.summary).toBe('Confirm the owner prefix for this folder.');
+  });
+
+  it('gives the guard channel four separate refusals and its own remedy', () => {
+    expect(guardRecordWords).toMatchObject({
+      sessionRefused: 'A factory session cannot write a guard record.',
+      claudeRefused: 'A Claude Code session cannot write a guard record.',
+      inputRequired: 'A guard record needs terminal input.',
+      outputRequired: 'A guard record needs terminal output.',
+      channelRemedy: 'Run the guard command in your terminal window, outside a session.',
+    });
+    expect(guardRecordWords.unreadable).toBe('The guard store cannot be read.');
+    expect(guardRecordWords.unreadableRemedy).toContain('factory guard confirm');
+  });
+
+  it('names the guard summary, doctor notice and own file rules by their effects', () => {
+    expect(guardStartWords).toMatchObject({ prefix: 'Guards:', noPrefixRecord: 'owner prefix has no record' });
+    expect(guardDoctorWords.noKey).toBe('No guards key: every guard is on.');
+    expect(guardDenyWords).toMatchObject({
+      edit: 'Edit',
+      missing: 'Own file Edit rules are incomplete.',
+      remedy: 'Run "factory upgrade" to add the own file Edit rules.',
+    });
+  });
+
+  it('names the off count, harm count, proxies, unmatched ids and prefix mismatch', () => {
+    expect(guardStartWords.off(2)).toBe('2 off');
+    expect(guardStartWords.harm(1)).toBe('1 with H');
+    expect(guardStartWords.directProxy('session.proxy')).toBe('direct proxy session.proxy');
+    expect(guardStartWords.unmatched('sample-guard')).toBe('unmatched sample-guard');
+    expect(guardStartWords.prefixMismatch).toBe('owner prefix differs from its record');
+  });
+
+  it('keeps the guard store file name and settable mark in names only', () => {
+    const path = join(SRC, 'sample.ts');
+    expect(violationsInText("const a = 'guard-records.json';", path)).toContain(
+      'sample.ts: "guard-records.json" holds the name guard-records.json',
+    );
+    expect(violationsInText("const a = 'not settable in this version';", path)).toHaveLength(1);
   });
 
   it('words the more line and the count line of the list', () => {

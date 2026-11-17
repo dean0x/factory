@@ -4,6 +4,7 @@ import { runCli } from '../../src/cli/run.js';
 import { loadConfig } from '../../src/config/load.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { guardRowsFor, guardsFor } from '../../src/guards/registry.js';
+import { guardOf } from '../../src/guards/build.js';
 import { dirs, files, guardIds, guardListWords, schemaIds } from '../../src/names.js';
 import { recipes, type RecipeEntry, type RecipeRegistry } from '../../src/recipes/index.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
@@ -59,7 +60,7 @@ describe('guard list', () => {
     expect(result.code).toBe(0);
     expect(result.err).toBe('');
     expect(cellsOf(lines[0] ?? '')).toEqual(['GUARD', 'VALUE', 'DEFAULT', 'H', 'SET IN']);
-    expect(lines.slice(1, -2).map((line) => rowCells(lines[0] ?? '', line))).toEqual(guards.slice(0, 17).map((guard) => [guard.id, 'on', guard.newNode, guard.harm ? 'H' : '', 'no key']));
+    expect(lines.slice(1, -2).map((line) => rowCells(lines[0] ?? '', line))).toEqual(guards.slice(0, 17).map((guard) => [guard.id, 'on', guard.newNode, guard.harm ? 'H' : '', guard.wired ? 'no key' : 'not settable in this version']));
     expect(lines.at(-2)).toBe('and 14 more: run with --all or --json');
     expect(lines.at(-1)).toBe('0 of 31 guards are off. 0 of them have the mark H.');
     expectShortOutput(result.out);
@@ -77,9 +78,9 @@ describe('guard list', () => {
     const recipe: RecipeEntry = {
       ...publishRecipe,
       guards: [
-        { id: 'unmarked-off', name: 'Unmarked', keepsSafe: 'Sample data stays safe.', newNode: 'on', whenMissing: 'off', related: [] },
-        { id: 'sample-on', name: 'On', keepsSafe: 'Sample data stays safe.', newNode: 'on', whenMissing: 'on', related: [] },
-        { id: 'marked-off', name: 'Marked', keepsSafe: 'Sample data stays private.', newNode: 'on', whenMissing: 'off', related: [] },
+        { id: 'unmarked-off', name: 'Unmarked', keepsSafe: 'Sample data stays safe.', wired: true, newNode: 'on', whenMissing: 'off', related: [] },
+        { id: 'sample-on', name: 'On', keepsSafe: 'Sample data stays safe.', wired: true, newNode: 'on', whenMissing: 'on', related: [] },
+        { id: 'marked-off', name: 'Marked', keepsSafe: 'Sample data stays private.', wired: true, newNode: 'on', whenMissing: 'off', related: [] },
       ],
       guardRows: [
         { id: 'unmarked-row', guard: 'unmarked-off', name: 'Sample data stays safe.', applies: 'Sample', kind: 'text', harm: false, sites: [] },
@@ -93,7 +94,7 @@ describe('guard list', () => {
     expect(lines.slice(1, -1).map((line) => rowCells(lines[0] ?? '', line))).toEqual([
       ['marked-off', 'off', 'on', 'H', 'no key'],
       ['unmarked-off', 'off', 'on', '', 'no key'],
-      ...guardsFor(publishRecipe).map((guard) => [guard.id, 'on', guard.newNode, guard.harm ? 'H' : '', 'no key']),
+      ...guardsFor(publishRecipe).map((guard) => [guard.id, 'on', guard.newNode, guard.harm ? 'H' : '', 'not settable in this version']),
       ['sample-on', 'on', 'on', '', 'no key'],
     ]);
     expect(lines.at(-1)).toBe(guardListWords.countLine(2, 31, 1));
@@ -115,11 +116,25 @@ describe('guard list', () => {
       schema: schemaIds.guardList,
       home: HOME,
       error: null,
-      guards: guardsFor(recipes[0]).map((guard) => ({ ...guard, value: 'on', source: 'missing', since: null })),
+      guards: guardsFor(recipes[0]).map((guard) => ({ ...guard, settable: false, value: 'on', source: 'missing', since: null })),
       rows: guardRowsFor(recipes[0]),
       unmatched: [],
       loosened: [],
     });
+  });
+
+  it('reports a recipe guard as settable only when it is wired', async () => {
+    const recipe: RecipeEntry = {
+      ...publishRecipe,
+      guards: [{ ...guardOf('sample-guard', 'Sample', 'Sample data stays safe.'), wired: true }],
+    };
+    const result = await run(make(publishingConfig()), ['--json'], [recipe]);
+    expect(result.code).toBe(0);
+    const doc: unknown = JSON.parse(result.out);
+    expect(doc).toMatchObject({ guards: [
+      ...guardsFor(publishRecipe).map((guard) => ({ id: guard.id, settable: false })),
+      { id: 'sample-guard', wired: true, settable: true, value: 'on', source: 'missing', since: null },
+    ] });
   });
 
   it('keeps the complete JSON with family and all flags', async () => {
@@ -221,7 +236,7 @@ describe('guard list', () => {
       schema: schemaIds.guardList,
       home: HOME,
       error: loaded.error,
-      guards: guardsFor(recipes[0]).map((guard) => ({ ...guard, value: 'unknown', source: 'missing', since: null })),
+      guards: guardsFor(recipes[0]).map((guard) => ({ ...guard, settable: false, value: 'unknown', source: 'missing', since: null })),
       rows: guardRowsFor(recipes[0]),
       unmatched: [],
       loosened: [],
@@ -250,7 +265,7 @@ describe('guard list', () => {
     expect(result.code).toBe(1);
     const doc: unknown = JSON.parse(result.out);
     expect(doc).toMatchObject({
-      guards: guardsFor(publishRecipe).map((guard) => ({ ...guard, value: 'unknown', source: 'missing', since: null })),
+      guards: guardsFor(publishRecipe).map((guard) => ({ ...guard, settable: false, value: 'unknown', source: 'missing', since: null })),
       rows: guardRowsFor(publishRecipe),
     });
   });
@@ -261,7 +276,7 @@ describe('guard list', () => {
     const result = await run(deps, ['--json'], twoRecipeRegistry);
     expect(result.code).toBe(1);
     const doc: unknown = JSON.parse(result.out);
-    expect(doc).toMatchObject({ guards: guardsFor(publishRecipe).map((guard) => ({ ...guard, value: 'unknown', source: 'missing', since: null })) });
+    expect(doc).toMatchObject({ guards: guardsFor(publishRecipe).map((guard) => ({ ...guard, settable: false, value: 'unknown', source: 'missing', since: null })) });
   });
 
   it('keeps a named recipe when another shared config field is invalid', async () => {
@@ -270,7 +285,7 @@ describe('guard list', () => {
     const result = await run(deps, ['--json'], twoRecipeRegistry);
     expect(result.code).toBe(1);
     const doc: unknown = JSON.parse(result.out);
-    expect(doc).toMatchObject({ guards: guardsFor(publishRecipe).map((guard) => ({ ...guard, value: 'unknown', source: 'missing', since: null })) });
+    expect(doc).toMatchObject({ guards: guardsFor(publishRecipe).map((guard) => ({ ...guard, settable: false, value: 'unknown', source: 'missing', since: null })) });
   });
 
   it('shows unknown values and exit 2 for a missing local config', async () => {
@@ -310,7 +325,7 @@ describe('guard list', () => {
   });
 
   it('shows hidden characters and line breaks in no table cell', async () => {
-    const recipe = { ...publishRecipe, guards: [{ id: 'sample\n\u001b[31m‮', name: 'Sample', keepsSafe: 'Sample data stays private.', newNode: 'on' as const, whenMissing: 'on' as const, related: [] }], guardRows: [{ id: 'sample-row\t\u001b', guard: 'sample\n\u001b[31m‮', name: 'Data\n\t\u001b‮stays private.', applies: 'Sample', kind: 'text' as const, harm: true, sites: [] }] };
+    const recipe = { ...publishRecipe, guards: [{ id: 'sample\n\u001b[31m‮', name: 'Sample', keepsSafe: 'Sample data stays private.', wired: false, newNode: 'on' as const, whenMissing: 'on' as const, related: [] }], guardRows: [{ id: 'sample-row\t\u001b', guard: 'sample\n\u001b[31m‮', name: 'Data\n\t\u001b‮stays private.', applies: 'Sample', kind: 'text' as const, harm: true, sites: [] }] };
     const registry: RecipeRegistry = [recipe];
     const deps = make(publishingConfig());
     for (const flags of [['--all'], ['--family', recipe.guards[0]?.id ?? '', '--all']]) {

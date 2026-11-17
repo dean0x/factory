@@ -295,6 +295,8 @@ export const files = {
   homeIndex: 'homes.json',
   /** The approval records of the user. The per-user state folder holds the file, beside the factory list. */
   ownerRecords: 'owner-records.json',
+  /** The guard values and owner prefix records of the user, beside the factory list. */
+  guardRecords: 'guard-records.json',
   /** The owner decisions of the user: one record for each decision that the owner answered. It has its own lock and its own bounds. */
   ownerDecisions: 'owner-decisions.json',
   /** The setup acceptances of the user. The per-user state folder holds the file, beside the factory list. */
@@ -2059,6 +2061,8 @@ export const checkIds = {
   projectPaths: 'project-paths',
   /** The mode of each approval point and the active delegations. */
   delegations: 'delegations',
+  /** The guard values, their records and their direct config proxies. */
+  guards: 'guards',
   instructionFiles: 'instruction-files',
   proxyEnv: 'proxy-env',
   proxy: 'proxy',
@@ -2258,6 +2262,8 @@ export const schemaIds = {
   queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
   guardList: `${program}.guard-list/v1`,
+  guardSet: `${program}.guard-set/v1`,
+  guardConfirm: `${program}.guard-confirm/v1`,
   lock: `${program}.${commands.lock}/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
@@ -2325,6 +2331,70 @@ export const guardValues = { on: 'on', off: 'off' } as const;
 /** The key of the guard values: the map in the local file, and the map in the shared file that can only tighten. */
 export const guardKeys = { local: 'guards', shared: 'shared_guards' } as const;
 
+/** The guard store has its own schema, keys and bounds, apart from approval records. */
+export const guardRecords = {
+  schema: 1,
+  keys: {
+    schema: 'schema',
+    records: 'records',
+    node: 'node',
+    root: 'root',
+    id: 'id',
+    value: 'value',
+    prefix: 'prefix',
+    at: 'at',
+  },
+  maxRecords: 1_000,
+  maxBytes: maxFileBytes,
+} as const;
+
+/** The words of the guard value command. */
+export const guardSetWords = {
+  summary: 'Set one guard in the local file.',
+  unknownId: (id: string): string => `Unknown guard "${id}". Run "${commandText(commandLines.guardList)}".`,
+  notSettable: (id: string): string =>
+    `Guard "${id}" is not settable in this version. Run "${commandText(commandLines.guardList)}".`,
+} as const;
+
+/** The words of the owner prefix command. */
+export const guardConfirmWords = {
+  summary: 'Confirm the owner prefix for this folder.',
+} as const;
+
+/** Guard record checks and their remedies have words of their own. */
+export const guardRecordWords = {
+  sessionRefused: `A ${program} session cannot write a guard record.`,
+  claudeRefused: 'A Claude Code session cannot write a guard record.',
+  inputRequired: 'A guard record needs terminal input.',
+  outputRequired: 'A guard record needs terminal output.',
+  channelRemedy: 'Run the guard command in your terminal window, outside a session.',
+  unreadable: 'The guard store cannot be read.',
+  unreadableRemedy: `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to recover the guard store.`,
+} as const;
+
+/** Parts of the one-line guard summary at start. */
+export const guardStartWords = {
+  prefix: 'Guards:',
+  off: (count: number): string => `${count} ${guardValues.off}`,
+  harm: (count: number): string => `${count} with ${harmMark}`,
+  directProxy: (key: string): string => `direct proxy ${key}`,
+  unmatched: (id: string): string => `unmatched ${id}`,
+  noPrefixRecord: 'owner prefix has no record',
+  prefixMismatch: 'owner prefix differs from its record',
+} as const;
+
+/** The doctor notice for a node whose local file has no guard values. */
+export const guardDoctorWords = {
+  noKey: 'No guards key: every guard is on.',
+} as const;
+
+/** The names and notice of the Edit rules for files that the program owns. */
+export const guardDenyWords = {
+  edit: 'Edit',
+  missing: 'Own file Edit rules are incomplete.',
+  remedy: `Run "${commandText(commands.upgrade)}" to add the own file Edit rules.`,
+} as const;
+
 /** The mark of a guard, or a row of it, that can harm the machine, the data or the accounts when it is off. */
 export const harmMark = 'H';
 
@@ -2345,6 +2415,7 @@ export const guardListWords = {
   columns: { guard: 'GUARD', value: 'VALUE', default: 'DEFAULT', harm: harmMark, setIn: 'SET IN' },
   familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
   unknown: 'unknown',
+  notSettable: 'not settable in this version',
   sources: {
     missing: 'no key',
     shared: files.config,

@@ -6,7 +6,7 @@ import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
 import { guardRowsFor, guardsFor } from '../guards/registry.js';
-import type { Guard, GuardRow, GuardValue } from '../guards/types.js';
+import type { Guard, GuardRow, GuardState, GuardValue } from '../guards/types.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
 import { commands, guardListWords, guardValues, harmMark, keys, maxGuardListLines, schemaIds } from '../names.js';
 import { findRecipe, type RecipeEntry, type RecipeRegistry } from '../recipes/index.js';
@@ -17,7 +17,7 @@ export interface GuardListOptions {
   readonly family: string | undefined;
 }
 
-interface ListedGuard extends Guard {
+interface ListedGuard extends Omit<GuardState, 'value'> {
   readonly value: GuardValue | typeof guardListWords.unknown;
   readonly source: 'missing';
   readonly since: null;
@@ -26,6 +26,7 @@ interface ListedGuard extends Guard {
 /** A config with no guard keys uses the missing-key value and has no record time. */
 const valueOf = (guard: Guard, loaded: boolean): ListedGuard => ({
   ...guard,
+  settable: guard.wired,
   value: loaded ? guard.whenMissing : guardListWords.unknown,
   source: 'missing',
   since: null,
@@ -40,7 +41,7 @@ const guardCells = (guard: ListedGuard): readonly string[] => cleanCells([
   guard.value,
   guard.newNode,
   guard.harm ? harmMark : '',
-  guardListWords.sources[guard.source],
+  guard.settable ? guardListWords.sources[guard.source] : guardListWords.notSettable,
 ]);
 
 const rowCells = (row: GuardRow): readonly string[] => cleanCells([

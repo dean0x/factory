@@ -6,8 +6,8 @@ import { glossary } from '../../src/glossary.js';
 import { isRecord } from '../../src/migrate/inspect.js';
 import { recipes } from '../../src/recipes/index.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
-import { guardOf } from '../../src/guards/build.js';
-import { guardRowsFor, guardsFor, retiredGuardIds } from '../../src/guards/registry.js';
+import { guardOf, wiredGuard } from '../../src/guards/build.js';
+import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
 import type { Guard, GuardRow } from '../../src/guards/types.js';
 import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, keys, roleText } from '../../src/names.js';
 import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
@@ -84,6 +84,27 @@ describe('the guards of a recipe', () => {
   it('gives no guard the id of an approval point', () => {
     const taken = new Set<string>(softwareRecipe.approvalPoints.map((point) => point.id));
     expect(idsOf(software.guards).filter((id) => taken.has(id))).toEqual([]);
+  });
+
+  it('leaves every core and software guard unwired until its text can follow a value', () => {
+    for (const guard of [...software.guards, ...guardsFor(publishRecipe)]) {
+      expect(guard.wired, guard.id).toBe(false);
+    }
+  });
+
+  it('marks a guard as wired without a change to its definition', () => {
+    const definition = guardOf('test-guard', 'Test guard', 'Test work stays safe.', ['test.key']);
+    const wired = wiredGuard(definition);
+    expect(wired).toEqual({ ...definition, wired: true });
+    expect(wired).not.toBe(definition);
+    expect(definition.wired).toBe(false);
+    expect(guardsFor({ ...publishRecipe, guards: [wired] }).at(-1)).toMatchObject({
+      ...definition, wired: true, harm: true, kinds: [], rows: [],
+    });
+  });
+
+  it('starts the guard record path with no sites and no registry row', () => {
+    expect(recordPathSites).toEqual([]);
   });
 
   it('retires no guard id yet', () => {

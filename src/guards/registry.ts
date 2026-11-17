@@ -2,7 +2,7 @@ import { guardIds, guardKeys, guardKinds, keys, places, roles } from '../names.j
 import type { RecipeEntry } from '../recipes/entry.js';
 import { guardOf } from './build.js';
 import { coreGuardRows } from './core-rows.js';
-import type { Guard, GuardDefinition, GuardRow } from './types.js';
+import type { Guard, GuardDefinition, GuardRow, RowSite } from './types.js';
 
 const { owner, worker } = roles;
 const folder = places.folder;
@@ -168,6 +168,9 @@ const coreGuards: readonly GuardDefinition[] = [
     `A session installs nothing outside its own folder without a go of the ${owner}.`,
   ),
 ];
+
+/** Sites of the guard record path, separate from the rows of the registry. */
+export const recordPathSites: readonly RowSite[] = [];
 
 /** The guard ids that older nodes may still hold in a config and that no guard has now. */
 export const retiredGuardIds: readonly string[] = [];
