@@ -325,7 +325,7 @@ export const checkIdleCompaction = async (deps: Deps, home: string, state: DocSt
   if (!listed.ok) return failedFrom(id, listed.error);
   const wanted = state.value.core.session.idle_compaction;
   const sessions = [
-    { folder: layoutOf(home).coordinatorDir, name: 'the coordinator', restart: commands.reboot },
+    { folder: layoutOf(home).coordinatorDir, name: `the ${roles.coordinator}`, restart: commands.reboot },
     ...listed.value.workers.map((record) => ({
       folder: workCopyOf(home, record.project, record.id), name: `${roles.worker} ${record.id}`, restart: `${commands.restart} ${record.id}`,
     })),
