@@ -357,6 +357,7 @@ describe('the work item port of the board: a worker id of 40 characters', () => 
     title: undefined,
     text: undefined,
     track: undefined,
+    epic: undefined,
     fields: [],
     state: undefined,
     stage: undefined,

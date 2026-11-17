@@ -18,6 +18,7 @@ const BASE: ItemOptions = {
   title: undefined,
   text: undefined,
   track: undefined,
+  epic: undefined,
   fields: [],
   state: undefined,
   stage: undefined,

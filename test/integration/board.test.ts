@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { files, stateGuard } from '../../src/names.js';
@@ -18,6 +18,9 @@ const CASE_MS = 120_000;
 const BOARD_BLOCK = ['board:', '  states: [open, doing, done]', '  in_progress: doing', '  closed: done', ''].join('\n');
 
 const BOARD_FILES = [files.board, files.waiting, files.decisionLog];
+
+/** A file of the factory folder that an item can link. */
+const DOC = 'docs/plan.md';
 
 const factory = (args: readonly string[]): Promise<RunResult> => box.run([...args, '--home', box.node]);
 
@@ -61,12 +64,14 @@ afterAll(removeOpenSandboxes);
 
 describe('the board commands with the delete guard off', () => {
   it(
-    'exits 4 for item add, update, move and close, track add, request add and queue set, writes nothing, and the lists still work',
+    'exits 4 for item add, update, move, close and doc, track add, request add and queue set, writes nothing, and the lists still work',
     async () => {
       await mustRun(['item', 'add', '--title', 'First']);
       await mustRun(['track', 'add', 'core', '--name', 'Core']);
       await mustRun(['request', 'add', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Yes']);
       await mustRun(['queue', 'set', 'Docs', '--item', 'B-1']);
+      await mkdir(join(box.node, 'docs'));
+      await writeFile(join(box.node, DOC), '# Plan\n');
       expect((await stateGit(['config', stateGuard.hooksPathKey, '/somewhere/else'])).code).toBe(0);
       const filesBefore = await boardFilesNow();
       const commitsBefore = await commitCount();
@@ -74,11 +79,14 @@ describe('the board commands with the delete guard off', () => {
       const writes: readonly (readonly string[])[] = [
         ['item', 'add', '--title', 'Second'],
         ['item', 'update', 'B-1', '--title', 'Changed'],
+        ['item', 'update', 'B-1', '--epic', 'Launch'],
         ['item', 'move', 'B-1', '--state', 'doing'],
         ['item', 'close', 'B-1'],
+        ['item', 'doc', 'B-1', DOC],
         ['track', 'add', 'docs', '--name', 'Docs'],
         ['request', 'add', '--title', 'Other', '--question', 'Why?', '--option', 'a=Yes'],
         ['queue', 'set', 'Docs', '--note', 'Changed'],
+        ['queue', 'set', 'Docs', '--release-group', 'Launch'],
       ];
       for (const args of writes) {
         const result = await factory(args);

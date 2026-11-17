@@ -1,6 +1,8 @@
-import { failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
-import { displayLine } from '../cli/output.js';
+import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
+import { displayLine, removedByDisplay } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
+import { dotRuleReason, type NameCompare } from '../core/place-rule.js';
+import { projectFolderKey } from '../core/project-path.js';
 import { ok, type Err } from '../core/result.js';
 import {
   boardIds,
@@ -50,9 +52,9 @@ import type {
 } from './contract.js';
 import { declaredFields, itemTarget, resolveFields, rowTarget, type FieldInput } from './fields.js';
 import type { BoardDoc, DecisionLogDoc, WaitingDoc } from './files.js';
-import { rowItemsOf, rowNameOf } from './queue.js';
+import { rowItemsOf, rowNameOf, rowReleaseGroupOf } from './queue.js';
 import { requestTitleOf } from './requests.js';
-import { firstStageOf, requireSettableStage, requireStage } from './stages.js';
+import { firstStageOf, requireSettableStage, requireStage, stagesOf } from './stages.js';
 import { holdsBreak, lineIssue } from './text.js';
 import { trackIdIssue, trackNameIssue } from './tracks.js';
 
@@ -90,6 +92,16 @@ const lineOf = (what: string, text: string, max: number): CliResult<string> => {
 const optionalLineOf = (what: string, text: string | undefined, max: number): CliResult<string | undefined> =>
   text === undefined ? ok(undefined) : lineOf(what, text, max);
 
+/** One line as `lineOf` checks it, and a view shows it whole: a character that the display removes is refused (exit 2). */
+const shownLineOf = (what: string, text: string, max: number): CliResult<string> => {
+  const line = lineOf(what, text, max);
+  if (!line.ok) return line;
+  return removedByDisplay(line.value) ? usageError(`the ${what} holds a character that the screen does not show`) : line;
+};
+
+const optionalShownLineOf = (what: string, text: string | undefined, max: number): CliResult<string | undefined> =>
+  text === undefined ? ok(undefined) : shownLineOf(what, text, max);
+
 /** The fields of the contract as the typed text that `resolveFields` checks. */
 const inputsOf = (fields: FieldValues | undefined): FieldInput[] =>
   Object.entries(fields ?? {}).map(([name, value]) => ({ name, value: String(value) }));
@@ -104,12 +116,18 @@ export interface NewItem {
   readonly title: string;
   readonly text: string | undefined;
   readonly track: string | undefined;
+  readonly epic: string | undefined;
   readonly status: string;
   readonly stage: string | null;
+  /** The stage list of the recipe at the add. It is empty for a recipe with no list, and the item then stores no `stages` key. */
+  readonly stages: readonly string[];
   readonly fields: FieldValues;
 }
 
-/** A new item: the first state of the setup, the first stage of the recipe, and the checked title, text and fields. */
+/**
+ * A new item: the first state of the setup, the first stage of the recipe with a copy of the stage list, and the checked title,
+ * text, epic and fields.
+ */
 export const checkNewItem = (setup: BoardSetup, input: ItemAddInput): CliResult<NewItem> => {
   const [status] = setup.config?.states ?? [];
   if (status === undefined) return usageError(NO_STATES);
@@ -117,15 +135,27 @@ export const checkNewItem = (setup: BoardSetup, input: ItemAddInput): CliResult<
   if (!title.ok) return title;
   const text = optionalLineOf('text', input.text, boardTextLimits.maxTextChars);
   if (!text.ok) return text;
+  const epic = optionalShownLineOf(boardKeys.epic, input.epic, boardTextLimits.maxEpicChars);
+  if (!epic.ok) return epic;
   const fields = resolveFields(setup.config, itemTarget, inputsOf(input.fields), { complete: true });
   if (!fields.ok) return fields;
-  return ok({ title: title.value, text: text.value, track: input.track, status, stage: firstStageOf(setup.recipe), fields: fields.value });
+  return ok({
+    title: title.value,
+    text: text.value,
+    track: input.track,
+    epic: epic.value,
+    status,
+    stage: firstStageOf(setup.recipe),
+    stages: [...stagesOf(setup.recipe)],
+    fields: fields.value,
+  });
 };
 
 export interface ItemChanges {
   readonly title: string | undefined;
   readonly text: string | undefined;
   readonly track: string | undefined;
+  readonly epic: string | undefined;
   readonly fields: FieldValues;
   /**
    * The refusal of an empty value for the worker field, held back until the item is read under the lock. An item that holds a worker
@@ -143,6 +173,8 @@ export const checkPatch = (setup: BoardSetup, patch: ItemPatch): CliResult<ItemC
   if (!title.ok) return title;
   const text = optionalLineOf('text', patch.text, boardTextLimits.maxTextChars);
   if (!text.ok) return text;
+  const epic = optionalShownLineOf(boardKeys.epic, patch.epic, boardTextLimits.maxEpicChars);
+  if (!epic.ok) return epic;
   const inputs = inputsOf(patch.fields);
   const workerField = setup.config?.worker_field;
   const emptied = inputs.filter((input) => input.name === workerField && input.value === '');
@@ -154,6 +186,7 @@ export const checkPatch = (setup: BoardSetup, patch: ItemPatch): CliResult<ItemC
     title: title.value,
     text: text.value,
     track: patch.track,
+    epic: epic.value,
     fields: fields.value,
     emptyWorker: refusal === undefined || refusal.ok ? undefined : refusal,
   });
@@ -242,18 +275,50 @@ export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecisio
   return ok({ title: title.value, question: question.value, options: stored, group: input.group ?? requestGroups.now });
 };
 
-/** Why a path can not be linked, as a phrase for a message ("the path ..."), or null. The checks need no file. */
-const docPathIssue = (path: string): string | null => {
+/**
+ * Why a path can not be linked. A `form` fault is a path that is no plain path of the factory folder (a usage error, exit 2). A
+ * `place` fault is a plain path that the place rule refuses (a security stop, exit 4). The reason is a phrase for a message
+ * ("the path ... <reason>"). It holds no more of the path than one part, cut to the width of an echo.
+ */
+export interface DocPathIssue {
+  readonly kind: 'form' | 'place';
+  readonly reason: string;
+}
+
+/** The doc place rule compares a name with a fixed name in any letter case, on every platform. */
+const sameDocName: NameCompare = (a, b) => projectFolderKey(a) === projectFolderKey(b);
+
+const plainPathFault = (path: string): string | null => {
   if (path === '') return 'is empty';
-  if (holdsBreak(path)) return 'holds a line break, a control character or a mark of text direction';
+  if (holdsBreak(path) || removedByDisplay(path)) return 'holds a line break, a control character, a hidden character or a mark of text direction';
   if (path.length > boardTextLimits.maxDocPathChars) return `is longer than ${boardTextLimits.maxDocPathChars} characters`;
   if (path.includes('\\')) return 'holds a backslash';
   return isPlainPath(path) ? null : `is not a plain relative path inside the ${places.folder}`;
 };
 
+/**
+ * The one name check of the doc rule, or null for a path that passes. It reads the path text and no file. The write (`checkDocPath`)
+ * and every view of a stored path call it, so they agree on each path. The checks run in this order: a plain path with no hidden
+ * character, then the place rule. The place rule refuses the local config at the top of the factory folder, in any letter case, and
+ * a part that starts with a dot. It has no exception for the orders folder.
+ */
+export const docPathIssue = (path: string): DocPathIssue | null => {
+  const fault = plainPathFault(path);
+  if (fault !== null) return { kind: 'form', reason: fault };
+  const place = dotRuleReason(path.split('/'), { atFactoryTop: true, ordersException: false, sameName: sameDocName });
+  return place === null ? null : { kind: 'place', reason: `is refused: ${displayLine(place, maxEchoChars)}` };
+};
+
 export const checkDocPath = (path: string): CliResult<string> => {
   const issue = docPathIssue(path);
-  return issue === null ? ok(path) : usageError(`the path ${shown(path)} ${issue}`);
+  if (issue === null) return ok(path);
+  const message = `the path ${shown(path)} ${issue.reason}`;
+  return issue.kind === 'form'
+    ? usageError(message)
+    : safetyRefusal(
+        message,
+        `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}. Then run "${commandText(commandLines.itemDoc)}" again with that file.`,
+      );
 };
 
 /** A request id of the form `D-n`. The form check comes first, because the id goes into the text of a commit. */
@@ -265,6 +330,7 @@ export interface CheckedRow {
   readonly name: string;
   readonly items: readonly string[] | undefined;
   readonly note: string | undefined;
+  readonly releaseGroup: string | undefined;
   readonly fields: FieldValues;
   readonly position: number | undefined;
 }
@@ -282,15 +348,17 @@ const rowItemsIssue = (items: readonly string[]): CliResult<void> => {
 };
 
 /**
- * A queue write: a one-line name and note, item ids of the form `B-n` with no repeat, owner fields of the row that the setup
- * declares, and a position from 1. Whether the items are on the board, and whether a field is required, depend on the board and wait
- * for the edit under the lock.
+ * A queue write: a one-line name and note, a release group of one clean line, item ids of the form `B-n` with no repeat, owner fields
+ * of the row that the setup declares, and a position from 1. Whether the items are on the board, and whether a field is required,
+ * depend on the board and wait for the edit under the lock.
  */
 export const checkQueueRow = (setup: BoardSetup, input: QueueRowInput): CliResult<CheckedRow> => {
   const name = lineOf(boardKeys.name, input.name, boardTextLimits.maxTitleChars);
   if (!name.ok) return name;
   const note = optionalLineOf(boardKeys.note, input.note, boardTextLimits.maxTextChars);
   if (!note.ok) return note;
+  const releaseGroup = optionalShownLineOf(boardKeys.releaseGroup, input.releaseGroup, boardTextLimits.maxReleaseGroupChars);
+  if (!releaseGroup.ok) return releaseGroup;
   if (input.items !== undefined) {
     const items = rowItemsIssue(input.items);
     if (!items.ok) return items;
@@ -300,7 +368,7 @@ export const checkQueueRow = (setup: BoardSetup, input: QueueRowInput): CliResul
   if (input.position !== undefined && !(Number.isInteger(input.position) && input.position >= 1)) {
     return usageError('the position is a whole number from 1');
   }
-  return ok({ name: name.value, items: input.items, note: note.value, fields: fields.value, position: input.position });
+  return ok({ name: name.value, items: input.items, note: note.value, releaseGroup: releaseGroup.value, fields: fields.value, position: input.position });
 };
 
 // The edits of a file that was read under the lock.
@@ -342,7 +410,8 @@ const withItem = (doc: BoardDoc, id: string, record: Stored): Stored =>
 
 /**
  * Add the item. The value is its new id: the number after the highest one on the board. A new item that has a stage gets `at`, the
- * exact time of the add, as the time of its stage (`boardKeys.stageAt`).
+ * exact time of the add, as the time of its stage (`boardKeys.stageAt`). The item keeps a copy of the stage list of the recipe
+ * (`boardKeys.stages`), fixed at the add, and a recipe with no list stores no key. The epic is stored only when the add has one.
  */
 export const addItemIn = (doc: BoardDoc, item: NewItem, at: string): CliResult<Edit<string>> => {
   if (item.track !== undefined) {
@@ -357,14 +426,17 @@ export const addItemIn = (doc: BoardDoc, item: NewItem, at: string): CliResult<E
     [boardKeys.status, item.status],
   ];
   if (item.stage !== null) entries.push([boardKeys.stage, item.stage], [boardKeys.stageAt, at]);
+  if (item.stages.length > 0) entries.push([boardKeys.stages, item.stages]);
   if (item.track !== undefined) entries.push([boardKeys.track, item.track]);
   if (item.text !== undefined) entries.push([boardKeys.text, item.text]);
+  if (item.epic !== undefined) entries.push([boardKeys.epic, item.epic]);
   entries.push(...Object.entries(item.fields));
   return ok({ top: withItems(doc, [...doc.items.map((entry) => entry.record), Object.fromEntries(entries)]), value: id.value });
 };
 
 /**
- * Change the title, the text, the track and the fields of an item. The value is the id.
+ * Change the title, the text, the track, the epic and the fields of an item. The value is the id. An epic is set or replaced and is
+ * never cleared, and the stage list of the item stays as the add stored it.
  *
  * The worker field guard: when the patch holds the worker field, and the stored item has the key, a new value that differs from the
  * stored one, or an empty value, is a usage error (exit 2) that names the command that takes a worker off an item. Only `unassignIn`
@@ -394,6 +466,7 @@ export const changeItemIn = (
   if (changes.title !== undefined) entries.push([boardKeys.title, changes.title]);
   if (changes.track !== undefined) entries.push([boardKeys.track, changes.track]);
   if (changes.text !== undefined) entries.push([boardKeys.text, changes.text]);
+  if (changes.epic !== undefined) entries.push([boardKeys.epic, changes.epic]);
   entries.push(...Object.entries(changes.fields));
   const next = withKeys(found.value.record, entries);
   return ok({ top: next.changed ? withItem(doc, id, next.record) : null, value: id });
@@ -577,8 +650,12 @@ export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliR
   return ok({ top: withItem(doc, id, marked), value: worker });
 };
 
-/** Add a path to the `docs` of an item. A path that the item has stays once. The value is the id. */
-export const linkDocIn = (doc: BoardDoc, id: string, path: string): CliResult<Edit<string>> => {
+/**
+ * Add a path to the `docs` of an item. A path that the item has stays once. A new path is a usage error (exit 2) when the item holds
+ * `boardTextLimits.maxItemDocs` paths already; a longer list that a hand edit made is read as it is. The value is true when the
+ * path is new, and false when the item had it and the file stays as it is.
+ */
+export const linkDocIn = (doc: BoardDoc, id: string, path: string): CliResult<Edit<boolean>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
   const docs = found.value.record[boardKeys.docs];
@@ -586,8 +663,14 @@ export const linkDocIn = (doc: BoardDoc, id: string, path: string): CliResult<Ed
     return failure(`${files.board}: the "${boardKeys.docs}" of ${id} is not a list of text`);
   }
   const current: readonly unknown[] = docs ?? [];
-  if (current.includes(path)) return ok({ top: null, value: id });
-  return ok({ top: withItem(doc, id, withKeys(found.value.record, [[boardKeys.docs, [...current, path]]]).record), value: id });
+  if (current.includes(path)) return ok({ top: null, value: false });
+  if (current.length >= boardTextLimits.maxItemDocs) {
+    return usageError(
+      `the item ${id} holds ${boardTextLimits.maxItemDocs} docs already, so it takes no more`,
+      `Take a path out of the "${boardKeys.docs}" of the item in ${files.board}, then run "${commandText(commandLines.itemDoc)}" again with the new path.`,
+    );
+  }
+  return ok({ top: withItem(doc, id, withKeys(found.value.record, [[boardKeys.docs, [...current, path]]]).record), value: true });
 };
 
 /**
@@ -785,11 +868,19 @@ export const setRowIn = (doc: BoardDoc, setup: BoardSetup, row: CheckedRow): Cli
   const itemsChanged = created || (row.items !== undefined && !holdsItems(current[boardKeys.items], row.items));
   if (itemsChanged) entries.push([boardKeys.items, row.items ?? []]);
   if (row.note !== undefined) entries.push([boardKeys.note, row.note]);
+  if (row.releaseGroup !== undefined) entries.push([boardKeys.releaseGroup, row.releaseGroup]);
   entries.push(...Object.entries(row.fields));
   const next = withKeys(current, entries);
   const others = created ? doc.queue : doc.queue.filter((_, at) => at !== old);
   const rows = [...others.slice(0, place - 1), next.record, ...others.slice(place - 1)];
   const changed = created || next.changed || place !== old + 1;
-  const value: QueueRowSet = { name: row.name, position: place, items: rowItemsOf(next.record), created, changed };
+  const value: QueueRowSet = {
+    name: row.name,
+    position: place,
+    items: rowItemsOf(next.record),
+    releaseGroup: rowReleaseGroupOf(next.record),
+    created,
+    changed,
+  };
   return ok({ top: changed ? { ...doc.top, [doc.queueKey]: rows } : null, value });
 };
