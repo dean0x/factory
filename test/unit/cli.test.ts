@@ -27,7 +27,7 @@ import {
 import { recipes, type RecipeEntry, type RecipeHost, type RecipeRegistry } from '../../src/recipes/index.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
-import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { procStatPath, procStatText } from '../helpers/ps-fake.js';
 import { publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
@@ -121,10 +121,14 @@ describe('the guard command in the command line', () => {
   });
 
   it.each([[[]], [['set']], [['list', 'extra']]])('refuses invalid guard arguments %j before any file read', async (words) => {
-    const result = await run(['guard', ...words]);
-    expect(result.code).toBe(2);
-    expect(result.out).toBe('');
-    expect(result.err).toContain('factory guard list');
+    const calls: string[] = [];
+    const deps = withFsWatch(createFakeDeps(), (method) => { calls.push(method); });
+    const sink = captureSink();
+    const code = await runCli(['guard', ...words], deps, sink);
+    expect(code).toBe(2);
+    expect(sink.out.join('')).toBe('');
+    expect(sink.errors.join('')).toContain('factory guard list');
+    expect(calls).toEqual([]);
   });
 });
 
