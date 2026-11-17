@@ -3715,6 +3715,14 @@ describe('init: the hook settings of the coordinator on a new root', () => {
 
   const settingsOf = (deps: FakeDeps): Record<string, unknown> => JSON.parse(deps.files.get(FILE) ?? 'null') as Record<string, unknown>;
 
+  it('writes false in the settings and the parsed config of a fresh init', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    const config = await loadConfig(deps, HOME);
+    expect(config).toMatchObject({ ok: true, value: { core: { session: { idle_compaction: false } } } });
+    expect(settingsOf(deps)['idleCompaction']).toBe(false);
+  });
+
   it('writes the own entries with the yes flag, prints the change and the target first, and asks nothing', async () => {
     const { deps } = setup();
     const result = await runInit(deps, options({ yes: true }));
