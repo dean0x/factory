@@ -18,6 +18,8 @@ export interface QueueOptions {
   /** The item ids of the item flag, in order. */
   readonly items: readonly string[];
   readonly note: string | undefined;
+  /** The group of the row. Only `set` takes it. */
+  readonly releaseGroup: string | undefined;
   /** The `NAME=VALUE` words of the field flag, in order. */
   readonly fields: readonly string[];
   /** The position flag as typed. */
@@ -34,7 +36,7 @@ const SUBCOMMANDS = Object.values(queueCommands).join(', ');
 
 /** The flags that each subcommand takes, besides the flags that every command takes. A flag of another subcommand is a usage error. */
 const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
-  [queueCommands.set]: [flags.item, flags.note, flags.field, flags.position],
+  [queueCommands.set]: [flags.item, flags.note, flags.releaseGroup, flags.field, flags.position],
   [queueCommands.show]: [],
 };
 
@@ -46,6 +48,7 @@ const refuseStrayFlags = (subcommand: Subcommand, options: QueueOptions): CliRes
   const given: readonly (readonly [string, boolean])[] = [
     [flags.item, options.items.length > 0],
     [flags.note, options.note !== undefined],
+    [flags.releaseGroup, options.releaseGroup !== undefined],
     [flags.field, options.fields.length > 0],
     [flags.position, options.position !== undefined],
   ];
@@ -81,6 +84,7 @@ const parseAction = (options: QueueOptions): CliResult<Action> => {
           fields: fields.value,
           ...(options.items.length === 0 ? {} : { items: options.items }),
           ...(options.note === undefined ? {} : { note: options.note }),
+          ...(options.releaseGroup === undefined ? {} : { releaseGroup: options.releaseGroup }),
           ...(position.value === undefined ? {} : { position: position.value }),
         },
       });
@@ -111,7 +115,7 @@ const setAnswer = (set: QueueRowSet): CommandOutput =>
   answer(setLine(set), {
     schema: schemaIds.queue,
     action: queueCommands.set,
-    row: { name: set.name, position: set.position, items: set.items, created: set.created, changed: set.changed },
+    row: { name: set.name, position: set.position, items: set.items, releaseGroup: set.releaseGroup, created: set.created, changed: set.changed },
   });
 
 /** The owner fields that a row holds, by name. A field that the row lacks is left out. */
@@ -127,7 +131,14 @@ const showAnswer = (rows: readonly QueueRow[], declared: readonly BoardField[]):
   lines: queueView({ rows, fields: declared }),
   json: {
     schema: schemaIds.queueShow,
-    rows: rows.map((row) => ({ position: row.position, name: row.name, items: row.items, note: row.note, fields: fieldsOf(row, declared) })),
+    rows: rows.map((row) => ({
+      position: row.position,
+      name: row.name,
+      items: row.items,
+      note: row.note,
+      releaseGroup: row.releaseGroup,
+      fields: fieldsOf(row, declared),
+    })),
   },
   warnings: [],
   failed: false,
