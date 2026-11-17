@@ -339,6 +339,9 @@ describe('request add: the text of the question', () => {
   const BAD: readonly (readonly [string, Partial<RequestOptions>])[] = [
     ['a title with a line break', { title: 'Two\nlines' }],
     ['an empty title', { title: ' ' }],
+    ['a title with a zero-width space', { title: `Pick${String.fromCodePoint(0x200b)} a plan` }],
+    ['a question with a zero-width space', { question: `Which${String.fromCodePoint(0x200b)} plan?` }],
+    ['option text with a zero-width space', { options: [`a=Plan${String.fromCodePoint(0x200b)} A`] }],
     ['an option key that is not a token', { options: ['bad key=Plan'], recommend: undefined }],
     ['an option key that is used twice', { options: ['a=Plan A', 'a=Plan B'] }],
     ['an option text of more than the most characters', { options: [`a=${'x'.repeat(201)}`], recommend: undefined }],
@@ -400,6 +403,31 @@ describe('the words and the flags of request', () => {
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain(message);
     expect(error.hint).toContain(commandText(commands.request));
+    expect(touched).toEqual([]);
+  });
+});
+
+describe('request doc with other action flags', () => {
+  const FLAGS: readonly (readonly [string, Partial<RequestOptions>])[] = [
+    ['--title', { title: 'Other' }],
+    ['--question', { question: 'Why?' }],
+    ['--option', { options: ['a=Plan'] }],
+    ['--recommend', { recommend: 'a' }],
+    ['--later', { later: true }],
+    ['--made-by', { decider: 'coordinator' }],
+    ['--decision', { decision: 'Yes' }],
+    ['--relayed', { relayed: true }],
+  ];
+
+  it.each(FLAGS)('refuses %s before a file read', async (flag, options) => {
+    const repo = await boardNode();
+    const touched: string[] = [];
+    const result = await runRequest(
+      withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)),
+      { ...BASE, words: ['doc', 'D-1', 'docs/plan.md'], ...options },
+      recipes,
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining(`${flag} is not for`) } });
     expect(touched).toEqual([]);
   });
 });
