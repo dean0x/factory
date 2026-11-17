@@ -8,6 +8,8 @@ import { parseConfig } from './package-registry.js';
 
 export const sampleConfig = (): FactoryConfig => ({
   core: {
+    guards: {},
+    shared_guards: {},
     node: { id: 'demo', layer: 1 },
     owner: {
       display: 'Test Owner',

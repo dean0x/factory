@@ -13,7 +13,9 @@ import { ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
 import { fileSteps, rootMoves, type BlockRename, type FileStep, type RootMove } from '../migrate/files.js';
-import type { SchemaParser, TextParser, VersionSpec } from '../migrate/inspect.js';
+import { isRecord, type SchemaParser, type TextParser, type VersionSpec } from '../migrate/inspect.js';
+import { retiredGuardIds } from '../guards/registry.js';
+import { guardConfigWords, guardKeys } from '../names.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
 import { jsonText } from '../state/files.js';
@@ -30,6 +32,8 @@ export interface UpgradeFile {
   readonly migrations: readonly Migration[];
   /** Check a value against the schema, and give the new text of the file. */
   finish(raw: unknown): CliResult<string>;
+  /** Notices about values that the finisher removes from the raw file. */
+  notices?(raw: unknown): readonly string[];
 }
 
 /** The managed blocks of one node, and the key of the queue in its board file: the recipe of the config gives both. */
@@ -71,6 +75,28 @@ export const finisher =
     return parsed.success ? ok(render(parsed.data)) : failure(describeIssues(parsed.error));
   };
 
+/** The local finisher removes only retired ids. Each other value still goes through the local schema. */
+export const localFinisher = (retired: readonly string[] = retiredGuardIds): Required<Pick<UpgradeFile, 'finish' | 'notices'>> => {
+  const finish = finisher(localConfigSchema, renderLocalConfig);
+  const retiredIn = (raw: unknown): readonly string[] => {
+    const values = isRecord(raw) ? raw[guardKeys.local] : undefined;
+    return isRecord(values) ? Object.keys(values).filter((id) => retired.includes(id)) : [];
+  };
+  return {
+    finish: (raw) => {
+      if (!isRecord(raw)) return finish(raw);
+      const values = raw[guardKeys.local];
+      if (!isRecord(values)) return finish(raw);
+      const kept = Object.fromEntries(Object.entries(values).filter(([id]) => !retired.includes(id)));
+      return finish({ ...raw, [guardKeys.local]: kept });
+    },
+    notices: (raw) => {
+      const removed = retiredIn(raw);
+      return removed.length === 0 ? [] : [guardConfigWords.droppedRetired(removed)];
+    },
+  };
+};
+
 /**
  * The blocks come from the combined config of the two files: the layer sets the role, the recipe sets the approval
  * points, the local file sets the owner prefix, and the shared file sets the context limits. The setup texts follow the
@@ -108,7 +134,7 @@ export const specFor = (registry: RecipeRegistry): UpgradeSpec => ({
     spec: LOCAL_SPEC,
     parse: parseYamlText,
     migrations: [],
-    finish: finisher(localConfigSchema, renderLocalConfig),
+    ...localFinisher(),
   },
   state: {
     spec: STATE_SPEC,

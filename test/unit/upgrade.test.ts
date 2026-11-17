@@ -24,7 +24,10 @@ import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { isChange, planBlock, planBoardQueueKey } from '../../src/upgrade/plan.js';
 import { writeBlockPlans } from '../../src/upgrade/render.js';
-import { finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
+import { finisher, localFinisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
+import { localOf } from '../../src/config/schema.js';
+import { guardsFor } from '../../src/guards/registry.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 import { currentSpec, parseConfigTexts, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { fileTemplates } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
@@ -210,6 +213,56 @@ const stateAt = (target: number, migrations: readonly Migration[]): UpgradeFile 
     finish: finisher(schema, jsonText),
   };
 };
+
+describe('upgrade: guard config finishers', () => {
+  const localRaw = () => ({ schema: 1, ...localOf(sampleConfig()) });
+
+  it('keeps all guard values through both config finishers', () => {
+    const sample = sampleConfig();
+    const ids = guardsFor(sample.entry).map((guard) => guard.id);
+    const raw = {
+      schema: 2,
+      ...sample.core,
+      recipe: sample.recipe,
+      guards: Object.fromEntries(ids.map((id, index) => [id, index % 2 === 0 ? 'on' : 'off'])),
+      shared_guards: Object.fromEntries(ids.map((id) => [id, 'on'])),
+    };
+    const shared = currentSpec.config.finish(raw);
+    const local = currentSpec.local.finish(currentSpec.localPartOf(raw));
+    expect(shared.ok, shared.ok ? undefined : shared.error.message).toBe(true);
+    expect(local.ok, local.ok ? undefined : local.error.message).toBe(true);
+    expect(shared.ok && local.ok && parseConfigTexts(shared.value, local.value)).toMatchObject({
+      ok: true,
+      value: { core: { guards: raw.guards, shared_guards: raw.shared_guards } },
+    });
+  });
+
+  it('drops only retired ids and gives one notice for all of them', () => {
+    const raw = {
+      ...localRaw(),
+      guards: { 'retired-fixture-guard': 'off', 'another-retired-guard': 'on', 'install-rules': 'off' },
+    };
+    const file = localFinisher(['retired-fixture-guard', 'another-retired-guard']);
+    const finished = file.finish(raw);
+    expect(finished).toMatchObject({ ok: true });
+    if (!finished.ok) return;
+    expect(parseYamlText(finished.value)).toEqual({ ok: true, value: { ...raw, guards: { 'install-rules': 'off' } } });
+    expect(finished.value).not.toContain('retired');
+    expect(file.notices(raw)).toEqual(['Removed retired guard ids: retired-fixture-guard, another-retired-guard.']);
+    expect(raw.guards).toHaveProperty('retired-fixture-guard', 'off');
+  });
+
+  it('gives no retired-id notice when the raw file has no retired entry', () => {
+    const file = localFinisher(['retired-fixture-guard']);
+    expect(file.notices({ ...localRaw(), guards: { 'install-rules': 'on' } })).toEqual([]);
+    expect(file.notices(localRaw())).toEqual([]);
+  });
+
+  it.each([null, [], { ...localRaw(), guards: [] }, { ...localRaw(), guards: null }, { ...localRaw(), guards: { 'install-rules': 'invalid' } }])(
+    'refuses malformed local config instead of a partial rewrite',
+    (raw) => expect(localFinisher(['retired-fixture-guard']).finish(raw)).toMatchObject({ ok: false }),
+  );
+});
 
 describe('upgrade: when nothing changes', () => {
   it('changes no file and runs no git command when all is current', async () => {

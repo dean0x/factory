@@ -2331,6 +2331,15 @@ export const guardValues = { on: 'on', off: 'off' } as const;
 /** The key of the guard values: the map in the local file, and the map in the shared file that can only tighten. */
 export const guardKeys = { local: 'guards', shared: 'shared_guards' } as const;
 
+/** The guard config messages and comments. */
+export const guardConfigWords = {
+  sharedOnOnly: `${files.config} can only turn a guard on. Run "${commandText(commandLines.guardList)}".`,
+  localOnly: `is a local key: put it in ${files.localConfig}, not in ${files.config}. Run "${commandText(commandLines.guardList)}".`,
+  localComment: 'The local value of this guard.',
+  sharedComment: 'This guard stays on on every machine.',
+  droppedRetired: (ids: readonly string[]): string => `Removed retired guard ids: ${ids.join(', ')}.`,
+} as const;
+
 /** The guard store has its own schema, keys and bounds, apart from approval records. */
 export const guardRecords = {
   schema: 1,

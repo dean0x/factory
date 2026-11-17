@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { durationMinutes, isSlug, slugify } from '../../src/config/primitives.js';
-import { CONFIG_SCHEMA_VERSION, localConfigSchema, mergeConfig, splitConfigValue } from '../../src/config/schema.js';
+import { parseYamlText } from '../../src/config/load.js';
+import { renderConfig } from '../../src/config/render.js';
+import { CONFIG_SCHEMA_VERSION, localConfigSchema, localOf, mergeConfig, mixConfigValue, sharedOf, splitConfigValue } from '../../src/config/schema.js';
+import { guardsFor } from '../../src/guards/registry.js';
 import { describeIssues } from '../../src/core/zod.js';
 import { boardKeys, boardLimits, files, reservedFieldNames, values } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
@@ -30,6 +33,123 @@ const parsedOf = (raw: Raw) => {
 const hosted = (raw: Raw, extra: Raw = {}): void => {
   raw['tracker'] = { kind: 'github', items: 'acme/web', decisions: 'acme/decisions', ...extra };
 };
+
+describe('guard config values', () => {
+  const guards = guardsFor(recipes[0]);
+  const known = guards.map((guard) => guard.id);
+
+  it('loads files with no guard keys as empty maps', () => {
+    const { shared, local } = sampleFiles();
+    delete shared['shared_guards'];
+    delete local['guards'];
+    const parsed = parseConfig(shared, local);
+    expect(parsed.success && parsed.data.core.guards).toEqual({});
+    expect(parsed.success && parsed.data.core.shared_guards).toEqual({});
+    expect(guards.every((guard) => guard.whenMissing === 'on')).toBe(true);
+  });
+
+  it.each(['on', 'off'] as const)('accepts local %s for every known guard, also when it is not wired', (value) => {
+    const { shared, local } = sampleFiles();
+    const values = Object.fromEntries(known.map((id) => [id, value]));
+    const parsed = parseConfig(shared, { ...local, guards: values });
+    expect(parsed.success && parsed.data.core.guards).toEqual(values);
+    expect(guards.some((guard) => !guard.wired)).toBe(true);
+  });
+
+  it('accepts shared on for every known guard', () => {
+    const values = Object.fromEntries(known.map((id) => [id, 'on']));
+    const parsed = sharedConfigSchema.safeParse({ ...sampleFiles().shared, shared_guards: values });
+    expect(parsed.success && parsed.data.core.shared_guards).toEqual(values);
+  });
+
+  it.each(['not-a-guard', 'retired-fixture-guard'])('refuses local and shared id %s with the list command', (id) => {
+    const { shared, local } = sampleFiles();
+    for (const parsed of [
+      parseConfig(shared, { ...local, guards: { [id]: 'off' } }),
+      parseConfig({ ...shared, shared_guards: { [id]: 'on' } }, local),
+      parseConfig({ ...shared, shared_guards: { [id]: 'off' } }, local),
+    ]) {
+      expect(parsed.success).toBe(false);
+      if (parsed.success) continue;
+      expect(describeIssues(parsed.error)).toContain(id);
+      expect(describeIssues(parsed.error)).toContain('factory guard list');
+    }
+  });
+
+  it('refuses shared off with the guard id and the on-only message', () => {
+    const id = known[0] ?? '';
+    const parsed = sharedConfigSchema.safeParse({ ...sampleFiles().shared, shared_guards: { [id]: 'off' } });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(describeIssues(parsed.error)).toContain(id);
+    expect(describeIssues(parsed.error)).toContain('factory.yaml can only turn a guard on');
+  });
+
+  it.each(['on', 'off'] as const)('refuses each local key in the shared file with local guard value %s', (value) => {
+    const { shared, local } = sampleFiles();
+    const entries = [
+      ...Object.entries(local).filter(([key]) => key !== 'schema' && key !== 'session' && key !== 'guards'),
+      ['guards', { [known[0] ?? '']: value }],
+      ['session', { ...shared['session'], proxy: 'none' }],
+      ['session', { ...shared['session'], statusline: null }],
+      ['state', { remote: null }],
+    ];
+    for (const [key, data] of entries) {
+      const parsed = parseConfig({ ...shared, [String(key)]: data }, { ...local, guards: { [known[0] ?? '']: value } });
+      expect(parsed.success).toBe(false);
+      if (parsed.success) continue;
+      expect(parsed.file).toBe(files.config);
+      expect(describeIssues(parsed.error)).toContain('is a local key');
+      if (key === 'guards') {
+        expect(describeIssues(parsed.error)).toContain(known[0]);
+        expect(describeIssues(parsed.error)).toContain('factory guard list');
+      }
+    }
+    const badMode = parseConfig(
+      { ...shared, session: { ...shared['session'], permission_mode: 'default' } },
+      { ...local, guards: { [known[0] ?? '']: value } },
+    );
+    expect(badMode.success).toBe(false);
+  });
+
+  it('renders only the saved guard values with one comment per guard', () => {
+    const sample = sampleConfig();
+    const saved = { 'install-rules': 'off', 'resume-routines': 'on' } as const;
+    const sharedSaved = { 'approval-merge': 'on' } as const;
+    const config = { ...sample, core: { ...sample.core, guards: saved, shared_guards: sharedSaved } };
+    const rendered = renderConfig(config);
+    const shared = parseYamlText(rendered.shared);
+    const local = parseYamlText(rendered.local);
+    expect(shared.ok && local.ok && parseConfig(shared.value, local.value)).toMatchObject({ success: true, data: config });
+    for (const id of Object.keys(saved)) expect(rendered.local).toMatch(new RegExp(`  ${id}: [^\\n]+ +# `));
+    expect(rendered.shared).toMatch(/  approval-merge: [^\n]+ +# /);
+    expect(local.ok && local.value).toHaveProperty('guards', saved);
+    expect(shared.ok && shared.value).toHaveProperty('shared_guards', sharedSaved);
+  });
+
+  it('writes no guard value for empty parsed maps', () => {
+    const rendered = renderConfig(sampleConfig());
+    const shared = parseYamlText(rendered.shared);
+    const local = parseYamlText(rendered.local);
+    expect(shared.ok && shared.value).not.toHaveProperty('shared_guards');
+    expect(local.ok && local.value).not.toHaveProperty('guards');
+  });
+
+  it('keeps both guard maps through split, mix and parsed projections', () => {
+    const raw = sampleObject();
+    raw['guards'] = Object.fromEntries(known.map((id, index) => [id, index % 2 === 0 ? 'on' : 'off']));
+    raw['shared_guards'] = Object.fromEntries(known.map((id) => [id, 'on']));
+    const { shared, local } = splitConfigValue(raw);
+    expect(mixConfigValue(shared, local)).toEqual(raw);
+    const parsed = parseConfig(shared, local);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(localOf(parsed.data).guards).toEqual(raw['guards']);
+    expect(sharedOf(parsed.data).core.shared_guards).toEqual(raw['shared_guards']);
+    expect(sharedOf(parsed.data).core).not.toHaveProperty('guards');
+    expect(localOf(parsed.data)).not.toHaveProperty('shared_guards');
+  });
+});
 
 describe('config schema 2', () => {
   it('accepts the sample config and returns the core and the recipe apart', () => {
@@ -915,7 +1035,7 @@ describe('the shared file and the local file (design 4.4)', () => {
 
   it('keeps the tracker, the project list, the session way of working and the limits in the shared file', () => {
     const raw = sampleFiles().shared;
-    expect(Object.keys(raw).sort()).toEqual(['limits', 'node', 'recipe', 'schema', 'session', 'tracker']);
+    expect(Object.keys(raw).sort()).toEqual(['limits', 'node', 'recipe', 'schema', 'session', 'shared_guards', 'tracker']);
     expect(Object.keys(raw['session']).sort()).toEqual(['agent', 'effort', 'model', 'permission_mode']);
     expect(Object.keys(raw['limits'])).toContain('idle_after');
     expect(
