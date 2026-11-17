@@ -707,6 +707,7 @@ describe('renderConfig', () => {
     const at = lines.indexOf('  idle_compaction: false');
     expect(at).toBeGreaterThan(0);
     const comment = lines.slice(Math.max(0, at - 3), at).join('\n');
+    expect(comment).toContain('The idle rule of Claude Code');
     expect(comment).toContain('limits.idle_after');
     expect(comment).toContain('prompt cache');
     expect(comment).toContain('next session start');

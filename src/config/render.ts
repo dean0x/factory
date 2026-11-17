@@ -162,7 +162,7 @@ export const renderSharedConfig = (shared: SharedConfig): string => {
     entry(1, keys.session.agent, scalar(core.session.agent), 'the only accepted value'),
     entry(1, keys.session.effort, core.session.effort),
     entry(1, keys.session.model, scalar(core.session.model)),
-    `${pad(1)}# The idle rule of ${capitalize(program)} itself: about one hour with no turn, at a large context. It is not ${keys.root.limits}.${keys.limits.idleAfter}.`,
+    `${pad(1)}# The idle rule of Claude Code: about one hour with no turn, at a large context. It is not ${keys.root.limits}.${keys.limits.idleAfter}.`,
     `${pad(1)}# false keeps the full context, so the first turn after a long wait rebuilds the prompt cache.`,
     `${pad(1)}# A change applies at the next session start.`,
     entry(1, keys.session.idleCompaction, String(core.session.idle_compaction)),

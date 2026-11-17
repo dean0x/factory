@@ -1230,6 +1230,73 @@ describe('reboot', () => {
     });
   });
 
+  describe.each(['own', 'received'] as const)('idle compaction in an %s root', (origin) => {
+    const oldSettings = `${JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine })}\n`;
+
+    it('starts all sessions with no settings write and one remedy line when no terminal can ask', async () => {
+      const made = await make({
+        origin,
+        hookSettings: oldSettings,
+        workers: { alpha: { settings: oldSettings }, beta: { settings: oldSettings }, gamma: { settings: oldSettings } },
+      });
+      const output = await succeeded(reboot(made));
+      expect(output.json).toMatchObject({ started: true, workers: { resumed: [...IDS], skipped: [], failed: [] } });
+      expect(countOf(made, 'new-session')).toBe(1);
+      expect(resumesOf(made)).toEqual(SESSION);
+      for (const file of [SETTINGS_FILE, ...IDS.map((id) => `${COPIES}/${id}/.claude/settings.local.json`)]) {
+        expect(made.deps.files.get(file)).toBe(oldSettings);
+        expect(made.events).not.toContain(`write ${file}`);
+      }
+      expect(made.deps.prompts).toEqual([]);
+      expect(made.deps.warned).toEqual([
+        `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
+          'Run "factory upgrade --yes" to write it. The session starts as before.',
+      ]);
+    });
+
+    it.each([false, true])('writes the config value %s after consent and before any session stops', async (idle) => {
+      const base = sampleConfig();
+      const config = { ...base, core: { ...base.core, session: { ...base.core.session, idle_compaction: idle } } };
+      const made = await make({ origin, config, hookSettings: oldSettings, answer: 'y' });
+      const output = await succeeded(reboot(made));
+      expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? 'null')).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+      expect(made.deps.prompts).toEqual([
+        `This changes the settings of Claude Code in ${SETTINGS_FILE}:\n` +
+          `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml)\nWrite this change? [y/N] `,
+      ]);
+      const writeAt = made.events.indexOf(`write ${SETTINGS_FILE}`);
+      expect(writeAt).toBeGreaterThanOrEqual(0);
+      expect(writeAt).toBeLessThan(made.events.indexOf(`terminate ${PID.alpha}`));
+      expect(output.json).toMatchObject({ started: true, workers: { resumed: [...IDS], skipped: [], failed: [] } });
+    });
+
+    it.each([
+      ['hook', '{}\n'],
+      ['status line', JSON.stringify({ hooks: ownSettingsEntries.hooks })],
+    ])('refuses a %s change without a terminal before any write or stop', async (_name, hookSettings) => {
+      const made = await make({ origin, hookSettings });
+      const before = new Map(made.deps.files);
+      expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(2);
+      expect(made.deps.files).toEqual(before);
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+      expect(made.deps.warned.join('\n')).not.toContain('factory upgrade --yes');
+    });
+
+    it('refuses a non-boolean config value before any write or stop', async () => {
+      const made = await make({ origin, hookSettings: oldSettings });
+      const file = `${HOME}/factory.yaml`;
+      made.deps.seed(file, (made.deps.files.get(file) ?? '').replace('idle_compaction: false', 'idle_compaction: "false"'));
+      const before = new Map(made.deps.files);
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('session.idle_compaction');
+      expect(made.deps.files).toEqual(before);
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+  });
+
   it('keeps the coordinator pane and the session when it runs in a pane of the session', async () => {
     const made = await make({ from: 'coordinator' });
     const output = await succeeded(reboot(made));
