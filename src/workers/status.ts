@@ -1,6 +1,7 @@
 import { displayLine } from '../cli/output.js';
 import type { PaneRow } from '../launch/tmux.js';
 import { keys, lastSeen, roles, statusWords, watchPoll, workerListWords, workerRowKeys, type HookState } from '../names.js';
+import type { Hold, HoldRead } from './hold.js';
 import { promptStateOf, type LastSeen } from './last-seen.js';
 import type { MachineLimits } from './machine.js';
 import type { WorkerRecord } from './registry.js';
@@ -41,6 +42,8 @@ export interface WorkerStatus {
   readonly state: WorkerState;
   readonly contextPct: number | null;
   readonly mark: Mark | null;
+  /** The hold of the worker: a hold word or `none`. It is null when the hold file can not be read, or was not read. */
+  readonly hold: Hold | null;
   /** The newer of the event time and the percent time of the line, as the line holds it, or null when the worker has no line. */
   readonly activityAt: string | null;
   readonly workItem: WorkItem;
@@ -60,6 +63,8 @@ export interface StatusInput {
   readonly lines: ReadonlyMap<string, LineRead>;
   /** The work item of each worker, by id. A worker with no entry has an unknown work item. */
   readonly workItems: ReadonlyMap<string, WorkItem>;
+  /** The read of the hold file of each worker, by id. A worker with no entry has an unknown hold: null, as for a fault. */
+  readonly holds: ReadonlyMap<string, HoldRead>;
   readonly now: Date;
   /** The minutes of `limits.idle_after`. */
   readonly idleAfterMinutes: number;
@@ -138,6 +143,9 @@ const entryOf = (
   const workItem = input.workItems.get(record.id) ?? unknownItem;
   const fault =
     read?.kind === 'fault' ? `cannot read the last-seen line of the ${roles.worker} ${record.id}: ${read.reason}` : null;
+  const holdRead = input.holds.get(record.id);
+  const holdFault =
+    holdRead?.kind === 'fault' ? `cannot read the hold word of the ${roles.worker} ${record.id}: ${holdRead.reason}` : null;
   const running = pane.row !== null && !pane.row.dead;
   const state = promptState === null ? workerListWords.states.unknown : stateWords[promptState];
   const eventAt = line === null ? null : line[lastSeen.keys.eventAt];
@@ -150,13 +158,14 @@ const entryOf = (
     state,
     contextPct,
     mark: markOf(contextPct, input.limits),
+    hold: holdRead?.kind === 'hold' ? holdRead.hold : null,
     activityAt,
     workItem,
     idle: isIdle(running, state, eventAt, input.now, input.idleAfterMinutes),
     stalled: running && state === workerListWords.states.busy && isStalledAt(activityAt, input.now),
     noOpenWork: hasNoOpenWork(workItem),
   };
-  return { entry, warnings: [pane.warning, fault].filter((warning): warning is string => warning !== null) };
+  return { entry, warnings: [pane.warning, fault, holdFault].filter((warning): warning is string => warning !== null) };
 };
 
 /** The table of the workers from the facts that the caller read. It makes no call and changes none of its inputs. */
@@ -173,7 +182,8 @@ export const shownStateOf = (entry: WorkerStatus): ShownState => (entry.running 
  * `workerRowKeys`. The row gives facts only and holds no final state word: a view makes its own words. The item fields come from
  * the display data of the work item and are null when the worker has no open item or the work item is unknown. `parkedCount` is
  * null only for an unknown work item. `paneLive` is true only for a pane that exists and has not ended, and `sessionState` is the
- * raw state of the last event, whatever the pane is. The title is stored owner text, so it prints as one clean line.
+ * raw state of the last event, whatever the pane is. `hold` is the hold word of `worker mark`, `none` with no
+ * hold word, or null for a hold file that can not be read. The title is stored owner text, so it prints as one clean line.
  */
 export type BoardRow = {
   readonly [workerRowKeys.itemId]: string | null;
@@ -186,6 +196,7 @@ export type BoardRow = {
   readonly [workerRowKeys.sessionState]: WorkerState;
   readonly [workerRowKeys.activityAt]: string | null;
   readonly [workerRowKeys.stalled]: boolean;
+  readonly [workerRowKeys.hold]: Hold | null;
 };
 
 export const boardRowOf = (entry: WorkerStatus): BoardRow => {
@@ -203,5 +214,6 @@ export const boardRowOf = (entry: WorkerStatus): BoardRow => {
     [workerRowKeys.sessionState]: entry.state,
     [workerRowKeys.activityAt]: entry.activityAt,
     [workerRowKeys.stalled]: entry.stalled,
+    [workerRowKeys.hold]: entry.hold,
   };
 };

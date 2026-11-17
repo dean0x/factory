@@ -8,6 +8,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { boardKeys, files, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { readOwnLastSeen, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
+import { writeHold } from '../../src/workers/hold.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
@@ -40,6 +41,8 @@ interface Setup {
   readonly panes?: readonly PaneFixture[];
   readonly tmux?: TmuxFixture;
   readonly config?: FactoryConfig;
+  /** Paths that are links in the fake file system, each to its target. */
+  readonly links?: Readonly<Record<string, string>>;
 }
 
 interface Made {
@@ -61,7 +64,7 @@ const pane = (worker: string, change: Partial<PaneFixture> = {}): PaneFixture =>
 
 const make = async (setup: Setup = {}): Promise<Made> => {
   const { handler, log } = tmuxHandler({ sessions: { [NODE]: HOME }, panes: setup.panes ?? [], ...setup.tmux });
-  const deps = createFakeDeps({ cwd: '/w', os: 'darwin', env: { PATH: '/bin', XDG_STATE_HOME: '/state' }, run: handler });
+  const deps = createFakeDeps({ cwd: '/w', os: 'darwin', env: { PATH: '/bin', XDG_STATE_HOME: '/state' }, run: handler, ...(setup.links === undefined ? {} : { links: setup.links }) });
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
   registerRoot(deps, HOME, config.core.node.id);
@@ -136,6 +139,7 @@ type JsonWorker = {
   readonly sessionState: string;
   readonly activityAt: string | null;
   readonly stalled: boolean;
+  readonly hold: string | null;
 };
 
 const jsonOf = (output: CommandOutput) =>
@@ -222,6 +226,7 @@ describe('worker list: the table', () => {
           sessionState: 'busy',
           activityAt: made.deps.now().toISOString(),
           stalled: false,
+          hold: 'none',
         },
       ],
       invalid: [],
@@ -750,4 +755,140 @@ describe('worker list: the name of a folder prints clean', () => {
     expect(text).not.toContain(BIDI);
     expect(JSON.parse(text).invalid).toEqual([{ name: '"badna\\nme"', reason: expect.any(String) }]);
   });
+});
+
+describe('worker mark: the hold word of a worker', () => {
+  const holdFile = (id: string): string => workerPathsOf(HOME, id).holdFile;
+
+  const marked = async (made: Made, id: string, word: string): Promise<CommandOutput> => {
+    const result = await runWorker(made.deps, options({ words: ['mark', id, word] }));
+    if (!result.ok) throw new Error(`${result.error.message} ${result.error.hint ?? ''}`);
+    return result.value;
+  };
+
+  const holdsOf = async (made: Made): Promise<readonly (string | null)[]> =>
+    jsonOf(await listed(made)).workers.map((worker) => worker.hold);
+
+  it('shows none for a worker with no mark', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }, { id: 'beta' }] });
+    expect(await holdsOf(made)).toEqual(['none', 'none']);
+  });
+
+  it('sets each mark, and worker list --json shows it for that worker only', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }, { id: 'beta' }] });
+    for (const word of ['parked', 'on-hold']) {
+      const output = await marked(made, 'alpha', word);
+      expect(output.json).toEqual({ schema: schemaIds.workerMark, id: 'alpha', hold: word });
+      expect(output.lines.map((line) => line.text)).toEqual([`The worker alpha has the hold word ${word}.`]);
+      expect(made.deps.files.get(holdFile('alpha'))).toBe(`${word}\n`);
+      expect(await holdsOf(made)).toEqual([word, 'none']);
+    }
+  });
+
+  it('clears the mark with none, and none on a worker with no mark changes nothing', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    await marked(made, 'alpha', 'parked');
+    const output = await marked(made, 'alpha', 'none');
+    expect(output.json).toEqual({ schema: schemaIds.workerMark, id: 'alpha', hold: 'none' });
+    expect(output.lines.map((line) => line.text)).toEqual(['The worker alpha has no hold word.']);
+    expect(made.deps.files.has(holdFile('alpha'))).toBe(false);
+    expect(await holdsOf(made)).toEqual(['none']);
+    expect((await marked(made, 'alpha', 'none')).json).toMatchObject({ hold: 'none' });
+    expect(await holdsOf(made)).toEqual(['none']);
+  });
+
+  it('runs from the command line and prints the hold in the JSON of worker list', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    expect(await runCli(['worker', 'mark', 'alpha', 'on-hold', '--home', HOME], made.deps, captureSink())).toBe(0);
+    const sink = captureSink();
+    expect(await runCli(['worker', 'list', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
+    expect(JSON.parse(sink.out.join('')).workers[0].hold).toBe('on-hold');
+  });
+
+  it('refuses a word that is not a mark, and a wrong count of words, with exit 2 and no write', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    for (const words of [['mark', 'alpha', 'held'], ['mark', 'alpha'], ['mark', 'alpha', 'parked', 'extra'], ['mark']]) {
+      const result = await runWorker(made.deps, options({ words }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.kind).toBe('usage');
+    }
+    expect(made.deps.files.has(holdFile('alpha'))).toBe(false);
+  });
+
+  it('refuses a worker with no record with exit 2, and writes no folder for it', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const result = await runWorker(made.deps, options({ words: ['mark', 'ghost', 'parked'] }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('usage');
+    expect(made.deps.dirs.has(workerPathsOf(HOME, 'ghost').dir)).toBe(false);
+    expect(made.deps.files.has(holdFile('ghost'))).toBe(false);
+  });
+
+  it('gives null and a warning for a hold file that holds no hold word, and lists the other workers', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }, { id: 'beta' }] });
+    made.deps.seed(holdFile('alpha'), 'parked and more\n');
+    const output = await listed(made);
+    expect(jsonOf(output).workers.map((worker) => worker.hold)).toEqual([null, 'none']);
+    expect(output.warnings).toEqual(['cannot read the hold word of the worker alpha: the hold file holds no hold word']);
+    expect(output.warnings[0]).not.toContain('more');
+  });
+
+  it('gives null and a warning for a hold file that is a link, and does not follow it', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], links: { [holdFile('alpha')]: '/elsewhere/hold' } });
+    const output = await listed(made);
+    expect(jsonOf(output).workers[0]?.hold).toBeNull();
+    expect(output.warnings).toEqual(['cannot read the hold word of the worker alpha: the hold file is a link']);
+  });
+  it('gives null and a warning for a hold file that is larger than the bound', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    made.deps.seed(holdFile('alpha'), `parked\n${' '.repeat(64)}`);
+    const output = await listed(made);
+    expect(jsonOf(output).workers[0]?.hold).toBeNull();
+    expect(output.warnings).toEqual(['cannot read the hold word of the worker alpha: larger than 64 bytes']);
+  });
+
+  it('stops with a security refusal for a hold file that is a link, for a set and for a clear, and keeps the link', async () => {
+    for (const word of ['parked', 'none']) {
+      const made = await make({ workers: [{ id: 'alpha' }], links: { [holdFile('alpha')]: '/elsewhere/hold' } });
+      const result = await runWorker(made.deps, options({ words: ['mark', 'alpha', word] }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.kind).toBe('safety');
+      expect(made.deps.files.has('/elsewhere/hold')).toBe(false);
+    }
+  });
+
+  it('refuses a folder of the worker that is a link with exit 2, and writes nothing', async () => {
+    const dir = workerPathsOf(HOME, 'alpha').dir;
+    for (const word of ['parked', 'none']) {
+      const made = await make({ links: { [dir]: '/elsewhere' } });
+      const before = [...made.deps.files.keys()].sort();
+      const result = await runWorker(made.deps, options({ words: ['mark', 'alpha', word] }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.kind).toBe('usage');
+      expect([...made.deps.files.keys()].sort()).toEqual(before);
+    }
+  });
+
+  it('makes no folder again when the folder of the worker went away before the write', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const dir = workerPathsOf(HOME, 'alpha').dir;
+    const removed = await made.deps.fs.remove(dir);
+    expect(removed.ok).toBe(true);
+    const written = await writeHold(made.deps, HOME, 'alpha', 'parked');
+    expect(written.ok).toBe(false);
+    expect(made.deps.dirs.has(dir)).toBe(false);
+    expect(made.deps.files.has(holdFile('alpha'))).toBe(false);
+  });
+
+  it('echoes a word that is not a mark as one clean and short text', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const bidi = String.fromCodePoint(0x202e);
+    const result = await runWorker(made.deps, options({ words: ['mark', 'alpha', `pa${bidi}rked\n${'x'.repeat(80)}`] }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).not.toContain(bidi);
+      expect(result.error.message).not.toContain('x'.repeat(41));
+    }
+  });
+
 });

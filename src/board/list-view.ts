@@ -152,9 +152,45 @@ export interface QueueViewInput {
   readonly fields: readonly BoardField[];
 }
 
+/** A line of the table of the queue: the heading of a group (text), or a row. */
+type QueueEntry = string | QueueRow;
+
+/**
+ * The entries of a queue with at least one group: the rows of each group under the heading of the group, the groups in the order in
+ * which their first rows appear, then the rows with no group under their own heading. A row keeps its stored place in its cell. The
+ * groups are told apart by the text that the heading shows, so two stored groups that differ only by a hidden character share one
+ * heading.
+ */
+const groupedEntries = (rows: readonly QueueRow[]): readonly QueueEntry[] => {
+  const byGroup = new Map<string, QueueRow[]>();
+  const ungrouped: QueueRow[] = [];
+  for (const row of rows) {
+    if (row.releaseGroup === null) {
+      ungrouped.push(row);
+      continue;
+    }
+    const shownGroup = clean(row.releaseGroup, queueWords.maxCellChars);
+    const members = byGroup.get(shownGroup);
+    if (members === undefined) byGroup.set(shownGroup, [row]);
+    else members.push(row);
+  }
+  const groups = [...byGroup].flatMap(([group, members]): QueueEntry[] => [`${queueWords.groupHeading}: ${group}`, ...members]);
+  return ungrouped.length === 0 ? groups : [...groups, queueWords.ungroupedHeading, ...ungrouped];
+};
+
+/**
+ * The entries that fit in the `maxTrackLines` lines of the table. A heading counts as a line. The heading of a group shows only with
+ * its first row, so a heading that would be the last line is left out.
+ */
+const fittingEntries = (entries: readonly QueueEntry[]): readonly QueueEntry[] => {
+  const fitting = entries.slice(0, maxTrackLines);
+  return typeof fitting.at(-1) === 'string' ? fitting.slice(0, -1) : fitting;
+};
+
 /**
  * The view of the queue: a summary line, then a table with one row for each row of the queue (its place, its name, its items, its
- * owner fields and its note), then one more line when the rows do not fit.
+ * owner fields and its note), then one more line when the rows do not fit. When a row has a release group, the rows go under one
+ * heading for each group (the heading lines come inside the `maxTrackLines` lines of the table), and the rows with no group are last.
  */
 export const queueView = (input: QueueViewInput): readonly OutLine[] => {
   const { rows, fields } = input;
@@ -167,14 +203,20 @@ export const queueView = (input: QueueViewInput): readonly OutLine[] => {
     ...fields.map((field) => field.name.toUpperCase()),
     queueWords.columns.note,
   ];
-  const lines = rows.slice(0, maxTrackLines).map((row) => [
+  const shown = fittingEntries(rows.some((row) => row.releaseGroup !== null) ? groupedEntries(rows) : rows);
+  const shownRows = shown.filter((entry): entry is QueueRow => typeof entry !== 'string');
+  const cells = shownRows.map((row) => [
     String(row.position),
     orDash(row.name, queueWords.maxCellChars),
     row.items.length === 0 ? itemWords.empty : clean(row.items.join(queueWords.itemSeparator), queueWords.maxCellChars),
     ...fields.map((field) => fieldText(row.record, field)),
     orDash(row.note, queueWords.maxCellChars),
   ]);
-  const hidden = rows.length - lines.length;
+  const table = tableLines(title, cells);
+  // The table gives one line for each shown row, in order. The lines are taken in that order, and a heading of a group takes none.
+  const rowLines = table.slice(1);
+  const body = shown.flatMap((entry): OutLine[] => (typeof entry === 'string' ? [{ level: 'heading', text: entry }] : rowLines.splice(0, 1)));
+  const hidden = rows.length - shownRows.length;
   const more = hidden > 0 ? [lineOf(`${plural(hidden, `more ${queueWords.row}`, `more ${queueWords.rows}`)}.`)] : [];
-  return framed([summary, ...tableLines(title, lines), ...more]);
+  return framed([summary, ...table.slice(0, 1), ...body, ...more]);
 };

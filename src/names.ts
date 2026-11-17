@@ -116,6 +116,7 @@ export const workerCommands = {
   summon: 'summon',
   reset: 'reset',
   watch: 'watch',
+  mark: 'mark',
 } as const;
 
 /**
@@ -130,6 +131,8 @@ export const itemCommands = {
   list: 'list',
   record: 'record',
   unassign: 'unassign',
+  /** `doc ID PATH` links a file of the factory folder to an item. */
+  doc: 'doc',
 } as const;
 
 /** The subcommands of `track`. The command has no remove subcommand. */
@@ -163,6 +166,7 @@ export const commandLines = {
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
   workerReset: `${commands.worker} ${workerCommands.reset}`,
   workerWatch: `${commands.worker} ${workerCommands.watch}`,
+  workerMark: `${commands.worker} ${workerCommands.mark}`,
   itemAdd: `${commands.item} ${itemCommands.add}`,
   itemUpdate: `${commands.item} ${itemCommands.update}`,
   itemMove: `${commands.item} ${itemCommands.move}`,
@@ -170,6 +174,7 @@ export const commandLines = {
   itemList: `${commands.item} ${itemCommands.list}`,
   itemRecord: `${commands.item} ${itemCommands.record}`,
   itemUnassign: `${commands.item} ${itemCommands.unassign}`,
+  itemDoc: `${commands.item} ${itemCommands.doc}`,
   trackAdd: `${commands.track} ${trackCommands.add}`,
   trackList: `${commands.track} ${trackCommands.list}`,
   requestAdd: `${commands.request} ${requestCommands.add}`,
@@ -226,6 +231,8 @@ export const flags = {
   note: 'note',
   position: 'position',
   priority: 'priority',
+  epic: 'epic',
+  releaseGroup: 'release-group',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -250,6 +257,8 @@ export const files = {
   workerRecord: 'worker.json',
   /** The pointer of one worker to its newest session: `workers/<id>/last-session` holds a session id. */
   workerLastSession: 'last-session',
+  /** The hold word of one worker: `workers/<id>/hold-word` holds `parked` or `on-hold`. No file: the worker has no hold word. */
+  workerHold: 'hold-word',
   /** The notes of a worker for its next turn, in its inbox folder: a reset needs them before it clears or compacts the session. */
   resume: 'resume.md',
   /** The assignment of a worker, in its inbox folder: `worker new --assignment FILE` copies the text of FILE to this file. */
@@ -634,6 +643,12 @@ export const boardKeys = {
    * and no other write does. It is a reserved field name. A stored value of any other form reads as no time.
    */
   stageAt: 'stage_at',
+  /** The epic of an item: one line of text that a view groups items by. */
+  epic: 'epic',
+  /** The copy of the stage list of the recipe, stored on an item when it is added. An item from before this key has none. */
+  stages: 'stages',
+  /** The release group of a queue row: one line of text that a view groups rows by. */
+  releaseGroup: 'release_group',
 } as const;
 
 /** The keys of the waiting file: the top keys, and the id of a waiting item. */
@@ -761,6 +776,9 @@ export const queueWords = {
   columns: { position: 'NO', name: 'NAME', items: 'ITEMS', note: 'NOTE' },
   itemSeparator: ' ',
   maxCellChars: 60,
+  /** The word of the heading of a release group in the grouped view, and the heading of the rows that have no group. */
+  groupHeading: 'group',
+  ungroupedHeading: 'no group',
 } as const;
 
 /**
@@ -807,6 +825,12 @@ export const boardTextLimits = {
   maxNoteChars: 500,
   maxOptions: 9,
   maxDocPathChars: 200,
+  /** The most characters of the epic of an item. */
+  maxEpicChars: 60,
+  /** The most characters of the release group of a queue row. */
+  maxReleaseGroupChars: 60,
+  /** The most docs that one item holds. A write that would pass it is a usage error. */
+  maxItemDocs: 10,
 } as const;
 
 /**
@@ -848,6 +872,9 @@ export const reservedFieldNames: readonly string[] = [
   boardKeys.mergedPrHead,
   boardKeys.unassignedFrom,
   boardKeys.stageAt,
+  boardKeys.epic,
+  boardKeys.stages,
+  boardKeys.releaseGroup,
 ];
 
 /** The most workers that the list of former workers of one item (`boardKeys.unassignedFrom`) holds. */
@@ -1360,7 +1387,8 @@ export const workerListWords = {
 
 /**
  * The keys of the JSON output for a view outside the core. A row of `worker list --json` and of `status --json` holds the
- * `workerRowKeys` next to its older keys; `sessionState` holds one of `workerListWords.states`. The display data of a work item
+ * `workerRowKeys` next to its older keys; `sessionState` holds one of `workerListWords.states`, and `hold` holds a word of `workerHold`
+ * or null for a hold file that can not be read. The display data of a work item
  * holds the `workItemDisplayKeys`. A row of `request list --json` holds the `requestRowKeys`. The `machine --json` output holds the
  * `powerKeys.power` key, and its value holds the other `powerKeys`, with a source that is one of `powerSources`. The output gives
  * facts only: a view makes its own state words.
@@ -1376,6 +1404,7 @@ export const workerRowKeys = {
   sessionState: 'sessionState',
   activityAt: 'activityAt',
   stalled: 'stalled',
+  hold: 'hold',
 } as const;
 export const workItemDisplayKeys = { title: 'title', stage: 'stage', stageAt: 'stageAt', status: 'status' } as const;
 export const requestRowKeys = { openedAt: 'openedAt', group: 'group' } as const;
@@ -1745,6 +1774,17 @@ export const workerRecord = {
   /** The permission bits of a worker folder and of its record. The record is private to the user. */
   folderMode: privateFile.folderMode,
   fileMode: privateFile.fileMode,
+} as const;
+
+/**
+ * The hold word of a worker (design 4.11). `worker mark ID parked|on-hold|none` sets it, and the key `hold` of a worker row shows it.
+ * `none` removes the file, and it is the word of a worker with no hold word. The file holds one word and a new line, and a reader
+ * refuses a file of more bytes than `maxBytes`. A hold word is no approval.
+ */
+export const workerHold = {
+  words: { parked: 'parked', onHold: 'on-hold' },
+  none: 'none',
+  maxBytes: 64,
 } as const;
 
 /**
@@ -2193,6 +2233,7 @@ export const schemaIds = {
   workerSummon: `${program}.worker-summon/v1`,
   workerReset: `${program}.worker-reset/v1`,
   workerWatch: `${program}.worker-watch/v1`,
+  workerMark: `${program}.worker-mark/v1`,
   selfReset: `${program}.self-reset/v1`,
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,

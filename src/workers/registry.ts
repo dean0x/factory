@@ -170,14 +170,14 @@ export const readCheckedFile = async (
 };
 
 /**
- * Read one file in the folder of a worker, for the record and for the pointer to the session. The read checks the workers
+ * Read one file in the folder of a worker, for the record, the pointer to the session and the hold word. The read checks the workers
  * folder, the folder of the worker and the file (`readCheckedFile`). An id that is not a slug is invalid, and no path is touched.
  */
 export const readWorkerFile = async (
   deps: Deps,
   home: string,
   id: string,
-  file: { readonly of: 'recordFile' | 'lastSessionFile'; readonly what: string; readonly maxBytes: number },
+  file: { readonly of: 'recordFile' | 'lastSessionFile' | 'holdFile'; readonly what: string; readonly maxBytes: number },
 ): Promise<CliResult<WorkerFileRead>> => {
   if (!isSlug(id)) return ok({ state: 'invalid', reason: `the ${roles.worker} id is not a slug` });
   const paths = workerPathsOf(home, id);

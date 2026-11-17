@@ -6,6 +6,7 @@ import {
   address,
   blockNames,
   boardKeys,
+  boardTextLimits,
   checkIds,
   claudeSettingKeys,
   claudeSettings,
@@ -43,6 +44,7 @@ import {
   powerKeys,
   powerSources,
   program,
+  queueWords,
   relayedMarker,
   requestCommands,
   requestGroups,
@@ -1605,8 +1607,12 @@ describe('the names of the board records', () => {
     expect(Object.values(requestCommands)).toEqual(['add', 'list', 'close', 'log']);
   });
 
-  it('adds the record and unassign subcommands of item after the five older ones', () => {
-    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign']);
+  it('adds the record, unassign and doc subcommands of item after the five older ones', () => {
+    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign', 'doc']);
+  });
+
+  it('gives the doc subcommand of item a command line', () => {
+    expect(commandLines.itemDoc).toBe(`${commands.item} ${itemCommands.doc}`);
   });
 
   it('names the flags of the record and of the relayed close', () => {
@@ -1634,6 +1640,35 @@ describe('the names of the board records', () => {
 
   it('gives the gh time limit that init and the record check of the software recipe share', () => {
     expect(ghTimeoutMs).toBe(10_000);
+  });
+});
+
+describe('the names of the board data for an outside review page', () => {
+  it('names the flag of the epic of an item and the flag of the release group of a queue row', () => {
+    expect(flags.epic).toBe('epic');
+    expect(flags.releaseGroup).toBe('release-group');
+  });
+
+  it('names the keys of the epic, of the stage copy and of the release group', () => {
+    expect(boardKeys.epic).toBe('epic');
+    expect(boardKeys.stages).toBe('stages');
+    expect(boardKeys.releaseGroup).toBe('release_group');
+  });
+
+  it('leaves the names release and kind free for an owner field', () => {
+    expect(reservedFieldNames).not.toContain('release');
+    expect(reservedFieldNames).not.toContain('kind');
+  });
+
+  it('caps an epic and a release group at 60 characters and the docs of one item at 10', () => {
+    expect(boardTextLimits.maxEpicChars).toBe(60);
+    expect(boardTextLimits.maxReleaseGroupChars).toBe(60);
+    expect(boardTextLimits.maxItemDocs).toBe(10);
+  });
+
+  it('gives the grouped queue view a word for the heading of a group and a word for the rows with no group', () => {
+    expect(queueWords.groupHeading).toBe('group');
+    expect(queueWords.ungroupedHeading).toBe('no group');
   });
 });
 
@@ -1680,6 +1715,14 @@ describe('the names of the data for a view outside the core', () => {
     expect(duplicatesOf(reservedFieldNames)).toEqual([]);
   });
 
+  it('reserves the epic, the stage copy and the release group keys, so that no owner field can take their names', () => {
+    for (const key of [boardKeys.epic, boardKeys.stages, boardKeys.releaseGroup]) {
+      expect(reservedFieldNames).toContain(key);
+    }
+    expect(reservedFieldNames).not.toContain('release');
+    expect(duplicatesOf(reservedFieldNames)).toEqual([]);
+  });
+
   it('names the open time and the group of a request, the two groups, and the flag of the later group', () => {
     expect(decisionKeys.openedAt).toBe('opened_at');
     expect(decisionKeys.group).toBe('group');
@@ -1699,6 +1742,7 @@ describe('the names of the data for a view outside the core', () => {
       'sessionState',
       'activityAt',
       'stalled',
+      'hold',
     ]);
     expect(Object.values(workItemDisplayKeys)).toEqual(['title', 'stage', 'stageAt', 'status']);
     expect(duplicatesOf(Object.values(workerRowKeys))).toEqual([]);
