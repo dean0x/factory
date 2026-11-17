@@ -2042,6 +2042,7 @@ export const checkIds = {
   setupText: 'setup-text',
   roles: 'roles',
   tracker: 'tracker',
+  idleCompaction: 'idle-compaction',
   children: 'children',
   secrets: 'secrets',
   permissionMode: 'permission-mode',

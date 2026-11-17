@@ -745,7 +745,7 @@ The state of a line is one of these:
 
 ### Doctor
 
-`factory doctor` runs 31 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 20 checks are new:
+`factory doctor` runs 32 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 21 checks are new:
 
 - `local-file`: the mode, the owner and the type of `factory.local.yaml`.
 - `root`: the factory folder is the top folder of its own git work tree and holds an intact share list. This is a warning.
@@ -755,6 +755,7 @@ The state of a line is one of these:
 - `setup-text`: text outside the managed blocks that the setup files do not hold. This is a warning.
 - `roles`: the layer has a role template.
 - `tracker`: the kind of the board. A kind other than `local` warns, because its connector comes later.
+- `idle-compaction`: the value of `session.idle_compaction`. A session file with a hook of factory warns for another or absent value. A file that the check cannot read also warns. The check skips a file with no hook of factory. Run `factory upgrade`, then `factory reboot` for the coordinator or `factory restart ID` for a worker. The check writes nothing.
 - `children`: the child nodes. It fails when a child is on the wrong layer, answers with another id than the config lists (`mismatch`), or has the id of a worker.
 - `root-repo`: what the config repo tracks, and what git ignores.
 - `root-files`: the tracked text files hold no value that looks like a token (a failure), no `file` URL and no path of a user folder (warnings).
