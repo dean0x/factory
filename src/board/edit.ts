@@ -380,7 +380,7 @@ export const checkDocPath = (path: string): CliResult<string> => {
     ? usageError(message)
     : safetyRefusal(
         message,
-        `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}. Then run "${commandText(commandLines.itemDoc)}" again with that file.`,
+        `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}. Then repeat the command with that file.`,
       );
 };
 

@@ -908,6 +908,23 @@ describe('request doc', () => {
     expect(repo.commits).toEqual([]);
   });
 
+  it.each(['FACTORY.LOCAL.YAML', '.hidden/plan.md'])('gives the correct retry hint for refused path %s on add and link', async (path) => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    const results = [
+      await run(repo, { ...ADD, docs: [path] }),
+      await link(inPane(repo.deps, '%0'), ['doc', 'D-1', path]),
+    ];
+    for (const result of results) {
+      const error = errorOf(result);
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.hint).toContain('Then repeat the command with that file.');
+      expect(error.hint).not.toContain('item doc');
+    }
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
   it.each([
     ['docs/missing.md', 'usage'], ['../outside.md', 'usage'],
     ['FACTORY.LOCAL.YAML', 'safety'], ['.hidden/plan.md', 'safety'],
