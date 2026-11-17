@@ -91,7 +91,7 @@ import { OLD_WORD_ENDINGS, OLD_WORD_LIST, oldWordsIn } from '../helpers/old-word
 import { runInit } from '../helpers/package-registry.js';
 import { JARGON_ERE, JARGON_PATTERNS, jargonIn } from '../helpers/plain-words.js';
 import { MAX_OUTPUT_LINES } from '../helpers/short-output.js';
-import { allSourceFiles, callsOf, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
+import { allSourceFiles, callsOf, codeOfExpression, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
@@ -1148,13 +1148,37 @@ describe('the writers of the approval record and of the setup acceptance', () =>
     expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/owner-record.ts']);
   });
 
+  const writerHits = (source: string, path: string, pattern: RegExp, owners: readonly string[]): readonly string[] =>
+    !owners.includes(path) && pattern.test(codeOfExpression(stripComments(source))) ? [path] : [];
+
+  const writerCallersOf = (pattern: RegExp, owners: readonly string[]): string[] =>
+    sourceFiles(SRC).flatMap((path) => writerHits(readFileSync(path, 'utf8'), relative(SRC, path), pattern, owners)).sort();
+
+  const writerCases = [
+    { writer: 'putDecision', owners: ['core/owner-record.ts', 'commands/decide.ts'] },
+    { writer: 'recordScope', owners: ['core/owner-record.ts'] },
+  ];
+
+  it.each(writerCases)('finds real $writer use outside its allowed files', ({ writer, owners }) => {
+    const path = 'commands/other.ts';
+    const pattern = new RegExp(`\\b${writer}\\b`);
+    expect(writerHits(`${writer}(deps, input);`, path, pattern, owners)).toEqual([path]);
+    expect(writerHits(`import { ${writer} as write } from '../core/owner-record.js';`, path, pattern, owners)).toEqual([path]);
+    expect(writerHits(`const write = ${writer};`, path, pattern, owners)).toEqual([path]);
+    expect(writerHits('const note = `saved ${' + writer + '(deps, input)}`;', path, pattern, owners)).toEqual([path]);
+    expect(writerHits(`${writer}(deps, input);`, 'core/owner-record.ts', pattern, owners)).toEqual([]);
+  });
+
+  it.each(writerCases)('leaves $writer site strings out of the writer scan', ({ writer, owners }) => {
+    const source = `const sites = ['${writer}', "${writer}()", \`${writer}\`];`;
+    expect(writerHits(source, 'commands/other.ts', new RegExp(`\\b${writer}\\b`), owners)).toEqual([]);
+  });
+
   it('lets only the code of decide name the decision writer, and only decide call recordDecision', () => {
     const decide = 'commands/decide.ts';
-    const callersOf = (pattern: RegExp, owners: readonly string[]): string[] =>
-      rel(withText(pattern)).filter((path) => !owners.includes(path));
-    expect(callersOf(/\bputDecision\b/, ['core/owner-record.ts', decide])).toEqual([]);
+    expect(writerCallersOf(/\bputDecision\b/, ['core/owner-record.ts', decide])).toEqual([]);
     // The definition in the local board and the type in the contract are no calls.
-    expect(callersOf(/\brecordDecision\(/, ['board/local.ts', 'board/contract.ts', decide])).toEqual([]);
+    expect(writerCallersOf(/\brecordDecision\(/, ['board/local.ts', 'board/contract.ts', decide])).toEqual([]);
   });
 
   it('limits the key of the decisions folder to the state layout, the record path and the local board', () => {
@@ -1199,10 +1223,9 @@ describe('the writers of the approval record and of the setup acceptance', () =>
   });
 
   it('has no module that writes the approval record apart from the owner record writer', () => {
-    const callersOf = (pattern: RegExp): string[] => rel(withText(pattern).filter((path) => path !== OWNER_RECORD));
-    expect(callersOf(/\brecordScope\b/)).toEqual([]);
+    expect(writerCallersOf(/\brecordScope\b/, ['core/owner-record.ts'])).toEqual([]);
     // The code of init is the only caller of the delegation writer: it records the points that the owner sets.
-    expect(callersOf(/\brecordDelegation\b/).filter((path) => !/^commands\/init[^/]*\.ts$/.test(path))).toEqual([]);
+    expect(writerCallersOf(/\brecordDelegation\b/, ['core/owner-record.ts']).filter((path) => !/^commands\/init[^/]*\.ts$/.test(path))).toEqual([]);
   });
 
   it('keeps the setup acceptance writer apart: it imports nothing of the approval store and names none of it', () => {

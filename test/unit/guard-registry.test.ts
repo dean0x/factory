@@ -356,7 +356,7 @@ describe('the rows of the registry', () => {
         'yes-in-session-text',
       ],
       'owner-go': [
-        'inbox-message-header',
+        'inbox-task-file-header',
         'decide-prompt',
         'decision-proof',
         'answered-row-not-proof',
