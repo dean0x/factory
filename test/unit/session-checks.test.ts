@@ -355,12 +355,18 @@ describe('the hook settings of a session folder', () => {
     expect(valueOf(await readHookSettings(make(), FOLDER))).toMatchObject({ state: 'plain', idleCompaction: null, hasOwnHook: false });
   });
 
-  it.each([FOLDER, join(FOLDER, dirs.claude), FILE])('does not read through a link at %s', async (path) => {
+  it.each([
+    [FOLDER, 'folder'],
+    [join(FOLDER, dirs.claude), 'folder'],
+    [FILE, 'file'],
+  ])('does not read through a link at %s and names a plain %s in the remedy', async (path, kind) => {
     const deps = make({ links: { [path]: '/elsewhere/settings' } });
     deps.seed(FILE, JSON.stringify(ownSettingsEntries));
     const readHookDeps = { ...deps, fs: { ...deps.fs, readTextLimited: async () => failure('unexpected read') } };
     expect(valueOf(await readHookSettings(readHookDeps, FOLDER))).toMatchObject({ state: 'link' });
-    expect(codeOf(await requireOwnHooks(readHookDeps, request))).toBe(4);
+    const refusal = errorOf(await requireOwnHooks(readHookDeps, request));
+    expect(exitCodeOf[refusal.kind]).toBe(4);
+    expect(refusal.hint).toBe(`Replace the link with a plain ${kind}. Run "factory upgrade", then "factory restart alpha".`);
   });
 
   describe('older than the start of the process', () => {

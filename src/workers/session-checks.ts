@@ -183,9 +183,10 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Pro
   if (!settings.ok) return settings;
   const found = settings.value;
   if (found.state === 'link') {
+    const kind = found.reason === 'the hook settings file is a link' ? 'file' : 'folder';
     return safetyRefusal(
       `cannot use ${found.file}: ${found.reason}`,
-      `Replace the link with a plain file. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
+      `Replace the link with a plain ${kind}. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
     );
   }
   const missing = found.state === 'not-parsed' ? hookNames.events : found.missing;
