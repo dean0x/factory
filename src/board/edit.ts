@@ -784,7 +784,9 @@ export const linkRequestDocIn = (waiting: WaitingDoc, id: string, path: string):
   if (docs !== undefined && !(Array.isArray(docs) && docs.every((entry) => typeof entry === 'string'))) {
     return failure(`${files.waiting}: the "${decisionKeys.docs}" of ${id} is not a list of text`);
   }
-  const current: readonly unknown[] = docs ?? [];
+  const checked = requestDocsOf(docs ?? []);
+  if (!checked.ok) return failure(`${files.waiting}: the "${decisionKeys.docs}" of ${id} is invalid: ${checked.error.message}`);
+  const current = checked.value;
   if (current.includes(path)) return ok({ top: null, value: false });
   if (current.length >= boardTextLimits.maxRequestDocs) {
     return usageError(`the ${requestWords.request} ${id} holds ${boardTextLimits.maxRequestDocs} docs already, so it takes no more`);

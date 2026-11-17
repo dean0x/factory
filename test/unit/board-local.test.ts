@@ -885,7 +885,7 @@ describe('the local connector: request context writes', () => {
     ['a repeated doc', { ...DECISION, docs: [DOC_PATH, DOC_PATH] }],
   ];
 
-  it.each(invalid)('refuses %s before the lock and leaves every file unchanged', async (_name, input) => {
+  it.each(invalid)('refuses %s with a usage error and leaves every file unchanged', async (_name, input) => {
     const repo = await repoWith(EMPTY_BOARD);
     const before = new Map(repo.deps.files);
     expect(await connectorOf(repo).askDecision(input)).toMatchObject({ ok: false, error: { kind: 'usage' } });
@@ -904,21 +904,28 @@ describe('the local connector: request context writes', () => {
     }
   });
 
-  const hiddenInputs = (hidden: string): readonly DecisionAskInput[] => [
-    { ...DECISION, title: `A${hidden}B` },
-    { ...DECISION, question: `A${hidden}B` },
-    { ...DECISION, options: [{ key: 'a', text: `A${hidden}B` }] },
-    { ...DECISION, fields: [{ label: `A${hidden}B`, text: 'Text' }] },
-    { ...DECISION, fields: [{ label: 'Label', text: `A${hidden}B` }] },
-    { ...DECISION, options: [{ key: 'a', text: 'A', why: `A${hidden}B` }] },
+  const hiddenInputs = (hidden: string): readonly (readonly [string, DecisionAskInput])[] => [
+    ['title', { ...DECISION, title: `A${hidden}B` }],
+    ['question', { ...DECISION, question: `A${hidden}B` }],
+    ['option text', { ...DECISION, options: [{ key: 'a', text: `A${hidden}B` }] }],
+    ['field label', { ...DECISION, fields: [{ label: `A${hidden}B`, text: 'Text' }] }],
+    ['field text', { ...DECISION, fields: [{ label: 'Label', text: `A${hidden}B` }] }],
+    ['option reason', { ...DECISION, options: [{ key: 'a', text: 'A', why: `A${hidden}B` }] }],
   ];
 
-  it.each([0x200b, 0x202e, 0x1b])('refuses hidden character %s in all request text', async (point) => {
-    const repo = await repoWith(EMPTY_BOARD);
-    for (const input of hiddenInputs(String.fromCodePoint(point))) {
-      expect((await connectorOf(repo).askDecision(input)).ok).toBe(false);
-    }
-    expect(repo.commits).toEqual([]);
+  describe.each([
+    ['a zero-width space', 0x200b, 'usage'],
+    ['a direction mark', 0x202e, 'failure'],
+    ['a control character', 0x1b, 'failure'],
+  ] as const)('%s in request text', (_name, point, questionKind) => {
+    it.each(hiddenInputs(String.fromCodePoint(point)))('refuses the %s with the required error kind', async (field, input) => {
+      const repo = await repoWith(EMPTY_BOARD);
+      const before = new Map(repo.deps.files);
+      const kind = field === 'question' ? questionKind : 'usage';
+      expect(await connectorOf(repo).askDecision(input)).toMatchObject({ ok: false, error: { kind } });
+      expect(repo.deps.files).toEqual(before);
+      expect(repo.commits).toEqual([]);
+    });
   });
 });
 
@@ -1001,6 +1008,20 @@ describe('the local connector: the ids of a write', () => {
     expect(request.kind).toBe('command');
     expect(request.fields).toEqual(fields);
     expect(request.options).toEqual(options);
+  });
+
+  it('keeps doc paths through add, strict read and link, and changes the hash', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    repo.deps.seed(join(HOME, 'docs/other.md'), '# Other\n');
+    const connector = connectorOf(repo);
+    valueOf(await connector.askDecision({ ...DECISION, docs: [DOC_PATH] }));
+    const before = valueOf(strictRequestOf(valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? '')), 'D-1'));
+    expect(before.docs).toEqual([DOC_PATH]);
+
+    expect(valueOf(await connector.linkRequestDoc({ id: 'D-1', path: 'docs/other.md' }))).toBe(true);
+    const after = valueOf(strictRequestOf(valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? '')), 'D-1'));
+    expect(after.docs).toEqual([DOC_PATH, 'docs/other.md']);
+    expect(after.hash).not.toBe(before.hash);
   });
 
   it('leaves the rows that are open as they are when it adds one, even for a row with no open time', async () => {
@@ -1446,10 +1467,32 @@ describe('the local connector: request doc links', () => {
     expect(repo.commits).toEqual([]);
   });
 
+  const invalidStoredDocs: readonly (readonly [string, readonly string[]])[] = [
+    ['a path outside the folder', ['../outside.md', DOC_PATH]],
+    ['a path with a dot part', ['docs/.plan.md', DOC_PATH]],
+    ['a repeated path', [DOC_PATH, DOC_PATH]],
+    ['more than five paths', [DOC_PATH, ...Array.from({ length: boardTextLimits.maxRequestDocs }, (_, at) => `docs/${at}.md`)]],
+  ];
+
+  describe.each(invalidStoredDocs)('a stored doc list with %s', (_name, docs) => {
+    it.each([
+      ['a new path', 'docs/new.md'],
+      ['a stored path', DOC_PATH],
+    ])('refuses a link of %s with a failure and changes nothing', async (_action, path) => {
+      const waiting = waitingWithDocs(docs);
+      const repo = await repoWith(EMPTY_BOARD, { waiting });
+      repo.deps.seed(join(HOME, path), '# Context\n');
+      const before = new Map(repo.deps.files);
+      expect(await link(connectorOf(repo), path)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(repo.deps.files).toEqual(before);
+      expect(repo.commits).toEqual([]);
+    });
+  });
+
   it.each([
     ['an answered request', (): string => storeOf(storedRecord()), 2],
     ['an unreadable owner store', (): string => '{', 1],
-  ] as const)('refuses %s under the lock and changes nothing', async (_name, store, exit) => {
+  ] as const)('refuses %s with the expected exit code and changes nothing', async (_name, store, exit) => {
     const repo = await decideRepo({ store: store() });
     repo.deps.seed(join(HOME, DOC_PATH), '# Context\n');
     const waiting = repo.textOf(fileNames.waiting);
@@ -1473,7 +1516,6 @@ describe('the local connector: request doc links', () => {
     if (exit === 4) repo.deps.seed(join(HOME, path), '# Context\n');
     const connector = connectorOf(repo);
     expect(exitOf(await link(connector, path))).toBe(exit);
-    expect(await connector.askDecision({ ...DECISION, docs: [path] })).toMatchObject({ ok: false });
     expect(exitOf(await connector.askDecision({ ...DECISION, docs: [path] }))).toBe(exit);
     expect(repo.textOf(fileNames.waiting)).toBe(waiting);
     expect(repo.commits).toEqual([]);
