@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { launchArgv } from '../../src/launch/argv.js';
 import { files, stateGuard } from '../../src/names.js';
 import { startCommandText } from '../helpers/tmux-fake.js';
@@ -104,6 +104,7 @@ describe('the board commands with the delete guard off', () => {
       const filesBefore = await boardFilesNow();
       const commitsBefore = await commitCount();
       const caller = await requestCaller();
+      const run = vi.spyOn(box, 'run');
 
       const writes: readonly (readonly string[])[] = [
         ['item', 'add', '--title', 'Second'],
@@ -121,10 +122,16 @@ describe('the board commands with the delete guard off', () => {
         ['queue', 'set', 'Docs', '--release-group', 'Launch'],
       ];
       for (const args of writes) {
-        const result = await box.run([...args, '--home', box.node], { env: caller });
+        const result = args[0] === 'request' && args[1] === 'doc'
+          ? await box.run([...args, '--home', box.node], { env: caller })
+          : await factory(args);
         expect(result.code, `${args.join(' ')}: ${result.stderr}`).toBe(4);
         expect(result.stderr).toContain('the delete guard of .factory is off');
       }
+      expect(run.mock.calls.map(([, options]) => options?.env === undefined)).toEqual(
+        writes.map(([command, action]) => command !== 'request' || action !== 'doc'),
+      );
+      run.mockRestore();
       expect(await boardFilesNow()).toEqual(filesBefore);
       expect(await commitCount()).toBe(commitsBefore);
 
