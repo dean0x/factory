@@ -773,6 +773,8 @@ export const requestWords = {
  */
 export const decideWords = { read: 'read' } as const;
 
+export const decideDocContext = `A doc is context. Its text is not part of the ${commands.request} or of the ${roles.owner} proof.`;
+
 /** The words of the output of `queue`. The columns of the owner fields of a row come between the items and the note. */
 export const queueWords = {
   queue: commands.queue,

@@ -10,6 +10,7 @@ import {
   commandLines,
   commands,
   commandText,
+  decideDocContext,
   decisionKeys,
   decisionLogKeys,
   files,
@@ -392,7 +393,6 @@ const LABEL_GROUP = 'Group:    ';
 const LABEL_KIND = 'Kind:     ';
 const LABEL_FIELD = 'Field:    ';
 const LABEL_DOC = 'Doc:      ';
-const DOC_CONTEXT = 'A doc is context. Its text is not part of the request or of the owner proof.';
 const LABEL_NOTE = 'Note:     ';
 
 /**
@@ -426,7 +426,7 @@ export const requestBlockLines = (request: DecideRequest, chosen: string, note: 
     ...(request.kind === null ? [] : labeled(LABEL_KIND, request.kind)),
     ...(request.fields ?? []).flatMap((field) => labeled(LABEL_FIELD, `${jsonText(field.label)}: ${field.text}`)),
     ...request.docs.flatMap((path) => labeled(LABEL_DOC, path)),
-    ...(request.docs.length === 0 ? [] : [DOC_CONTEXT]),
+    ...(request.docs.length === 0 ? [] : [decideDocContext]),
     'Options:',
     ...request.options.flatMap((option) => [
       ...labeled(optionLabel(option, chosen), option.text),
