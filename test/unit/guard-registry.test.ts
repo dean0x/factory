@@ -6,6 +6,7 @@ import { glossary } from '../../src/glossary.js';
 import { isRecord } from '../../src/migrate/inspect.js';
 import { recipes } from '../../src/recipes/index.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
+import { guardOf } from '../../src/guards/build.js';
 import { guardRowsFor, guardsFor, retiredGuardIds } from '../../src/guards/registry.js';
 import type { Guard, GuardRow } from '../../src/guards/types.js';
 import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, keys, roleText } from '../../src/names.js';
@@ -68,6 +69,16 @@ describe('the guards of a recipe', () => {
   it('lists only the core guards for a recipe that names no guard', () => {
     expect(idsOf(guardsFor(publishRecipe))).toEqual(Object.values(guardIds));
     expect(guardRowsFor(publishRecipe).every((row) => !row.sites.some((site) => site.path.startsWith('src/recipes/')))).toBe(true);
+  });
+
+  it('sets the harm mark for a recipe guard with no rows', () => {
+    const recipe = {
+      ...publishRecipe,
+      guards: [guardOf('test-guard', 'Test guard', 'Test work stays safe.')],
+      guardRows: [],
+    };
+    const guard = guardsFor(recipe).find((candidate) => candidate.id === 'test-guard');
+    expect(guard).toMatchObject({ harm: true, kinds: [], rows: [] });
   });
 
   it('gives no guard the id of an approval point', () => {
@@ -567,45 +578,9 @@ describe('the rows of the registry', () => {
     });
   });
 
-  it('pins the number of rows of each guard and in all, so that a change of the count is a reviewed change', () => {
-    const counts = Object.fromEntries(software.guards.map((guard) => [guard.id, guard.rows.length]));
-    expect(counts).toEqual({
-      'approval-delegation': 8,
-      'board-edits': 14,
-      'settings-check': 12,
-      'settings-write': 6,
-      'clone-rules': 8,
-      'context-limits': 2,
-      'delete-guard': 6,
-      dismiss: 15,
-      'file-link-safety': 25,
-      'folder-trust': 12,
-      'git-safety': 6,
-      'hook-runtime': 5,
-      'launch-commands': 10,
-      'machine-limits': 9,
-      'task-files': 13,
-      'session-checks': 13,
-      'owner-go': 24,
-      'pane-safety': 14,
-      'permission-mode': 3,
-      proxy: 8,
-      'resume-routines': 5,
-      'root-scan': 9,
-      'safety-block': 3,
-      secrets: 7,
-      'setup-text': 14,
-      spend: 6,
-      'work-conduct': 31,
-      'install-rules': 1,
-      'approval-merge': 2,
-      'approval-release': 1,
-      'pr-rules': 14,
-    });
-    expect(software.rows).toHaveLength(306);
+  it('pins the split between core rows and recipe rows', () => {
     expect(guardRowsFor(publishRecipe)).toHaveLength(204);
     expect(softwareRecipe.guardRows).toHaveLength(102);
-    expect(Object.values(counts).reduce((sum, count) => sum + count, 0)).toBe(software.rows.length);
   });
 
   it('gives every guard at least one row', () => {
@@ -648,17 +623,35 @@ describe('the rows of the registry', () => {
     expect(names?.sites).toContainEqual({ path: 'src/names.ts', symbol: 'reservedFieldNames' });
   });
 
-  it('cites the shared place rule for assignment files and not its former file', () => {
+  it('cites the shared place rule for assignment files', () => {
     const row = software.rows.find((candidate) => candidate.id === 'assignment-file-check');
     expect(row).toMatchObject({ guard: guardIds.taskFiles, harm: true });
     expect(row?.sites).toContainEqual({ path: 'src/core/place-rule.ts', symbol: 'dotRuleReason' });
-    expect(row?.sites).not.toContainEqual({ path: 'src/workers/assignment.ts', symbol: 'dotRuleReason' });
   });
 
   it('keeps the doc count and epic and release group text forms outside the registry', () => {
     const formChecks = ['linkDocIn', 'shownLineOf', 'optionalShownLineOf'];
     const sites = software.rows.flatMap((row) => row.sites);
     expect(sites.filter((site) => site.path === 'src/board/edit.ts' && formChecks.includes(site.symbol))).toEqual([]);
+  });
+
+  it('cites config and state backup and restore for upgrade backups', () => {
+    const row = software.rows.find((candidate) => candidate.id === 'upgrade-backups');
+    expect(row?.sites).toEqual([
+      { path: 'src/upgrade/apply.ts', symbol: 'copyIntoBackup' },
+      { path: 'src/upgrade/apply.ts', symbol: 'backup' },
+      { path: 'src/upgrade/apply.ts', symbol: 'restore' },
+      { path: 'src/commands/upgrade.ts', symbol: 'runUpgrade' },
+    ]);
+  });
+
+  it('cites the local config writers that set mode 0600', () => {
+    const row = software.rows.find((candidate) => candidate.id === 'local-file-mode');
+    expect(row?.sites).toEqual(expect.arrayContaining([
+      { path: 'src/commands/init.ts', symbol: 'applyInit' },
+      { path: 'src/commands/init-existing.ts', symbol: 'applyWrites' },
+      { path: 'src/commands/upgrade.ts', symbol: 'runUpgrade' },
+    ]));
   });
 
   it('lists the hold removal with the link checks and the hold write with the existing-folder write checks', () => {

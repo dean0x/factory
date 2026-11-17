@@ -188,7 +188,7 @@ export const guardsFor = (recipe: Pick<RecipeEntry, 'guards' | 'guardRows'>): re
     const own = rows.filter((row) => row.guard === definition.id);
     return {
       ...definition,
-      harm: own.some((row) => row.harm),
+      harm: own.length === 0 || own.some((row) => row.harm),
       kinds: Object.values(guardKinds).filter((kind) => own.some((row) => row.kind === kind)),
       key: keyOf(definition.id),
       rows: own.map((row) => row.id),

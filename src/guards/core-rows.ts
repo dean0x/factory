@@ -514,6 +514,9 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/config/load.ts', 'localFileAccess', 'settleLocalMode'),
+      ...at('src/commands/init.ts', 'applyInit'),
+      ...at('src/commands/init-existing.ts', 'applyWrites'),
+      ...at('src/commands/upgrade.ts', 'runUpgrade'),
       ...at('src/commands/start.ts', 'runStart'),
       ...at('src/commands/doctor.ts', 'checkLocalFile'),
     ],
@@ -655,7 +658,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     name: 'An upgrade keeps a backup of the config, the local config and the state before it changes them, and an abort restores them',
     applies: 'Upgrade',
     harm: true,
-    sites: [...at('src/upgrade/apply.ts', 'copyIntoBackup', 'backup', 'backupBlocks'), ...at('src/commands/upgrade.ts', 'runUpgrade')],
+    sites: [...at('src/upgrade/apply.ts', 'copyIntoBackup', 'backup', 'restore'), ...at('src/commands/upgrade.ts', 'runUpgrade')],
   }),
   codeRow({
     id: 'upgrade-paths',
