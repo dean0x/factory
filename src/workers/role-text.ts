@@ -4,9 +4,11 @@ import { removedByDisplay } from '../cli/output.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { accessFaultOf } from '../core/access.js';
 import type { CheckedFault, Deps } from '../core/deps.js';
+import { readGuardState } from '../core/guard-records.js';
 import { ok, type Err } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { acceptedEntryOf, entryOfText, type ManifestEntry } from '../core/setup-acceptance.js';
+import type { GuardValues } from '../guards/types.js';
 import { blockNames, commands, roleText, setupFileOf, type RoleSizeUnit } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { plainSetupText, renderableSetupText } from '../state/setup-text.js';
@@ -56,12 +58,17 @@ const freeRoomOf = (packageText: string): number =>
  * The warning for a role text above the cap, or null when the text fits or the templates hold no worker block. A command
  * that renders the worker file gives this warning and still writes its files. The text names its size, the cap and the
  * characters that the setup text may hold. `retry` is the command that a person runs again after the fix.
+ * Pass the all-on package templates for a stable setup allowance when guards alter the rendered text.
  */
-export const roleTextSizeWarning = (templates: readonly BlockTemplate[], retry: string): string | null => {
+export const roleTextSizeWarning = (
+  templates: readonly BlockTemplate[],
+  retry: string,
+  allOnTemplates: readonly BlockTemplate[] = templates,
+): string | null => {
   if (!templates.some((template) => template.name === blockNames.worker)) return null;
   const size = composeRoleText(templates).length;
   if (size <= roleText.maxChars) return null;
-  const free = freeRoomOf(composeRoleText(templates.filter((template) => template.name !== blockNames.setupWorker)));
+  const free = freeRoomOf(composeRoleText(allOnTemplates.filter((template) => template.name !== blockNames.setupWorker)));
   return `${roleText.tooLargeText(size, 'characters')}. ${roleText.remedies.shorten(free, retry)}`;
 };
 
@@ -104,11 +111,11 @@ const sameAsAccepted = (accepted: ManifestEntry | null, read: ManifestEntry): bo
  * no block marker. `plainSetupText` refuses a control character, an invisible filler and a marker with one error, and gives
  * the text with LF line ends. The text of that error is dropped. The fault names the marker when the raw text holds one.
  */
-const roleOfSetupText = (raw: string, config: FactoryConfig, free: number): CliResult<RoleRead> => {
+const roleOfSetupText = (raw: string, config: FactoryConfig, guards: GuardValues | undefined, free: number): CliResult<RoleRead> => {
   const plain = plainSetupText(setupFileOf(blockNames.setupWorker), raw, commands.doctor);
   if (!plain.ok) return refused({ kind: holdsBlockMarker(raw) ? 'blockMarker' : 'notPlainText' });
   if (removedByDisplay(plain.value)) return refused({ kind: 'notPlainText' });
-  return withinCap(composeRoleText(workerFileTemplatesFor(config, renderableSetupText(plain.value))), free);
+  return withinCap(composeRoleText(workerFileTemplatesFor(config, renderableSetupText(plain.value), guards)), free);
 };
 
 /**
@@ -127,13 +134,13 @@ const roleOfSetupText = (raw: string, config: FactoryConfig, free: number): CliR
  */
 export const readRoleText = async (
   deps: Deps,
-  input: { readonly home: string; readonly config: FactoryConfig },
+  input: { readonly home: string; readonly config: FactoryConfig; readonly guards?: GuardValues },
 ): Promise<CliResult<RoleRead>> => {
-  const { home, config } = input;
-  const packageTemplates = workerFileTemplatesFor(config, null);
+  const { home, config, guards } = input;
+  const packageTemplates = workerFileTemplatesFor(config, null, guards);
   if (!packageTemplates.some((template) => template.name === blockNames.worker)) return refused({ kind: 'configNotUsable' });
   const packageText = composeRoleText(packageTemplates);
-  const free = freeRoomOf(packageText);
+  const free = freeRoomOf(composeRoleText(workerFileTemplatesFor(config, null)));
 
   const layout = layoutOf(home);
   const linked = await requireNoLinks(deps, home, [layout.setupWorkerFile]);
@@ -170,7 +177,7 @@ export const readRoleText = async (
       const accepted = await acceptedOf();
       if (!accepted.ok) return accepted;
       if (!sameAsAccepted(accepted.value, entryOfText(path, found.text))) return refused({ kind: 'notAccepted' });
-      return roleOfSetupText(found.text, config, free);
+      return roleOfSetupText(found.text, config, guards, free);
     }
     default: {
       const unreachable: never = found;
@@ -234,7 +241,8 @@ export const requireRoleText = async (
   input: { readonly home: string; readonly config: FactoryConfig; readonly retry: string },
 ): Promise<CliResult<void>> => {
   const { home, config, retry } = input;
-  const read = await readRoleText(deps, { home, config });
+  const guards = await readGuardState(deps, home, config, 'when-off');
+  const read = await readRoleText(deps, { home, config, guards: guards.values });
   if (!read.ok) return read;
   return read.value.kind === 'ok' ? ok(undefined) : roleFaultRefusal(read.value.fault, { retry });
 };

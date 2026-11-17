@@ -3,8 +3,10 @@ import { displayLine, renderError, tableLines, type CommandOutput, type OutLine 
 import { inspectSharedConfig, loadConfig, readNodeIdentity } from '../config/load.js';
 import type { SharedConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import { readGuardState } from '../core/guard-records.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
+import type { GuardRules } from '../guards/effective.js';
 import { guardRowsFor, guardsFor } from '../guards/registry.js';
 import type { Guard, GuardRow, GuardState, GuardValue } from '../guards/types.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
@@ -19,17 +21,15 @@ export interface GuardListOptions {
 
 interface ListedGuard extends Omit<GuardState, 'value'> {
   readonly value: GuardValue | typeof guardListWords.unknown;
-  readonly source: 'missing';
-  readonly since: null;
 }
 
-/** A config with no guard keys uses the missing-key value and has no record time. */
-const valueOf = (guard: Guard, loaded: boolean): ListedGuard => ({
+/** Registry facts and effective state share one row. A failed config load leaves the value unknown. */
+const listedGuard = (guard: Guard, state: GuardRules | null): ListedGuard => ({
   ...guard,
   settable: guard.wired,
-  value: loaded ? guard.whenMissing : guardListWords.unknown,
-  source: 'missing',
-  since: null,
+  value: state === null ? guardListWords.unknown : state.values[guard.id] ?? guardValues.on,
+  source: state?.sources[guard.id] ?? 'missing',
+  since: state?.since[guard.id] ?? null,
 });
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
@@ -68,7 +68,7 @@ const recipeOf = (state: DocState<SharedConfig>, registry: RecipeRegistry): Reci
   return (typeof id === 'string' ? findRecipe(registry, id) : undefined) ?? registry[0];
 };
 
-/** The list reads its config and registry facts only. It changes no file and runs no check. */
+/** The list reads its config, effective guard state and registry facts. It changes no file and runs no check. */
 export const runGuardList = async (
   deps: Deps,
   options: GuardListOptions,
@@ -84,7 +84,8 @@ export const runGuardList = async (
   const home = located.value.home;
   const loaded = await loadConfig(deps, home, registry);
   const recipe = loaded.ok ? loaded.value.entry : recipeOf(await inspectSharedConfig(deps, home, registry), registry);
-  const guards = guardsFor(recipe).map((guard) => valueOf(guard, loaded.ok));
+  const state = loaded.ok ? await readGuardState(deps, home, loaded.value, 'when-off') : null;
+  const guards = guardsFor(recipe).map((guard) => listedGuard(guard, state));
   const rows = guardRowsFor(recipe);
   const family = options.family;
   if (family !== undefined && !guards.some((guard) => guard.id === family)) {
@@ -114,10 +115,13 @@ export const runGuardList = async (
       error: loaded.ok ? null : loaded.error,
       guards,
       rows,
-      unmatched: [],
-      loosened: [],
+      unmatched: state?.unmatched ?? [],
+      loosened: state?.loosened ?? [],
     },
-    warnings: loaded.ok || loaded.error.hint === undefined ? [] : [loaded.error.hint],
+    warnings: [
+      ...(state?.fault == null ? [] : [state.fault]),
+      ...(!loaded.ok && loaded.error.hint !== undefined ? [loaded.error.hint] : []),
+    ],
     failed: !loaded.ok,
     ...(loaded.ok ? {} : { exitCode: exitCodeFor(loaded.error) }),
   });

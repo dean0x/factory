@@ -19,6 +19,7 @@ import { folderKey } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
+import { readGuardState } from '../core/guard-records.js';
 import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { folderKeyOf } from '../core/paths.js';
@@ -36,6 +37,7 @@ import {
   tmuxVersionOf,
   toolNames,
 } from '../core/tools.js';
+import type { GuardValues } from '../guards/types.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
@@ -482,6 +484,7 @@ export const checkNodeBlocks = async (
   deps: Deps,
   home: string,
   state: DocState<FactoryConfig>,
+  guards?: GuardValues,
 ): Promise<CheckResult> => {
   if (state.kind !== 'valid') return notChecked(checkIds.blocks, `${files.config} is not valid`);
   const layout = layoutOf(home);
@@ -489,7 +492,7 @@ export const checkNodeBlocks = async (
   if (!plain.ok) return failedFrom(checkIds.blocks, plain.error);
   const setup = await readSetupTexts(deps, layout, commands.doctor);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
-  const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value));
+  const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value), guards);
   const pending = { ...NO_PENDING_FILES, renames: [...blockRenamesOf(fileSteps), ...roleBlockRenames(input.recipe, input.layer)] };
   // A node state that is not valid gives no record, and every block then counts as recorded.
   const nodeState = await inspectState(deps, home);
@@ -609,11 +612,13 @@ const rolePartOf = (read: CliResult<RoleRead>): RolePart => {
  * workers holds at most `workerRecord.maxEntries` records, so the loop is bounded. The check reads and writes nothing else, and it
  * reads no hook settings file that is a link.
  */
-export const checkRoleDelivery = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+export const checkRoleDelivery = async (
+  deps: Deps, home: string, state: DocState<FactoryConfig>, guards?: GuardValues,
+): Promise<CheckResult> => {
   const id = checkIds.roleDelivery;
   if (state.kind !== 'valid') return notChecked(id, `${files.config} is not valid`);
   const config = state.value;
-  if (workerFileTemplatesFor(config, null).length === 0) return check(id, 'ok', roleText.doctor.noWorkerFile);
+  if (workerFileTemplatesFor(config, null, guards).length === 0) return check(id, 'ok', roleText.doctor.noWorkerFile);
   const listed = await listWorkerRecords(deps, home);
   if (!listed.ok) return failedFrom(id, listed.error);
   const gaps: string[] = [];
@@ -623,7 +628,7 @@ export const checkRoleDelivery = async (deps: Deps, home: string, state: DocStat
     if (gap !== null) gaps.push(gap);
   }
   const copies = listed.value.workers.length;
-  const part = rolePartOf(await readRoleText(deps, { home, config }));
+  const part = rolePartOf(await readRoleText(deps, { home, config, ...(guards === undefined ? {} : { guards }) }));
   const level = part.level === 'ok' && gaps.length > 0 ? 'warn' : part.level;
   const text = [`${roleText.doctor.hooks(copies - gaps.length, copies)}; ${part.role}.`, ...part.remedy, ...gaps, roleText.doctor.acceptance];
   return check(id, level, text.join(' '));
@@ -855,6 +860,7 @@ const skippedProxyCheck = (): CheckResult =>
 
 const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CheckRun> => {
   const config = await inspectConfig(deps, home, registry);
+  const guards = config.kind === 'valid' ? await readGuardState(deps, home, config.value, 'always') : null;
   const state = await inspectState(deps, home);
   const rootScan = await scanRoot(deps, home, config.kind === 'valid' ? config.value : null);
   const [
@@ -881,9 +887,9 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkTempFolders(deps, home),
     checkIndex(deps),
     checkNodeId(deps, home, config),
-    checkNodeBlocks(deps, home, config),
+    checkNodeBlocks(deps, home, config, guards?.values),
     checkSetupText(deps, home),
-    checkRoleDelivery(deps, home, config),
+    checkRoleDelivery(deps, home, config, guards?.values),
     checkChildren(deps, home, config, registry),
     checkInstructionFiles(deps, home),
     hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config),

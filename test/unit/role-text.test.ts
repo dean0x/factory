@@ -3,7 +3,8 @@ import { exitCodeFor, failure, type CliResult } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { entryOfText, manifestOf } from '../../src/core/setup-acceptance.js';
-import { roleText } from '../../src/names.js';
+import { files, guardIds, roleText } from '../../src/names.js';
+import type { GuardValues } from '../../src/guards/types.js';
 import { recipes } from '../../src/recipes/index.js';
 import { workerFileTemplatesFor } from '../../src/templates/index.js';
 import {
@@ -12,6 +13,7 @@ import {
   requireRoleText,
   roleFaultReason,
   roleFaultRefusal,
+  roleTextSizeWarning,
   type RoleFault,
   type RoleRead,
 } from '../../src/workers/role-text.js';
@@ -71,6 +73,41 @@ const worldOf = (world: World = {}): FakeDeps => {
 const read = (deps: Deps): Promise<CliResult<RoleRead>> => readRoleText(deps, { home: HOME, config });
 
 const refused = (fault: RoleFault): CliResult<RoleRead> => ({ ok: true, value: { kind: 'refused', fault } });
+const withGuards = (guards: GuardValues) => ({ home: HOME, config, guards });
+
+describe('worker role text with guard values', () => {
+  const guards: GuardValues = { [guardIds.installRules]: 'off' };
+
+  it.each([null, 'Write tests first.\n'])('renders effective worker rules with setup text %j', async (text) => {
+    const result = await readRoleText(worldOf({ text }), withGuards(guards));
+    const expected = composeRoleText(workerFileTemplatesFor(config, text, guards));
+    expect(expected).not.toBe(composeRoleText(workerFileTemplatesFor(config, text)));
+    expect(result).toEqual({ ok: true, value: { kind: 'ok', text: expected, chars: expected.length } });
+  });
+
+  it('keeps the all-on setup allowance in a size refusal when a guard is off', async () => {
+    const packageText = composeRoleText(workerFileTemplatesFor(config, null, guards));
+    const setup = 'x'.repeat(roleText.maxChars - packageText.length - roleText.joiner.length + 1);
+    const result = await readRoleText(worldOf({ text: setup }), withGuards(guards));
+    expect(result).toEqual(refused({ kind: 'tooLarge', size: roleText.maxChars + 1, unit: 'characters', free: FREE }));
+  });
+
+  it('uses the effective state for the launch role check', async () => {
+    const deps = worldOf({ text: 'x'.repeat(FREE + 1) });
+    deps.seed(`/state/factory/${files.guardRecords}`, JSON.stringify({ schema: 1, records: [{ node: NODE, root: HOME,
+      values: { [guardIds.installRules]: { value: 'off', at: '2030-01-02T03:04:05.678Z' } }, prefix: null,
+    }] }));
+    const result = await requireRoleText(deps, { home: HOME, config: { ...config, core: { ...config.core, guards } }, retry: 'factory start' });
+    expect(result).toEqual({ ok: true, value: undefined });
+  });
+
+  it('keeps the all-on setup allowance in the rendered size warning', () => {
+    const templates = workerFileTemplatesFor(config, 'x'.repeat(roleText.maxChars), guards);
+    const warning = roleTextSizeWarning(templates, 'factory upgrade', workerFileTemplatesFor(config, null));
+    expect(warning).toContain(roleText.remedies.shorten(FREE, 'factory upgrade'));
+    expect(warning).toContain(roleText.tooLargeText(composeRoleText(templates).length, 'characters'));
+  });
+});
 
 describe('composeRoleText', () => {
   const templates = workerFileTemplatesFor(config, 'Owner text.\n');

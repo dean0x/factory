@@ -38,7 +38,11 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { boardWarnPercent, checkIds, childReasons, dirs, files, instructionFiles, lessonLimits, maxFileBytes, roleText } from '../../src/names.js';
+import { boardWarnPercent, checkIds, childReasons, dirs, files, guardIds, instructionFiles, lessonLimits, maxFileBytes, roleText } from '../../src/names.js';
+import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
+import { composeRoleText } from '../../src/workers/role-text.js';
+import type { GuardValues } from '../../src/guards/types.js';
+import { countReadsOf } from '../helpers/read-count.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { inspectState } from '../../src/state/load.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -132,6 +136,72 @@ const doctor = async (deps: FakeDeps) => {
   if (!result.ok) throw new Error(result.error.message);
   return result.value;
 };
+
+describe('doctor: shared guard state', () => {
+  const STORE = `/state/factory/${files.guardRecords}`;
+  const guards: GuardValues = { [guardIds.installRules]: 'off', [guardIds.resumeRoutines]: 'off', 'approval-merge': 'off' };
+  const withGuards = (values: GuardValues): FactoryConfig => {
+    const config = sampleConfig();
+    return { ...config, core: { ...config.core, guards: values } };
+  };
+  const seedBlocks = (deps: FakeDeps, config: FactoryConfig, values: GuardValues): void => {
+    const templates = blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: null }, config.core.approval, values));
+    for (const target of ['claudeFile', 'workerFile'] as const) {
+      const blocks = templates.filter((template) => template.target === target).map((template) => {
+        const rendered = renderBlock(template);
+        if (!rendered.ok) throw new Error(rendered.error.message);
+        return rendered.value;
+      });
+      deps.seed(target === 'claudeFile' ? CLAUDE_MD : layoutOf(HOME).workerMd, blocks.join('\n\n'));
+    }
+  };
+
+  it('uses one effective state for the rendered blocks and delivered worker text', async () => {
+    const deps = makeDeps();
+    const config = withGuards(guards);
+    writeConfig(deps, config);
+    seedBlocks(deps, config, guards);
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: config.core.node.id, root: HOME, prefix: null,
+      values: Object.fromEntries(Object.entries(guards).map(([id, value]) => [id, { value, at: '2030-01-02T03:04:05.678Z' }])),
+    }] }));
+    const counted = countReadsOf(deps, STORE);
+    const result = await runDoctor(counted.deps, { home: HOME });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const size = composeRoleText(workerFileTemplatesFor(config, null, guards)).length;
+    expect(result.value.json).toMatchObject({ checks: expect.arrayContaining([
+      expect.objectContaining({ id: checkIds.blocks, level: 'ok' }),
+      expect.objectContaining({ id: checkIds.roleDelivery, level: 'ok', text: expect.stringContaining(`role text ${size} of`) }),
+    ]) });
+    expect(counted.count()).toBe(1);
+  });
+
+  it('reads the guard store once even with all guards on', async () => {
+    const deps = await initialized();
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [] }));
+    const counted = countReadsOf(deps, STORE);
+    expect((await runDoctor(counted.deps, { home: HOME })).ok).toBe(true);
+    expect(counted.count()).toBe(1);
+  });
+
+  it('keeps both text checks on when the guard store cannot be read', async () => {
+    const deps = makeDeps();
+    const config = withGuards(guards);
+    writeConfig(deps, config);
+    seedBlocks(deps, config, {});
+    deps.seed(STORE, 'invalid');
+    const counted = countReadsOf(deps, STORE);
+    const result = await runDoctor(counted.deps, { home: HOME });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const size = composeRoleText(workerFileTemplatesFor(config, null)).length;
+    expect(result.value.json).toMatchObject({ checks: expect.arrayContaining([
+      expect.objectContaining({ id: checkIds.blocks, level: 'ok' }),
+      expect.objectContaining({ id: checkIds.roleDelivery, level: 'ok', text: expect.stringContaining(`role text ${size} of`) }),
+    ]) });
+    expect(counted.count()).toBe(1);
+  });
+});
 
 describe('doctor: config, version and state', () => {
   it('reports a valid config and current versions', async () => {
