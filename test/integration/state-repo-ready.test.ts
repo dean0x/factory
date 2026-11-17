@@ -7,6 +7,7 @@ import { requireStateConfigSafe, requireStateRepoReady, stateStatusOf } from '..
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { commands } from '../../src/names.js';
 import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { scaled } from './load.js';
 
 /**
  * The checks that run before a step changes the state repo, with real git in a scratch folder with its own HOME and git identity:
@@ -19,7 +20,7 @@ let stateDir: string;
 let deps: Deps;
 
 /** The time that the start of a test may take: the sandbox, the state repo and the first commit. */
-const SETUP_TIMEOUT_MS = 30_000;
+const SETUP_TIMEOUT_MS = scaled(30_000);
 
 /** The names of the environment that make git read the scratch HOME and nothing else. The in-process calls need them. */
 const GIT_ENV_NAMES = ['HOME', 'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT'] as const;

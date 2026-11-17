@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { files } from '../../src/names.js';
 import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
+import { loadNote, scaled } from './load.js';
 
 /**
  * The view slot with the built program, real git and a separate tmux server. `factory start` makes the session, and its right pane in
@@ -16,13 +17,13 @@ const hasTmux = major >= 3;
 if (!hasTmux) console.warn('view-slot.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
 /** The time that a case may take: `init`, the writes, `start`, and the waits for the screen of the pane. */
-const CASE_MS = 120_000;
+const CASE_MS = scaled(120_000);
 const STEP_MS = 100;
-const STOP_STEPS = 30;
-/** The follow loop polls every 2 s, so a change shows within about 2 s. The wait for it ends after 20 s. */
+const STOP_STEPS = scaled(30);
+/** The follow loop polls every 2 s, so a change shows within about 2 s. The wait for it ends after 20 s, times the wait factor. */
 const SCREEN_STEP_MS = 200;
-const SCREEN_STEPS = 100;
-const EXIT_STEPS = 100;
+const SCREEN_STEPS = scaled(100);
+const EXIT_STEPS = scaled(100);
 
 /** The right pane of the window `view`: the slot. */
 const SLOT_PANE = '=demo:view.{right}';
@@ -36,7 +37,7 @@ let socket: string;
 
 const tmux = (args: readonly string[]): Promise<RunResult> =>
   new Promise((resolve) => {
-    execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: 20_000 }, (error, stdout, stderr) => {
+    execFile('tmux', [...args], { env: tmuxEnv, encoding: 'utf8', timeout: scaled(20_000) }, (error, stdout, stderr) => {
       resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr });
     });
   });
@@ -61,7 +62,7 @@ const waitForScreen = async (needles: readonly string[]): Promise<string> => {
     if (needles.every((needle) => screen.includes(needle))) return screen;
     await sleep(SCREEN_STEP_MS);
   }
-  throw new Error(`the slot pane did not show ${needles.join(' and ')}. It showed:\n${screen}`);
+  throw new Error(`the slot pane did not show ${needles.join(' and ')} ${loadNote()}. It showed:\n${screen}`);
 };
 
 /** True while the process exists. Signal 0 only checks. */
@@ -170,7 +171,7 @@ describe.skipIf(!hasTmux)('the view slot (built binary, separate tmux server)', 
         alive = exists(pid);
         if (alive) await sleep(STEP_MS);
       }
-      expect(alive).toBe(false);
+      expect(alive, loadNote()).toBe(false);
     },
     CASE_MS,
   );

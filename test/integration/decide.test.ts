@@ -7,6 +7,7 @@ import { files, program, stateGuard } from '../../src/names.js';
 import { stateRel } from '../../src/state/layout.js';
 import { runInTerminal, scriptGate, type Exchange } from './fake-terminal.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { scaled } from './load.js';
 
 /**
  * `factory decide` with the built program and real git, in a scratch folder with its own HOME and git identity. The node is made by
@@ -20,9 +21,9 @@ if (gate === 'skip') console.warn('decide.test.ts is skipped: the program script
 let box: Sandbox;
 
 /** The bounds of a run in the fake terminal: the wait for one prompt, the whole run, and the time limit of a case. */
-const PROMPT_MS = 15_000;
-const TOTAL_MS = 90_000;
-const CASE_MS = 120_000;
+const PROMPT_MS = scaled(15_000);
+const TOTAL_MS = scaled(90_000);
+const CASE_MS = scaled(120_000);
 
 const BOARD_BLOCK = ['board:', '  states: [open, doing, done]', '  in_progress: doing', '  closed: done', ''].join('\n');
 

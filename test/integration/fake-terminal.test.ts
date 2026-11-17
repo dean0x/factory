@@ -2,14 +2,15 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runInTerminal, scriptGate } from './fake-terminal.js';
 import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
+import { loadNote, scaled } from './load.js';
 
 const gate = scriptGate();
 if (gate === 'skip') console.warn('fake-terminal.test.ts is skipped: the program script is not installed.');
 
 /** The time limit of one case: the longest run of the helper (90 s) and the time for the end of the run. */
-const CASE_MS = 120_000;
+const CASE_MS = scaled(120_000);
 /** The wait for a process group to be gone after the helper killed it. The wait has an upper bound. */
-const GONE_MS = 3_000;
+const GONE_MS = scaled(3_000);
 const GONE_STEP_MS = 50;
 
 let box: Sandbox;
@@ -60,7 +61,7 @@ const groupOf = (text: string): number => Number(/PID:(\d+)/.exec(text)?.[1]);
 const expectGroupGone = async (group: number): Promise<void> => {
   expect(group).toBeGreaterThan(1);
   for (let waited = 0; groupExists(group) && waited < GONE_MS; waited += GONE_STEP_MS) await sleep(GONE_STEP_MS);
-  expect(groupExists(group)).toBe(false);
+  expect(groupExists(group), loadNote()).toBe(false);
 };
 
 /**

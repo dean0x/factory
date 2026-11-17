@@ -10,6 +10,7 @@ import { boardKeys, hookNames, setupAcceptance, stateLock } from '../../src/name
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, withoutTmux, type RunResult, type Sandbox } from './harness.js';
+import { scaled } from './load.js';
 
 let box: Sandbox;
 
@@ -36,7 +37,7 @@ const run = (
   env: Readonly<Record<string, string>>,
 ): Promise<RunResult> =>
   new Promise((resolve) => {
-    execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: 60_000 }, (error, stdout, stderr) => {
+    execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: scaled(60_000) }, (error, stdout, stderr) => {
       resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr });
     });
   });
