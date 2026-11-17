@@ -1,11 +1,12 @@
 import { basename, dirname } from 'node:path';
 import { notReady, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { hookSettingsPlaceOf, missingHookEvents } from '../core/claude-settings.js';
+import { holdsAnyOwnCommand, hookSettingsPlaceOf, missingHookEvents } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
-import { commandLines, commands, commandText, flags, flagText, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
+import { isRecord } from '../migrate/inspect.js';
+import { claudeSettingKeys, commandLines, commands, commandText, flags, flagText, hookNames, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import { readCheckedFile, type NamedPath } from './registry.js';
 import { requireRoleText } from './role-text.js';
@@ -122,17 +123,24 @@ export interface SettingsAgeRequest extends SettingsRequest {
 const settingsPartsOf = (folder: string): { readonly folders: readonly NamedPath[]; readonly file: NamedPath } => {
   const place = hookSettingsPlaceOf(folder);
   return {
-    folders: [{ path: place.claudeFolder, what: 'the settings folder' }],
+    folders: [{ path: folder, what: 'the session folder' }, { path: place.claudeFolder, what: 'the settings folder' }],
     file: { path: place.file, what: 'the hook settings file' },
   };
 };
 
 /**
- * What the hook settings file of a session folder holds, for a check: the hook events that lack the own command, or the link that
- * stops the read. A file that is missing, not JSON, not an object, above the limit or of the wrong kind counts every event as missing.
+ * The hook events that lack the own command and the idle value of a parsed settings file. An absent file has no own hook.
+ * A file that does not parse, exceeds the limit or has the wrong kind has its own state. A link stops the read.
  */
 export type HookSettingsRead =
-  | { readonly state: 'plain'; readonly file: string; readonly missing: readonly HookEvent[] }
+  | {
+      readonly state: 'plain';
+      readonly file: string;
+      readonly missing: readonly HookEvent[];
+      readonly idleCompaction: boolean | null;
+      readonly hasOwnHook: boolean;
+    }
+  | { readonly state: 'not-parsed'; readonly file: string }
   | { readonly state: 'link'; readonly file: string; readonly reason: string };
 
 /**
@@ -145,8 +153,25 @@ export const readHookSettings = async (deps: Deps, folder: string): Promise<CliR
   if (!read.ok) return read;
   const found = read.value;
   if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason });
-  const json = found.state === 'text' ? parseJsonText(found.text) : null;
-  return ok({ state: 'plain', file: file.path, missing: missingHookEvents(json !== null && json.ok ? json.value : undefined) });
+  if (found.state === 'invalid') return ok({ state: 'not-parsed', file: file.path });
+  if (found.state === 'absent') {
+    return ok({ state: 'plain', file: file.path, missing: hookNames.events, idleCompaction: null, hasOwnHook: false });
+  }
+  const json = parseJsonText(found.text);
+  if (!json.ok || !isRecord(json.value)) return ok({ state: 'not-parsed', file: file.path });
+  const settings = json.value;
+  const hooks = settings[claudeSettingKeys.hooks];
+  if (hooks !== undefined && (!isRecord(hooks) || hookNames.events.some((event) => Object.hasOwn(hooks, event) && !Array.isArray(hooks[event])))) {
+    return ok({ state: 'not-parsed', file: file.path });
+  }
+  const idle = settings[claudeSettingKeys.idleCompaction];
+  return ok({
+    state: 'plain',
+    file: file.path,
+    missing: missingHookEvents(settings),
+    idleCompaction: typeof idle === 'boolean' ? idle : null,
+    hasOwnHook: holdsAnyOwnCommand(settings),
+  });
 };
 
 /**
@@ -163,9 +188,10 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Pro
       `Replace the link with a plain file. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
     );
   }
-  if (found.missing.length === 0) return ok(undefined);
+  const missing = found.state === 'not-parsed' ? hookNames.events : found.missing;
+  if (missing.length === 0) return ok(undefined);
   return notReady(
-    `the hook settings ${found.file} lack the events: ${found.missing.join(', ')}`,
+    `the hook settings ${found.file} lack the events: ${missing.join(', ')}`,
     request.remedy ?? `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
   );
 };

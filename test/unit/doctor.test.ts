@@ -2704,6 +2704,20 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     expect(outcomes.map((outcome) => outcome.warns)).toEqual([false, true, true, true, true, true]);
   });
 
+  it.each(['not json', '[]', '{"hooks": {"Stop": "x"}}', ' '.repeat(maxFileBytes + 1)])(
+    'keeps the all-events warning and the new-worker remedy for a file that does not parse (case %#)',
+    async (text) => {
+      const deps = await initialized();
+      const workCopy = await withWorker(deps, 'alpha');
+      deps.seed(settingsFileOf(workCopy), text);
+      const result = await check(deps);
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain(`lack the hook of these events: ${Object.keys(ownSettingsEntries.hooks).join(', ')}.`);
+      expect(result.text).toContain('Run "factory dismiss alpha", then "factory worker new alpha --project web"');
+      expect(result.text).not.toContain('factory upgrade');
+    },
+  );
+
   it('warns for hook settings that are a link, reads nothing through the link, and names the link in its remedy', async () => {
     const TARGET = '/elsewhere/settings.json';
     const plain = await initialized();

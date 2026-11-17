@@ -574,11 +574,12 @@ const hookGapOf = (record: WorkerRecord, settings: HookSettingsRead): string | n
   const words = roleText.doctor;
   const resume = commandText(resumeLine(record.id));
   if (settings.state === 'link') return `${words.linkGap(record.id)} ${words.remedies.link(record.id, resume)}`;
-  if (settings.missing.length === 0) return null;
+  const missing = settings.state === 'not-parsed' ? hookNames.events : settings.missing;
+  if (missing.length === 0) return null;
   // No own hook at all: `upgrade` leaves such a work copy as it is, because its owner said no to the hook.
-  const none = settings.missing.length === hookNames.events.length;
+  const none = missing.length === hookNames.events.length;
   const { dismiss, create } = startOverCommands(record.id, record.project);
-  return `${words.gap(record.id, settings.missing)} ${none ? words.remedies.recreate(dismiss, create) : words.remedies.upgrade(resume)}`;
+  return `${words.gap(record.id, missing)} ${none ? words.remedies.recreate(dismiss, create) : words.remedies.upgrade(resume)}`;
 };
 
 /** The finding for a work copy whose hook settings the check cannot read, with its one remedy. */

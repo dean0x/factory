@@ -517,7 +517,7 @@ const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliR
  * True when a list of an event of the fixed list holds the own command of that event, under any matcher. An event whose value is
  * not a list holds nothing and does not hide the other events.
  */
-const holdsAnyOwnCommand = (settings: Settings): boolean => {
+export const holdsAnyOwnCommand = (settings: Settings): boolean => {
   const hooks = settings[claudeSettingKeys.hooks];
   return isRecord(hooks) && hookNames.events.some((event) => (groupsOfEvent(hooks, event) ?? []).some((group) => holdsOwnCommand(group, event)));
 };
