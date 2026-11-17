@@ -75,6 +75,7 @@ export const register: Register = (on, options) => {
     await update($, running, () => false);
     await $.command.register({ name: 'board', description: 'Show the factory board in a pane' });
     if (options.open === 'auto') await $.ui.open({ id: PANE, title: 'Factory board' });
+    if (currentSession !== session) return next(e);
     timer = $.clock.every(interval, async () => {
       // Claim before the first await, so two timer callbacks cannot start a run.
       if (busy || currentSession !== session) return;

@@ -18,11 +18,15 @@ const success = (stdout = boardTextFixture): ProcessRunResult => ({
   exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false,
 });
 
-const setup = (on: On, placed = true) => {
+const setup = (on: On, placed = true, beforeRegister?: () => Promise<void>) => {
   const clock = mock.clock(on, { now: Date.parse('2030-01-02T03:04:00Z') });
   let panes: readonly UiPane[] = [];
   let registrations = 0;
-  on('command.register', () => { registrations += 1; return { value: { command: 'board' } }; });
+  on('command.register', async () => {
+    await beforeRegister?.();
+    registrations += 1;
+    return { value: { command: 'board' } };
+  });
   on('command.run', () => ({ text: '' }));
   on('session.start', (_, e) => ({ cwd: e.cwd }));
   on('session.end', () => ({ sessionId: 'demo' }));
@@ -378,6 +382,21 @@ for (const surface of ['terminal', 'desktop'] as const) {
       await ui.unmount();
     });
   }
+
+  test(`session end during startup leaves no refresh timer on ${surface}`, async ($, on) => {
+    let ticks = 0;
+    on('clock.every', { ms: 10000 }, async (_, e, next) => { ticks += 1; return next(e); });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const host = setup(on, true, () => gate);
+    const pending = start($, surface);
+    await host.clock.settle();
+    await $.session.end({ reason: 'clear', sessionId: 'demo', resume: { id: 'demo' } });
+    release();
+    await pending;
+    await host.clock.advance(20000);
+    expect(ticks).toBe(0);
+  });
 
   test(`session end stops refresh on ${surface}`, async ($, on) => {
     const host = setup(on);
