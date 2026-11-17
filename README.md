@@ -22,6 +22,22 @@ You need:
 - git 2.26 or newer. With an older git, `factory start` exits with code 1 and starts no session, `factory upgrade` and `factory init` exit with code 1 when they must change `.factory/`, and `factory doctor` fails the check `tools`.
 - macOS or Linux. On native Windows, every command exits with code 1 and says to use WSL.
 
+### Install the board mod
+
+The optional Claude Code mod shows `factory board` beside the chat. Install factory first, as above.
+The mod needs a factory version that has the `board` command and the early-access mod API of Claude Code 2.1.326.
+
+At the prompt of a Claude Code terminal session, run:
+
+```text
+/plugin install factory-board --marketplace dean0x/factory
+```
+
+Accept the marketplace with `y`, then select the install scope. Set the `command` option if factory is not on the PATH.
+Run `/board` to open the pane. By default, the mod opens no pane until you ask.
+The mod comes from this repo, not from the npm package.
+See [the mod guide](plugins/factory-board/README.md) for the options and update steps.
+
 ## Commands
 
 | Command | What it does |
@@ -54,6 +70,7 @@ You need:
 | `factory guard list` | Show the guards, their values, their defaults and the harm mark `H`. `--all` shows every guard. `--family NAME` shows the rows of one guard. `--json` prints every guard and row. It only reads. See "Guards" in `docs/design.md`. |
 | `factory doctor` | Run 32 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
+| `factory board [--home DIR] [--width N] [--json]` | Show requests, workers, open items, the queue and machine facts. Text width is 40 to 120 characters, with 120 as the default. `--json` prints `factory.board/v1` and ignores width. A section that cannot be read is `null`, with its reason in `faults`. Other sections remain visible. It changes nothing. |
 | `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
 | `factory pr watch PR [--head SHA] [--project ID]` | Watch the checks of one pull request at one head, with up to 60 reads, 60 seconds apart. It exits with code 0 only when every check passed. It never merges, and a pass is no approval. See "Watch a pull request". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |

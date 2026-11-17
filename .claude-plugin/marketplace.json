@@ -1,0 +1,12 @@
+{
+  "name": "factory",
+  "owner": { "name": "dean0x" },
+  "metadata": { "description": "Claude Code mods for the factory board" },
+  "plugins": [
+    {
+      "name": "factory-board",
+      "source": "./plugins/factory-board",
+      "description": "A live factory board in a pane beside the chat"
+    }
+  ]
+}

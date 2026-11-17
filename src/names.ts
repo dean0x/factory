@@ -50,6 +50,7 @@ export const commands = {
   node: 'node',
   doctor: 'doctor',
   machine: 'machine',
+  board: 'board',
   worker: 'worker',
   item: 'item',
   track: 'track',
@@ -231,6 +232,7 @@ export const flags = {
   all: 'all',
   family: 'family',
   follow: 'follow',
+  width: 'width',
   roadmap: 'roadmap',
   question: 'question',
   option: 'option',
@@ -797,6 +799,33 @@ export const queueWords = {
  * characters (`MAX_FIRST_LINE_CHARS` in `test/helpers/short-output.ts`). `displayLine` in `src/cli/output.ts` cuts to it.
  */
 export const maxDisplayWidth = 120;
+
+/** The facts document of the whole home, and the names of its independent sections. */
+export const boardDocKeys = {
+  home: 'home',
+  requests: requestWords.requests,
+  queue: 'queue',
+  workers: 'workers',
+  items: 'items',
+  itemsMore: 'itemsMore',
+  machine: 'machine',
+  faults: 'faults',
+  section: 'section',
+  error: 'error',
+} as const;
+
+export const boardWords = {
+  minWidth: 40,
+  maxItems: 500,
+  /** Leave time for startup and output inside the pane's shortest process limit of five seconds. */
+  sectionTimeoutMs: 3_000,
+  lateSection: 'Section read timed out.',
+  widthPattern: /^[0-9]+$/,
+  headings: { requests: requestWords.requests, workers: 'Workers', items: 'Board', queue: 'Queue', machine: 'Machine' },
+  fault: 'Cannot read this section',
+  summary: `Show the ${commands.request}s, ${roles.worker}s, board, queue and machine of one ${roles.node}.`,
+  widthDescription: `Text width: a whole number from 40 to ${maxDisplayWidth}.`,
+} as const;
 
 /** The most characters of typed text that a message repeats: a field name, a stage or a key. A longer text is cut. */
 export const maxEchoChars = 40;
@@ -2241,6 +2270,7 @@ export const schemaIds = {
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   machine: `${program}.machine/v1`,
+  board: `${program}.${commands.board}/v1`,
   workerNew: `${program}.worker-new/v1`,
   workerList: `${program}.worker-list/v1`,
   workerStop: `${program}.worker-stop/v1`,

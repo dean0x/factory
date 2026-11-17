@@ -171,6 +171,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const ended = new Set<number>();
   const uid = options.uid === undefined ? DEFAULT_UID : options.uid;
   let clock = (options.now ?? DEFAULT_NOW).getTime();
+  const waits = new Map<() => void, number>();
+  const advance = (ms: number): void => {
+    clock += ms;
+    for (const [finish, due] of waits) if (due <= clock) finish();
+  };
   const touch = (path: string): void => void mtimes.set(path, clock);
 
   const ancestors = (path: string): string[] => {
@@ -245,9 +250,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       ended.add(pid);
       return ok(false);
     },
-    advance: (ms) => {
-      clock += ms;
-    },
+    advance,
     seed: (path, text) => {
       addDir(posix.dirname(path));
       files.set(path, text);
@@ -472,9 +475,21 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       return (options.fetch ?? (() => failure('no answer')))(url);
     },
     now: () => new Date(clock),
-    sleep: async (ms) => {
+    sleep: async (ms, signal) => {
       sleeps.push(ms);
-      clock += ms;
+      if (signal !== undefined) {
+        if (signal.aborted) return;
+        return new Promise<void>((resolve) => {
+          const finish = (): void => {
+            waits.delete(finish);
+            signal.removeEventListener('abort', finish);
+            resolve();
+          };
+          waits.set(finish, clock + ms);
+          signal.addEventListener('abort', finish, { once: true });
+        });
+      }
+      advance(ms);
       // Other work that waits runs before this wait ends, as it does with a real wait.
       await yieldTurn();
     },

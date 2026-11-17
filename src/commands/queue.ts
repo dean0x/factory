@@ -127,18 +127,20 @@ const fieldsOf = (row: QueueRow, declared: readonly BoardField[]): Record<string
     }),
   );
 
+export const queueRowsJsonOf = (rows: readonly QueueRow[], declared: readonly BoardField[]) => rows.map((row) => ({
+  position: row.position,
+  name: row.name,
+  items: row.items,
+  note: row.note,
+  releaseGroup: row.releaseGroup,
+  fields: fieldsOf(row, declared),
+}));
+
 const showAnswer = (rows: readonly QueueRow[], declared: readonly BoardField[]): CommandOutput => ({
   lines: queueView({ rows, fields: declared }),
   json: {
     schema: schemaIds.queueShow,
-    rows: rows.map((row) => ({
-      position: row.position,
-      name: row.name,
-      items: row.items,
-      note: row.note,
-      releaseGroup: row.releaseGroup,
-      fields: fieldsOf(row, declared),
-    })),
+    rows: queueRowsJsonOf(rows, declared),
   },
   warnings: [],
   failed: false,

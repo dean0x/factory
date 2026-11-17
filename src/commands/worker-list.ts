@@ -6,7 +6,7 @@ import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
 import { commands, hookNames, roles, schemaIds, workerListWords } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { readStatus } from '../workers/status-read.js';
+import { readStatus, type StatusReport } from '../workers/status-read.js';
 import { boardRowOf, type WorkerStatus } from '../workers/status.js';
 import type { WorkItemPort } from '../workers/work-items.js';
 
@@ -30,6 +30,34 @@ const cellsOf = (entry: WorkerStatus): readonly string[] =>
     entry.contextPct === null ? hookNames.unknownPercent : `${entry.contextPct}%`,
     entry.mark ?? '',
   ].map((cell) => displayLine(cell));
+
+/** The same fact rows serve the worker list and the whole board. */
+export const workerRowsOf = (entries: readonly WorkerStatus[]) => entries.map((entry) => ({
+  id: entry.id,
+  project: entry.project,
+  pane: entry.pane,
+  dead: entry.dead,
+  state: entry.state,
+  contextPct: entry.contextPct,
+  mark: entry.mark,
+  ...boardRowOf(entry),
+}));
+
+export const workerListView = (entries: readonly WorkerStatus[]): readonly OutLine[] =>
+  entries.length === 0 ? [text(`No ${roles.worker}s yet.`)] : tableLines(Object.values(workerListWords.columns), entries.map(cellsOf));
+
+export const workerListOutput = (home: string, report: StatusReport): CommandOutput => ({
+  lines: workerListView(report.entries),
+  json: {
+    schema: schemaIds.workerList,
+    home,
+    running: report.running,
+    workers: workerRowsOf(report.entries),
+    invalid: report.invalid,
+  },
+  warnings: report.warnings,
+  failed: false,
+});
 
 /**
  * `worker list`: each worker of the registry with its pane, its state, its context percent and its mark. It reads the registry,
@@ -57,26 +85,5 @@ export const runWorkerList = async (
   if (!loaded.ok) return loaded;
   const read = await readStatus(deps, { home, config: loaded.value, workItems });
   if (!read.ok) return read;
-  const { entries, invalid, running, warnings } = read.value;
-  return ok({
-    lines: entries.length === 0 ? [text(`No ${roles.worker}s yet.`)] : tableLines(Object.values(workerListWords.columns), entries.map(cellsOf)),
-    json: {
-      schema: schemaIds.workerList,
-      home,
-      running,
-      workers: entries.map((entry) => ({
-        id: entry.id,
-        project: entry.project,
-        pane: entry.pane,
-        dead: entry.dead,
-        state: entry.state,
-        contextPct: entry.contextPct,
-        mark: entry.mark,
-        ...boardRowOf(entry),
-      })),
-      invalid,
-    },
-    warnings,
-    failed: false,
-  });
+  return ok(workerListOutput(home, read.value));
 };

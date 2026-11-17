@@ -1,0 +1,13 @@
+{
+  "name": "factory-board",
+  "version": "0.1.0",
+  "description": "A live factory board in a pane beside the chat",
+  "author": { "name": "dean0x" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "command": { "type": "string", "title": "Factory program", "description": "Program name without /, or absolute path; no arguments or shell quotes", "default": "factory" },
+    "home": { "type": "string", "title": "Factory home", "description": "Factory folder; empty uses the session folder", "default": "" },
+    "refreshSeconds": { "type": "number", "title": "Refresh seconds", "description": "Refresh interval from 5 to 300 seconds", "default": 10 },
+    "open": { "type": "string", "title": "Open pane", "description": "Open on request or at session start", "options": ["asked", "auto"], "default": "asked" }
+  }
+}
