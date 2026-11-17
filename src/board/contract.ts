@@ -1,5 +1,5 @@
 import type { CliResult } from '../cli/errors.js';
-import type { requestDeciders, requestGroups } from '../names.js';
+import type { requestDeciders, requestGroups, requestKinds } from '../names.js';
 import type { CheckedRecord } from '../recipes/entry.js';
 import type { DecideRequest } from './decide.js';
 
@@ -93,7 +93,18 @@ export interface DecisionOption {
   readonly key: string;
   readonly text: string;
   readonly rec?: boolean;
+  /** The reason that the asker gives for this option. */
+  readonly why?: string;
 }
+
+/** One ordered context field of a request. */
+export interface RequestField {
+  readonly label: string;
+  readonly text: string;
+}
+
+/** A request kind is display data, not authority. Every kind needs 1 to 9 options. */
+export type RequestKind = (typeof requestKinds)[keyof typeof requestKinds];
 
 /**
  * A decision item for the owner: a one-line title and question, and 1 to 9 options. The connector gives it the next `D-n` and stores
@@ -104,6 +115,11 @@ export interface DecisionAskInput {
   readonly question: string;
   readonly options: readonly DecisionOption[];
   readonly group?: RequestGroup;
+  /** The write checks this word and defaults to the decision kind. */
+  readonly kind?: string;
+  readonly fields?: readonly RequestField[];
+  /** Relative paths only. The request holds no file content. */
+  readonly docs?: readonly string[];
 }
 
 /** A link from an item to a file of the factory folder: a relative path inside the folder, never a copy. */
@@ -328,6 +344,8 @@ export interface DecisionRecorded {
 export interface LocalBoard extends BoardConnector {
   /** The requests of the waiting file, in file order. */
   listRequests(): Promise<CliResult<readonly BoardRequest[]>>;
+  /** Add a doc path before the owner answers. True means a new path; false means no change and no commit. */
+  linkRequestDoc(input: DocLinkInput): Promise<CliResult<boolean>>;
   /**
    * Take a request off the waiting file and add a row for it to the decision log, in one commit. The row names no owner who answered,
    * so it is no owner answer, and the number of the request is never given again. With a settlement, the row holds the decision text

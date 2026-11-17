@@ -63,6 +63,7 @@ import {
   closeItemIn,
   closeRequestIn,
   linkDocIn,
+  linkRequestDocIn,
   logDecisionIn,
   moveItemIn,
   recordCheckedIn,
@@ -118,6 +119,7 @@ const commitMessages = {
   addTrack: (id: string): string => `chore: add track ${id}`,
   unassignItem: (id: string): string => `chore: take the ${roles.worker} off item ${id}`,
   askDecision: 'chore: add a decision to the board',
+  linkRequestDoc: (id: string): string => `chore: link a file to ${requestWords.request} ${id}`,
   logDecision: 'chore: log a decision',
   closeDecision: (id: string): string => `chore: close decision ${id}`,
   recordDecision: (id: string): string => `chore: record decision ${id}`,
@@ -578,6 +580,10 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const checked = checkDecision(input);
       if (!checked.ok) return checked;
+      for (const path of checked.value.docs) {
+        const file = await requireDocFile(path);
+        if (!file.ok) return file;
+      }
       const place = await decisionPlaceOf(deps, layout.home, options.node);
       if (!place.ok) return place;
       return commit(decisionFiles, commitMessages.askDecision, async (texts) => {
@@ -590,6 +596,33 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         const written = newText(files.waiting, edited.value.top, parseWaiting);
         if (!written.ok) return written;
         return ok({ texts: new Map([[files.waiting, written.value.text]]), value: edited.value.value });
+      });
+    },
+
+    async linkRequestDoc(input) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkRequestId(input.id);
+      if (!valid.ok) return valid;
+      const path = checkDocPath(input.path);
+      if (!path.ok) return path;
+      const file = await requireDocFile(path.value);
+      if (!file.ok) return file;
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      return commit(decisionFiles, commitMessages.linkRequestDoc(input.id), async (texts) => {
+        const read = decisionDocsOf(texts);
+        if (!read.ok) return read;
+        const stored = await storedIdsOf(place.value);
+        if (!stored.ok) return stored;
+        if (stored.value.includes(input.id)) {
+          return usageError(`${requestWords.request} ${shown(input.id)} was answered by the ${roles.owner}, so its docs cannot change`);
+        }
+        const edited = linkRequestDocIn(read.value.waiting, input.id, path.value);
+        if (!edited.ok) return edited;
+        if (edited.value.top === null) return ok({ texts: new Map(), value: edited.value.value });
+        const written = newText(files.waiting, edited.value.top, parseWaiting);
+        return written.ok ? ok({ texts: new Map([[files.waiting, written.value.text]]), value: edited.value.value }) : written;
       });
     },
 

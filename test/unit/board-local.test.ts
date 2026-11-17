@@ -841,6 +841,87 @@ describe('the local connector: the checks of a write', () => {
   });
 });
 
+describe('the local connector: request context writes', () => {
+  const recordOf = (repo: BoardRepo): Readonly<Record<string, unknown>> | undefined =>
+    valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? '')).items[0]?.record;
+
+  it.each(['decision', 'command', 'information'] as const)('stores kind %s with the same option limits', async (kind) => {
+    const repo = await repoWith(EMPTY_BOARD);
+    valueOf(await connectorOf(repo).askDecision({ ...DECISION, kind }));
+    expect(recordOf(repo)?.['kind']).toBe(kind);
+  });
+
+  it('stores the default kind and omits empty optional context', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    valueOf(await connectorOf(repo).askDecision({ ...DECISION, fields: [], docs: [] }));
+    expect(recordOf(repo)?.['kind']).toBe('decision');
+    expect(recordOf(repo)).not.toHaveProperty('fields');
+    expect(recordOf(repo)).not.toHaveProperty('docs');
+    expect(recordOf(repo)?.['options']).toEqual(DECISION.options);
+  });
+
+  it('stores ordered fields, docs and each option reason at the exact caps', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const fields = Array.from({ length: 6 }, (_, at) => ({ label: `${at}${'l'.repeat(59)}`, text: 't'.repeat(200) }));
+    const docs = Array.from({ length: 5 }, (_, at) => `docs/context-${at}.md`);
+    for (const path of docs) repo.deps.seed(join(HOME, path), '# Context\n');
+    valueOf(await connectorOf(repo).askDecision({
+      ...DECISION, fields, docs, options: [{ key: 'a', text: 'Plan A', rec: true, why: 'w'.repeat(200) }],
+    }));
+    expect(recordOf(repo)).toMatchObject({ fields, docs, options: [{ key: 'a', text: 'Plan A', rec: true, why: 'w'.repeat(200) }] });
+  });
+
+  const invalid: readonly (readonly [string, DecisionAskInput])[] = [
+    ['an unknown kind', { ...DECISION, kind: 'other' }],
+    ['seven fields', { ...DECISION, fields: Array.from({ length: 7 }, (_, at) => ({ label: `Field ${at}`, text: 'Text' })) }],
+    ['an empty field label', { ...DECISION, fields: [{ label: ' ', text: 'Text' }] }],
+    ['a long field label', { ...DECISION, fields: [{ label: 'l'.repeat(61), text: 'Text' }] }],
+    ['an empty field text', { ...DECISION, fields: [{ label: 'Label', text: '' }] }],
+    ['a long field text', { ...DECISION, fields: [{ label: 'Label', text: 't'.repeat(201) }] }],
+    ['repeated field labels after trim', { ...DECISION, fields: [{ label: 'Label', text: 'One' }, { label: ' Label ', text: 'Two' }] }],
+    ['a long reason', { ...DECISION, options: [{ key: 'a', text: 'A', why: 'w'.repeat(201) }] }],
+    ['a repeated option key with reasons', { ...DECISION, options: [{ key: 'a', text: 'A', why: 'One' }, { key: 'a', text: 'B', why: 'Two' }] }],
+    ['six docs', { ...DECISION, docs: Array.from({ length: 6 }, (_, at) => `docs/${at}.md`) }],
+    ['a repeated doc', { ...DECISION, docs: [DOC_PATH, DOC_PATH] }],
+  ];
+
+  it.each(invalid)('refuses %s before the lock and leaves every file unchanged', async (_name, input) => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const before = new Map(repo.deps.files);
+    expect(await connectorOf(repo).askDecision(input)).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(repo.deps.files).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each(['decision', 'command', 'information'] as const)('requires one to nine options for kind %s', async (kind) => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const connector = connectorOf(repo);
+    for (const length of [0, 10]) {
+      expect(exitOf(await connector.askDecision({ ...DECISION, kind, options: Array.from({ length }, (_, at) => ({ key: `k${at}`, text: 'Text' })) }))).toBe(2);
+    }
+    for (const length of [1, 9]) {
+      expect((await connector.askDecision({ ...DECISION, kind, options: Array.from({ length }, (_, at) => ({ key: `k${at}`, text: 'Text' })) })).ok).toBe(true);
+    }
+  });
+
+  const hiddenInputs = (hidden: string): readonly DecisionAskInput[] => [
+    { ...DECISION, title: `A${hidden}B` },
+    { ...DECISION, question: `A${hidden}B` },
+    { ...DECISION, options: [{ key: 'a', text: `A${hidden}B` }] },
+    { ...DECISION, fields: [{ label: `A${hidden}B`, text: 'Text' }] },
+    { ...DECISION, fields: [{ label: 'Label', text: `A${hidden}B` }] },
+    { ...DECISION, options: [{ key: 'a', text: 'A', why: `A${hidden}B` }] },
+  ];
+
+  it.each([0x200b, 0x202e, 0x1b])('refuses hidden character %s in all request text', async (point) => {
+    const repo = await repoWith(EMPTY_BOARD);
+    for (const input of hiddenInputs(String.fromCodePoint(point))) {
+      expect((await connectorOf(repo).askDecision(input)).ok).toBe(false);
+    }
+    expect(repo.commits).toEqual([]);
+  });
+});
+
 describe('the local connector: the ids of a write', () => {
   it('refuses a track id that exists with exit 2, and a 31st track with exit 2, and writes nothing', async () => {
     const tracks = Array.from({ length: 30 }, (_, at) => ({ id: `t${at}`, name: `Track ${at}`, roadmap: false }));
@@ -895,6 +976,7 @@ describe('the local connector: the ids of a write', () => {
         options: [{ key: 'a', text: 'Plan A', rec: true }, { key: 'b', text: 'Plan B' }],
         [decisionKeys.openedAt]: at,
         [decisionKeys.group]: requestGroups.now,
+        [decisionKeys.kind]: 'decision',
       },
     ]);
     expect(repo.textOf(fileNames.decisionLog)).toBe(jsonOf({ rows: [] }));
@@ -907,11 +989,11 @@ describe('the local connector: the ids of a write', () => {
     expect(waiting.items.map((entry) => entry.record[decisionKeys.group])).toEqual([requestGroups.later]);
   });
 
-  it('writes a row that decide accepts, with the open time and the group it stored', async () => {
-    const repo = await repoWith(EMPTY_BOARD);
-    const at = repo.deps.now().toISOString();
-    valueOf(await connectorOf(repo).askDecision({ ...DECISION, group: requestGroups.later }));
-    const waiting = valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? ''));
+  it('reads a legacy row with its exact open time and stored group', () => {
+    const at = '2029-01-01T00:00:00.000Z';
+    const waiting = valueOf(parseWaiting(jsonOf({ intro: '', groups: [], items: [
+      { id: 'D-1', ...DECISION, [decisionKeys.openedAt]: at, [decisionKeys.group]: requestGroups.later },
+    ] })));
     const request = valueOf(strictRequestOf(waiting, 'D-1'));
     expect(request.openedAt).toBe(at);
     expect(request.group).toBe(requestGroups.later);
@@ -1307,6 +1389,122 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
       expect(exitOf(await link(repo, DOC_PATH))).toBe(2);
       expectUntouched(repo, board);
     });
+  });
+});
+
+describe('the local connector: request doc links', () => {
+  const waitingWithDocs = (docs?: unknown): string => jsonOf({ intro: 'Keep', groups: [{ name: 'Keep group' }], items: [
+    { id: 'D-1', title: 'Open', question: 'Choose?', options: [{ key: 'a', text: 'Yes' }], extra: 'kept', ...(docs === undefined ? {} : { docs }) },
+    { id: 'D-2', extra: 'untouched' },
+  ] });
+  const link = async (connector: LocalBoard, path = DOC_PATH, id = 'D-1'): Promise<CliResult<boolean>> => {
+    expect(typeof connector.linkRequestDoc).toBe('function');
+    return connector.linkRequestDoc({ id, path });
+  };
+
+  it('adds one path in one commit, preserves other data, and makes no commit for a repeat', async () => {
+    const waiting = waitingWithDocs(['docs/old.md']);
+    const repo = await repoWith(EMPTY_BOARD, { waiting });
+    const connector = connectorOf(repo);
+    expect(valueOf(await link(connector))).toBe(true);
+    expect(valueOf(await link(connector))).toBe(false);
+    expect(repo.textOf(fileNames.waiting)).toBe(waitingWithDocs(['docs/old.md', DOC_PATH]));
+    expect(repo.commits.map(({ message, staged }) => ({ message, staged }))).toEqual([
+      { message: 'chore: link a file to request D-1', staged: [fileNames.waiting] },
+    ]);
+  });
+
+  it('adds a fifth path and refuses a sixth, but allows a repeat at the cap', async () => {
+    const repo = await repoWith(EMPTY_BOARD, { waiting: waitingWithDocs(Array.from({ length: 4 }, (_, at) => `docs/${at}.md`)) });
+    const connector = connectorOf(repo);
+    valueOf(await link(connector));
+    const waiting = repo.textOf(fileNames.waiting);
+    repo.deps.seed(join(HOME, 'docs/new.md'), '# New\n');
+    expect(exitOf(await link(connector, 'docs/new.md'))).toBe(2);
+    expect(valueOf(await link(connector))).toBe(false);
+    expect(repo.textOf(fileNames.waiting)).toBe(waiting);
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it.each(['unknown', 'D-99'])('refuses request id %s with exit 2 and no change', async (id) => {
+    const waiting = waitingWithDocs();
+    const repo = await repoWith(EMPTY_BOARD, { waiting });
+    expect(exitOf(await link(connectorOf(repo), DOC_PATH, id))).toBe(2);
+    expect(repo.textOf(fileNames.waiting)).toBe(waiting);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('refuses a malformed stored docs value rather than replace it', async () => {
+    const waiting = waitingWithDocs('not a list');
+    const repo = await repoWith(EMPTY_BOARD, { waiting });
+    expect(exitOf(await link(connectorOf(repo)))).toBe(1);
+    expect(repo.textOf(fileNames.waiting)).toBe(waiting);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each([
+    ['an answered request', (): string => storeOf(storedRecord()), 2],
+    ['an unreadable owner store', (): string => '{', 1],
+  ] as const)('refuses %s under the lock and changes nothing', async (_name, store, exit) => {
+    const repo = await decideRepo({ store: store() });
+    repo.deps.seed(join(HOME, DOC_PATH), '# Context\n');
+    const waiting = repo.textOf(fileNames.waiting);
+    expect(exitOf(await link(localOf(repo.deps)))).toBe(exit);
+    expect(repo.textOf(fileNames.waiting)).toBe(waiting);
+    expect(repo.commits).toEqual([]);
+  });
+
+  const badPaths: readonly (readonly [string, number])[] = [
+    ['', 2], ['../outside.md', 2], ['/outside.md', 2], ['docs//plan.md', 2], ['docs\\plan.md', 2],
+    [`docs/a${String.fromCodePoint(0x200b)}.md`, 2], [`docs/a${String.fromCodePoint(0x202e)}.md`, 2],
+    [`${'d'.repeat(198)}.md`, 2], ['docs/missing.md', 2], ['docs', 2],
+    [fileNames.localConfig, 4], [fileNames.localConfig.toUpperCase(), 4],
+    ['.hidden/plan.md', 4], ['docs/.plan.md', 4], [`${dirs.state}/${dirs.orders}/order.md`, 4],
+  ];
+
+  it.each(badPaths)('refuses doc path %s with exit %s on add and link', async (path, exit) => {
+    const waiting = waitingWithDocs();
+    const repo = await repoWith(EMPTY_BOARD, { waiting });
+    repo.deps.seedDir(join(HOME, 'docs'));
+    if (exit === 4) repo.deps.seed(join(HOME, path), '# Context\n');
+    const connector = connectorOf(repo);
+    expect(exitOf(await link(connector, path))).toBe(exit);
+    expect(await connector.askDecision({ ...DECISION, docs: [path] })).toMatchObject({ ok: false });
+    expect(exitOf(await connector.askDecision({ ...DECISION, docs: [path] }))).toBe(exit);
+    expect(repo.textOf(fileNames.waiting)).toBe(waiting);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each(['add', 'link'] as const)('refuses a linked doc parent on %s with exit 4', async (operation) => {
+    const repo = await repoWith(EMPTY_BOARD, { waiting: waitingWithDocs() });
+    const linked = createLocalBoard(linkAt(repo.deps, join(HOME, 'docs')), LAYOUT, {
+      queueKey: QUEUE, recipe: softwareBoard, config: sampleBoard(), command: commands.request, tracker: values.trackerLocal, node: NODE,
+    });
+    expect(exitOf<unknown>(await (operation === 'add' ? linked.askDecision({ ...DECISION, docs: [DOC_PATH] }) : link(linked)))).toBe(4);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each(['add', 'link'] as const)('checks the doc file size on %s and takes the exact limit', async (operation) => {
+    const repo = await repoWith(EMPTY_BOARD, { waiting: waitingWithDocs() });
+    const connector = connectorOf(repo);
+    const write = (): Promise<CliResult<unknown>> => operation === 'add' ? connector.askDecision({ ...DECISION, docs: [DOC_PATH] }) : link(connector);
+    repo.deps.seed(join(HOME, DOC_PATH), 'x'.repeat(maxFileBytes + 1));
+    expect(exitOf(await write())).toBe(2);
+    expect(repo.commits).toEqual([]);
+    repo.deps.seed(join(HOME, DOC_PATH), 'x'.repeat(maxFileBytes));
+    expect((await write()).ok).toBe(true);
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it.each(['add', 'link'] as const)('fails closed when the doc file check fails on %s', async (operation) => {
+    const repo = await repoWith(EMPTY_BOARD, { waiting: waitingWithDocs() });
+    const deps: Deps = { ...repo.deps, fs: { ...repo.deps.fs, lstatInfo: async (path) =>
+      path === join(HOME, DOC_PATH) ? failure('cannot read the doc file') : repo.deps.fs.lstatInfo(path) } };
+    const connector = createLocalBoard(deps, LAYOUT, {
+      queueKey: QUEUE, recipe: softwareBoard, config: sampleBoard(), command: commands.request, tracker: values.trackerLocal, node: NODE,
+    });
+    expect(exitOf<unknown>(await (operation === 'add' ? connector.askDecision({ ...DECISION, docs: [DOC_PATH] }) : link(connector)))).toBe(1);
+    expect(repo.commits).toEqual([]);
   });
 });
 

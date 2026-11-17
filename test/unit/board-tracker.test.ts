@@ -86,6 +86,10 @@ const WRITES: readonly (readonly [string, Write])[] = [
   ['track add', (c) => c.addTrack({ id: 'core', name: 'Core', roadmap: true })],
   ['doc link', (c) => c.linkDoc({ id: 'B-1', path: DOC_PATH })],
   ['decision ask', (c) => c.askDecision(DECISION)],
+  ['request doc link', (c) => {
+    expect(typeof c.linkRequestDoc).toBe('function');
+    return c.linkRequestDoc({ id: 'D-1', path: DOC_PATH });
+  }],
   ['request close', (c) => c.closeRequest('D-1')],
   ['queue set', (c) => c.setQueueRow({ name: 'Docs', items: ['B-1'] })],
   ['queue set with a release group', (c) => c.setQueueRow({ name: 'Docs', items: ['B-1'], releaseGroup: 'Release 2' })],
@@ -102,6 +106,10 @@ const BAD_WRITES: readonly (readonly [string, Write])[] = [
   ['track add', (c) => c.addTrack({ id: 'Bad Id', name: '', roadmap: true })],
   ['doc link', (c) => c.linkDoc({ id: 'B-1', path: '../outside.md' })],
   ['decision ask', (c) => c.askDecision({ title: '', question: '', options: [] })],
+  ['request doc link', (c) => {
+    expect(typeof c.linkRequestDoc).toBe('function');
+    return c.linkRequestDoc({ id: 'nope', path: '../outside.md' });
+  }],
   ['request close', (c) => c.closeRequest('nope')],
   ['queue set', (c) => c.setQueueRow({ name: ' ' })],
   ['queue set with a release group', (c) => c.setQueueRow({ name: 'Docs', releaseGroup: 'two\nlines' })],
