@@ -102,21 +102,59 @@ const guardRenderSets: readonly (readonly [string, GuardValues])[] = [
 ];
 const withGuards = (layer: number, guards: GuardValues): BlockInput => blockInput(layer, { guards });
 
-const withoutInstallLine = (body: string): string =>
+const guardedBody = (body: string, guards: GuardValues): string =>
   body
     .split('\n')
-    .filter((line) => !line.startsWith('- Do not install outside'))
+    .filter((line) =>
+      !(guards[guardIds.installRules] === guardValues.off && line.startsWith('- Do not install outside')) &&
+      !(guards[guardIds.resumeRoutines] === guardValues.off && line.startsWith('- To compact this session')),
+    )
+    .map((line) => {
+      const point = points.find((candidate) => line.startsWith(`- \`${candidate.id}\` (`));
+      if (point === undefined || guards[point.guard] !== guardValues.off) return line;
+      return fillTemplate([`- \`${point.id}\` (${point.label}): ${point.offText}`], coordinatorValuesFor(blockInput(1)));
+    })
     .join('\n');
 
 describe.each([1, 2])('guard values in layer %i templates', (layer) => {
-  it.each(guardRenderSets)('changes only the install line for %s', (_label, guards) => {
-    const baseline = blockTemplatesFor(blockInput(layer));
-    const expected = baseline.map((block) => ({
+  it.each(guardRenderSets)('changes only the selected guard text for %s', (_label, guards) => {
+    const expected = blockTemplatesFor(blockInput(layer)).map((block) => ({
       ...block,
-      body: guards[guardIds.installRules] === guardValues.off ? withoutInstallLine(block.body) : block.body,
+      body: guardedBody(block.body, guards),
     }));
     expect(blockTemplatesFor(withGuards(layer, guards))).toEqual(expected);
   });
+});
+
+describe.each(values.approvalModes)('approval text with mode %s', (mode) => {
+  it.each(points)('uses the off text and log command for $id without its approval text', (point) => {
+    const input = blockInput(1, { modes: { [point.id]: mode }, guards: { [`approval-${point.id}`]: guardValues.off } });
+    for (const name of ['coordinator', 'safety']) {
+      const body = blockTemplatesFor(input).find((block) => block.name === name)?.body ?? '';
+      const line = body.split('\n').find((text) => text.startsWith(`- \`${point.id}\` (`)) ?? '';
+      expect(line).toContain('No approval is needed');
+      expect(line).toContain(`\`${templateValues.requestLogCommand}\``);
+      expect(line).not.toContain(fillTemplate([point.ownerText]));
+      expect(line).not.toContain(fillTemplate([point.delegatedText]));
+    }
+  });
+});
+
+it('keeps merge head, green CI and posted review checks when merge approval is off', () => {
+  const blocks = blockTemplatesFor(withGuards(1, { 'approval-merge': guardValues.off }));
+  const body = blocks.find((block) => block.name === 'coordinator')?.body ?? '';
+  expect(body).toContain('No approval is needed');
+  expect(body).toContain('Merge only at the full head SHA that you checked, with CI green at that SHA.');
+  expect(body).toContain('Before a merge, check on the primary source that the review is posted and the change is releasable at merge.');
+});
+
+it.each([1, 2])('removes the resume and routine instructions from layer %i when their guard is off', (layer) => {
+  const blocks = blockTemplatesFor(withGuards(layer, { [guardIds.resumeRoutines]: guardValues.off }));
+  const role = blocks.find((block) => block.name === (layer === 1 ? 'coordinator' : 'manager'))?.body ?? '';
+  expect(role).not.toContain('To compact this session');
+  expect(role).not.toContain(standingRoutines.section);
+  expect(role).toContain('## Workers');
+  expect(role).toContain('The context limits are in');
 });
 
 it('keeps the base text and block versions when every guard is on', () => {
@@ -460,6 +498,17 @@ describe('the approval points of the software recipe', () => {
       const lines = approvalLines(points, mixed);
       expect(lines[0]).toContain(points[0]?.delegatedText ?? '');
       expect(lines[1]).toContain(points[1]?.ownerText ?? '');
+    });
+
+    it.each(values.approvalModes)('uses the guard that a point names before its mode %s', (mode) => {
+      const point = {
+        id: 'ship', label: 'ship a parcel', guard: 'parcel-check',
+        ownerText: 'Wait for the owner.', delegatedText: 'Check the proof.', proof: 'a proof',
+        offText: 'No approval is needed. Log the step with `{{requestLogCommand}}`.',
+      };
+      expect(approvalLines([point], { ship: mode }, { 'parcel-check': guardValues.off })).toEqual([
+        `- \`ship\` (ship a parcel): ${point.offText}`,
+      ]);
     });
 
     it('gives no line for a recipe with no point', () => {

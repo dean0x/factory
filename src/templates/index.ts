@@ -21,7 +21,7 @@ const safetyFor = (input: BlockInput): BlockTemplate => ({
   version: 2,
   target: 'claudeFile',
   body: fillTemplate(
-    safetyLines(approvalLines(input.recipe.approvalPoints, input.modes), input.recipe.safetyLines),
+    safetyLines(approvalLines(input.recipe.approvalPoints, input.modes, input.guards), input.recipe.safetyLines),
     coordinatorValuesFor(input),
   ),
 });

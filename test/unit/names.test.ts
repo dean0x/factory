@@ -1093,9 +1093,9 @@ describe('the approval points of a recipe', () => {
     expect(paths.filter((path) => APPROVAL_IMPORT.test(path))).toHaveLength(4);
   });
 
-  it('keeps the approval file apart: it imports only the names file, and the entry file of the recipe imports it', () => {
+  it('keeps approval names in the recipe and the names file, and the entry file imports them', () => {
     const imports = importPathsOf(readFileSync(APPROVAL_FILE, 'utf8'));
-    expect(imports.filter((path) => !path.endsWith('/names.js'))).toEqual([]);
+    expect(imports.filter((path) => !path.endsWith('/names.js') && path !== './guard-parts.js')).toEqual([]);
     const entry = readFileSync(join(SRC, 'recipes', 'software', 'entry.ts'), 'utf8');
     expect(importPathsOf(entry)).toContain('./approval.js');
   });
@@ -1966,8 +1966,8 @@ describe('the names of the guards', () => {
   });
 
   it('words the more line and the count line of the list', () => {
-    expect(guardListWords.moreLine(14)).toBe('and 14 more: run with --all or --json');
-    expect(guardListWords.countLine(3, 31, 2)).toBe('3 of 31 guards are off. 2 of them have the mark H.');
+    expect(guardListWords.moreLine(15)).toBe('and 15 more: run with --all or --json');
+    expect(guardListWords.countLine(3, 32, 2)).toBe('3 of 32 guards are off. 2 of them have the mark H.');
     expect(guardListWords.unknown).toBe('unknown');
   });
 });

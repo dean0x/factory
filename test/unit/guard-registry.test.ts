@@ -18,6 +18,7 @@ import { publishRecipe } from '../helpers/publish-recipe.js';
 import { sampleObject } from '../helpers/sample-config.js';
 import * as sourceScan from '../helpers/source-scan.js';
 import { allSourceFiles, importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
+import { guardRulesOf } from '../../src/guards/effective.js';
 
 const REPO = join(__dirname, '..', '..');
 
@@ -90,18 +91,44 @@ const probeAt = (raw: unknown, path: readonly (string | number)[]): unknown => {
 };
 
 describe('the guards of a recipe', () => {
-  it('lists the 28 core guards and the 3 guards of the software recipe, each once', () => {
+  it('lists the 28 core guards and the 4 guards of the software recipe, each once', () => {
     const ids = idsOf(software.guards);
-    expect(ids).toHaveLength(31);
+    expect(ids).toHaveLength(32);
     expect(duplicatesOf(ids)).toEqual([]);
     expect(ids.slice(0, 28)).toEqual(Object.values(guardIds));
-    const points = softwareRecipe.approvalPoints.map((point) => `approval-${point.id}`);
-    expect(ids.slice(28).sort()).toEqual(['pr-rules', ...points].sort());
+    expect(ids.slice(28).sort()).toEqual(['approval-merge', 'approval-release', 'merge-quality', 'pr-rules']);
   });
 
   it('lists only the core guards for a recipe that names no guard', () => {
-    expect(idsOf(guardsFor(publishRecipe))).toEqual(Object.values(guardIds));
-    expect(guardRowsFor(publishRecipe).every((row) => !row.sites.some((site) => site.path.startsWith('src/recipes/')))).toBe(true);
+    const recipe = { ...publishRecipe, guards: [], guardRows: [] };
+    expect(idsOf(guardsFor(recipe))).toEqual(Object.values(guardIds));
+    expect(guardRowsFor(recipe).every((row) => !row.sites.some((site) => site.path.startsWith('src/recipes/')))).toBe(true);
+  });
+
+  it('gives each approval point a guard of its recipe and an off text', () => {
+    for (const recipe of [...recipes, publishRecipe]) {
+      for (const point of recipe.approvalPoints) {
+        expect(recipe.guards.map((guard) => guard.id)).toContain(point.guard);
+        expect(point.offText).toContain('{{requestLogCommand}}');
+        expect(guardsFor(recipe).map((guard) => guard.id)).not.toContain(point.id);
+      }
+    }
+  });
+
+  it('keeps merge quality separate from approval and on even with a recorded local off value', () => {
+    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { 'merge-quality': guardValues.off } });
+    const parsed = parseConfig(shared, local, recipes);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const state = guardRulesOf(software.guards, {
+      node: 'demo', root: '/node', local: parsed.data.core.guards,
+      record: { node: 'demo', root: '/node', values: { 'merge-quality': { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
+    });
+    expect(state.values['merge-quality']).toBe(guardValues.on);
+    expect(software.guards.find((guard) => guard.id === 'merge-quality')).toMatchObject({
+      wired: false, rows: ['merge-head-text'],
+    });
+    expect(software.rows.find((row) => row.id === 'merge-head-text')?.guard).toBe('merge-quality');
   });
 
   it('sets the harm mark for a recipe guard with no rows', () => {
@@ -119,10 +146,10 @@ describe('the guards of a recipe', () => {
     expect(idsOf(software.guards).filter((id) => taken.has(id))).toEqual([]);
   });
 
-  it('wires only the install guard when its text can follow a value', () => {
-    for (const guards of [software.guards, guardsFor(publishRecipe)]) {
-      expect(guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([guardIds.installRules]);
-    }
+  it('wires only the four text guards of the software recipe', () => {
+    expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
+      guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
+    ]);
   });
 
   it('marks a guard as wired without a change to its definition', () => {
@@ -300,8 +327,9 @@ describe('the rows of the registry', () => {
         'delegation-wait-text',
         'delegation-session-text',
       ],
-      'approval-merge': ['merge-point-text', 'merge-head-text'],
+      'approval-merge': ['merge-point-text'],
       'approval-release': ['release-point-text'],
+      'merge-quality': ['merge-head-text'],
       'board-edits': [
         'board-flow-stages',
         'board-worker-field',

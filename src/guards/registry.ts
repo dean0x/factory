@@ -127,10 +127,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'A session uses a proxy only when the config names one and the proxy answers.',
     [`${keys.root.session}.${keys.session.proxy}`, `${keys.root.proxies}[].${keys.proxy.onFail}`],
   ),
-  guardOf(
-    guardIds.resumeRoutines,
-    'Resume notes and routines',
-    'A resume file and a standing routine stay inside the folders and the commands that they name.',
+  wiredGuard(
+    guardOf(
+      guardIds.resumeRoutines,
+      'Resume notes and routines',
+      'A resume file and a standing routine stay inside the folders and the commands that they name.',
+    ),
   ),
   guardOf(
     guardIds.rootScan,
