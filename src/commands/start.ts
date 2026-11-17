@@ -379,7 +379,7 @@ const settleHook = async (
     session: hookSessions.coordinator,
     ...request,
   };
-  const hook = await ensureHookSettings(deps, settings, 'report');
+  const hook = await ensureHookSettings(deps, settings, 'return-outcome');
   if (!hook.ok) return hook;
   if (hook.value.kind === 'no-consent') {
     deps.warn(

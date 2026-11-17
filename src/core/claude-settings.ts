@@ -460,10 +460,10 @@ export const noConsentRemedy = (deps: Deps, request: HookConsentRequest, fileExi
 };
 
 /** The same consent rule serves the check before other writes and the settings writer. */
-const consentRoute = (deps: Deps, request: HookConsentRequest, fileExists: boolean): 'flag' | 'question' | 'refused-yes' | 'no-terminal' => {
+const consentRoute = (deps: Deps, request: HookConsentRequest, fileExists: boolean): 'flag' | 'ask-terminal' | 'refused-yes' | 'no-terminal' => {
   if (yesRefused(deps, request, fileExists)) return 'refused-yes';
   if (yesCounts(deps, request, fileExists)) return 'flag';
-  return deps.stdinIsTTY && deps.stdoutIsTTY ? 'question' : 'no-terminal';
+  return deps.stdinIsTTY && deps.stdoutIsTTY ? 'ask-terminal' : 'no-terminal';
 };
 
 /** The change is shown before consent. No terminal is distinct from a refused flag or a no to the question. */
@@ -482,7 +482,7 @@ const askConsent = async (
       return usageError(shown, noConsentRemedy(deps, request, fileExists));
     case 'no-terminal':
       return ok('no-terminal');
-    case 'question': {
+    case 'ask-terminal': {
       const answer = await deps.prompt(printable(`${shown}\nWrite this change? [y/N] `));
       return answer.ok ? ok(ACCEPT_ANSWER.test(answer.value.trim()) ? 'accepted' : 'declined') : answer;
     }
@@ -592,7 +592,7 @@ const planAfterConsent = async (deps: Deps, request: HookConsentRequest, seen: P
  * value. The checks of the target come first: a link, a real path outside the session folder or inside the user settings
  * folder is a stop (exit 4), and a file that is not a JSON object is a failure (exit 1) that leaves its bytes. Entries in place
  * need no question and no write. Else the change is shown with its target, the person consents, and the write keeps every other key. With no
- * terminal and no consent, the call writes nothing and gives a usage error (exit 2). With `noTerminalIdleChange` set to `report`,
+ * terminal and no consent, the call writes nothing and gives a usage error (exit 2). With `noTerminalIdleChange` set to `return-outcome`,
  * an idle-only change instead gives a no-consent outcome. A refused yes flag still stops with exit 2. After consent, the call
  * reads the file again and plans once more. It writes only the change that the person saw and keeps other file changes.
  * A different change stops with exit 1 and no write. A dry run returns the change with no question and no write.
@@ -600,7 +600,7 @@ const planAfterConsent = async (deps: Deps, request: HookConsentRequest, seen: P
 export const ensureHookSettings = async (
   deps: Deps,
   request: HookSettingsRequest,
-  noTerminalIdleChange: 'refuse' | 'report' = 'refuse',
+  noTerminalIdleChange: 'refuse' | 'return-outcome' = 'refuse',
 ): Promise<CliResult<HookSettingsOutcome>> => {
   const planned = await planChange(deps, request);
   if (!planned.ok) return planned;
@@ -612,7 +612,7 @@ export const ensureHookSettings = async (
   const consent = await askConsent(deps, request, shown, text !== null);
   if (!consent.ok) return consent;
   if (consent.value === 'no-terminal') {
-    if (onlyIdleCompaction && noTerminalIdleChange === 'report') return ok({ kind: 'no-consent', file: target.file, onlyIdleCompaction });
+    if (onlyIdleCompaction && noTerminalIdleChange === 'return-outcome') return ok({ kind: 'no-consent', file: target.file, onlyIdleCompaction });
     return usageError(shown, noConsentRemedy(deps, request, text !== null));
   }
   if (consent.value === 'declined') return ok({ kind: 'declined', file: target.file, onlyIdleCompaction });
@@ -655,6 +655,6 @@ export const requireHookConsent = async (
   const { change, text } = planned.value;
   if (change.lines.length === 0) return ok(undefined);
   const route = consentRoute(deps, request, text !== null);
-  if (route === 'flag' || route === 'question') return ok(undefined);
+  if (route === 'flag' || route === 'ask-terminal') return ok(undefined);
   return usageError(shownChange(target.file, change.lines), noConsentRemedy(deps, request, text !== null));
 };

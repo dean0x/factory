@@ -1347,7 +1347,7 @@ describe('hook settings: the idle compaction value', () => {
     const watched = withFsWatch(logged(deps, log), (method, path) => {
       if (method === 'readTextLimited' && path === FILE) reads.push(path);
     });
-    const result = await ensureHookSettings(watched, request(), 'report');
+    const result = await ensureHookSettings(watched, request(), 'return-outcome');
     expect(result).toEqual(ok({ kind: 'no-consent', file: FILE, onlyIdleCompaction: true }));
     expect(reads).toEqual([FILE]);
     expect(snapshot(deps)).toBe(before);
@@ -1363,7 +1363,7 @@ describe('hook settings: the idle compaction value', () => {
     const deps = makeDeps({ log });
     deps.seed(FILE, text);
     const before = snapshot(deps);
-    expect(errorOf(await ensureHookSettings(logged(deps, log), request(), 'report')).kind).toBe('usage');
+    expect(errorOf(await ensureHookSettings(logged(deps, log), request(), 'return-outcome')).kind).toBe('usage');
     expect(snapshot(deps)).toBe(before);
     expect(log).toEqual([]);
   });
@@ -1371,7 +1371,7 @@ describe('hook settings: the idle compaction value', () => {
   it.each([false, true])('refuses yes inside a session even when an idle-only change can be reported, terminal: %s', async (tty) => {
     const deps = makeDeps({ inSession: true, tty });
     deps.seed(FILE, NO_KEY);
-    const error = errorOf(await ensureHookSettings(deps, request({ yes: true }), 'report'));
+    const error = errorOf(await ensureHookSettings(deps, request({ yes: true }), 'return-outcome'));
     expect(error.kind).toBe('usage');
     expect(error.hint).toContain('--yes gives no consent inside a factory session');
     expect(deps.files.get(FILE)).toBe(NO_KEY);
@@ -1408,7 +1408,7 @@ describe('hook settings: the idle compaction value', () => {
         return deps.prompt(question);
       },
     };
-    const error = errorOf(await ensureHookSettings(logged(asking, log), request(), 'report'));
+    const error = errorOf(await ensureHookSettings(logged(asking, log), request(), 'return-outcome'));
     expect(error.kind).toBe('failure');
     expect(error.message).toContain('changed while the question waited');
     expect(deps.files.get(FILE)).toBe(changed);
