@@ -31,6 +31,8 @@ const recordDeps: Readonly<Record<string, RowSite>> = {
   'fs.lstatInfo': nodeSite('nodeFs.lstatInfo'),
   'fs.realpath': nodeSite('nodeFs.realpath'),
   'fs.openChecked': nodeSite('nodeFs.openChecked'),
+  'fs.openCheckedCore': nodeSite('nodeFs.openCheckedCore'),
+  'fs.writeTextAtomicCore': nodeSite('nodeFs.writeTextAtomicCore'),
   'fs.readTextLimited': nodeSite('nodeFs.readTextLimited'),
   'fs.writeTextExclusive': nodeSite('nodeFs.writeTextExclusive'),
   'fs.writeTextAtomic': nodeSite('nodeFs.writeTextAtomic'),
@@ -137,6 +139,8 @@ describe('the guards of a recipe', () => {
   it('keeps the record path separate from every registry row and guard read', () => {
     expect(recordPathSites.map((site) => site.symbol)).toEqual(expect.arrayContaining([
       'allOn', 'guardRulesOf', 'requireGuardChannel', 'guardStorePathOf', 'userStatePlaceOf',
+      'readGuardStore', 'changeGuardStore', 'recordGuards', 'recordPrefix', 'readGuardState',
+      'checkedTargetCore', 'checkedPidCore', 'openCheckedCore',
     ]));
     const sources = Object.fromEntries(allSourceFiles(join(REPO, 'src')).map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
     const result = sourceScan.traceSitesOf(sources, recordPathSites, { deps: recordDeps, exceptions: recordExceptions, maxDepth: 40 });
@@ -933,10 +937,34 @@ describe('the record path source scan', () => {
   it('finds the target, pid and open flags through the real adapter methods', () => {
     const paths = allSourceFiles(join(REPO, 'src'));
     const sources = Object.fromEntries(paths.map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
-    sources['src/a.ts'] = 'export const start = (deps) => { deps.fs.writeTextAtomic(); deps.isRunning(2); deps.fs.openChecked(); };';
+    sources['src/a.ts'] = 'export const start = (deps) => { deps.fs.writeTextAtomicCore(); deps.isRunning(2); deps.fs.openCheckedCore(); };';
     const result = sourceScan.traceSitesOf(sources, start, { deps: recordDeps, maxDepth: 40 });
     expect(result.faults).toEqual([]);
-    expect(result.sites).toEqual(expect.arrayContaining([nodeSite('checkedTarget'), nodeSite('checkedPid'), nodeSite('CHECKED_OPEN_FLAGS')]));
+    expect(result.sites).toEqual(expect.arrayContaining([
+      nodeSite('checkedTargetCore'), nodeSite('checkedPidCore'), nodeSite('openCheckedCore'), nodeSite('CHECKED_OPEN_FLAGS'),
+      { path: 'src/core/access.ts', symbol: 'checkedFaultCore' },
+    ]));
+    expect(result.sites).not.toEqual(expect.arrayContaining([nodeSite('checkedTarget')]));
+    expect(result.sites).not.toEqual(expect.arrayContaining([nodeSite('checkedPid')]));
+    expect(result.sites).not.toEqual(expect.arrayContaining([nodeSite('openChecked')]));
+    expect(software.rows.find((row) => row.id === 'atomic-write-target')?.sites).toContainEqual(nodeSite('checkedTarget'));
+    expect(software.rows.find((row) => row.id === 'signal-limits')?.sites).toContainEqual(nodeSite('checkedPid'));
+    expect(software.rows.find((row) => row.id === 'checked-open')?.sites).toContainEqual(nodeSite('openChecked'));
+    const rowSites = software.rows.flatMap((row) => row.sites);
+    expect(rowSites).not.toContainEqual(nodeSite('CHECKED_OPEN_FLAGS'));
+    for (const symbol of ['checkedTargetCore', 'checkedPidCore', 'openCheckedCore']) {
+      expect(rowSites).not.toContainEqual(nodeSite(symbol));
+    }
+  });
+
+  it('follows the clock port without a second port for a method of its result', () => {
+    const sources = {
+      'src/a.ts': 'export const start = (deps) => deps.now().getTime();',
+      'src/core/node-deps.ts': 'const createNodeDeps = () => ({ now: () => new Date() });',
+    };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: recordDeps, maxDepth: 10 });
+    expect(result.faults).toEqual([]);
+    expect(result.sites).toContainEqual(nodeSite('createNodeDeps.now'));
   });
 
   it('fails at the depth cap instead of accepting an incomplete scan', () => {

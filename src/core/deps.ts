@@ -120,6 +120,9 @@ export interface Fs {
    * exist is `absent`. A failure to open the file or to look at the handle is a failure; a failure of the read is `unreadable`.
    */
   openChecked(path: string, request: CheckedOpenRequest): Promise<CliResult<CheckedOpen>>;
+  /** Always-on file cores for the record path. An adapter without these methods cannot use the guard store. */
+  openCheckedCore?: Fs['openChecked'] | undefined;
+  writeTextAtomicCore?: Fs['writeTextAtomic'] | undefined;
   /** Set the permission bits of a file or a folder that exists. */
   chmod(path: string, mode: number): Promise<CliResult<void>>;
   /** The path with every link resolved. The path must exist. */

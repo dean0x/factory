@@ -600,6 +600,7 @@ export const privateFile = {
   lockWaitMs: 50,
   /** A lock that is older than this was left by a process that ended. The next writer takes it. */
   lockStaleMs: 5_000,
+  ageOnlyPolicy: 'an age-only lock cannot use a liveness policy',
 } as const;
 
 /**
@@ -2350,7 +2351,9 @@ export const guardRecords = {
     root: 'root',
     id: 'id',
     value: 'value',
+    values: 'values',
     prefix: 'prefix',
+    hash: 'hash',
     at: 'at',
   },
   maxRecords: 1_000,
@@ -2378,6 +2381,25 @@ export const guardRecordWords = {
   outputRequired: 'A guard record needs terminal output.',
   channelRemedy: 'Run the guard command in your terminal window, outside a session.',
   unreadable: 'The guard store cannot be read.',
+  noPlace: 'The guard store has no place: no variable names a state folder.',
+  inside: 'The guard store must be outside the factory and Claude Code folders.',
+  placeRemedy: `Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,
+  duplicate: 'The guard store holds two records for one node and root.',
+  recordCap: `The guard store cannot exceed ${guardRecords.maxRecords} records. Run "${commandText(commands.doctor)}".`,
+  byteCap: `The guard store cannot exceed ${guardRecords.maxBytes} bytes. Run "${commandText(commands.doctor)}".`,
+  badPrefix: `The ${keys.root.owner}.${keys.owner.prefix} text must not contain a hidden character.`,
+  adapterRequired: 'The file adapter has no always-on guard store methods.',
+  badFolder: 'The guard store folder must be a plain folder of this user, with no group or other write access.',
+  badFile: 'The guard store must be a plain file of this user, with no group or other write access.',
+  badOpen: 'The guard store open failed its file checks.',
+  lockBusy: 'Another command holds the guard store lock. Wait until that command ends, then try again.',
+  lockLink: 'The guard store lock is a link. Run factory doctor.',
+  lockLost: 'The guard store lock changed, so no record was written. Run factory doctor.',
+  lockLeft: 'The guard record is saved, but its lock could not be removed. Run factory doctor.',
+  invalidStore: 'The guard store does not match its schema.',
+  readFault: (path: string, reason: string): string => `The guard store ${path} cannot be read: ${reason}. Run "${commandText(commands.doctor)}".`,
+  writeFault: (reason: string): string => `The guard store cannot be changed: ${reason}. Run "${commandText(commands.doctor)}".`,
+  invalidChange: 'The guard change has no valid node, root or value.',
   unreadableRemedy: `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to recover the guard store.`,
 } as const;
 

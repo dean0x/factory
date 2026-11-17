@@ -230,7 +230,7 @@ const referencesOf = (body: ts.Node, file: ts.SourceFile): Pick<SourceDeclaratio
     }
     if (ts.isCallExpression(node)) {
       const text = node.expression.getText(file).replace(/\s|\?/g, '');
-      if (text.startsWith('deps.')) ports.add(text.slice('deps.'.length));
+      if (/^deps(?:\.[A-Za-z_]\w*)+$/.test(text)) ports.add(text.slice('deps.'.length));
       if (text.startsWith('deps[')) faults.add('computed dependency call');
     }
     if (ts.isElementAccessExpression(node)) {

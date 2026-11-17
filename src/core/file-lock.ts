@@ -1,4 +1,4 @@
-import { lockStaleWarning } from '../names.js';
+import { lockStaleWarning, privateFile } from '../names.js';
 import type { Deps, PathInfo } from './deps.js';
 import { processStartOf } from './process-start.js';
 import { err, ok, type Result } from './result.js';
@@ -267,7 +267,23 @@ export const takeLock = async (
   const random = deps.randomHex(TOKEN_BYTES);
   if (!random.ok) return err(random.error.message);
   const token = (rule.value === null ? [deps.pid, random.value] : [deps.pid, rule.value.input.ownStartMs, random.value]).join('-');
-  const lockEnded = lockEndedOf(deps, lockPath, policy, rule.value);
+  return takeLockLoop(deps, lockPath, policy, token, lockEndedOf(deps, lockPath, policy, rule.value));
+};
+
+/** The age-only entry uses the same lock loop, but reaches no process or output row caller. */
+export const takeAgeLock = async (deps: Deps, lockPath: string, policy: LockPolicy): Promise<Result<LockTake, string>> => {
+  if (policy.liveness !== undefined) return err(privateFile.ageOnlyPolicy);
+  const random = deps.randomHex(TOKEN_BYTES);
+  if (!random.ok) return err(random.error.message);
+  const token = [deps.pid, random.value].join('-');
+  return takeLockLoop(deps, lockPath, policy, token, async (seen) =>
+    ok(isStale(deps, seen, policy) ? { ended: true, tokenText: null } : STILL_HELD));
+};
+
+/** The bounded take and stale-lock replacement, shared by both policy entries. */
+const takeLockLoop = async (
+  deps: Deps, lockPath: string, policy: LockPolicy, token: string, lockEnded: LockEnded,
+): Promise<Result<LockTake, string>> => {
   const create = () => deps.fs.writeTextExclusive(lockPath, lockText(token), policy.mode);
   for (let attempt = 1; attempt <= policy.attempts; attempt += 1) {
     const created = await create();

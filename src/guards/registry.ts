@@ -177,6 +177,10 @@ export const recordPathSites: readonly RowSite[] = [
   { path: 'src/core/guard-records.ts', symbol: 'guardStorePathOf' },
   { path: 'src/core/private-file.ts', symbol: 'userStatePlaceOf' },
   { path: 'src/core/private-file.ts', symbol: 'absoluteEnv' },
+  ...['readGuardStore', 'changeGuardStore', 'recordGuards', 'recordPrefix', 'readGuardState'].map((symbol) => ({ path: 'src/core/guard-records.ts', symbol })),
+  ...['checkedTargetCore', 'checkedPidCore', 'openCheckedCore', 'CHECKED_OPEN_FLAGS'].map((symbol) => ({ path: 'src/core/node-deps.ts', symbol })),
+  ...['checkedFaultCore', 'accessFaultCore'].map((symbol) => ({ path: 'src/core/access.ts', symbol })),
+  { path: 'src/core/file-lock.ts', symbol: 'takeAgeLock' },
 ];
 
 /** The guard ids that older nodes may still hold in a config and that no guard has now. */

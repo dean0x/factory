@@ -333,6 +333,8 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         if (request.decode === 'fatal' && invalidUtf8.has(path)) return ok({ state: 'unreadable', info, bytes: info.size });
         return ok({ state: 'opened', info, text: files.get(path) ?? '', bytes: info.size });
       },
+      openCheckedCore: (path, request) => fake.fs.openChecked(path, request),
+      writeTextAtomicCore: (path, text, within, mode) => fake.fs.writeTextAtomic(path, text, within, mode),
       chmod: async (path, mode) => {
         if (kindOf(path) === null) return enoent('change the mode of', path);
         modes.set(path, mode);
