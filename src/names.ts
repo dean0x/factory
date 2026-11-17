@@ -2337,6 +2337,7 @@ export const maxGuardListLines = 17;
  */
 export const guardListWords = {
   summary: 'Show the guards and what each one keeps safe.',
+  scopeHelp: 'The list omits integrity checks and guards that are not built yet.',
   allHelp: 'Show every guard or every row of one family.',
   familyHelp: 'Show the rows of the guard with this id.',
   argumentsError: `${commandText(commandLines.guardList)} takes no argument.`,

@@ -1,16 +1,20 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parseConfig, splitConfigValue } from '../../src/config/schema.js';
 import { glossary } from '../../src/glossary.js';
+import { isRecord } from '../../src/migrate/inspect.js';
+import { recipes } from '../../src/recipes/index.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
 import { guardRowsFor, guardsFor, retiredGuardIds } from '../../src/guards/registry.js';
 import type { Guard, GuardRow } from '../../src/guards/types.js';
-import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, roleText } from '../../src/names.js';
+import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, keys, roleText } from '../../src/names.js';
 import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
 import { blockInput, softwareRecipe } from '../helpers/blocks.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { jargonIn } from '../helpers/plain-words.js';
 import { publishRecipe } from '../helpers/publish-recipe.js';
+import { sampleObject } from '../helpers/sample-config.js';
 import { importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
 
 const REPO = join(__dirname, '..', '..');
@@ -25,6 +29,31 @@ const idsOf = (items: readonly { readonly id: string }[]): string[] => items.map
 const duplicatesOf = (ids: readonly string[]): string[] => ids.filter((id, index) => ids.indexOf(id) !== index);
 
 const rowsOf = (guard: Guard): GuardRow[] => software.rows.filter((row) => row.guard === guard.id);
+
+/** Expand the approval map to the recipe points, the limits wildcard to all named keys, and [] to array index 0. */
+const relatedPathsOf = (path: string): readonly (readonly (string | number)[])[] => {
+  if (path === `${keys.root.approval}.<point>`) {
+    return softwareRecipe.approvalPoints.map((point) => [keys.root.approval, point.id]);
+  }
+  if (path === `${keys.root.limits}.*`) {
+    return Object.values(keys.limits).map((key) => [keys.root.limits, key]);
+  }
+  return [path.split('.').flatMap<string | number>((key) => (key.endsWith('[]') ? [key.slice(0, -2), 0] : [key]))];
+};
+
+/** Replace only the probe path; each call consumes one part, so the path length bounds the recursion. */
+const probeAt = (raw: unknown, path: readonly (string | number)[]): unknown => {
+  const [key, ...rest] = path;
+  if (key === undefined) return Symbol();
+  if (typeof key === 'number') {
+    const items: readonly unknown[] = Array.isArray(raw) ? raw : [];
+    return Array.from({ length: Math.max(items.length, key + 1) }, (_, index) =>
+      index === key ? probeAt(items[index], rest) : items[index],
+    );
+  }
+  const object = isRecord(raw) ? raw : {};
+  return { ...object, [key]: probeAt(object[key], rest) };
+};
 
 describe('the guards of a recipe', () => {
   it('lists the 28 core guards and the 3 guards of the software recipe, each once', () => {
@@ -55,6 +84,29 @@ describe('the guards of a recipe', () => {
       expect(guard.key).toBe(`${guardKeys.local}.${guard.id}`);
       expect(guard.whenMissing).toBe(guardValues.on);
       expect(guard.newNode).toBe(guardValues.on);
+    }
+  });
+
+  it('resolves every related path to a key of the config schema', () => {
+    const sample = splitConfigValue(sampleObject());
+    expect(parseConfig(sample.shared, sample.local, recipes).success).toBe(true);
+    const paths = [...software.guards.flatMap((guard) => guard.related), `${keys.root.limits}.*`];
+    for (const related of paths) {
+      const concrete = relatedPathsOf(related);
+      expect(concrete.length, related).toBeGreaterThan(0);
+      for (const path of concrete) {
+        const { shared, local } = splitConfigValue(probeAt(sampleObject(), path));
+        const parsed = parseConfig(shared, local, recipes);
+        // A value error at this exact path proves the parser knows the key; an unknown key reports its parent instead.
+        const issues = parsed.success ? [] : parsed.error.issues;
+        expect(
+          issues.some((issue) =>
+            issue.code !== 'unrecognized_keys' && issue.path.length === path.length &&
+            issue.path.every((part, index) => part === path[index]),
+          ),
+          related,
+        ).toBe(true);
+      }
     }
   });
 

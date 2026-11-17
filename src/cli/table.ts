@@ -379,7 +379,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
   },
   {
     name: commands.guard,
-    summary: guardListWords.summary,
+    summary: `${guardListWords.summary} ${guardListWords.scopeHelp}`,
     usage: `${commandText(commandLines.guardList)} [${flagText(flags.all)}] [${flagText(flags.family)} NAME] [${flagText(flags.home)} DIR]`,
     positionals: true,
     options: {

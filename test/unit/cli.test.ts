@@ -115,6 +115,7 @@ describe('the guard command in the command line', () => {
     const result = await run(argv);
     expect(result.code).toBe(0);
     expect(result.out).toContain('Usage: factory guard list [--all] [--family NAME] [--home DIR]');
+    expect(result.out).toContain('The list omits integrity checks and guards that are not built yet.');
     for (const flag of ['--all', '--family NAME', '--home DIR', '--json']) expect(result.out).toContain(flag);
     expect(result.out).not.toMatch(/factory guard (?:set|confirm)/);
   });
