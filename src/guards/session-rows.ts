@@ -99,7 +99,8 @@ const taskFileRows: readonly GuardRow[] = [
     applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
     harm: true,
     sites: [
-      ...at('src/workers/assignment.ts', 'readAssignment', 'placeOf', 'dotRuleReason'),
+      ...at('src/workers/assignment.ts', 'readAssignment', 'placeOf'),
+      ...at('src/core/place-rule.ts', 'dotRuleReason'),
       ...at('src/commands/node.ts', 'checkedTask'),
     ],
   }),

@@ -88,13 +88,13 @@ const boardEditRows: readonly GuardRow[] = [
     name: 'A field of the board cannot take a name that an item, a queue row or a decision already uses',
     applies: 'Config parse and every write of a field',
     harm: false,
-    sites: at('src/config/schema.ts', 'boardFieldName'),
+    sites: [...at('src/config/schema.ts', 'boardFieldName'), ...at('src/names.ts', 'reservedFieldNames')],
   }),
   codeRow({
     id: 'board-hosted-refusal',
     guard: guardIds.boardEdits,
     name: 'A write of board data goes only to a local board and never to an outside account',
-    applies: `Item, track, ${commands.request}, queue and decision writes`,
+    applies: `Item, track, ${commands.request}, queue and decision writes, with ${commandLines.itemDoc}`,
     harm: true,
     sites: [
       ...at('src/board/local.ts', 'requireLocalKind'),
@@ -105,14 +105,30 @@ const boardEditRows: readonly GuardRow[] = [
   codeRow({
     id: 'board-file-links',
     guard: guardIds.boardEdits,
-    name: 'The files of the board, the decisions and the docs are plain relative paths that hold no link',
-    applies: 'Every read and write of board files',
+    name: 'Board files, decisions and docs use plain relative paths with no link; a doc link checks file kind and size',
+    applies: `Every read and write of board files, with file checks for ${commandLines.itemDoc}`,
     harm: true,
     sites: [
       ...at('src/board/files.ts', 'textOfFile'),
       ...at('src/board/local.ts', 'createLocalBoard'),
       ...at('src/board/edit.ts', 'docPathIssue'),
     ],
+  }),
+  codeRow({
+    id: 'board-doc-place',
+    guard: guardIds.boardEdits,
+    name: 'A doc link keeps local settings and dot folders private through one path name check in any letter case',
+    applies: commandLines.itemDoc,
+    harm: true,
+    sites: [...at('src/board/edit.ts', 'checkDocPath', 'docPathIssue'), ...at('src/core/place-rule.ts', 'dotRuleReason')],
+  }),
+  codeRow({
+    id: 'board-doc-view',
+    guard: guardIds.boardEdits,
+    name: 'An item view shows only stored doc paths that pass the name check of the write',
+    applies: 'Item JSON output',
+    harm: false,
+    sites: [...at('src/commands/item.ts', 'docsOf'), ...at('src/board/edit.ts', 'docPathIssue')],
   }),
   codeRow({
     id: 'board-commit-paths',

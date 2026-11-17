@@ -5,7 +5,7 @@ import { glossary } from '../../src/glossary.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
 import { guardRowsFor, guardsFor, retiredGuardIds } from '../../src/guards/registry.js';
 import type { Guard, GuardRow } from '../../src/guards/types.js';
-import { blockNames, guardIds, guardKeys, guardKinds, guardValues, roleText } from '../../src/names.js';
+import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, roleText } from '../../src/names.js';
 import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
 import { blockInput, softwareRecipe } from '../helpers/blocks.js';
 import { oldWordsIn } from '../helpers/old-words.js';
@@ -178,6 +178,8 @@ describe('the rows of the registry', () => {
         'board-reserved-names',
         'board-hosted-refusal',
         'board-file-links',
+        'board-doc-place',
+        'board-doc-view',
         'board-commit-paths',
         'active-machine-mark',
         'board-single-store-text',
@@ -515,7 +517,7 @@ describe('the rows of the registry', () => {
     const counts = Object.fromEntries(software.guards.map((guard) => [guard.id, guard.rows.length]));
     expect(counts).toEqual({
       'approval-delegation': 8,
-      'board-edits': 12,
+      'board-edits': 14,
       'settings-check': 12,
       'settings-write': 6,
       'clone-rules': 8,
@@ -546,7 +548,9 @@ describe('the rows of the registry', () => {
       'approval-release': 1,
       'pr-rules': 14,
     });
-    expect(software.rows).toHaveLength(304);
+    expect(software.rows).toHaveLength(306);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(204);
+    expect(softwareRecipe.guardRows).toHaveLength(102);
     expect(Object.values(counts).reduce((sum, count) => sum + count, 0)).toBe(software.rows.length);
   });
 
@@ -558,6 +562,49 @@ describe('the rows of the registry', () => {
     const guard = software.guards.find((item) => item.id === guardIds.contextLimits);
     expect(guard?.kinds).toEqual([guardKinds.text]);
     expect(guard?.harm).toBe(false);
+  });
+
+  it('lists the doc place check with its harm mark and its shared name check', () => {
+    const row = software.rows.find((candidate) => candidate.id === 'board-doc-place');
+    expect(row).toMatchObject({ guard: guardIds.boardEdits, kind: guardKinds.code, harm: true });
+    expect(row?.sites).toEqual([
+      { path: 'src/board/edit.ts', symbol: 'checkDocPath' },
+      { path: 'src/board/edit.ts', symbol: 'docPathIssue' },
+      { path: 'src/core/place-rule.ts', symbol: 'dotRuleReason' },
+    ]);
+  });
+
+  it('lists the doc view filter without a harm mark and with the same path check as the write', () => {
+    const row = software.rows.find((candidate) => candidate.id === 'board-doc-view');
+    expect(row).toMatchObject({ guard: guardIds.boardEdits, kind: guardKinds.code, harm: false });
+    expect(row?.sites).toEqual([
+      { path: 'src/commands/item.ts', symbol: 'docsOf' },
+      { path: 'src/board/edit.ts', symbol: 'docPathIssue' },
+    ]);
+  });
+
+  it('keeps doc file checks, local writes and reserved names in their existing rows', () => {
+    const file = software.rows.find((row) => row.id === 'board-file-links');
+    expect(file?.sites).toContainEqual({ path: 'src/board/local.ts', symbol: 'createLocalBoard' });
+    expect(file?.applies).toContain(commandLines.itemDoc);
+    const local = software.rows.find((row) => row.id === 'board-hosted-refusal');
+    expect(local?.sites).toContainEqual({ path: 'src/board/local.ts', symbol: 'requireLocalKind' });
+    expect(local?.applies).toContain(commandLines.itemDoc);
+    const names = software.rows.find((row) => row.id === 'board-reserved-names');
+    expect(names?.sites).toContainEqual({ path: 'src/names.ts', symbol: 'reservedFieldNames' });
+  });
+
+  it('cites the shared place rule for assignment files and not its former file', () => {
+    const row = software.rows.find((candidate) => candidate.id === 'assignment-file-check');
+    expect(row).toMatchObject({ guard: guardIds.taskFiles, harm: true });
+    expect(row?.sites).toContainEqual({ path: 'src/core/place-rule.ts', symbol: 'dotRuleReason' });
+    expect(row?.sites).not.toContainEqual({ path: 'src/workers/assignment.ts', symbol: 'dotRuleReason' });
+  });
+
+  it('keeps the doc count and epic and release group text forms outside the registry', () => {
+    const formChecks = ['linkDocIn', 'shownLineOf', 'optionalShownLineOf'];
+    const sites = software.rows.flatMap((row) => row.sites);
+    expect(sites.filter((site) => site.path === 'src/board/edit.ts' && formChecks.includes(site.symbol))).toEqual([]);
   });
 
   it('lists the hold removal with the link checks and the hold write with the existing-folder write checks', () => {
