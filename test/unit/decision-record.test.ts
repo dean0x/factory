@@ -14,6 +14,8 @@ const REQUEST = {
   id: 'D-3',
   title: 'Which database?',
   question: 'Which database do we use for the queue?',
+  kind: null,
+  fields: null,
   options: [
     { key: 'a', text: 'Use SQLite.', rec: true as const },
     { key: 'b', text: 'Use Postgres.' },
@@ -202,7 +204,7 @@ describe('hostile text in the record', () => {
   const hostile = (): DecisionRecord =>
     built({
       request: {
-        id: 'D-3',
+        ...REQUEST,
         title: HOSTILE_TITLE,
         question: HOSTILE_QUESTION,
         options: [

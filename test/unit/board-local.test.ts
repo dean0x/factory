@@ -989,14 +989,18 @@ describe('the local connector: the ids of a write', () => {
     expect(waiting.items.map((entry) => entry.record[decisionKeys.group])).toEqual([requestGroups.later]);
   });
 
-  it('reads a legacy row with its exact open time and stored group', () => {
-    const at = '2029-01-01T00:00:00.000Z';
-    const waiting = valueOf(parseWaiting(jsonOf({ intro: '', groups: [], items: [
-      { id: 'D-1', ...DECISION, [decisionKeys.openedAt]: at, [decisionKeys.group]: requestGroups.later },
-    ] })));
+  it('reads a new request with its exact open time, group and context', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const fields = [{ label: 'Cost', text: 'Small' }];
+    const options = [{ key: 'a', text: 'Plan A', why: 'Less work.' }];
+    valueOf(await connectorOf(repo).askDecision({ ...DECISION, group: requestGroups.later, kind: 'command', fields, options }));
+    const waiting = valueOf(parseWaiting(repo.textOf(fileNames.waiting) ?? ''));
     const request = valueOf(strictRequestOf(waiting, 'D-1'));
-    expect(request.openedAt).toBe(at);
+    expect(request.openedAt).toBe(repo.deps.now().toISOString());
     expect(request.group).toBe(requestGroups.later);
+    expect(request.kind).toBe('command');
+    expect(request.fields).toEqual(fields);
+    expect(request.options).toEqual(options);
   });
 
   it('leaves the rows that are open as they are when it adds one, even for a row with no open time', async () => {

@@ -494,6 +494,50 @@ describe('decide: a yes answer records the answer', () => {
     expect(waitingIds(repo)).toEqual([]);
   });
 
+  it('shows all request context before the prompt and stores its canonical text with the owner answer', async () => {
+    const entry = {
+      ...ENTRY, kind: 'information', fields: [{ label: 'Scope', text: 'Queue' }], docs: ['docs/queue.md'],
+      options: [{ key: 'a', text: 'Plan A', rec: true, why: 'Less work.' }, { key: 'b', text: 'Plan B' }],
+    };
+    const repo = await nodeOf({ waiting: waitingOf(entry) });
+    const seen: string[][] = [];
+    valueOf(await decide(atTerminal(repo, () => { seen.push(shownOf(repo)); return ok('y'); }).deps));
+    expect(seen[0]).toContain('> Kind:     information');
+    expect(seen[0]).toContain('> Field:    "Scope": Queue');
+    expect(seen[0]).toContain('> Doc:      docs/queue.md');
+    expect(seen[0]).toContain('>     Why (a): Less work.');
+    const row = (JSON.parse(repo.textOf(fileNames.decisionLog) ?? '') as { rows: Record<string, unknown>[] }).rows[0];
+    expect(row?.['request']).toBe(textOf(entry));
+    expect(storedRecords(repo)).toEqual([storedRecord({ hash: requestHashOf(textOf(entry)) })]);
+  });
+
+  it('refuses repeated request docs before the prompt and leaves the store and board unchanged', async () => {
+    const repo = await nodeOf({ waiting: waitingOf({ ...ENTRY, docs: ['docs/a.md', 'docs/a.md'] }) });
+    const before = new Map(repo.deps.files);
+    const terminal = atTerminal(repo);
+    const error = errorOf(await decide(terminal.deps));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('docs');
+    expect(error.hint).toContain('Restore the entry');
+    expectNothingDone(repo, before, terminal);
+  });
+
+  it('refuses a doc path change during the prompt before the store or board copy', async () => {
+    const entry = { ...ENTRY, docs: ['docs/a.md'] };
+    const repo = await nodeOf({ waiting: waitingOf(entry) });
+    const terminal = atTerminal(repo, () => {
+      repo.deps.seed(WAITING_PATH, waitingOf({ ...entry, docs: ['docs/b.md'] }));
+      return ok('y');
+    });
+    const error = errorOf(await decide(terminal.deps));
+    expect(terminal.asked).toHaveLength(1);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('changed after the prompt');
+    expect(storedRecords(repo)).toEqual([]);
+    expect(repo.commits).toEqual([]);
+    expect(repo.textOf(RECORD_PATH)).toBeUndefined();
+  });
+
   it('puts the note in the profile record only, and shows it in the request block', async () => {
     const repo = await nodeOf();
     valueOf(await decide(atTerminal(repo).deps, { note: 'cheaper to run' }));

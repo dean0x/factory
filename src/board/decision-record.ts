@@ -5,6 +5,7 @@ import { isSlug, slugify } from '../config/primitives.js';
 import { ok } from '../core/result.js';
 import { boardIds, boardLimits, requestWords, roles } from '../names.js';
 import { stateRel } from '../state/layout.js';
+import type { RequestField, RequestKind } from './contract.js';
 
 /**
  * The profile record of an owner decision (design 4.10): the text of one record file of the decision profile, its path,
@@ -24,6 +25,8 @@ export interface DecisionRecordOption {
   readonly text: string;
   /** True for the option that the asker recommends. */
   readonly rec?: boolean;
+  /** The reason that the asker gives for this option, never a reason of the owner. */
+  readonly why?: string;
 }
 
 /** The parts of a waiting entry that the record shows. */
@@ -31,6 +34,10 @@ export interface DecisionRecordRequest {
   readonly id: string;
   readonly title: string;
   readonly question: string;
+  /** Null when the waiting entry has no kind. The kind grants no authority. */
+  readonly kind: RequestKind | null;
+  /** Ordered context, or null when the waiting entry has no fields. */
+  readonly fields: readonly RequestField[] | null;
   readonly options: readonly DecisionRecordOption[];
 }
 
@@ -70,7 +77,7 @@ const MD_SUFFIX = '.md';
 const ESCAPED = /[[\]<>\u0085\p{Zl}\p{Zp}]/gu;
 
 /** The text as a JSON string literal on one line, with each bracket and each separator of lines as a six-character escape. */
-const jsonText = (text: string): string =>
+export const jsonText = (text: string): string =>
   JSON.stringify(text).replace(ESCAPED, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
 /** True when the text is an ISO time in UTC with a `Z` end: the form that the program writes in a record or prints in a report. */
