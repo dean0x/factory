@@ -24,13 +24,14 @@ Set these fields in the plugin options of Claude Code:
 
 | Field | Default | Use |
 | --- | --- | --- |
-| `command` | `factory` | Program name or full path. Do not add arguments or shell quotes. |
+| `command` | `factory` | Program name without `/`, or an absolute path. Do not add arguments or shell quotes. |
 | `home` | empty | Factory folder. With no value, factory finds the home from the session folder. |
 | `refreshSeconds` | `10` | Whole seconds from 5 to 300. The mod holds a value outside this range to the nearest end. |
 | `open` | `asked` | `asked` waits for `/board`. `auto` asks for a pane at session start. |
 
-When factory is not on the session PATH, set `command` to its full path.
+When factory is not on the session PATH, set `command` to its absolute path.
 A path with spaces stays one argument. The mod does not start a shell.
+An empty or blank `command` uses `factory`. A relative path shows an option hint and starts no program.
 When an automatic pane has too little room, Claude Code leaves it undrawn. Run `/board` to open it at any width.
 
 ## Refresh and faults

@@ -18,7 +18,7 @@ const success = (stdout = boardTextFixture): ProcessRunResult => ({
   exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false,
 });
 
-const setup = (on: On) => {
+const setup = (on: On, placed = true) => {
   const clock = mock.clock(on, { now: Date.parse('2030-01-02T03:04:00Z') });
   let panes: readonly UiPane[] = [];
   let registrations = 0;
@@ -27,16 +27,16 @@ const setup = (on: On) => {
   on('session.start', (_, e) => ({ cwd: e.cwd }));
   on('session.end', () => ({ sessionId: 'demo' }));
   on('ui.open', () => {
-    panes = [{ id: 'factory-board', title: 'Factory board', isShown: true, isPlaced: true, isFocused: false }];
-    return { value: { isPlaced: true } };
+    panes = [{ id: 'factory-board', title: 'Factory board', isShown: true, isPlaced: placed, isFocused: false }];
+    return placed ? { value: { isPlaced: true } } : { value: { isPlaced: false, reason: 'No surface places panes.' } };
   });
   on('ui.panes', () => ({ value: panes }));
   on('session.usage', () => ({ value: {
     startedAt: 0, context: { window: 200000, percent: 23 },
     rateLimits: [{ kind: 'five_hour', percentUsed: 42 }, { kind: 'seven_day', percentUsed: 17 }],
   } }));
-  return { clock, registrations: () => registrations, panes: () => panes, hide: (placed = true) => {
-    panes = panes.map(pane => ({ ...pane, isShown: false, isPlaced: placed }));
+  return { clock, registrations: () => registrations, panes: () => panes, setPane: (shown: boolean, placed: boolean) => {
+    panes = panes.map(pane => ({ ...pane, isShown: shown, isPlaced: placed }));
   } };
 };
 const start = ($: Engine, surface: RenderSurface) => $.session.start({ cwd: '/demo', surface, isInteractive: true });
@@ -65,6 +65,17 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(host.panes()).toHaveLength(1);
   });
 
+  for (const [placed, text] of [
+    [true, 'Factory board pane opened.'],
+    [false, 'Factory board pane waits for a surface.'],
+  ] as const) {
+    test(`/board reports pane placement ${placed} on ${surface}`, async ($, on) => {
+      setup(on, placed);
+      await start($, surface);
+      expect((await $.command.run(OPEN)).text).toBe(text);
+    });
+  }
+
   test(`hidden and unplaced panes do not run on ${surface}`, async ($, on) => {
     const host = setup(on);
     let runs = 0;
@@ -75,9 +86,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await $.command.run(OPEN);
     await host.clock.advance(10000);
     expect(runs).toBe(1);
-    host.hide();
+    host.setPane(false, true);
     await host.clock.advance(10000);
-    host.hide(false);
+    expect(runs).toBe(1);
+    host.setPane(true, false);
     await host.clock.advance(10000);
     expect(runs).toBe(1);
   });
@@ -149,6 +161,34 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.unmount();
   });
 
+  for (const command of ['', '  ', '\t \n', 'factory-cli']) {
+    test(`command ${JSON.stringify(command)} uses a program name on ${surface}`, { options: { command } }, async ($, on) => {
+      const host = setup(on);
+      const programs: string[] = [];
+      on('process.run', (_, e) => { programs.push(e.argv[0] ?? ''); return { value: success() }; });
+      await start($, surface);
+      await $.command.run(OPEN);
+      await host.clock.advance(10000);
+      expect(programs).toEqual([command.trim() === '' ? 'factory' : command]);
+    });
+  }
+
+  for (const command of ['./factory', '../factory', 'tools/factory', 'tools/factory app', 'factory/']) {
+    test(`relative command ${command} shows an option hint without a run on ${surface}`, { options: { command } }, async ($, on) => {
+      const host = setup(on);
+      let runs = 0;
+      on('process.run', () => { runs += 1; return { value: success() }; });
+      await start($, surface);
+      await $.command.run(OPEN);
+      const ui = await $.ui.mount({ ...PANE, surface });
+      await host.clock.advance(20000);
+      expect(runs).toBe(0);
+      expect((await ui.findAll({ type: 'Text' })).map(row => row.text).slice(1))
+        .toEqual(['Factory command not found. Set the command option.']);
+      await ui.unmount();
+    });
+  }
+
   test(`command and home stay separate argv values on ${surface}`, {
     options: { command: '/tools/factory app', home: '/demo/home; echo no' },
   }, async ($, on) => {
@@ -179,6 +219,37 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.unmount();
   });
 
+  for (const [name, input, expected] of [
+    ['OSC with BEL', 'a\u001b]8;;https://example.com\u0007b', 'ab'],
+    ['OSC with ST', 'a\u001b]8;;https://example.com\u001b\\b', 'ab'],
+    ['OSC without an end', 'a\u001b]8;;https://example.com', 'a'],
+    ['CSI and C0', '\u001b[31ma\u001b[0m\u0000\tb', 'ab'],
+    ['C1', 'a\u0080\u0085\u009bb\u009fc', 'abc'],
+    ['bidi controls', 'a‪‫‬‭‮b⁦⁧⁨⁩c', 'abc'],
+    ['zero width and direction marks', 'a​‌‍‎‏b؜c', 'abc'],
+    ['line and paragraph separators', 'a b c', 'abc'],
+    ['byte order mark', 'a﻿b', 'ab'],
+    ['lone surrogates', 'a\ud800b\udcffc', 'abc'],
+    ['default ignorable points', 'a͏bᅟc\u{e0100}d', 'abcd'],
+    ['valid surrogate pair', 'a\u{1f680}b', 'a\u{1f680}b'],
+    ['width after the filter', '\u001b[31m' + 'x'.repeat(39) + '\u{1f680}tail\u001b[0m', 'x'.repeat(39) + '\u{1f680}'],
+  ] as const) {
+    for (const stream of ['stdout', 'stderr'] as const) {
+      test(`${stream} draws exact plain text for ${name} on ${surface}`, async ($, on) => {
+        const host = setup(on);
+        on('process.run', () => ({ value: stream === 'stdout'
+          ? success(input)
+          : { ...success(), exitCode: 1, stderr: input + '\nsecond line' } }));
+        await start($, surface);
+        await $.command.run(OPEN);
+        const ui = await $.ui.mount({ ...PANE, surface, props: { ...PANE.props, bodyColumns: 40 } });
+        await host.clock.advance(10000);
+        expect((await ui.findAll({ type: 'Text' })).map(row => row.text).slice(1)).toEqual([expected]);
+        await ui.unmount();
+      });
+    }
+  }
+
   for (const [seconds, interval, columns, width] of [[1, 5000, 2, 40], [999, 300000, 999, 120]] as const) {
     test(`refresh and width stay in range at ${seconds}s on ${surface}`, { options: { refreshSeconds: seconds } }, async ($, on) => {
       const host = setup(on);
@@ -191,6 +262,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
       expect(calls).toHaveLength(0);
       await host.clock.advance(1);
       expect(calls).toEqual([{ argv: ['factory', 'board', '--width', String(width)], init: { timeoutMs: Math.min(interval, 30000) } }]);
+      const rows = (await ui.findAll({ type: 'Text' })).slice(1);
+      expect(rows).toHaveLength(boardTextFixture.trimEnd().split('\n').length);
+      for (const row of rows) expect(Array.from(row.text ?? '').length).toBeLessThanOrEqual(width);
       await ui.unmount();
     });
   }

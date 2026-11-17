@@ -21,7 +21,7 @@ const held = (value: unknown, min: number, max: number, fallback: number): numbe
 const plain = (text: string): string => text
   .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\|$)/g, '')
   .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
-  .replace(/[\u0000-\u001f\u007f-\u009f\u{202a}-\u{202e}\u{2066}-\u{2069}]/gu, '');
+  .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Default_Ignorable_Code_Point}]/gu, '');
 const clipped = (text: string, width: number): string => Array.from(plain(text)).slice(0, width).join('');
 
 const parseOutput = (value: unknown, width: number): BoardRead => {
@@ -86,6 +86,10 @@ export const register: Register = (on, options) => {
         await update($, columns, () => width);
         await update($, running, () => true);
         if (currentSession !== session) return;
+        if (command.includes('/') && !command.startsWith('/')) {
+          await update($, fault, () => 'Factory command not found. Set the command option.');
+          return;
+        }
         let result: BoardRead;
         try {
           const output: unknown = await $.process.run([
