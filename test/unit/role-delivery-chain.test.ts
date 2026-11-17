@@ -78,6 +78,7 @@ const make = async (world: World = {}): Promise<Made> => {
       yes: true,
       dryRun: false,
       command: commandLines.workerNew,
+      idleCompaction: sampleConfig().core.session.idle_compaction,
     });
     expect(hooks.ok && hooks.value.kind).toBe('written');
   } else {

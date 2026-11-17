@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { renderBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import { collectSetup } from '../../src/commands/init-received.js';
-import type { StartOptions } from '../../src/commands/start.js';
+import { renderStartFiles, type StartOptions } from '../../src/commands/start.js';
 import { runStart } from '../helpers/package-registry.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
@@ -12,7 +12,7 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { activeMachine, env, files, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
+import { activeMachine, commands, env, files, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
@@ -1049,6 +1049,165 @@ describe('start:the hook settings of the coordinator', () => {
       await succeeded(deps, { yes: true });
       expect(deps.dirs.has(`${COORDINATOR}/.claude`)).toBe(true);
       expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    });
+  });
+
+  describe('the idle compaction value', () => {
+    const oldSettings = { hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine };
+    const oldText = `${JSON.stringify(oldSettings)}\n`;
+    const valueLine = '  idleCompaction: set to false (session.idle_compaction in factory.yaml)';
+    const skipNotice =
+      `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
+      'Run "factory upgrade" in a terminal window, or add --yes. The session starts as before.';
+    const configFor = (idle: boolean): FactoryConfig => {
+      const base = sampleConfig();
+      return { ...base, core: { ...base.core, session: { ...base.core.session, idle_compaction: idle } } };
+    };
+
+    it('shows only the value change before consent and keeps all other keys after a yes', async () => {
+      const original = { model: 'opus', ...oldSettings };
+      const held: { deps?: FakeDeps } = {};
+      const made = make({
+        hookSettings: JSON.stringify(original),
+        tty: true,
+        prompt: () => {
+          expect(held.deps?.files.get(SETTINGS_FILE)).toBe(JSON.stringify(original));
+          return ok('y');
+        },
+      });
+      held.deps = made.deps;
+      await succeeded(made.deps);
+      expect(made.deps.prompts).toEqual([
+        `This changes the settings of Claude Code in ${SETTINGS_FILE}:\n${valueLine}\nWrite this change? [y/N] `,
+      ]);
+      expect(settingsOf(made.deps)).toEqual({ ...original, idleCompaction: false });
+      expect(launched(made.tmux)).toBe(true);
+    });
+
+    it.each([false, true])('writes the config value %s at start', async (idle) => {
+      const { deps, tmux } = make({ ...noFile, config: configFor(idle) });
+      await succeeded(deps, { yes: true });
+      expect(settingsOf(deps)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+      expect(launched(tmux)).toBe(true);
+    });
+
+    it('asks nothing and writes nothing when true matches the config', async () => {
+      const text = JSON.stringify({ ...ownSettingsEntries, idleCompaction: true });
+      const { deps } = make({ config: configFor(true), hookSettings: text });
+      await succeeded(deps);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.warned).toEqual([]);
+      expect(deps.files.get(SETTINGS_FILE)).toBe(text);
+    });
+
+    it.each([false, true])('uses the config value %s for reboot consent and the write', async (idle) => {
+      const config = configFor(idle);
+      const { deps } = make({ config, hookSettings: oldText, tty: true, prompt: () => ok('y') });
+      expect(await renderStartFiles(deps, HOME, config, commands.reboot)).toEqual(ok(undefined));
+      expect(deps.prompts).toEqual([
+        `This changes the settings of Claude Code in ${SETTINGS_FILE}:\n` +
+        `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml)\nWrite this change? [y/N] `,
+      ]);
+      expect(settingsOf(deps)).toEqual({ ...oldSettings, idleCompaction: idle });
+    });
+
+    it.each([
+      { tty: false, stdoutTty: false },
+      { tty: true, stdoutTty: false },
+      { tty: false, stdoutTty: true },
+    ])('starts with no settings write and one remedy line without a full terminal: %j', async (terminal) => {
+      const { deps, tmux } = make({ ...terminal, hookSettings: oldText });
+      const writes: string[] = [];
+      const watched = withFsWatch(deps, (method, path) => {
+        if (WRITE_CALLS.includes(method) && path.startsWith(`${COORDINATOR}/.claude`)) writes.push(method);
+      });
+      await succeeded(watched);
+      expect(deps.files.get(SETTINGS_FILE)).toBe(oldText);
+      expect(writes).toEqual([]);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.warned).toEqual([skipNotice]);
+      expect(launched(tmux)).toBe(true);
+    });
+
+    it.each(['own', 'received'] as const)('starts in an %s root inside a session with no terminal and names a usable remedy', async (origin) => {
+      const { deps, tmux } = make({ origin, hookSettings: oldText, env: { [env.session]: 'demo' } });
+      const writes: string[] = [];
+      const watched = withFsWatch(deps, (method, path) => {
+        if (WRITE_CALLS.includes(method) && path.startsWith(`${COORDINATOR}/.claude`)) writes.push(method);
+      });
+      await succeeded(watched);
+      expect(deps.files.get(SETTINGS_FILE)).toBe(oldText);
+      expect(writes).toEqual([]);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.warned).toEqual([
+        `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
+          'Run "factory upgrade" outside the factory session, or in a terminal window and answer the question. The session starts as before.',
+      ]);
+      expect(deps.warned.join('\n')).not.toContain('--yes');
+      expect(launched(tmux)).toBe(true);
+    });
+
+    it('lets reboot continue without a settings write and prints one remedy line with no terminal', async () => {
+      const { deps } = make({ hookSettings: oldText });
+      const before = new Map(deps.files);
+      expect(await renderStartFiles(deps, HOME, sampleConfig(), commands.reboot)).toEqual(ok(undefined));
+      expect(new Map(deps.files)).toEqual(before);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.warned).toEqual([skipNotice]);
+    });
+
+    it('stops reboot with exit 2 for hook lines without a terminal and writes nothing', async () => {
+      const { deps } = make(noFile);
+      const before = new Map(deps.files);
+      const result = await renderStartFiles(deps, HOME, sampleConfig(), commands.reboot);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      if (!result.ok) expect(result.error.message).toContain('factory hook Stop');
+      expect(new Map(deps.files)).toEqual(before);
+      expect(deps.warned).toEqual([]);
+    });
+
+    it.each([
+      { origin: 'own' as const, tty: false },
+      { origin: 'received' as const, tty: false },
+      { origin: 'own' as const, tty: true },
+      { origin: 'received' as const, tty: true },
+    ])('refuses the yes flag in a factory session for a value-only change: %j', async (setup) => {
+      const { deps, tmux } = make({ ...setup, hookSettings: oldText, env: { [env.session]: 'demo' } });
+      const before = new Map(deps.files);
+      const result = await startFactory(deps, { yes: true });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      if (!result.ok) expect(result.error.hint).toContain('--yes gives no consent inside a factory session');
+      expect(new Map(deps.files)).toEqual(before);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.warned).toEqual([]);
+      expect(launched(tmux)).toBe(false);
+    });
+
+    it('keeps the value after a no and names the idle effect and the start remedy', async () => {
+      const { deps, tmux } = make({ hookSettings: oldText, tty: true, prompt: () => ok('n') });
+      await succeeded(deps);
+      expect(deps.files.get(SETTINGS_FILE)).toBe(oldText);
+      expect(deps.warned).toHaveLength(1);
+      expect(deps.warned[0]).toContain('the hooks are in place');
+      expect(deps.warned[0]).toContain('idleCompaction value');
+      expect(deps.warned[0]).toContain('session.idle_compaction in factory.yaml');
+      expect(deps.warned[0]).toContain('run "factory start" again and answer yes');
+      expect(deps.warned[0]).not.toContain('does not call the hook');
+      expect(launched(tmux)).toBe(true);
+    });
+
+    it('shows an invalid config error before any settings write or launch', async () => {
+      const { deps, tmux } = make(noFile);
+      const config = deps.files.get(`${HOME}/factory.yaml`) ?? '';
+      deps.seed(`${HOME}/factory.yaml`, config.replace('idle_compaction: false', 'idle_compaction: "false"'));
+      const before = new Map(deps.files);
+      const error = await failed(deps, { yes: true });
+      expect(error.kind).toBe('failure');
+      expect(error.message).toContain('session.idle_compaction');
+      expect(new Map(deps.files)).toEqual(before);
+      expect(deps.files.has(SETTINGS_FILE)).toBe(false);
+      expect(deps.prompts).toEqual([]);
+      expect(launched(tmux)).toBe(false);
     });
   });
 

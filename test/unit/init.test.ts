@@ -3715,6 +3715,14 @@ describe('init: the hook settings of the coordinator on a new root', () => {
 
   const settingsOf = (deps: FakeDeps): Record<string, unknown> => JSON.parse(deps.files.get(FILE) ?? 'null') as Record<string, unknown>;
 
+  it('writes false in the settings and the parsed config of a fresh init', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    const config = await loadConfig(deps, HOME);
+    expect(config).toMatchObject({ ok: true, value: { core: { session: { idle_compaction: false } } } });
+    expect(settingsOf(deps)['idleCompaction']).toBe(false);
+  });
+
   it('writes the own entries with the yes flag, prints the change and the target first, and asks nothing', async () => {
     const { deps } = setup();
     const result = await runInit(deps, options({ yes: true }));
@@ -3758,8 +3766,9 @@ describe('init: the hook settings of the coordinator on a new root', () => {
     expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
     expect(deps.files.has(INDEX)).toBe(true);
     const warnings = result.ok ? result.value.warnings : [];
-    expect(warnings).toContain(declinedHookText(FILE, commands.init));
-    expect(declinedHookText(FILE, commands.init)).toContain('run "factory init" again and answer yes');
+    const declined = { kind: 'declined', file: FILE, onlyIdleCompaction: false } as const;
+    expect(warnings).toContain(declinedHookText(declined, commands.init));
+    expect(declinedHookText(declined, commands.init)).toContain('run "factory init" again and answer yes');
     expect(result.ok && result.value.json['files']).not.toContain('coordinator/.claude/settings.local.json');
   });
 

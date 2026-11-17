@@ -160,6 +160,7 @@ const ownGroup = (event: string): Record<string, unknown> => ({
 const ownSettings = (): Record<string, unknown> => ({
   hooks: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroup(event)]])),
   statusLine: { type: 'command', command: 'factory hook statusline' },
+  idleCompaction: false,
 });
 
 /**

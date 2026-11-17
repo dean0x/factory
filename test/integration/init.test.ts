@@ -77,6 +77,8 @@ describe('factory init (built binary)', () => {
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('repo: "acme/web"');
     expect(config).toContain('path: "web"');
+    expect(config).toContain('idle_compaction: false');
+    expect(JSON.parse(await box.read(join(box.node, 'coordinator', '.claude', 'settings.local.json')))).toMatchObject({ idleCompaction: false });
     expect(existsSync(join(box.node, 'web', '.git'))).toBe(true);
   });
 
@@ -885,6 +887,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(init.stderr).toContain(`This changes the settings of Claude Code in ${join(await realpath(received), 'coordinator', '.claude', 'settings.local.json')}:`);
     expect(init.stderr).toContain('factory hook Stop');
     expect(await box.read(file)).toContain('factory hook statusline');
+    expect(JSON.parse(await box.read(file))).toMatchObject({ idleCompaction: false });
     expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect((await box.git(received, ['status', '--porcelain', '-uall'])).stdout).toBe('');
 

@@ -84,6 +84,7 @@ const sharedSessionSchema = z.strictObject({
     .default(values.agent),
   [keys.session.effort]: z.enum(values.efforts, { error: `must be one of: ${values.efforts.join(', ')}` }),
   [keys.session.model]: z.string().min(1).max(80),
+  [keys.session.idleCompaction]: z.boolean({ error: 'must be true or false' }).default(values.defaultIdleCompaction),
 });
 
 /** What is true for one machine only: the proxy of the sessions, and the status line command of the owner. */
@@ -555,6 +556,7 @@ export const sharedOf = (config: FactoryConfig): SharedConfig => {
         [keys.session.agent]: session.agent,
         [keys.session.effort]: session.effort,
         [keys.session.model]: session.model,
+        [keys.session.idleCompaction]: session.idle_compaction,
       },
     },
     recipe: config.recipe,

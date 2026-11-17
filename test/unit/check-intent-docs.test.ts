@@ -1214,6 +1214,7 @@ describe('docs of the board of each track', () => {
     expect(readme).toContain(`\`factory doctor\` runs ${count} checks.`);
     expect(part(changelog, '## 0.2.0 (not released)', '\n## 0.1.0 (not released)')).toContain(`\`factory doctor\` runs ${count} checks.`);
     expect(readme).toContain(`- \`${checkIds.boardSize}\`:`);
+    expect(readme).toContain('- `idle-compaction`:');
   });
 
   it('changes the CHANGELOG only in the section of 0.2.0 for the local board', () => {
