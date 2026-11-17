@@ -8,7 +8,7 @@ import { recipes } from '../../src/recipes/index.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
 import { guardOf, wiredGuard } from '../../src/guards/build.js';
 import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
-import type { Guard, GuardRow } from '../../src/guards/types.js';
+import type { Guard, GuardRow, RowSite } from '../../src/guards/types.js';
 import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, keys, roleText } from '../../src/names.js';
 import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
 import { blockInput, softwareRecipe } from '../helpers/blocks.js';
@@ -16,9 +16,40 @@ import { oldWordsIn } from '../helpers/old-words.js';
 import { jargonIn } from '../helpers/plain-words.js';
 import { publishRecipe } from '../helpers/publish-recipe.js';
 import { sampleObject } from '../helpers/sample-config.js';
-import { importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
+import * as sourceScan from '../helpers/source-scan.js';
+import { allSourceFiles, importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
 
 const REPO = join(__dirname, '..', '..');
+
+const nodeSite = (symbol: string): RowSite => ({ path: 'src/core/node-deps.ts', symbol });
+
+/** Each port maps to its own body, not to the full adapter. Unknown ports fail the scan. */
+const recordDeps: Readonly<Record<string, RowSite>> = {
+  'fs.stat': nodeSite('nodeFs.stat'),
+  'fs.lstat': nodeSite('nodeFs.lstat'),
+  'fs.statInfo': nodeSite('nodeFs.statInfo'),
+  'fs.lstatInfo': nodeSite('nodeFs.lstatInfo'),
+  'fs.realpath': nodeSite('nodeFs.realpath'),
+  'fs.openChecked': nodeSite('nodeFs.openChecked'),
+  'fs.readTextLimited': nodeSite('nodeFs.readTextLimited'),
+  'fs.writeTextExclusive': nodeSite('nodeFs.writeTextExclusive'),
+  'fs.writeTextAtomic': nodeSite('nodeFs.writeTextAtomic'),
+  'fs.mkdirOne': nodeSite('nodeFs.mkdirOne'),
+  'fs.rename': nodeSite('nodeFs.rename'),
+  'fs.removeFile': nodeSite('nodeFs.removeFile'),
+  isRunning: nodeSite('createNodeDeps.isRunning'),
+  randomHex: nodeSite('createNodeDeps.randomHex'),
+  now: nodeSite('createNodeDeps.now'),
+  sleep: nodeSite('createNodeDeps.sleep'),
+  prompt: nodeSite('createNodeDeps.prompt'),
+  warn: nodeSite('createNodeDeps.warn'),
+  writeStdout: nodeSite('createNodeDeps.writeStdout'),
+};
+
+const recordExceptions = [
+  { path: 'src/core/home.ts', symbol: 'locateHome', reason: 'Reads config files only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Loads config values only, not the guard store.' },
+];
 
 const software = {
   guards: guardsFor(softwareRecipe),
@@ -103,8 +134,17 @@ describe('the guards of a recipe', () => {
     });
   });
 
-  it('starts the guard record path with no sites and no registry row', () => {
-    expect(recordPathSites).toEqual([]);
+  it('keeps the record path separate from every registry row and guard read', () => {
+    expect(recordPathSites.map((site) => site.symbol)).toEqual(expect.arrayContaining([
+      'allOn', 'guardRulesOf', 'requireGuardChannel', 'guardStorePathOf', 'userStatePlaceOf',
+    ]));
+    const sources = Object.fromEntries(allSourceFiles(join(REPO, 'src')).map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
+    const result = sourceScan.traceSitesOf(sources, recordPathSites, { deps: recordDeps, exceptions: recordExceptions, maxDepth: 40 });
+    expect(result.faults).toEqual([]);
+    const allowed = new Set(recordExceptions.map((site) => `${site.path}:${site.symbol}`));
+    const rowSites = new Set(software.rows.flatMap((row) => row.sites.map((site) => `${site.path}:${site.symbol}`)));
+    expect(result.sites.filter((site) => rowSites.has(`${site.path}:${site.symbol}`) && !allowed.has(`${site.path}:${site.symbol}`))).toEqual([]);
+    expect(result.sites.filter((site) => site.symbol === 'guardOn')).toEqual([]);
   });
 
   it('retires no guard id yet', () => {
@@ -871,6 +911,65 @@ describe('the text rows of the registry', () => {
     const all = [...Object.values(TEXT_OF_PATH), ...layer2.map((block) => block.body)].join('\n');
     const missing = Object.entries(FRAGMENTS).flatMap(([id, pieces]) => pieces.filter((piece) => !all.includes(piece)).map((piece) => `${id}: ${piece}`));
     expect(missing).toEqual([]);
+  });
+});
+
+describe('the record path source scan', () => {
+  const start = [{ path: 'src/a.ts', symbol: 'start' }];
+
+  it('follows local helpers, renamed imports, constants and adapter method bodies', () => {
+    const sources = {
+      'src/a.ts': `import { next as step } from './b.js'; export const start = (deps) => step(deps);`,
+      'src/b.ts': 'const helper = (deps) => deps.fs.writeTextAtomic(); export const next = helper;',
+      'src/core/node-deps.ts': 'const FLAGS = 1; const checkedTarget = () => FLAGS; const writeAtomic = () => checkedTarget(); const nodeFs = { writeTextAtomic: () => writeAtomic() };',
+    };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: recordDeps, maxDepth: 10 });
+    expect(result.faults).toEqual([]);
+    expect(result.sites).toEqual(expect.arrayContaining([
+      { path: 'src/b.ts', symbol: 'helper' }, nodeSite('nodeFs.writeTextAtomic'), nodeSite('checkedTarget'), nodeSite('FLAGS'),
+    ]));
+  });
+
+  it('finds the target, pid and open flags through the real adapter methods', () => {
+    const paths = allSourceFiles(join(REPO, 'src'));
+    const sources = Object.fromEntries(paths.map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
+    sources['src/a.ts'] = 'export const start = (deps) => { deps.fs.writeTextAtomic(); deps.isRunning(2); deps.fs.openChecked(); };';
+    const result = sourceScan.traceSitesOf(sources, start, { deps: recordDeps, maxDepth: 40 });
+    expect(result.faults).toEqual([]);
+    expect(result.sites).toEqual(expect.arrayContaining([nodeSite('checkedTarget'), nodeSite('checkedPid'), nodeSite('CHECKED_OPEN_FLAGS')]));
+  });
+
+  it('fails at the depth cap instead of accepting an incomplete scan', () => {
+    const result = sourceScan.traceSitesOf({ 'src/a.ts': 'const next = () => 1; export const start = () => next();' }, start, { deps: {}, maxDepth: 1 });
+    expect(result.faults).toEqual(expect.arrayContaining([expect.stringContaining('depth cap')]));
+  });
+
+  it('fails for an unmapped dependency method and a guard value read', () => {
+    for (const body of ['deps.fs.unknown()', 'deps.guards']) {
+      const result = sourceScan.traceSitesOf({ 'src/a.ts': `export const start = (deps) => ${body};` }, start, { deps: {}, maxDepth: 10 });
+      expect(result.faults.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('refuses dependency aliases that would hide an unmapped method', () => {
+    for (const body of ['const fs = deps.fs; return fs.unknown();', 'const { fs } = deps; return fs.unknown();']) {
+      const result = sourceScan.traceSitesOf({ 'src/a.ts': `export const start = (deps) => { ${body} };` }, start, { deps: {}, maxDepth: 10 });
+      expect(result.faults.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('fails for a missing declaration or relative import', () => {
+    for (const source of ['', `import { next } from './missing.js'; export const start = () => next();`]) {
+      const result = sourceScan.traceSitesOf({ 'src/a.ts': source }, start, { deps: {}, maxDepth: 10 });
+      expect(result.faults.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('stops only at a named exception with a reason', () => {
+    const sources = { 'src/a.ts': 'const mergeConfig = (deps) => deps.fs.unknown(); export const start = (deps) => mergeConfig(deps);' };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    expect(sourceScan.traceSitesOf(sources, start, { deps: {}, exceptions: [exception], maxDepth: 10 }).faults).toEqual([]);
+    expect(sourceScan.traceSitesOf(sources, start, { deps: {}, exceptions: [{ ...exception, reason: '' }], maxDepth: 10 }).faults.length).toBeGreaterThan(0);
   });
 });
 

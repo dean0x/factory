@@ -1,5 +1,6 @@
 import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, normalize } from 'node:path';
+import type { RowSite } from '../../src/guards/types.js';
 import * as ts from 'typescript/unstable/ast';
 import { createVirtualFileSystem } from 'typescript/unstable/fs';
 import { API } from 'typescript/unstable/sync';
@@ -168,8 +169,8 @@ const namesOfFile = (file: ts.SourceFile): readonly string[] =>
     return [];
   });
 
-/** Parse source texts in one compiler session. All input stays in memory, and the session always closes. */
-export const topLevelNamesOf = (sources: readonly string[]): readonly (readonly string[])[] => {
+/** Reuse the installed TypeScript parser. A separate parser would duplicate its syntax and module rules. */
+const withSourceFiles = <T>(sources: readonly string[], read: (files: readonly ts.SourceFile[]) => T): T => {
   const folder = join(process.cwd(), 'source-scan');
   const config = join(folder, 'tsconfig.json');
   const paths = sources.map((_, index) => join(folder, `source-${index}.ts`));
@@ -182,17 +183,180 @@ export const topLevelNamesOf = (sources: readonly string[]): readonly (readonly 
     const snapshot = api.updateSnapshot({ openProjects: [config] });
     try {
       const program = snapshot.getProject(config)?.program;
-      return paths.map((path) => {
+      return read(paths.map((path) => {
         const file = program?.getSourceFile(path);
         if (file === undefined) throw new Error('The source parser did not return a file.');
-        return namesOfFile(file);
-      });
+        return file;
+      }));
     } finally {
       snapshot.dispose();
     }
   } finally {
     api.close();
   }
+};
+
+/** Parse source texts in one compiler session. All input stays in memory, and the session always closes. */
+export const topLevelNamesOf = (sources: readonly string[]): readonly (readonly string[])[] =>
+  withSourceFiles(sources, (files) => files.map(namesOfFile));
+
+export interface SourceDeclaration {
+  readonly site: RowSite;
+  readonly body: string;
+  readonly references: readonly string[];
+  readonly ports: readonly string[];
+  readonly faults: readonly string[];
+}
+
+interface SourceModule {
+  readonly declarations: ReadonlyMap<string, SourceDeclaration>;
+  readonly imports: ReadonlyMap<string, RowSite>;
+}
+
+/** Runtime references only: comments, literal text, type annotations and property names cannot create an edge. */
+const referencesOf = (body: ts.Node, file: ts.SourceFile): Pick<SourceDeclaration, 'references' | 'ports' | 'faults'> => {
+  const references = new Set<string>();
+  const ports = new Set<string>();
+  const faults = new Set<string>();
+  const visit = (node: ts.Node, depth: number): void => {
+    if (depth >= 128) { faults.add('syntax depth cap reached'); return; }
+    if (ts.isTypeNode(node)) return;
+    if (ts.isPropertyAccessExpression(node)) {
+      const text = node.getText(file).replace(/\s|\?/g, '');
+      if (text === 'deps.guards' || text.startsWith('deps.guards.')) faults.add('guard value read');
+      references.add(text);
+      visit(node.expression, depth + 1);
+      return;
+    }
+    if (ts.isCallExpression(node)) {
+      const text = node.expression.getText(file).replace(/\s|\?/g, '');
+      if (text.startsWith('deps.')) ports.add(text.slice('deps.'.length));
+      if (text.startsWith('deps[')) faults.add('computed dependency call');
+    }
+    if (ts.isElementAccessExpression(node)) {
+      const owner = node.expression.getText(file);
+      if (owner === 'deps' || owner === 'deps.fs' || owner.startsWith('deps.guards')) faults.add('computed dependency access');
+    }
+    if (ts.isIdentifier(node)) { references.add(node.text); return; }
+    if (ts.isPropertyAssignment(node)) { visit(node.initializer, depth + 1); return; }
+    if (ts.isVariableDeclaration(node) || ts.isParameterDeclaration(node)) {
+      if (node.initializer !== undefined) {
+        const text = node.initializer.getText(file).trim();
+        if (/^deps(?:\.fs(?:\.[A-Za-z_]\w*)?)?$/.test(text)) faults.add('dependency alias');
+        visit(node.initializer, depth + 1);
+      }
+      return;
+    }
+    node.forEachChild((child) => { visit(child, depth + 1); });
+  };
+  visit(body, 0);
+  return { references: [...references], ports: [...ports], faults: [...faults] };
+};
+
+const objectOf = (node: ts.Node): ts.ObjectLiteralExpression | undefined => {
+  let current = node;
+  for (let depth = 0; depth < 16; depth += 1) {
+    if (ts.isObjectLiteralExpression(current)) return current;
+    if (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) current = current.expression;
+    else if (ts.isArrowFunction(current)) current = current.body;
+    else return undefined;
+  }
+  return undefined;
+};
+
+const moduleOf = (path: string, file: ts.SourceFile): SourceModule => {
+  const declarations = new Map<string, SourceDeclaration>();
+  const imports = new Map<string, RowSite>();
+  const add = (symbol: string, node: ts.Node): void => {
+    declarations.set(symbol, { site: { path, symbol }, body: node.getText(file), ...referencesOf(node, file) });
+    const object = objectOf(node);
+    if (object === undefined) return;
+    for (const property of object.properties) {
+      if (ts.isSpreadAssignment(property) || !ts.isIdentifier(property.name)) continue;
+      const name = `${symbol}.${property.name.text}`;
+      if (ts.isPropertyAssignment(property)) addMember(name, property.initializer);
+      else if (ts.isShorthandPropertyAssignment(property)) addMember(name, property.name);
+      else if (ts.isMethodDeclaration(property) && property.body !== undefined) addMember(name, property.body);
+    }
+  };
+  const addMember = (symbol: string, node: ts.Node): void => {
+    declarations.set(symbol, { site: { path, symbol }, body: node.getText(file), ...referencesOf(node, file) });
+  };
+  for (const statement of file.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const clause = statement.importClause;
+      if (clause === undefined || clause.phaseModifier === ts.SyntaxKind.TypeKeyword) continue;
+      const target = normalize(join(dirname(path), statement.moduleSpecifier.text)).replace(/\.js$/, '.ts');
+      if (!statement.moduleSpecifier.text.startsWith('.')) continue;
+      const bindings = clause.namedBindings;
+      if (bindings !== undefined && ts.isNamedImports(bindings)) {
+        for (const item of bindings.elements) {
+          if (!item.isTypeOnly) imports.set(item.name.text, { path: target, symbol: item.propertyName?.text ?? item.name.text });
+        }
+      } else if (bindings !== undefined && ts.isNamespaceImport(bindings)) imports.set(bindings.name.text, { path: target, symbol: '*' });
+      if (clause.name !== undefined) imports.set(clause.name.text, { path: target, symbol: 'default' });
+    } else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.initializer !== undefined) add(declaration.name.text, declaration.initializer);
+      }
+    } else if (ts.isFunctionDeclaration(statement) && statement.name !== undefined && statement.body !== undefined) {
+      add(statement.name.text, statement);
+    }
+  }
+  return { declarations, imports };
+};
+
+export interface TraceOptions {
+  readonly deps: Readonly<Record<string, RowSite>>;
+  readonly exceptions?: readonly (RowSite & { readonly reason: string })[];
+  readonly maxDepth: number;
+}
+
+export interface SourceTrace {
+  readonly sites: readonly RowSite[];
+  readonly faults: readonly string[];
+}
+
+/** Follow declaration bodies through local names, relative imports and an explicit dependency adapter map. */
+export const traceSitesOf = (sources: Readonly<Record<string, string>>, roots: readonly RowSite[], options: TraceOptions): SourceTrace => {
+  const paths = Object.keys(sources);
+  const modules = withSourceFiles(paths.map((path) => sources[path] ?? ''), (files) =>
+    new Map(files.map((file, index) => [paths[index] ?? '', moduleOf(paths[index] ?? '', file)])));
+  const seen = new Map<string, RowSite>();
+  const faults = new Set<string>();
+  const visit = (site: RowSite, depth: number, ancestors: ReadonlySet<string>): void => {
+    const key = `${site.path}:${site.symbol}`;
+    if (depth >= options.maxDepth) { faults.add(`${key}: depth cap reached`); return; }
+    if (ancestors.has(key)) return;
+    const module = modules.get(site.path);
+    const declaration = module?.declarations.get(site.symbol);
+    if (declaration === undefined || module === undefined) { faults.add(`${key}: declaration not found`); return; }
+    seen.set(key, site);
+    const exception = options.exceptions?.find((item) => item.path === site.path && item.symbol === site.symbol);
+    if (exception !== undefined && exception.reason.trim() !== '') return;
+    const nextAncestors = new Set([...ancestors, key]);
+    for (const fault of declaration.faults) faults.add(`${key}: ${fault}`);
+    const next = new Map<string, RowSite>();
+    for (const port of declaration.ports) {
+      const target = options.deps[port];
+      if (target === undefined) faults.add(`${key}: unmapped dependency method ${port}`);
+      else next.set(`${target.path}:${target.symbol}`, target);
+    }
+    for (const reference of declaration.references) {
+      let target: RowSite | undefined;
+      if (module.declarations.has(reference)) target = { path: site.path, symbol: reference };
+      else {
+        const [name, ...members] = reference.split('.');
+        const imported = module.imports.get(name ?? '');
+        if (imported !== undefined && imported.symbol !== '*') target = imported;
+        else if (imported !== undefined && members.length > 0) target = { path: imported.path, symbol: members.join('.') };
+      }
+      if (target !== undefined) next.set(`${target.path}:${target.symbol}`, target);
+    }
+    for (const target of next.values()) visit(target, depth + 1, nextAncestors);
+  };
+  for (const root of roots) visit(root, 0, new Set());
+  return { sites: [...seen.values()], faults: [...faults] };
 };
 
 /** The module path of every import, re-export and dynamic import of a source text. */

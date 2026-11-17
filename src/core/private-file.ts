@@ -17,29 +17,33 @@ const absoluteEnv = (environment: Environment, name: string): string | undefined
   return value !== undefined && value !== '' && isAbsolute(value) ? resolve(value) : undefined;
 };
 
-/**
- * The place of a per-user file: below the state home when that variable holds an absolute path, else below `.local/state`
- * of the user home. It is null when neither variable names a folder. A path inside the folder of Claude Code is refused.
- * The two paths are compared as they are written, and no call of the file system is made: nothing asks about the folder
- * of Claude Code, and a link into it is not detected. On macOS the comparison ignores the case of letters.
- */
-export const userStatePathOf = async (deps: Deps, fileName: string): Promise<CliResult<string | null>> => {
+export interface StateFilePlace {
+  readonly path: string | null;
+  readonly inside: boolean;
+}
+
+/** The per-user path and its Claude Code folder flag, without file access. The paths use the platform case rule. */
+export const userStatePlaceOf = (deps: Deps, fileName: string): StateFilePlace => {
   const userHome = absoluteEnv(deps.env, env.userHome);
   const stateHome =
     absoluteEnv(deps.env, env.stateHome) ??
     (userHome === undefined ? undefined : join(userHome, ...privateFile.defaultStateHome));
-  if (stateHome === undefined) return ok(null);
-
+  if (stateHome === undefined) return { path: null, inside: false };
   const path = join(stateHome, program, fileName);
-  if (userHome === undefined) return ok(path);
-  const claudeDir = join(userHome, dirs.claude);
-  if (isWrittenInside(deps, claudeDir, path)) {
+  return { path, inside: userHome !== undefined && isWrittenInside(deps, join(userHome, dirs.claude), path) };
+};
+
+/** The per-user path, with a refusal when it lies inside the Claude Code folder. No file access occurs. */
+export const userStatePathOf = async (deps: Deps, fileName: string): Promise<CliResult<string | null>> => {
+  const place = userStatePlaceOf(deps, fileName);
+  if (place.inside) {
+    const claudeDir = join(deps.env[env.userHome] ?? '', dirs.claude);
     return safetyRefusal(
-      `the file would be ${path}, inside ${claudeDir}`,
+      `the file would be ${place.path}, inside ${claudeDir}`,
       `Claude Code owns that folder. Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,
     );
   }
-  return ok(path);
+  return ok(place.path);
 };
 
 /**

@@ -170,7 +170,14 @@ const coreGuards: readonly GuardDefinition[] = [
 ];
 
 /** Sites of the guard record path, separate from the rows of the registry. */
-export const recordPathSites: readonly RowSite[] = [];
+export const recordPathSites: readonly RowSite[] = [
+  { path: 'src/guards/effective.ts', symbol: 'allOn' },
+  { path: 'src/guards/effective.ts', symbol: 'guardRulesOf' },
+  { path: 'src/core/guard-records.ts', symbol: 'requireGuardChannel' },
+  { path: 'src/core/guard-records.ts', symbol: 'guardStorePathOf' },
+  { path: 'src/core/private-file.ts', symbol: 'userStatePlaceOf' },
+  { path: 'src/core/private-file.ts', symbol: 'absoluteEnv' },
+];
 
 /** The guard ids that older nodes may still hold in a config and that no guard has now. */
 export const retiredGuardIds: readonly string[] = [];
