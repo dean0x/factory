@@ -94,6 +94,7 @@ interface Setup {
   readonly hookSettings?: string;
   /** How the factory folder came to this machine. Default: no origin, which counts as received. */
   readonly origin?: 'own' | 'received';
+  readonly links?: Readonly<Record<string, string>>;
   /** A terminal window with this answer to the question about the hook settings. Default: no terminal window. */
   readonly answer?: string;
   /** The mark of the active machine: of this machine, or of another one. Default: no mark. */
@@ -227,6 +228,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
       return handler(call);
     },
     fetch: setup.fetch ?? answers,
+    ...(setup.links === undefined ? {} : { links: setup.links }),
     ...(setup.answer === undefined ? {} : { stdinIsTTY: true, stdoutIsTTY: true, prompt: () => ok(setup.answer ?? '') }),
   });
   const stuckProcess = (): number | undefined => {
@@ -376,6 +378,36 @@ const expectNothingStopped = (made: Made): void => {
   expect(countOf(made, 'kill-pane')).toBe(0);
   expect(countOf(made, 'kill-session')).toBe(0);
 };
+
+describe.each(['restart', 'reboot'] as const)('%s: linked folders', (command) => {
+  describe.each(['own', 'received'] as const)('%s root', (origin) => {
+    it('exits 4 for a linked work copy, shows the current remedy, and starts no pane', async () => {
+      const made = await make({ origin, links: { [`${COPIES}/alpha`]: '/elsewhere/folder' } });
+      made.deps.seedDir('/elsewhere/folder');
+      const error = await failed(command === 'restart' ? restart(made, 'alpha') : reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toBe('work-copies/web/alpha is a link, so factory does not use it');
+      expect(error.hint).toBe('Replace the link with a plain file inside the factory folder, then run "factory doctor".');
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+      expect(countOf(made, 'new-window')).toBe(0);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+
+    it('exits 4 for a linked .claude folder, names a plain folder, and starts no pane', async () => {
+      const made = await make({ origin, links: { [`${COPIES}/alpha/.claude`]: '/elsewhere/folder' } });
+      made.deps.seedDir('/elsewhere/folder');
+      const error = await failed(command === 'restart' ? restart(made, 'alpha') : reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toBe('work-copies/web/alpha/.claude is a link, so factory does not use it');
+      expect(error.hint).toBe('Make work-copies/web/alpha/.claude a plain folder, or remove it, then run "factory doctor".');
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+      expect(countOf(made, 'new-window')).toBe(0);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+  });
+});
 
 describe('shutdown', () => {
   it('says that nothing runs and exits 0 when the tmux session does not run', async () => {
@@ -1225,6 +1257,89 @@ describe('reboot', () => {
       const made = await make({ hookSettings: '{}\n' });
       expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(2);
       expect(made.deps.files.get(SETTINGS_FILE)).toBe('{}\n');
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+  });
+
+  describe.each(['own', 'received'] as const)('idle compaction in an %s root', (origin) => {
+    const oldSettings = `${JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine })}\n`;
+
+    it('starts all sessions with no settings write and one remedy line when no terminal can ask', async () => {
+      const made = await make({
+        origin,
+        hookSettings: oldSettings,
+        workers: { alpha: { settings: oldSettings }, beta: { settings: oldSettings }, gamma: { settings: oldSettings } },
+      });
+      const output = await succeeded(reboot(made));
+      expect(output.json).toMatchObject({ started: true, workers: { resumed: [...IDS], skipped: [], failed: [] } });
+      expect(countOf(made, 'new-session')).toBe(1);
+      expect(resumesOf(made)).toEqual(SESSION);
+      for (const file of [SETTINGS_FILE, ...IDS.map((id) => `${COPIES}/${id}/.claude/settings.local.json`)]) {
+        expect(made.deps.files.get(file)).toBe(oldSettings);
+        expect(made.events).not.toContain(`write ${file}`);
+      }
+      expect(made.deps.prompts).toEqual([]);
+      expect(made.deps.warned).toEqual([
+        `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
+          'Run "factory upgrade" in a terminal window, or add --yes. The session starts as before.',
+      ]);
+    });
+
+    it('reboots with a session marker and no terminal, keeps settings and names a usable remedy', async () => {
+      const made = await make({ origin, hookSettings: oldSettings });
+      const marked = { ...made, deps: { ...made.deps, env: { ...made.deps.env, [env.session]: NODE } } };
+      const output = await succeeded(reboot(marked));
+      expect(output.json).toMatchObject({ started: true, workers: { resumed: [...IDS], skipped: [], failed: [] } });
+      expect(countOf(made, 'new-session')).toBe(1);
+      expect(made.deps.files.get(SETTINGS_FILE)).toBe(oldSettings);
+      expect(made.events).not.toContain(`write ${SETTINGS_FILE}`);
+      expect(made.deps.prompts).toEqual([]);
+      expect(made.deps.warned).toEqual([
+        `The value of session.idle_compaction is not written to ${SETTINGS_FILE}, because no terminal window can ask. ` +
+          'Run "factory upgrade" outside the factory session, or in a terminal window and answer the question. The session starts as before.',
+      ]);
+      expect(made.deps.warned.join('\n')).not.toContain('--yes');
+    });
+
+    it.each([false, true])('writes the config value %s after consent and before any session stops', async (idle) => {
+      const base = sampleConfig();
+      const config = { ...base, core: { ...base.core, session: { ...base.core.session, idle_compaction: idle } } };
+      const made = await make({ origin, config, hookSettings: oldSettings, answer: 'y' });
+      const output = await succeeded(reboot(made));
+      expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? 'null')).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+      expect(made.deps.prompts).toEqual([
+        `This changes the settings of Claude Code in ${SETTINGS_FILE}:\n` +
+          `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml)\nWrite this change? [y/N] `,
+      ]);
+      const writeAt = made.events.indexOf(`write ${SETTINGS_FILE}`);
+      expect(writeAt).toBeGreaterThanOrEqual(0);
+      expect(writeAt).toBeLessThan(made.events.indexOf(`terminate ${PID.alpha}`));
+      expect(output.json).toMatchObject({ started: true, workers: { resumed: [...IDS], skipped: [], failed: [] } });
+    });
+
+    it.each([
+      ['hook', '{}\n'],
+      ['status line', JSON.stringify({ hooks: ownSettingsEntries.hooks })],
+    ])('refuses a %s change without a terminal before any write or stop', async (_name, hookSettings) => {
+      const made = await make({ origin, hookSettings });
+      const before = new Map(made.deps.files);
+      expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(2);
+      expect(made.deps.files).toEqual(before);
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+      expect(made.deps.warned.join('\n')).not.toContain('factory upgrade --yes');
+    });
+
+    it('refuses a non-boolean config value before any write or stop', async () => {
+      const made = await make({ origin, hookSettings: oldSettings });
+      const file = `${HOME}/factory.yaml`;
+      made.deps.seed(file, (made.deps.files.get(file) ?? '').replace('idle_compaction: false', 'idle_compaction: "false"'));
+      const before = new Map(made.deps.files);
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('session.idle_compaction');
+      expect(made.deps.files).toEqual(before);
       expectNothingStopped(made);
       expect(countOf(made, 'new-session')).toBe(0);
     });

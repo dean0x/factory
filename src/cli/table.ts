@@ -5,6 +5,7 @@ import { runBoard } from '../commands/board.js';
 import { runDecide } from '../commands/decide.js';
 import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
+import { runGuardList } from '../commands/guard-list.js';
 import { runHook, startEvent } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
 import { runItem } from '../commands/item.js';
@@ -37,6 +38,8 @@ import {
   flags,
   flagShorts,
   flagText,
+  guardCommands,
+  guardListWords,
   helpTopics,
   hookNames,
   itemCommands,
@@ -375,6 +378,24 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
     },
     run: (given, deps) =>
       runNode(deps, { home: given.string(flags.home), words: given.positionals(), file: given.string(flags.file) }, registry),
+  },
+  {
+    name: commands.guard,
+    summary: `${guardListWords.summary} ${guardListWords.scopeHelp}`,
+    usage: `${commandText(commandLines.guardList)} [${flagText(flags.all)}] [${flagText(flags.family)} NAME] [${flagText(flags.home)} DIR]`,
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.all]: { type: 'boolean', description: guardListWords.allHelp },
+      [flags.family]: { type: 'string', placeholder: 'NAME', description: guardListWords.familyHelp },
+    },
+    run: (given, deps) => {
+      const words = given.positionals();
+      if (words.length !== 1 || words[0] !== guardCommands.list) {
+        return Promise.resolve(usageError(guardListWords.argumentsError));
+      }
+      return runGuardList(deps, { home: given.string(flags.home), all: given.bool(flags.all), family: given.string(flags.family) }, registry);
+    },
   },
   {
     name: commands.worker,

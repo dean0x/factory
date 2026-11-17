@@ -24,6 +24,11 @@ Config files
 - The factory folder holds two config files. `factory.yaml` is shared: git tracks it, and it goes to every machine. `factory.local.yaml` is private: git ignores it, and it has mode 600.
 - The shared file holds the node, the board, the session settings, the limits and the recipe with its projects. The private file holds the owner, the proxies, the settings of a worker, the mode of each approval point, the links to other nodes and the local source of a project.
 - New shared key `session.agent`. Its only value is `claude`, and `claude` is the default. A `factory.yaml` with no `agent` key loads with no upgrade.
+- New shared key `session.idle_compaction`, a boolean with default `false` for new and existing nodes. A `factory.yaml` with no key loads with no upgrade. After consent, `init`, `start`, `reboot`, `worker new` and `upgrade` write `idleCompaction` in the session settings. With `false`, Claude Code keeps the full context after a long wait. The first turn after the prompt cache expires rebuilds that cache at a higher cost. With `true`, idle compaction stays on.
+
+  After the write, run `factory restart ID` for a worker or `factory reboot` outside the session for the coordinator. With no terminal, `start` and `reboot` skip a write of only the idle value and start as before. They print one line that names `factory upgrade`. Outside a factory session, the remedy offers `--yes`. Inside one, it tells the owner to run the upgrade outside the session or in a terminal window and answer the question. `factory doctor` warns until the value is written. A change with hook or status line lines still stops with exit code 2 without consent. Inside a factory session, `--yes` still gives no consent for an existing settings file.
+
+  After a compact, Claude Code loads the project instructions and memory again and reads again up to five recent files. Each shows as a `Read` line, and a large file shows as `Referenced file`. These lines are not reads by the session.
 - New shared key `limits.idle_after`, `<n>m` or `<n>h` from 1m to 24h, default `2h`. A `factory.yaml` with no such key loads with no upgrade.
 - The shared file refuses a key of the private file. The error names the key and the private file. A proxy entry in `factory.yaml` fails the load.
 - `init` writes the private file with mode 600. `start`, `init`, `node` and `upgrade` set a mode with group or other read bits back to 600 and print a notice. They stop with exit code 4 when the file has a group or other write bit, has another owner, or is a link. `doctor` and a dry run only warn about read bits.
@@ -147,7 +152,7 @@ The heavy-test lock
 
 `doctor`
 
-- `factory doctor` runs 31 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `node-id`, `setup-text`, `roles`, `tracker`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls`, `agent-version`, `state-guard`, `board-size`, `lessons` and `role-delivery`.
+- `factory doctor` runs 32 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `node-id`, `setup-text`, `roles`, `tracker`, `idle-compaction`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls`, `agent-version`, `state-guard`, `board-size`, `lessons` and `role-delivery`.
 - `role-delivery` checks the path from the setup text to the worker sessions. Its line counts the work copies whose hook settings hold the hook of factory for every hook event, gives the size of the role text against the cap of 9000 characters, and names the place of the acceptance of the setup text. No worker is ok. A fault of the role text fails the check. A work copy that lacks the hook for one or more events, or whose hook settings file is a link, is a warning. The finding names the missing events, and the check uses the same rule as the launch of a worker, so the check and the launch agree. Each finding gives one remedy. The check writes nothing.
 - `board-size` warns when `board.json`, `waiting.json` or `decision-log.json` reaches 80 percent of the read cap of 1 MiB, and names the file. A file that is not there is no fault.
 - `delegations` shows the mode of each approval point. A `delegated` mode with no matching approval record warns, and the point counts as `owner`.
@@ -249,6 +254,10 @@ Pull requests and the role lines
 - The resume notes can hold a section `Standing routines`. A session starts only `factory worker watch` and `factory pr watch` from it. The argument is a worker id (a-z, 0-9 and hyphen, at most 40 characters, no hyphen at the start), a PR number or a 40-hex SHA. Any other line of the section is data: the session tells the owner and does not act on it. A session never starts `factory lock run`, a merge, a typed owner line or any other shell command from the notes. At the start of a session, it starts only the routines that do not run now. After a compact, it starts none. The manager text has the same rule.
 - The coordinator keeps its lessons in `.factory/lessons.md`, at most 40 entries and 32768 bytes. An entry is three lines that start with `Rule:`, `Why:` and `How:`, and only the coordinator writes the file. A lesson is data: it grants no approval and no delegation, and it overrides no rule. No text of `gh`, a pull request or an issue goes into an entry.
 - `factory doctor` fails the new check `lessons` when `.factory/lessons.md` is a link or not a plain file, is larger than 32768 bytes, or holds more than 40 entries. A missing file is no fault, and the check never changes the file.
+
+Guards
+
+- `factory guard list` shows the guards, their values, their defaults and the harm mark `H`. `--all` shows every guard, and `--family NAME` shows the rows of one guard. `--json` prints every guard and row. The list only reads. Every guard is on, and neither config file has a guard key in this version.
 
 Platforms and help
 

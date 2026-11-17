@@ -119,7 +119,8 @@ export type FileFault = 'link' | 'wrong-kind' | 'size';
 /** What `readCheckedFile` finds: the text, a file that can not be used with the reason and the cause, or no file. */
 export type CheckedFileRead =
   | { readonly state: 'text'; readonly text: string }
-  | { readonly state: 'invalid'; readonly reason: string; readonly cause: FileFault }
+  | { readonly state: 'invalid'; readonly reason: string; readonly cause: 'link'; readonly part: 'file' | 'folder' }
+  | { readonly state: 'invalid'; readonly reason: string; readonly cause: Exclude<FileFault, 'link'> }
   | { readonly state: 'absent' };
 
 /**
@@ -156,7 +157,7 @@ export const readCheckedFile = async (
     const found = await deps.fs.lstat(path);
     if (!found.ok) return found;
     if (found.value === null) return ok({ state: 'absent' });
-    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link`, cause: 'link' });
+    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link`, cause: 'link', part: kind === 'dir' ? 'folder' : 'file' });
     if (found.value !== kind) {
       return ok({ state: 'invalid', reason: `${what} is not a ${kind === 'dir' ? 'folder' : 'file'}`, cause: 'wrong-kind' });
     }

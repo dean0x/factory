@@ -18,22 +18,31 @@ export interface HookStep {
   readonly warnings: readonly string[];
 }
 
-const requestOf = (home: string, yes: boolean): HookConsentRequest => ({
+const requestOf = (home: string, yes: boolean, idleCompaction: boolean): HookConsentRequest => ({
   folder: layoutOf(home).coordinatorDir,
   session: hookSessions.coordinator,
   yes,
   command: commands.init,
+  idleCompaction,
 });
 
-/** Stop before the first write when the person can not give the consent later: no terminal window and no yes that counts. */
-export const checkHookConsent = (deps: Deps, home: string, yes: boolean): Promise<CliResult<void>> =>
-  requireHookConsent(deps, requestOf(home, yes));
+/**
+ * Stop before the first write when the person can not give the consent later: no terminal window and no yes that counts.
+ * `idleCompaction` is the value of `session.idle_compaction`, the same value that the write gets.
+ */
+export const checkHookConsent = (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<void>> =>
+  requireHookConsent(deps, requestOf(home, yes, idleCompaction));
 
 /** Ask for the hook settings and write them, after the last write of the command. A no goes on with a notice. */
-export const writeHookSettings = async (deps: Deps, home: string, yes: boolean): Promise<CliResult<HookStep>> => {
-  const done = await ensureHookSettings(deps, { ...requestOf(home, yes), dryRun: false });
+export const writeHookSettings = async (
+  deps: Deps,
+  home: string,
+  yes: boolean,
+  idleCompaction: boolean,
+): Promise<CliResult<HookStep>> => {
+  const done = await ensureHookSettings(deps, { ...requestOf(home, yes, idleCompaction), dryRun: false });
   if (!done.ok) return done;
   if (done.value.kind === 'written') return ok({ written: [relative(home, done.value.file)], warnings: [] });
-  if (done.value.kind === 'declined') return ok({ written: [], warnings: [declinedHookText(done.value.file, commands.init)] });
+  if (done.value.kind === 'declined') return ok({ written: [], warnings: [declinedHookText(done.value, commands.init)] });
   return ok({ written: [], warnings: [] });
 };

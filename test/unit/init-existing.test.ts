@@ -1603,6 +1603,36 @@ describe('init: the warning for another entry with the same node id', () => {
 describe('init: the hook settings of a registered root', () => {
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(HOOK_FILE) ?? 'null');
 
+  it.each([false, true])('uses the config value %s in the pre-check and the write', async (idle) => {
+    const { deps } = existing();
+    const shared = deps.files.get(`${ROOT}/factory.yaml`) ?? '';
+    deps.seed(`${ROOT}/factory.yaml`, shared.replace('idle_compaction: false', `idle_compaction: ${idle}`));
+    deps.seed(HOOK_FILE, JSON.stringify({ ...ownSettingsEntries, idleCompaction: !idle }));
+    const before = snapshot(deps);
+    const refused = await runInit(deps, options());
+    expect(refused).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(refused)).toContain(
+      `idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml), and replace the value ${!idle}`,
+    );
+    expect(snapshot(deps)).toBe(before);
+    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+    expect(settingsOf(deps)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it('rejects an idle value that is not a boolean before any write', async () => {
+    const { deps } = existing({ hookInPlace: false });
+    const shared = deps.files.get(`${ROOT}/factory.yaml`) ?? '';
+    deps.seed(`${ROOT}/factory.yaml`, shared.replace('idle_compaction: false', 'idle_compaction: "false"'));
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain('factory.yaml already exists');
+    expect(messageOf(result)).toContain('Run "factory doctor"');
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.files.has(HOOK_FILE)).toBe(false);
+  });
+
   it('asks nothing and writes nothing when the entries are in place, also with no terminal window and no yes flag', async () => {
     const { deps } = existing();
     const before = rootFiles(deps);
