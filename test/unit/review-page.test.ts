@@ -10,10 +10,9 @@ import { HOME } from '../helpers/guard-fixture.js';
 import { captureSink } from '../helpers/sink.js';
 
 /**
- * The exit check of the board data for an outside review page, item card half. The test sets the board up through the command line, or
- * with a board file of an older version. Then it reads one thing only: the text of `board.json`, with `JSON.parse`. From that text it
- * builds the card of an item: the epic, a strip of the stages with the current stage, and the docs that pass the name check. The test
- * imports nothing from the board source, and the card code is in this file and not in `src/`, because a view lives outside the core.
+ * The exit check of the board data for an outside review page. The test uses the command line or files of an older version.
+ * It reads only the texts of `board.json` and `waiting.json`, with `JSON.parse`, to build plain item and decision cards.
+ * It imports nothing from the board source. The card code stays in this test, because a view lives outside the core.
  */
 
 const TITLE = 'Build the login page';
@@ -125,6 +124,89 @@ describe('the card of an item, from the text of board.json alone', () => {
     const repo = await boardNode({ board: boardText([itemRecord('B-1', { title: TITLE, docs: [DOC, ...failing] })]) });
     await mustRun(repo, ['item', 'move', 'B-1', '--stage', 'review']);
     expect(cardOf(itemsOf(repo)[0] as StoredItem).docs).toEqual([DOC]);
+  });
+});
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const recordsOf = (value: unknown): readonly Record<string, unknown>[] =>
+  Array.isArray(value) ? value.filter(isRecord) : [];
+
+const textOf = (value: unknown): string | null => typeof value === 'string' ? value : null;
+
+/** The requests come from the file text, not from command output or a board reader. */
+const requestsOf = (repo: BoardRepo): readonly Record<string, unknown>[] => {
+  const waiting: unknown = JSON.parse(repo.textOf(files.waiting) ?? '');
+  return isRecord(waiting) ? recordsOf(waiting['items']) : [];
+};
+
+const decisionCardOf = (request: Record<string, unknown>) => ({
+  title: textOf(request['title']),
+  question: textOf(request['question']),
+  kind: ['decision', 'command', 'information'].find((kind) => kind === request['kind']) ?? 'decision',
+  fields: recordsOf(request['fields']).map((field) => ({ label: textOf(field['label']), text: textOf(field['text']) })),
+  docs: Array.isArray(request['docs'])
+    ? request['docs'].filter((path: unknown): path is string => typeof path === 'string' && passesNameCheck(path))
+    : [],
+  options: recordsOf(request['options']).map((option) => ({
+    key: textOf(option['key']),
+    text: textOf(option['text']),
+    recommended: option['rec'] === true,
+    askerReason: textOf(option['why']),
+  })),
+});
+
+const OLD_REQUEST = {
+  id: 'D-1', title: 'Pick a plan', question: 'Which plan do we use?',
+  options: [{ key: 'a', text: 'Plan A', rec: true }, { key: 'b', text: 'Plan B' }],
+};
+
+const firstDecisionCard = (repo: BoardRepo) => decisionCardOf(requestsOf(repo)[0] ?? {});
+
+const factoryWithRequest = async (kind: string): Promise<BoardRepo> => {
+  const repo = await boardNode();
+  repo.deps.seed(join(HOME, DOC), '# Plan\n');
+  await mustRun(repo, [
+    'request', 'add', '--title', OLD_REQUEST.title, '--question', OLD_REQUEST.question,
+    '--option', 'a=Plan A', '--option', 'b=Plan B', '--recommend', 'a', '--kind', kind,
+    '--field', 'Scope=Web=API', '--field', 'Cost=Small', '--why', 'a=Fits=now', '--doc', DOC,
+  ]);
+  return repo;
+};
+
+describe('the card of a decision, from the text of waiting.json alone', () => {
+  it.each(['decision', 'command', 'information'])('shows kind %s, ordered fields, docs and the reasons of the asker', async (kind) => {
+    const repo = await factoryWithRequest(kind);
+    expect(firstDecisionCard(repo)).toEqual({
+      title: OLD_REQUEST.title, question: OLD_REQUEST.question, kind,
+      fields: [{ label: 'Scope', text: 'Web=API' }, { label: 'Cost', text: 'Small' }],
+      docs: [DOC],
+      options: [
+        { key: 'a', text: 'Plan A', recommended: true, askerReason: 'Fits=now' },
+        { key: 'b', text: 'Plan B', recommended: false, askerReason: null },
+      ],
+    });
+  });
+
+  it.each([
+    OLD_REQUEST,
+    { ...OLD_REQUEST, opened_at: '2030-01-02T03:04:05.678Z', group: 'later' },
+  ])('gives the same card for an older request with no context keys: %j', async (request) => {
+    const repo = await boardNode({ waiting: JSON.stringify({ intro: '', groups: [], items: [request] }) });
+    expect(firstDecisionCard(repo)).toEqual({
+      title: OLD_REQUEST.title, question: OLD_REQUEST.question, kind: 'decision', fields: [], docs: [],
+      options: [
+        { key: 'a', text: 'Plan A', recommended: true, askerReason: null },
+        { key: 'b', text: 'Plan B', recommended: false, askerReason: null },
+      ],
+    });
+  });
+
+  it('leaves a doc path out when the path fails the name check, without a file read', async () => {
+    const request = { ...OLD_REQUEST, docs: [DOC, '../outside.md', 'Factory.Local.YAML', 'docs/.draft.md'] };
+    const repo = await boardNode({ waiting: JSON.stringify({ intro: '', groups: [], items: [request] }) });
+    expect(firstDecisionCard(repo).docs).toEqual([DOC]);
   });
 });
 
