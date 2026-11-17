@@ -22,6 +22,22 @@ You need:
 - git 2.26 or newer. With an older git, `factory start` exits with code 1 and starts no session, `factory upgrade` and `factory init` exit with code 1 when they must change `.factory/`, and `factory doctor` fails the check `tools`.
 - macOS or Linux. On native Windows, every command exits with code 1 and says to use WSL.
 
+### Install the board mod
+
+The optional Claude Code mod shows `factory board` beside the chat. Install factory first, as above.
+The mod needs a factory version that has the `board` command and the early-access mod API of Claude Code 2.1.326.
+
+At the prompt of a Claude Code terminal session, run:
+
+```text
+/plugin install factory-board --marketplace dean0x/factory
+```
+
+Accept the marketplace with `y`, then select the install scope. Set the `command` option if factory is not on the PATH.
+Run `/board` to open the pane. By default, the mod opens no pane until you ask.
+The mod ships from this repo, not in the npm package.
+See [the mod guide](plugins/factory-board/README.md) for the options and update steps.
+
 ## Commands
 
 | Command | What it does |
