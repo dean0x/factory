@@ -1290,7 +1290,7 @@ Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and i
 
 In this version, every guard is `on`, on new nodes and existing nodes. No guard key exists in either config file. Related config keys already exist and keep their meaning. A related key is not a guard key.
 
-**The list.** `factory guard list` reads the node config and the registry facts. It changes no file and inspects no work copy or child node. It keeps the normal folder registration and config access checks. The list only reads; it cannot change a guard.
+**The list.** `factory guard list` reads the node config and the registry facts. It changes no file and checks no work copy or child node. It keeps the normal folder registration and config access checks. The list only reads; it cannot change a guard.
 
 The default table has the columns `GUARD`, `VALUE`, `DEFAULT`, `H` and `SET IN`. `DEFAULT` is the value for a new node. `SET IN` names the place of the current value. In this version, `VALUE` and `DEFAULT` are `on`, and `SET IN` is `no key`.
 
