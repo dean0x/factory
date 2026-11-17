@@ -94,13 +94,15 @@ describe('the rows of the registry', () => {
   });
 
   it('cites for each site a source file and a symbol that the file declares at the top level', () => {
+    const paths = [...new Set(software.rows.flatMap((row) => row.sites.map((site) => site.path)))];
+    const present = paths.filter((path) => existsSync(join(REPO, path)));
+    const names = topLevelNamesOf(present.map((path) => readFileSync(join(REPO, path), 'utf8')));
+    const namesByPath = new Map(present.map((path, index) => [path, names[index] ?? []]));
     const missing = software.rows.flatMap((row) =>
       row.sites.flatMap((site) => {
-        const path = join(REPO, site.path);
-        if (!existsSync(path)) return [`${row.id}: no file ${site.path}`];
-        return topLevelNamesOf(readFileSync(path, 'utf8')).includes(site.symbol)
-          ? []
-          : [`${row.id}: ${site.path} declares no ${site.symbol}`];
+        const declared = namesByPath.get(site.path);
+        if (declared === undefined) return [`${row.id}: no file ${site.path}`];
+        return declared.includes(site.symbol) ? [] : [`${row.id}: ${site.path} declares no ${site.symbol}`];
       }),
     );
     expect(missing).toEqual([]);
@@ -807,18 +809,40 @@ describe('the text rows of the registry', () => {
 });
 
 describe('the top-level names of a source text', () => {
-  it('finds a declaration that starts in the first column, and leaves an indented one and a comment out', () => {
+  it('finds top-level declarations with any indentation and leaves nested declarations and comments out', () => {
     const source = [
       '// const hidden = 1;',
-      'export const first = 1;',
-      'const second = (): number => {',
-      '  const inner = 2;',
+      'export const first = 1, extra = 2;',
+      '  const second = (): number => {',
+      'const inner = 2;',
       '  return inner;',
       '};',
       'export async function third() {}',
       'export interface Fourth {}',
       'type Fifth = string;',
+      'export class Sixth {}',
+      'enum Seventh { value }',
+      '{',
+      'const inBlock = 3;',
+      '}',
     ].join('\n');
-    expect(topLevelNamesOf(source)).toEqual(['first', 'second', 'third', 'Fourth', 'Fifth']);
+    expect(topLevelNamesOf([source])).toEqual([['first', 'extra', 'second', 'third', 'Fourth', 'Fifth', 'Sixth', 'Seventh']]);
+  });
+
+  it('does not count declarations in template text, template expressions or block comments', () => {
+    const source = [
+      'const text = `',
+      'const inText = 1;',
+      '${(() => {',
+      'const inExpression = 2;',
+      'return inExpression;',
+      '})()}',
+      '`;',
+      '/*',
+      'function inComment() {}',
+      '*/',
+      'const kept = 3;',
+    ].join('\n');
+    expect(topLevelNamesOf([source])).toEqual([['text', 'kept']]);
   });
 });

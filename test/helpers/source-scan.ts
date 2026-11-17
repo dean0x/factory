@@ -1,5 +1,8 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import * as ts from 'typescript/unstable/ast';
+import { createVirtualFileSystem } from 'typescript/unstable/fs';
+import { API } from 'typescript/unstable/sync';
 
 /** Every `.ts` file under a folder. */
 export const allSourceFiles = (dir: string): string[] =>
@@ -148,16 +151,49 @@ export const constantsOf = (source: string): readonly Constant[] => {
   return [...declared, ...defaults];
 };
 
-/**
- * The names that a source text declares at the top level: a function, a constant, a class, an interface, a type or an enum
- * that starts in the first column. A name inside a function or a block is left out.
- */
-export const topLevelNamesOf = (source: string): readonly string[] =>
-  [
-    ...stripComments(source).matchAll(
-      /^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function\*?|const|let|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/gm,
-    ),
-  ].map((match) => match[1] ?? '');
+/** The named declarations of a source file, without nested code, comments or literal text. */
+const namesOfFile = (file: ts.SourceFile): readonly string[] =>
+  file.statements.flatMap((statement) => {
+    if (ts.isVariableStatement(statement)) {
+      return statement.declarationList.declarations.flatMap((declaration) =>
+        ts.isIdentifier(declaration.name) ? [declaration.name.text] : [],
+      );
+    }
+    if (
+      ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isEnumDeclaration(statement)
+    ) {
+      return statement.name === undefined ? [] : [statement.name.text];
+    }
+    return [];
+  });
+
+/** Parse source texts in one compiler session. All input stays in memory, and the session always closes. */
+export const topLevelNamesOf = (sources: readonly string[]): readonly (readonly string[])[] => {
+  const folder = join(process.cwd(), 'source-scan');
+  const config = join(folder, 'tsconfig.json');
+  const paths = sources.map((_, index) => join(folder, `source-${index}.ts`));
+  const virtualFiles = Object.fromEntries(paths.map((path, index) => [path, sources[index] ?? '']));
+  const api = new API({ fs: createVirtualFileSystem({
+    ...virtualFiles,
+    [config]: JSON.stringify({ files: paths, compilerOptions: { noLib: true, noResolve: true, types: [] } }),
+  }) });
+  try {
+    const snapshot = api.updateSnapshot({ openProjects: [config] });
+    try {
+      const program = snapshot.getProject(config)?.program;
+      return paths.map((path) => {
+        const file = program?.getSourceFile(path);
+        if (file === undefined) throw new Error('The source parser did not return a file.');
+        return namesOfFile(file);
+      });
+    } finally {
+      snapshot.dispose();
+    }
+  } finally {
+    api.close();
+  }
+};
 
 /** The module path of every import, re-export and dynamic import of a source text. */
 export const importPathsOf = (source: string): string[] =>
