@@ -93,6 +93,8 @@ export const publishRecipe: RecipeEntry = {
   initProjectKeys: [],
   roles: publishRoles,
   board: publishBoard,
+  guards: [],
+  guardRows: [],
 };
 
 /** The registry of a package that holds the publishing recipe only. */

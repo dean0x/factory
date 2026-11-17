@@ -63,6 +63,7 @@ export const commands = {
   upgrade: 'upgrade',
   hook: 'hook',
   state: 'state',
+  guard: 'guard',
   version: 'version',
   help: 'help',
 } as const;
@@ -91,6 +92,7 @@ export const terms = [
   'session reset',
   'queue',
   'check',
+  'guard',
   'track',
   'stage',
 ] as const;
@@ -156,6 +158,9 @@ export const selfCommands = { reset: 'reset' } as const;
 /** The subcommands of `state`. */
 export const stateCommands = { guard: 'guard' } as const;
 
+/** The subcommands of `guard`. */
+export const guardCommands = { list: 'list', set: 'set', confirm: 'confirm' } as const;
+
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
   nodeSend: `${commands.node} ${nodeCommands.send}`,
@@ -186,6 +191,9 @@ export const commandLines = {
   lockRun: `${commands.lock} ${lockCommands.run}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
   stateGuard: `${commands.state} ${stateCommands.guard}`,
+  guardList: `${commands.guard} ${guardCommands.list}`,
+  guardSet: `${commands.guard} ${guardCommands.set}`,
+  guardConfirm: `${commands.guard} ${guardCommands.confirm}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -221,6 +229,7 @@ export const flags = {
   state: 'state',
   stage: 'stage',
   all: 'all',
+  family: 'family',
   follow: 'follow',
   roadmap: 'roadmap',
   question: 'question',
@@ -2248,6 +2257,7 @@ export const schemaIds = {
   queue: `${program}.${commands.queue}/v1`,
   queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
+  guardList: `${program}.guard-list/v1`,
   lock: `${program}.${commands.lock}/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
@@ -2270,6 +2280,83 @@ export const flagText = (name: string): string => `--${name}`;
 
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
+
+/**
+ * The ids of the core guards. A guard is one family of checks and rule texts. A recipe adds guards of its own, and its files
+ * hold their ids, like the ids of its approval points. No id is the id of an approval point.
+ */
+export const guardIds = {
+  approvalDelegation: 'approval-delegation',
+  boardEdits: 'board-edits',
+  settingsCheck: 'settings-check',
+  settingsWrite: 'settings-write',
+  cloneRules: 'clone-rules',
+  contextLimits: 'context-limits',
+  deleteGuard: 'delete-guard',
+  dismiss: 'dismiss',
+  fileLinkSafety: 'file-link-safety',
+  folderTrust: 'folder-trust',
+  gitSafety: 'git-safety',
+  hookRuntime: 'hook-runtime',
+  launchCommands: 'launch-commands',
+  machineLimits: 'machine-limits',
+  taskFiles: 'task-files',
+  sessionChecks: 'session-checks',
+  ownerGo: 'owner-go',
+  paneSafety: 'pane-safety',
+  permissionMode: 'permission-mode',
+  proxy: 'proxy',
+  resumeRoutines: 'resume-routines',
+  rootScan: 'root-scan',
+  safetyBlock: 'safety-block',
+  secrets: 'secrets',
+  setupText: 'setup-text',
+  spend: 'spend',
+  workConduct: 'work-conduct',
+  installRules: 'install-rules',
+} as const;
+
+/** The kinds of a guard or a row of it: a check in code, or a rule in the role text. */
+export const guardKinds = { code: 'code', text: 'text' } as const;
+
+/** The two values of a guard. */
+export const guardValues = { on: 'on', off: 'off' } as const;
+
+/** The key of the guard values: the map in the local file, and the map in the shared file that can only tighten. */
+export const guardKeys = { local: 'guards', shared: 'shared_guards' } as const;
+
+/** The mark of a guard, or a row of it, that can harm the machine, the data or the accounts when it is off. */
+export const harmMark = 'H';
+
+/** The default list leaves room for its heading, more line and count line. */
+export const maxGuardListLines = 17;
+
+/**
+ * The words of `guard list`: the titles of the columns, the value of a guard that the list can not read, the words of the
+ * place of a value, the line that tells how many lines the view leaves out, and the line that counts the guards that are off.
+ */
+export const guardListWords = {
+  summary: 'Show the guards and what each one keeps safe.',
+  scopeHelp: 'The list omits integrity checks and guards that are not built yet.',
+  allHelp: 'Show every guard or every row of one family.',
+  familyHelp: 'Show the rows of the guard with this id.',
+  argumentsError: `${commandText(commandLines.guardList)} takes no argument.`,
+  unknownFamily: (id: string): string => `${commandText(commandLines.guardList)}: unknown family "${id}".`,
+  columns: { guard: 'GUARD', value: 'VALUE', default: 'DEFAULT', harm: harmMark, setIn: 'SET IN' },
+  familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
+  unknown: 'unknown',
+  sources: {
+    missing: 'no key',
+    shared: files.config,
+    local: `${files.localConfig} and record`,
+    noRecord: `${files.localConfig} with no record`,
+  },
+  moreLine: (count: number): string => `and ${count} more: run with ${flagText(flags.all)} or ${flagText(flags.json)}`,
+  countLine: (off: number, total: number, harm: number): string =>
+    `${off} of ${total} guards are off. ${harm} of them have the mark ${harmMark}.`,
+  unknownCountLine: (total: number): string =>
+    `The off count is unknown for ${total} guards. The off count with the mark ${harmMark} is unknown.`,
+} as const;
 
 /**
  * The fixed word of each outcome of `lock run` that the program itself decides. The line of an outcome starts with `lockLine`, which

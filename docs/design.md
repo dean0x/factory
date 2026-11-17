@@ -1268,6 +1268,45 @@ A plugin adds a part to factory with no change to the package. A plugin is an np
 
 Community documents and examples for plugin authors wait for FAC-M10.
 
+### 4.16 Guards
+
+A guard is one family of code checks and rule texts that keep one thing safe. Each row belongs to one guard. A row names one check or rule text and the source sites where it applies.
+
+**The registry.** The core and the recipe supply one registry for the list. The core supplies the guards that apply to every recipe. The software recipe adds guards for approval of a merge, approval of a release, and push and pull request rules.
+
+Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and its rows. It also has a new-node default, a value for a missing key, and related config keys. Each row has its own id, name, kind, harm mark, place of use and source sites. Integrity checks are not guards. They do not appear in the list and always run.
+
+**The mark `H`.** This mark means that harm to the machine, data or accounts is possible if the guard is off. Each row has its own harm mark. A guard has `H` when at least one of its rows has `H`.
+
+**Kinds.** A row has kind `code` for a check in code, or `text` for a rule in the role text. A guard can have one kind or both kinds.
+
+**Places, not layers.** The shared file, the local file and the recipe are different places. They are not levels of the node.
+
+| Place | What it holds |
+|---|---|
+| The shared file, `factory.yaml` | The facts of the factory and the recipe choice that travel to every machine. |
+| The local file, `factory.local.yaml` | The facts of the owner and this machine. |
+| The recipe | The guard definitions and rows for its kind of work. |
+
+In this version, every guard is `on`, on new nodes and existing nodes. No guard key exists in either config file. Related config keys already exist and keep their meaning. A related key is not a guard key.
+
+**The list.** `factory guard list` reads the node config and the registry facts. It changes no file and checks no work copy or child node. It keeps the normal folder registration and config access checks. The list only reads; it cannot change a guard.
+
+The default table has the columns `GUARD`, `VALUE`, `DEFAULT`, `H` and `SET IN`. `DEFAULT` is the value for a new node. `SET IN` names the place of the current value. In this version, `VALUE` and `DEFAULT` are `on`, and `SET IN` is `no key`.
+
+The default view has at most 20 lines, with at most 17 guard lines. A more line gives the count of guards that do not fit. The last line counts all guards, the guards that are off, and those off guards that have `H`. If the config does not load, the last line states that both off counts are unknown.
+
+| Flag | What it does |
+|---|---|
+| `--all` | Show every guard, or every row with `--family`. |
+| `--family NAME` | Show the rows of the guard with this id, with columns `ROW`, `KIND`, `H` and `KEEPS SAFE`. |
+| `--json` | Print every guard and every row under schema id `factory.guard-list/v1`, with no table cap. |
+| `--home DIR` | Read the node in this factory folder. |
+
+The JSON `error` field is `null` when the config loads; otherwise, it holds the load error.
+
+The common flags `--quiet` and `--no-color` also apply. An unknown family exits with code 2. When the config loads, the list exits with code 0. When the config does not load, the first line shows the load error, and the guard values show `unknown`. The list then exits with the code of the load error.
+
 ## 5. Layers: same mechanics, one role per layer
 
 ### 5.1 The node
