@@ -256,6 +256,55 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.unmount();
   });
 
+  for (const restart of [false, true]) {
+    test(`an old run cannot publish after session end (restart ${restart}) on ${surface}`, async ($, on) => {
+      const host = setup(on);
+      let runs = 0;
+      on('process.run', async () => {
+        if (++runs === 1) {
+          await host.clock.sleep(25000);
+          return { value: success('Previous board') };
+        }
+        return { value: success() };
+      });
+      await start($, surface);
+      await $.command.run(OPEN);
+      const ui = await $.ui.mount({ ...PANE, surface });
+      await host.clock.advance(10000);
+      await $.session.end({ reason: 'clear', sessionId: 'demo', resume: { id: 'demo' } });
+      if (restart) await start($, surface);
+      await host.clock.advance(25000);
+      expect(runs).toBe(1);
+      expect(await ui.find({ type: 'Text', text: 'Previous board' })).toBeUndefined();
+      expect((await ui.findAll({ type: 'Text' }))[0]?.text).toMatch(/updated \?$/);
+      await host.clock.advance(5000);
+      expect(runs).toBe(restart ? 2 : 1);
+      if (restart) expect(await ui.find({ type: 'Text', text: 'Requests' })).toBeDefined();
+      await ui.unmount();
+    });
+  }
+
+  for (const [name, output] of [
+    ['no result', null],
+    ['missing fields', { exitCode: 0, stdout: boardTextFixture, stderr: '' }],
+    ['oversized stdout', success('x'.repeat(4194305))],
+    ['oversized stderr', { ...success(), stderr: 'x'.repeat(4194305) }],
+  ] as const) {
+    test(`${name} keeps good text and shows a fault on ${surface}`, async ($, on) => {
+      const host = setup(on);
+      let runs = 0;
+      on('process.run', () => ({ value: ++runs === 1 ? success() : output as unknown as ProcessRunResult }));
+      await start($, surface);
+      await $.command.run(OPEN);
+      const ui = await $.ui.mount({ ...PANE, surface });
+      await host.clock.advance(20000);
+      expect(await ui.find({ type: 'Text', text: 'Factory returned invalid output.' })).toBeDefined();
+      expect(await ui.find({ type: 'Text', text: 'Requests' })).toBeDefined();
+      expect(await ui.find({ type: 'Text', text: /Last good ·/ })).toBeDefined();
+      await ui.unmount();
+    });
+  }
+
   test(`session end stops refresh on ${surface}`, async ($, on) => {
     const host = setup(on);
     let runs = 0;
@@ -269,6 +318,21 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(runs).toBe(1);
   });
 }
+
+test('a desktop widget marks a failed refresh and clears it after success', async ($, on) => {
+  const host = setup(on);
+  let runs = 0;
+  on('process.run', () => ({ value: ++runs === 2 ? { ...success(), exitCode: 1, stderr: 'Read failed' } : success() }));
+  await start($, 'desktop');
+  await $.command.run(OPEN);
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, placement: 'widget' } });
+  await host.clock.advance(20000);
+  const rows = (await ui.findAll({ type: 'Text' })).map(row => row.text);
+  expect(rows.slice(1)).toEqual(['Read failed', expect.stringMatching(/^Last good ·/), 'requests 1']);
+  await host.clock.advance(10000);
+  expect((await ui.findAll({ type: 'Text' })).map(row => row.text).slice(1)).toEqual(['requests 1']);
+  await ui.unmount();
+});
 
 test('a desktop widget shows only usage and the request count', async ($, on) => {
   const host = setup(on);

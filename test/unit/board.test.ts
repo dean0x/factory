@@ -118,6 +118,23 @@ describe('board', () => {
     expect(result.json).toHaveProperty('faults.length', 2);
   });
 
+  it.each(['requests', 'workers'] as const)('keeps other sections when the %s source is a link', async (section) => {
+    const deps = await boardFixture();
+    const layout = layoutOf(BOARD_HOME);
+    const path = section === 'requests' ? join(layout.stateDir, files.waiting) : layout.workersDir;
+    const original = deps.fs.lstat;
+    deps.fs.lstat = (candidate) => candidate === path ? Promise.resolve({ ok: true, value: 'link' }) : original(candidate);
+    const result = await boardCommand(deps, ['board', '--json']);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({
+      [section]: null,
+      items: expected.items,
+      queue: expected.queue,
+      machine: expected.machine,
+      faults: [{ section, error: expect.any(String) }],
+    });
+  });
+
   it('prints an error document when no home is found', async () => {
     const sink = captureSink();
     const code = await runCli(['board', '--json'], createFakeDeps({ cwd: '/empty' }), sink);

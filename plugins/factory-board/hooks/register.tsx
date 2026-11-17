@@ -66,25 +66,26 @@ export const register: Register = (on, options) => {
   const home = typeof options.home === 'string' ? options.home : '';
   let timer: Timer | undefined;
   let busy = false;
-  let ended = false;
+  let session = 0;
   let bodyColumns = 100;
 
   on('session.start', async ($, e, next) => {
     timer?.cancel();
-    ended = false;
+    const currentSession = ++session;
     await update($, running, () => false);
     await $.command.register({ name: 'board', description: 'Show the factory board in a pane' });
     if (options.open === 'auto') await $.ui.open({ id: PANE, title: 'Factory board' });
     timer = $.clock.every(interval, async () => {
       // Claim before the first await, so two timer callbacks cannot start a run.
-      if (busy || ended) return;
+      if (busy || currentSession !== session) return;
       busy = true;
       try {
         const visible = (await $.ui.panes()).some(pane => pane.id === PANE && pane.isShown && pane.isPlaced);
-        if (!visible || ended) return;
+        if (!visible || currentSession !== session) return;
         const width = held(bodyColumns, MIN_WIDTH, MAX_WIDTH, 100);
         await update($, columns, () => width);
         await update($, running, () => true);
+        if (currentSession !== session) return;
         let result: BoardRead;
         try {
           const output: unknown = await $.process.run([
@@ -94,9 +95,10 @@ export const register: Register = (on, options) => {
         } catch (error: unknown) {
           result = { ok: false, error: failureOf(error) };
         }
-        if (ended) return;
+        if (currentSession !== session) return;
         if (result.ok) {
           const time = new Date(await $.clock.now()).toISOString();
+          if (currentSession !== session) return;
           await update($, lines, () => result.lines);
           await update($, ranAt, () => time);
         }
@@ -109,7 +111,7 @@ export const register: Register = (on, options) => {
     return next(e);
   });
   on('session.end', async ($, e, next) => {
-    ended = true;
+    session += 1;
     timer?.cancel();
     await update($, running, () => false);
     return next(e);
@@ -124,12 +126,11 @@ export const register: Register = (on, options) => {
     bodyColumns = held(e.props.bodyColumns, MIN_WIDTH, MAX_WIDTH, 100);
     const [rows, error, at, usage] = await Promise.all([read($, lines), read($, fault), read($, ranAt), $.session.usage()]);
     const header = headerOf(usage, at);
-    if (e.props.placement === 'widget') return <Box flexDirection="column"><Text>{header}</Text><Text>requests {requestCount(rows)}</Text></Box>;
     return <Box flexDirection="column" overflowX="scroll">
       <Text>{header}</Text>
       {error !== null && <Text>{error}</Text>}
       {error !== null && at !== null && <Text>Last good · {timeOf(at)}</Text>}
-      {rows.map(row => <Text>{row}</Text>)}
+      {e.props.placement === 'widget' ? <Text>requests {requestCount(rows)}</Text> : rows.map(row => <Text>{row}</Text>)}
     </Box>;
   });
 };

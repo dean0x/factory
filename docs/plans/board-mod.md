@@ -152,7 +152,7 @@ Files (all new):
 - `const { Box, Text } = $.ui.resolve(e)`.
 - First line, from the session itself: `context <n>% · 5h <n>% · 7d <n>% · updated <hh:mm:ss>`, from `$.session.usage()`. A missing value shows `?`.
 - Then one `Text` for each line of factory, in `Box overflowX="scroll"`.
-- The widget placement (desktop) shows only the header line and the count of requests. The count is the number of lines under the requests heading (INFERRED: this needs no JSON run).
+- The widget placement (desktop) shows the header and the request count from the command's summary line. A failed run also shows the fault and the last good time.
 
 The mod does not run `factory board --json`. The text gives all that the pane draws. A later status line entry can use the JSON (follow-up).
 

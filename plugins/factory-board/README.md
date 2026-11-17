@@ -2,7 +2,7 @@
 
 Show the factory board in a Claude Code pane beside the chat. Factory supplies all board text.
 The mod adds this session's context percent, five-hour and seven-day limits, and the UTC time of the last good run.
-A missing value shows `?`. A desktop widget shows only this header and the request count.
+A missing value shows `?`. A desktop widget shows this header and the request count instead of the board text.
 
 ## Install
 
@@ -42,6 +42,7 @@ The timer stops when the session ends.
 
 The mod keeps at most 400 plain text lines. It removes terminal controls from process text.
 A failed run shows one fault line and keeps the last good text with its UTC time.
+A desktop widget also shows the fault and marks the request count with its last good time.
 A later successful run clears the fault. No background writer or shared text file is required.
 The pane reads no JSON and adds no board state words.
 
