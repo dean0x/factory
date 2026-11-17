@@ -52,7 +52,7 @@ You need:
 | `factory request add\|list\|close\|log` | Put a question for the owner in the waiting file, list the open requests, close one with no answer, with a decision of the coordinator or a delegate, or with an answer of the owner that the coordinator passes on, or log a decision that no request asked for. See "Use the local board". |
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. `queue set` takes `--release-group TEXT`, and `queue show` lists the rows under one heading for each group. See "Use the local board". |
 | `factory guard list` | Show the guards, their values, their defaults and the harm mark `H`. `--all` shows every guard. `--family NAME` shows the rows of one guard. `--json` prints every guard and row. It only reads. See "Guards" in `docs/design.md`. |
-| `factory doctor` | Run 31 checks. See "Doctor". |
+| `factory doctor` | Run 32 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
 | `factory pr watch PR [--head SHA] [--project ID]` | Watch the checks of one pull request at one head, with up to 60 reads, 60 seconds apart. It exits with code 0 only when every check passed. It never merges, and a pass is no approval. See "Watch a pull request". |
