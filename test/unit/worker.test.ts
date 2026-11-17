@@ -813,6 +813,78 @@ describe('worker new: the checks before any write', () => {
 
 describe('worker new: the consent for the hook settings', () => {
   const NO_TERMINAL = { tty: false } as const;
+  const configFor = (idle: boolean): FactoryConfig => {
+    const base = sampleConfig();
+    return { ...base, core: { ...base.core, session: { ...base.core.session, idle_compaction: idle } } };
+  };
+
+  it.each([false, true])('pre-checks the config value %s before the work copy exists', async (idle) => {
+    const checkout = JSON.stringify({ ...ownSettingsEntries, idleCompaction: !idle });
+    const made = make({ config: configFor(idle), checkout });
+    const error = await failed(made, { yes: false });
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain(
+      `idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml), and replace the value ${!idle}`,
+    );
+    expectNothingChanged(made);
+  });
+
+  it.each([false, true])('uses the config value %s in the prompt and the write after checkout', async (idle) => {
+    const original = { model: 'opus', ...ownSettingsEntries, idleCompaction: !idle };
+    const made = make({ config: configFor(idle), checkout: JSON.stringify(original), tty: true, prompt: () => ok('y') });
+    await succeeded(made, { yes: false });
+    expect(made.deps.prompts).toEqual([
+      `This changes the settings of Claude Code in ${SETTINGS_FILE}:\n` +
+      `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml), and replace the value ${!idle}\nWrite this change? [y/N] `,
+    ]);
+    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? 'null')).toEqual({ ...original, idleCompaction: idle });
+    expect(made.events).toContain('tmux split-window');
+  });
+
+  it.each(['own', 'received'] as const)('refuses a value-only change inside a factory session on an %s root', async (origin) => {
+    const made = make({ config: configFor(true), checkout: OWN_SETTINGS, env: { FACTORY_SESSION: 'demo' }, origin });
+    const error = await failed(made, { yes: true });
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('idleCompaction: set to true');
+    expect(error.hint).toContain('--yes gives no consent inside a factory session');
+    expectNothingChanged(made);
+  });
+
+  it('writes true into a new file with the yes flag inside a factory session', async () => {
+    const made = make({ config: configFor(true), env: { FACTORY_SESSION: 'demo' } });
+    await succeeded(made, { yes: true });
+    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? 'null')).toEqual({ ...ownSettingsEntries, idleCompaction: true });
+    expect(made.deps.prompts).toEqual([]);
+    expect(made.events).toContain('tmux split-window');
+  });
+
+  it('keeps the hooks after a no to the idle value and names upgrade as the remedy', async () => {
+    const checkout = JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine });
+    const made = make({ checkout, tty: true, prompt: () => ok('n') });
+    await succeeded(made, { yes: false });
+    expect(made.deps.files.get(SETTINGS_FILE)).toBe(checkout);
+    const notices = made.deps.warned.filter((line) => line.includes('idleCompaction value'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('the hooks are in place');
+    expect(notices[0]).toContain('run "factory upgrade" and answer yes');
+    expect(notices[0]).not.toContain('factory worker new');
+    expect(notices[0]).not.toContain('does not call the hook');
+    expect(made.events).toContain('tmux split-window');
+  });
+
+  it('rejects an idle value that is not a boolean before any work copy or settings write', async () => {
+    const made = make();
+    const shared = made.deps.files.get(`${HOME}/factory.yaml`) ?? '';
+    made.deps.seed(`${HOME}/factory.yaml`, shared.replace('idle_compaction: false', 'idle_compaction: "false"'));
+    const before = new Map(made.deps.files);
+    const error = await failed(made);
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain('session.idle_compaction');
+    expect(new Map(made.deps.files)).toEqual(before);
+    expect(made.deps.files.has(SETTINGS_FILE)).toBe(false);
+    expect(made.events).not.toContain('git worktree-add');
+    expect(made.events).not.toContain('tmux split-window');
+  });
 
   it('writes nothing and exits 2 with no terminal window and no yes flag, and shows the change', async () => {
     const made = make(NO_TERMINAL);
@@ -2014,6 +2086,30 @@ describe('worker stop and resume: a record that is not the record of its worker 
     const made = await withWorkers();
     expect(await resumed(made)).toMatchObject({ failed: false });
     expect(made.tmux.panes().at(-1)).toMatchObject({ cwd: COPY });
+  });
+});
+
+describe.each(['own', 'received'] as const)('worker resume: linked folders, %s root', (origin) => {
+  it('exits 4 for a linked work copy, shows the current remedy, and starts no pane', async () => {
+    const made = await withWorkers({ origin, links: { [COPY]: '/elsewhere/folder' }, seed: { '/elsewhere/folder': null } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toBe('work-copies/web/alpha is a link, so factory does not use it');
+    expect(error.hint).toBe('Replace the link with a plain file inside the factory folder, then run "factory doctor".');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.events).not.toContain('tmux new-window');
+    expect(made.events).not.toContain('tmux new-session');
+  });
+
+  it('exits 4 for a linked .claude folder, names a plain folder, and starts no pane', async () => {
+    const made = await withWorkers({ origin, links: { [`${COPY}/.claude`]: '/elsewhere/folder' }, seed: { '/elsewhere/folder': null } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toBe('work-copies/web/alpha/.claude is a link, so factory does not use it');
+    expect(error.hint).toBe('Make work-copies/web/alpha/.claude a plain folder, or remove it, then run "factory doctor".');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.events).not.toContain('tmux new-window');
+    expect(made.events).not.toContain('tmux new-session');
   });
 });
 

@@ -5,13 +5,16 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { env, files, lockWords } from '../../src/names.js';
 import { killKeptGroups, readyPid } from '../helpers/own-group.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
+import { loadNote, scaled } from './load.js';
 
 /**
  * `lock run` with the built program (`dist/factory.js`) and real child processes. The state folder is in the HOME of the sandbox.
- * Every child ends by itself within 8 s, and each test stops at 15 s, so a run that goes wrong never holds the worker. The wait
+ * Every child ends by itself within 8 s, and each test stops at 15 s times the wait factor, so a run that goes wrong never holds the worker. The wait
  * between two tries is the real 5 s of the policy, so a test that waits for a lock takes a little more than 5 s.
  */
-const TEST_TIMEOUT_MS = 15_000;
+const TEST_TIMEOUT_MS = scaled(15_000);
+/** The tries of `until`, 20 ms apart: 6 s, times the wait factor. */
+const UNTIL_TRIES = scaled(300);
 
 let box: Sandbox;
 const processes: ChildProcess[] = [];
@@ -19,7 +22,7 @@ const childGroups: number[] = [];
 
 beforeAll(async () => {
   box = await makeSandbox();
-}, 30_000);
+}, scaled(30_000));
 
 afterAll(removeOpenSandboxes);
 
@@ -58,13 +61,13 @@ const factory = (args: readonly string[], extra: Readonly<Record<string, string>
 /** The command line of a held child: `lock run -- node -e BODY ARG...`. */
 const lockRun = (body: string, ...args: readonly string[]): string[] => ['lock', 'run', '--', 'node', '-e', body, ...args];
 
-/** Wait at most 6 s for the check to hold. */
+/** Wait at most 6 s, times the wait factor, for the check to hold. */
 const until = async (check: () => boolean | Promise<boolean>): Promise<void> => {
-  for (let tries = 0; tries < 300; tries += 1) {
+  for (let tries = 0; tries < UNTIL_TRIES; tries += 1) {
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error('the condition did not hold within 6 s');
+  throw new Error(`the condition did not hold within ${(UNTIL_TRIES * 20) / 1000} s ${loadNote()}`);
 };
 
 const textOf = (file: string): Promise<string> => readFile(file, 'utf8').catch(() => '');
@@ -142,7 +145,7 @@ describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
 
   it('starts the second child only after the first child has ended', async () => {
     const stamps = path('stamps.txt');
-    const first = factory(lockRun(STAMP, stamps, '1200'));
+    const first = factory(lockRun(STAMP, stamps, String(scaled(1_200))));
     await until(async () => (await textOf(stamps)).includes('start'));
     const second = factory(lockRun(STAMP, stamps, '10'));
     const results = await Promise.all([first.done, second.done]);

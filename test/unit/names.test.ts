@@ -20,6 +20,12 @@ import {
   files,
   flags,
   ghTimeoutMs,
+  guardCommands,
+  guardIds,
+  guardKinds,
+  guardListWords,
+  guardValues,
+  harmMark,
   heavyLock,
   hookNames,
   instructionFiles,
@@ -73,6 +79,7 @@ import {
   workItemDisplayKeys,
   workerRowKeys,
 } from '../../src/names.js';
+import { isSlug } from '../../src/config/primitives.js';
 import { projectPathIssue } from '../../src/core/project-path.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
 import { glossary } from '../../src/glossary.js';
@@ -88,7 +95,7 @@ import { OLD_WORD_ENDINGS, OLD_WORD_LIST, oldWordsIn } from '../helpers/old-word
 import { runInit } from '../helpers/package-registry.js';
 import { JARGON_ERE, JARGON_PATTERNS, jargonIn } from '../helpers/plain-words.js';
 import { MAX_OUTPUT_LINES } from '../helpers/short-output.js';
-import { allSourceFiles, callsOf, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
+import { allSourceFiles, callsOf, codeOfExpression, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
@@ -96,8 +103,8 @@ const GLOSSARY_FILE = join(SRC, 'glossary.ts');
 const EXIT_CHECK = join(__dirname, '..', '..', 'scripts', 'exit-check.sh');
 const INSTALL_CHECK = join(__dirname, '..', '..', 'scripts', 'install-check.sh');
 
-/** An import path is no text for a user. */
-const IMPORT_PATH = /^(node:|\.{1,2}\/)/;
+/** An import path, and the repo path of a source file that a row of the guard registry cites, are no text for a user. */
+const PATH_LITERAL = /^(?:node:|\.{1,2}\/|src\/[\w./-]+\.ts$)/;
 
 const sourceFiles = (dir: string): string[] =>
   readdirSync(dir).flatMap((entry) => {
@@ -139,6 +146,7 @@ const EXACT_NAMES = new Set([
     keys.recipe,
     keys.link,
     stateKeys,
+    guardIds,
     schema1.keys,
     { windowView: tmuxNames.windowView, windowWorkers: tmuxNames.windowWorkers, slotBoard: tmuxNames.slotBoard },
   ).filter((name) => !PLAIN_WORD_FLAGS.has(name) && !PLAIN_WORD_SUBCOMMANDS.has(name)),
@@ -198,7 +206,7 @@ const GIT_VOCABULARY_FILES = new Set([join(SRC, 'core', 'git.ts')]);
 const violationsInText = (source: string, path: string): string[] => {
   const found: string[] = [];
   for (const literal of literalsOf(source)) {
-    if (IMPORT_PATH.test(literal)) continue;
+    if (PATH_LITERAL.test(literal)) continue;
     if (POINT_IDS.has(literal) && !RECIPE_APPROVAL_FILE.test(path)) found.push(`"${literal}" is an approval point id`);
     if (RECIPE_NAMES.has(literal) && !RECIPE_APPROVAL_FILE.test(path)) found.push(`"${literal}" is a name of a recipe`);
     if (!GIT_VOCABULARY_FILES.has(path)) {
@@ -263,6 +271,15 @@ describe('names', () => {
     const path = join(SRC, 'sample.ts');
     expect(violationsInText("const a = 'git restore --staged';", path)).toEqual([]);
     expect(violationsInText(`const a = 'git restore --${flags.home}=x';`, path)).toHaveLength(1);
+  });
+
+  it('keeps a core guard id out of the other source files, and leaves the repo path of a source file alone', () => {
+    const path = join(SRC, 'sample.ts');
+    expect(violationsInText(`const a = '${guardIds.fileLinkSafety}';`, path)).toEqual([
+      `sample.ts: "${guardIds.fileLinkSafety}" is a name`,
+    ]);
+    expect(violationsInText("const a = 'src/workers/launch.ts';", path)).toEqual([]);
+    expect(violationsInText("const a = 'the workers launch';", path)).toHaveLength(1);
   });
 
   it('reads the string literals of a text, and leaves out comments, template expressions and placeholders', () => {
@@ -794,7 +811,7 @@ describe('the old words and the jargon words in the text of the source', () => {
    */
   const plainWordHits = (source: string, path: string): string[] =>
     literalsOf(source)
-      .filter((literal) => !IMPORT_PATH.test(literal))
+      .filter((literal) => !PATH_LITERAL.test(literal))
       .filter((literal) => path !== NAMES_FILE || !(OLD_LAYOUT_NAMES.has(literal) || DISK_NAMES.has(literal)))
       .flatMap((literal) => plainWordsIn(literal).map((word) => `${relative(SRC, path)}: "${literal}" holds ${word}`));
 
@@ -822,7 +839,7 @@ describe('the old words and the jargon words in the text of the source', () => {
    */
   const wordRuleHits = (source: string, path: string): string[] =>
     literalsOf(source)
-      .filter((literal) => !IMPORT_PATH.test(literal))
+      .filter((literal) => !PATH_LITERAL.test(literal))
       .filter(
         (literal) =>
           literal !== 'display-message' &&
@@ -887,7 +904,7 @@ describe('the words home and root for a factory folder in the text of the source
 
   const folderWordHits = (source: string, path: string): string[] =>
     literalsOf(source)
-      .filter((literal) => !IMPORT_PATH.test(literal) && !KEPT.has(literal) && FOLDER_WORD.test(literal))
+      .filter((literal) => !PATH_LITERAL.test(literal) && !KEPT.has(literal) && FOLDER_WORD.test(literal))
       .map((literal) => `${relative(SRC, path)}: "${literal}"`);
 
   it('finds no home and no root in the string literals of src', () => {
@@ -1135,13 +1152,37 @@ describe('the writers of the approval record and of the setup acceptance', () =>
     expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/owner-record.ts']);
   });
 
+  const writerHits = (source: string, path: string, pattern: RegExp, owners: readonly string[]): readonly string[] =>
+    !owners.includes(path) && pattern.test(codeOfExpression(stripComments(source))) ? [path] : [];
+
+  const writerCallersOf = (pattern: RegExp, owners: readonly string[]): string[] =>
+    sourceFiles(SRC).flatMap((path) => writerHits(readFileSync(path, 'utf8'), relative(SRC, path), pattern, owners)).sort();
+
+  const writerCases = [
+    { writer: 'putDecision', owners: ['core/owner-record.ts', 'commands/decide.ts'] },
+    { writer: 'recordScope', owners: ['core/owner-record.ts'] },
+  ];
+
+  it.each(writerCases)('finds real $writer use outside its allowed files', ({ writer, owners }) => {
+    const path = 'commands/other.ts';
+    const pattern = new RegExp(`\\b${writer}\\b`);
+    expect(writerHits(`${writer}(deps, input);`, path, pattern, owners)).toEqual([path]);
+    expect(writerHits(`import { ${writer} as write } from '../core/owner-record.js';`, path, pattern, owners)).toEqual([path]);
+    expect(writerHits(`const write = ${writer};`, path, pattern, owners)).toEqual([path]);
+    expect(writerHits('const note = `saved ${' + writer + '(deps, input)}`;', path, pattern, owners)).toEqual([path]);
+    expect(writerHits(`${writer}(deps, input);`, 'core/owner-record.ts', pattern, owners)).toEqual([]);
+  });
+
+  it.each(writerCases)('leaves $writer site strings out of the writer scan', ({ writer, owners }) => {
+    const source = `const sites = ['${writer}', "${writer}()", \`${writer}\`];`;
+    expect(writerHits(source, 'commands/other.ts', new RegExp(`\\b${writer}\\b`), owners)).toEqual([]);
+  });
+
   it('lets only the code of decide name the decision writer, and only decide call recordDecision', () => {
     const decide = 'commands/decide.ts';
-    const callersOf = (pattern: RegExp, owners: readonly string[]): string[] =>
-      rel(withText(pattern)).filter((path) => !owners.includes(path));
-    expect(callersOf(/\bputDecision\b/, ['core/owner-record.ts', decide])).toEqual([]);
+    expect(writerCallersOf(/\bputDecision\b/, ['core/owner-record.ts', decide])).toEqual([]);
     // The definition in the local board and the type in the contract are no calls.
-    expect(callersOf(/\brecordDecision\(/, ['board/local.ts', 'board/contract.ts', decide])).toEqual([]);
+    expect(writerCallersOf(/\brecordDecision\(/, ['board/local.ts', 'board/contract.ts', decide])).toEqual([]);
   });
 
   it('limits the key of the decisions folder to the state layout, the record path and the local board', () => {
@@ -1186,10 +1227,9 @@ describe('the writers of the approval record and of the setup acceptance', () =>
   });
 
   it('has no module that writes the approval record apart from the owner record writer', () => {
-    const callersOf = (pattern: RegExp): string[] => rel(withText(pattern).filter((path) => path !== OWNER_RECORD));
-    expect(callersOf(/\brecordScope\b/)).toEqual([]);
+    expect(writerCallersOf(/\brecordScope\b/, ['core/owner-record.ts'])).toEqual([]);
     // The code of init is the only caller of the delegation writer: it records the points that the owner sets.
-    expect(callersOf(/\brecordDelegation\b/).filter((path) => !/^commands\/init[^/]*\.ts$/.test(path))).toEqual([]);
+    expect(writerCallersOf(/\brecordDelegation\b/, ['core/owner-record.ts']).filter((path) => !/^commands\/init[^/]*\.ts$/.test(path))).toEqual([]);
   });
 
   it('keeps the setup acceptance writer apart: it imports nothing of the approval store and names none of it', () => {
@@ -1839,5 +1879,39 @@ describe('the names of the role text delivery', () => {
   it('names the size and the cap of a text that is too large, in the unit of the size', () => {
     expect(roleText.tooLargeText(12_345, 'bytes')).toBe('the role text has 12345 bytes, and the cap is 9000 characters');
     expect(roleText.tooLargeText(9_001, 'characters')).toBe('the role text has 9001 characters, and the cap is 9000 characters');
+  });
+});
+
+describe('the names of the guards', () => {
+  it('holds the 28 core guard ids as slugs, once each, and no id of an approval point', () => {
+    const ids = Object.values(guardIds);
+    expect(ids).toHaveLength(28);
+    expect(new Set(ids).size).toBe(28);
+    expect(ids.every(isSlug)).toBe(true);
+    const taken = new Set<string>(recipes.flatMap((entry) => entry.approvalPoints.map((point) => point.id)));
+    expect(ids.filter((id) => taken.has(id))).toEqual([]);
+  });
+
+  it('names the guard command, its three subcommands and the family flag', () => {
+    expect(commands.guard).toBe('guard');
+    expect(guardCommands).toEqual({ list: 'list', set: 'set', confirm: 'confirm' });
+    expect(commandLines.guardList).toBe('guard list');
+    expect(commandLines.guardSet).toBe('guard set');
+    expect(commandLines.guardConfirm).toBe('guard confirm');
+    expect(flags.family).toBe('family');
+  });
+
+  it('names the kinds, the values, the harm mark, the schema id of the list and the term', () => {
+    expect(guardKinds).toEqual({ code: 'code', text: 'text' });
+    expect(guardValues).toEqual({ on: 'on', off: 'off' });
+    expect(harmMark).toBe('H');
+    expect(schemaIds.guardList).toBe(`${program}.guard-list/v1`);
+    expect(terms).toContain('guard');
+  });
+
+  it('words the more line and the count line of the list', () => {
+    expect(guardListWords.moreLine(14)).toBe('and 14 more: run with --all or --json');
+    expect(guardListWords.countLine(3, 31, 2)).toBe('3 of 31 guards are off. 2 of them have the mark H.');
+    expect(guardListWords.unknown).toBe('unknown');
   });
 });

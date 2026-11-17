@@ -95,12 +95,13 @@ const withHint = (error: CliError, hint: string): CliError => ({ ...error, hint 
 const newLine = (id: string, project: string): string =>
   `${commandText(commandLines.workerNew)} ${id} ${flagText(flags.project)} ${project}`;
 
-/** The request for the consent to the hook settings of a work copy. */
-const hookRequestOf = (workCopy: string, yes: boolean): HookConsentRequest => ({
+/** The request for the consent to the settings of a work copy. `idleCompaction` is the value of `session.idle_compaction`. */
+const hookRequestOf = (workCopy: string, yes: boolean, idleCompaction: boolean): HookConsentRequest => ({
   folder: workCopy,
   session: hookSessions.workCopy,
   yes,
   command: commandLines.workerNew,
+  idleCompaction,
 });
 
 /** Where a new worker lives, and what it is called. */
@@ -311,7 +312,7 @@ const makeWorker = async (
   home: string,
   config: FactoryConfig,
   plan: NewWorkerPlan,
-  yes: boolean,
+  hookRequest: HookConsentRequest,
   assignment: string | null,
 ): Promise<CliResult<{ readonly paneId: string; readonly proxy: string | null; readonly warnings: readonly string[] }>> => {
   const { id, project, clone, workCopy, branch } = plan;
@@ -328,10 +329,10 @@ const makeWorker = async (
   }
   const exclude = await ensureCloneExclude(deps, clone);
   if (!exclude.ok) return { ...exclude, error: keptCopy(exclude.error, plan, home, true) };
-  const hook = await ensureHookSettings(deps, { ...hookRequestOf(workCopy, yes), dryRun: false });
+  const hook = await ensureHookSettings(deps, { ...hookRequest, dryRun: false });
   if (!hook.ok) return { ...hook, error: keptCopy(hook.error, plan, home, true) };
   if (hook.value.kind === 'declined') {
-    deps.warn(declinedHookText(hook.value.file, commandLines.workerNew, hookSessions.workCopy));
+    deps.warn(declinedHookText(hook.value, commandLines.workerNew, hookSessions.workCopy));
   }
   for (const line of machineWarnings(await gatherMachine(deps, home, config.core.limits))) deps.warn(line);
   const launched = await launchWorker(deps, { home, config, workerId: id, workCopy, retry: resumeLine(id) });
@@ -379,10 +380,12 @@ const runNew = async (
   // A role text that no session could get stops the command here, so that no work copy, no branch and no record are made for it.
   const role = await requireRoleText(deps, { home, config, retry: newLine(id, options.project) });
   if (!role.ok) return role;
-  const consent = await requireHookConsent(deps, hookRequestOf(plan.value.workCopy, options.yes), tracked.value.localText);
+  // One request serves the pre-check on the checkout text and the write, so both use the same idle compaction value.
+  const hookRequest = hookRequestOf(plan.value.workCopy, options.yes, config.core.session.idle_compaction);
+  const consent = await requireHookConsent(deps, hookRequest, tracked.value.localText);
   if (!consent.ok) return consent;
 
-  const made = await makeWorker(deps, home, config, plan.value, options.yes, assignment.value);
+  const made = await makeWorker(deps, home, config, plan.value, hookRequest, assignment.value);
   if (!made.ok) return made;
   const { workCopy, branch, project } = plan.value;
   const copy = assignment.value === null ? null : assignmentFileOf(home, id);

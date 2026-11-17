@@ -8,7 +8,7 @@ import { parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
-import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
+import { CONFIG_SCHEMA_VERSION, mixConfigValue } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
 import { boardKeys, commands, env, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
@@ -177,7 +177,7 @@ const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
 
 /** The blocks that the spec gives for every config, whatever its layer. */
 const fixedBlocks = (templates: readonly BlockTemplate[]): Pick<UpgradeSpec, 'blocksOf'> => ({
-  blocksOf: async () => ok({ templates, renames: [], queueKey: softwareQueueKey }),
+  blocksOf: async () => ok({ templates, renames: [], queueKey: softwareQueueKey, idleCompaction: false }),
 });
 
 const blocksSpec = (templates: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, ...fixedBlocks(templates) });
@@ -3088,7 +3088,7 @@ describe('upgrade: a node of schema 1', () => {
     const sharedValue = shared.ok ? (shared.value as Record<string, Record<string, unknown>>) : {};
     expect(Object.keys(sharedValue)).toEqual(['schema', 'node', 'session', 'limits', 'tracker', 'recipe']);
     expect(Object.keys(sharedValue['node'] ?? {})).toEqual(['id', 'layer']);
-    expect(Object.keys(sharedValue['session'] ?? {})).toEqual(['permission_mode', 'agent', 'effort', 'model']);
+    expect(Object.keys(sharedValue['session'] ?? {})).toEqual(['permission_mode', 'agent', 'effort', 'model', 'idle_compaction']);
     expect(Object.keys(sharedValue['limits'] ?? {})).toContain('idle_after');
     expect(sharedValue['recipe']).toMatchObject({ projects: [] });
 
@@ -4829,6 +4829,122 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
       },
     };
   };
+
+  const beforeIdleCompaction = settingsText({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine });
+
+  const beforeConfigSplit = (deps: FakeDeps): void => {
+    const shared = parseYamlText(text(deps, CONFIG));
+    const local = parseYamlText(text(deps, LOCAL));
+    if (!shared.ok || !local.ok) throw new Error('expected valid config fixtures');
+    const mixed = z.looseObject({ schema: z.number() }).parse(mixConfigValue(shared.value, local.value));
+    deps.seed(CONFIG, settingsText({ ...mixed, schema: C - 1 }));
+    deps.files.delete(LOCAL);
+  };
+
+  const migrateIdleCompactionTo = (idle: boolean): UpgradeSpec => ({
+    ...currentSpec,
+    config: {
+      ...currentSpec.config,
+      migrations: [
+        {
+          from: C - 1,
+          to: C,
+          apply: (raw) => {
+            const parsed = z.looseObject({ session: z.record(z.string(), z.unknown()) }).safeParse(raw);
+            return parsed.success
+              ? ok({ ...parsed.data, schema: C, session: { ...parsed.data.session, idle_compaction: idle } })
+              : failure('config migration needs a session object');
+          },
+        },
+      ],
+    },
+  });
+
+  it.each([false, true])('plans and applies the migrated idle compaction value %s with the same consent lines', async (idle) => {
+    const { deps } = await makeNode();
+    edit(deps, CONFIG, 'idle_compaction: false', `idle_compaction: ${!idle}`);
+    beforeConfigSplit(deps);
+    deps.seed(COORDINATOR_SETTINGS, beforeIdleCompaction);
+    await seedWorker(deps, 'alpha', beforeIdleCompaction);
+    await seedWorker(deps, 'beta', beforeIdleCompaction);
+    const spec = migrateIdleCompactionTo(idle);
+    const before = snapshot(deps);
+
+    const dry = success(await upgrade(deps, spec, { dryRun: true, yes: false }));
+    const changes = ALL_FILES.map((file) => [
+      `This changes the settings of Claude Code in ${file}:`,
+      `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml)`,
+    ]);
+    expect(lineTexts(dry).filter((line) => line.includes('settings of Claude Code') || line.includes('idleCompaction:'))).toEqual(
+      changes.flat(),
+    );
+    expect(dry.json).toMatchObject({ config: { from: C - 1, to: C }, dryRun: true, hookSettings: ALL_FILES });
+    expect(snapshot(deps)).toEqual(before);
+
+    const terminal = onTerminal(deps, ['y', 'y', 'y']);
+    const output = success(await upgrade(terminal.deps, spec, { yes: false }));
+    expect(terminal.asked).toEqual(changes.map((lines) => `${lines.join('\n')}\nWrite this change? [y/N] `));
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+    const config = parseConfigTexts(text(deps, CONFIG), text(deps, LOCAL));
+    expect(config).toMatchObject({ ok: true, value: { core: { session: { idle_compaction: idle } } } });
+    expect(output.json).toMatchObject({ config: { from: C - 1, to: C }, hookSettings: ALL_FILES });
+  });
+
+  it.each([false, true])('keeps the planned value when consent changes the config, with a migration: %s', async (migrate) => {
+    const { deps } = await olderFactory();
+    for (const file of ALL_FILES) deps.seed(file, beforeIdleCompaction);
+    if (migrate) beforeConfigSplit(deps);
+    const terminal = onTerminal(deps, ['y', 'y', 'y']);
+    const changingConfig: FakeDeps = {
+      ...terminal.deps,
+      prompt: async (question) => {
+        if (terminal.asked.length === 0) edit(deps, CONFIG, 'idle_compaction: false', 'idle_compaction: true');
+        return terminal.deps.prompt(question);
+      },
+    };
+
+    const output = success(await upgrade(changingConfig, migrate ? migrateIdleCompactionTo(false) : currentSpec, { yes: false }));
+
+    expect(terminal.asked).toHaveLength(3);
+    for (const question of terminal.asked) {
+      expect(question).toContain('  idleCompaction: set to false (session.idle_compaction in factory.yaml)');
+    }
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
+    expect(text(deps, CONFIG)).toContain('idle_compaction: true');
+    expect(output.json).toMatchObject({ hookSettings: ALL_FILES });
+  });
+
+  it.each([false, true])('writes no settings file for an invalid idle compaction config, with a dry run: %s', async (dryRun) => {
+    const { deps } = await olderFactory();
+    deps.files.delete(COORDINATOR_SETTINGS);
+    edit(deps, CONFIG, 'idle_compaction: false', 'idle_compaction: "false"');
+    const before = snapshot(deps);
+    const firstWrite = deps.atomicWrites.length;
+
+    const error = refusal(await upgrade(deps, currentSpec, { dryRun, yes: true }));
+
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain('factory.yaml is invalid');
+    expect(error.message).toContain('session.idle_compaction');
+    expect(error.message).toContain('must be true or false');
+    expect(deps.files.has(COORDINATOR_SETTINGS)).toBe(false);
+    expect(snapshot(deps)).toEqual(before);
+    expect(deps.atomicWrites.slice(firstWrite)).toEqual([]);
+  });
+
+  it.each(['coordinator', 'work copy'])('leaves the %s without the idle key when it has no own hook command', async (session) => {
+    const { deps } = await olderFactory();
+    const file = session === 'coordinator' ? COORDINATOR_SETTINGS : copySettings('alpha');
+    const otherSettings = settingsText({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'other-tool' }] }] } });
+    deps.seed(file, otherSettings);
+
+    const output = success(await upgrade(deps, currentSpec, { yes: true }));
+
+    expect(text(deps, file)).toBe(otherSettings);
+    expect(settingsAt(deps, file)).not.toHaveProperty('idleCompaction');
+    expect(output.json).toMatchObject({ hookSettings: ALL_FILES.filter((path) => path !== file) });
+    for (const changed of ALL_FILES.filter((path) => path !== file)) expect(settingsAt(deps, changed)).toEqual(ownSettingsEntries);
+  });
 
   it('adds the two new events to the list of a factory that wrote four', () => {
     expect(hookNames.events.slice(4)).toEqual(['Notification', 'PreToolUse']);

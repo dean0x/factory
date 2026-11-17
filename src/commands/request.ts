@@ -278,18 +278,24 @@ const logAnswer = (id: string, input: DecisionLogInput): CommandOutput =>
     decider: input.decider,
   });
 
+const requestRowOf = ({ id, title, options, openedAt, group }: BoardRequest) => ({
+  id,
+  title,
+  options,
+  [requestRowKeys.openedAt]: openedAt,
+  [requestRowKeys.group]: group,
+});
+
+export const requestRowsOf = (requests: readonly BoardRequest[]) => requests.map(requestRowOf);
+
 const listAnswer = (requests: readonly BoardRequest[]): CommandOutput => ({
   lines: requestView(requests),
   json: {
     schema: schemaIds.requestList,
-    requests: requests.map(({ id, title, options, openedAt, group, kind, question }) => ({
-      id,
-      title,
-      options,
-      [requestRowKeys.openedAt]: openedAt,
-      [requestRowKeys.group]: group,
-      [requestRowKeys.kind]: kind,
-      [requestRowKeys.question]: question,
+    requests: requests.map((request) => ({
+      ...requestRowOf(request),
+      [requestRowKeys.kind]: request.kind,
+      [requestRowKeys.question]: request.question,
     })),
   },
   warnings: [],

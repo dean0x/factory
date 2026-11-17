@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { files } from '../../src/names.js';
 import { hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded, type Marker } from './lifecycle-lab.js';
+import { loadNote } from './load.js';
 
 if (!hasTmux) console.warn('dismiss.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
@@ -66,7 +67,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     expect(result.stdout).toMatch(/The removal deleted \d+ ignored files?: .*\.claude/);
     expect(result.stdout).toContain('branch -D worker/alpha');
 
-    expect(await waitUntilEnded(pane?.pid ?? 0)).toBe(true);
+    expect(await waitUntilEnded(pane?.pid ?? 0), loadNote()).toBe(true);
     expect(await lab.livePaneOf('alpha')).toBeUndefined();
     expect(existsSync(copyOf('alpha'))).toBe(false);
     expect(existsSync(recordDirOf('alpha'))).toBe(false);
@@ -87,7 +88,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
 
     const result = await lab.factory('dismiss', ['beta', '--yes']);
     expect(result.code, result.stderr).toBe(0);
-    expect(await waitUntilEnded(pane?.pid ?? 0)).toBe(true);
+    expect(await waitUntilEnded(pane?.pid ?? 0), loadNote()).toBe(true);
     expect(existsSync(copyOf('beta'))).toBe(false);
     expect(existsSync(recordDirOf('beta'))).toBe(false);
     await expectIntact('alpha');
@@ -305,7 +306,7 @@ describe.skipIf(!hasTmux)('factory dismiss --closed frees a finished worker for 
     expect(freed.code, freed.stderr).toBe(0);
     expect(freed.stdout).toContain('Logged the decision D-1 to free the worker alpha.');
     expect(freed.stdout).toContain('Removed the work copy');
-    expect(await waitUntilEnded(alphaPane?.pid ?? 0)).toBe(true);
+    expect(await waitUntilEnded(alphaPane?.pid ?? 0), loadNote()).toBe(true);
     expect(await lab.livePaneOf('alpha')).toBeUndefined();
     expect(existsSync(copyOf('alpha'))).toBe(false);
     expect(existsSync(recordDirOf('alpha'))).toBe(false);

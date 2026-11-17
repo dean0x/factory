@@ -5,6 +5,7 @@ import { launchArgv } from '../../src/launch/argv.js';
 import { files, stateGuard } from '../../src/names.js';
 import { startCommandText } from '../helpers/tmux-fake.js';
 import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { scaled } from './load.js';
 
 /**
  * The board commands with the built program and real git, in a scratch folder with its own HOME and git identity. The `board` block
@@ -15,7 +16,7 @@ import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from '
 let box: Sandbox;
 
 /** The time that a case may take: `init`, a run of the program for each write, and the wait for the state lock of the writes. */
-const CASE_MS = 120_000;
+const CASE_MS = scaled(120_000);
 
 const BOARD_BLOCK = ['board:', '  states: [open, doing, done]', '  in_progress: doing', '  closed: done', ''].join('\n');
 

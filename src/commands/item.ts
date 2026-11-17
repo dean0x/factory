@@ -212,7 +212,7 @@ const titleText = (item: BoardItem): string => displayLine(item.title, itemWords
 const isTextList = (value: unknown): value is readonly string[] => Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 
 /** The stored epic of an item, or null when the item has none or the key holds other than text. */
-const epicOf = (item: BoardItem): string | null => {
+export const epicOf = (item: BoardItem): string | null => {
   const stored = item.record[boardKeys.epic];
   return typeof stored === 'string' ? stored : null;
 };

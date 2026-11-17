@@ -27,7 +27,7 @@ import {
 import { recipes, type RecipeEntry, type RecipeHost, type RecipeRegistry } from '../../src/recipes/index.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
-import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { procStatPath, procStatText } from '../helpers/ps-fake.js';
 import { publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
@@ -101,6 +101,34 @@ describe('runCli', () => {
     expect(result.code).toBe(0);
     expect(result.out).toContain('Usage: factory version');
     expect(result.out).toContain('--json');
+  });
+});
+
+describe('the guard command in the command line', () => {
+  it('lists guard in the main help', async () => {
+    const result = await run(['--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toMatch(/^ {2}guard\s+\S/m);
+  });
+
+  it.each([['help', 'guard'], ['guard', '--help']])('shows the list command and its flags for %s %s', async (...argv) => {
+    const result = await run(argv);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Usage: factory guard list [--all] [--family NAME] [--home DIR]');
+    expect(result.out).toContain('The list omits integrity checks and guards that are not built yet.');
+    for (const flag of ['--all', '--family NAME', '--home DIR', '--json']) expect(result.out).toContain(flag);
+    expect(result.out).not.toMatch(/factory guard (?:set|confirm)/);
+  });
+
+  it.each([[[]], [['set']], [['list', 'extra']]])('refuses invalid guard arguments %j before any file read', async (words) => {
+    const calls: string[] = [];
+    const deps = withFsWatch(createFakeDeps(), (method) => { calls.push(method); });
+    const sink = captureSink();
+    const code = await runCli(['guard', ...words], deps, sink);
+    expect(code).toBe(2);
+    expect(sink.out.join('')).toBe('');
+    expect(sink.errors.join('')).toContain('factory guard list');
+    expect(calls).toEqual([]);
   });
 });
 

@@ -50,6 +50,7 @@ export const commands = {
   node: 'node',
   doctor: 'doctor',
   machine: 'machine',
+  board: 'board',
   worker: 'worker',
   item: 'item',
   track: 'track',
@@ -63,6 +64,7 @@ export const commands = {
   upgrade: 'upgrade',
   hook: 'hook',
   state: 'state',
+  guard: 'guard',
   version: 'version',
   help: 'help',
 } as const;
@@ -91,6 +93,7 @@ export const terms = [
   'session reset',
   'queue',
   'check',
+  'guard',
   'track',
   'stage',
 ] as const;
@@ -156,6 +159,9 @@ export const selfCommands = { reset: 'reset' } as const;
 /** The subcommands of `state`. */
 export const stateCommands = { guard: 'guard' } as const;
 
+/** The subcommands of `guard`. */
+export const guardCommands = { list: 'list', set: 'set', confirm: 'confirm' } as const;
+
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
   nodeSend: `${commands.node} ${nodeCommands.send}`,
@@ -187,6 +193,9 @@ export const commandLines = {
   lockRun: `${commands.lock} ${lockCommands.run}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
   stateGuard: `${commands.state} ${stateCommands.guard}`,
+  guardList: `${commands.guard} ${guardCommands.list}`,
+  guardSet: `${commands.guard} ${guardCommands.set}`,
+  guardConfirm: `${commands.guard} ${guardCommands.confirm}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -222,7 +231,9 @@ export const flags = {
   state: 'state',
   stage: 'stage',
   all: 'all',
+  family: 'family',
   follow: 'follow',
+  width: 'width',
   roadmap: 'roadmap',
   question: 'question',
   kind: 'kind',
@@ -386,6 +397,8 @@ export const claudeSettingKeys = {
   approveMcpList: 'enabledMcpjsonServers',
   /** The setting that tells a session what to do with the input of other sessions: accept it, hold it for approval, or refuse it. */
   crossSessionInbound: 'crossSessionInbound',
+  /** The setting (a boolean) that lets the program compact a session that has had no turn for about one hour. */
+  idleCompaction: 'idleCompaction',
 } as const;
 
 /** The permission mode that accepts file edits with no prompt. A settings file with it gives a warning, not a stop. */
@@ -794,6 +807,33 @@ export const queueWords = {
  */
 export const maxDisplayWidth = 120;
 
+/** The facts document of the whole home, and the names of its independent sections. */
+export const boardDocKeys = {
+  home: 'home',
+  requests: requestWords.requests,
+  queue: 'queue',
+  workers: 'workers',
+  items: 'items',
+  itemsMore: 'itemsMore',
+  machine: 'machine',
+  faults: 'faults',
+  section: 'section',
+  error: 'error',
+} as const;
+
+export const boardWords = {
+  minWidth: 40,
+  maxItems: 500,
+  /** Leave time for startup and output inside the pane's shortest process limit of five seconds. */
+  sectionTimeoutMs: 3_000,
+  lateSection: 'Section read timed out.',
+  widthPattern: /^[0-9]+$/,
+  headings: { requests: requestWords.requests, workers: 'Workers', items: 'Board', queue: 'Queue', machine: 'Machine' },
+  fault: 'Cannot read this section',
+  summary: `Show the ${commands.request}s, ${roles.worker}s, board, queue and machine of one ${roles.node}.`,
+  widthDescription: `Text width: a whole number from 40 to ${maxDisplayWidth}.`,
+} as const;
+
 /** The most characters of typed text that a message repeats: a field name, a stage or a key. A longer text is cut. */
 export const maxEchoChars = 40;
 
@@ -1131,6 +1171,7 @@ export const keys = {
     agent: 'agent',
     effort: 'effort',
     model: 'model',
+    idleCompaction: 'idle_compaction',
     proxy: 'proxy',
     statusline: 'statusline',
   },
@@ -1916,6 +1957,8 @@ export const values = {
   permissionMode: 'auto',
   /** The only agent program that a session starts. */
   agent: 'claude',
+  /** Whether a session may compact itself after about one hour with no turn: off, so that the full context stays. */
+  defaultIdleCompaction: false,
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   noProxy: 'none',
   onFail: ['stop', 'direct'],
@@ -2057,6 +2100,7 @@ export const checkIds = {
   setupText: 'setup-text',
   roles: 'roles',
   tracker: 'tracker',
+  idleCompaction: 'idle-compaction',
   children: 'children',
   secrets: 'secrets',
   permissionMode: 'permission-mode',
@@ -2177,8 +2221,8 @@ export const roleText = {
     /** A work copy whose hook settings lack the own hook of these events: the launch of the worker refuses the same work copy. */
     gap: (id: string, events: readonly HookEvent[]): string =>
       `${id}: the hook settings of the work copy lack the hook of these events: ${events.join(', ')}. The worker does not start until they are in place.`,
-    /** A work copy whose hook settings file is a link: the check reads nothing through it. */
-    linkGap: (id: string): string => `${id}: the hook settings file of the work copy is a link, and the check does not read it.`,
+    /** A work copy with a link at the session folder, its `.claude` folder or the hook settings file. */
+    linkGap: (id: string, part: 'file' | 'folder'): string => `${id}: the hook settings ${part} of the work copy is a link, and the check does not read it.`,
     /** A work copy whose hook settings the check cannot read. `reason` is the read fault. */
     unreadGap: (id: string, reason: string): string => `${id}: the hook settings of the work copy are not checked (${reason}).`,
     remedies: {
@@ -2187,7 +2231,7 @@ export const roleText = {
       /** No own hook is there: `upgrade` leaves such a work copy as it is, so only a new worker asks for the hook settings. */
       recreate: (dismiss: string, create: string): string =>
         `Run "${dismiss}", then "${create}", and answer yes to the question about the hook settings.`,
-      link: (id: string, resume: string): string => `Replace the hook settings file of ${id} with a plain file. ${upgradeThen(resume)}`,
+      link: (id: string, resume: string, part: 'file' | 'folder'): string => `Replace the hook settings ${part} of ${id} with a plain ${part}. ${upgradeThen(resume)}`,
       unread: (id: string): string => `Make the hook settings of ${id} readable, then run "${commandText(commands.doctor)}" again.`,
     },
   },
@@ -2246,6 +2290,7 @@ export const schemaIds = {
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   machine: `${program}.machine/v1`,
+  board: `${program}.${commands.board}/v1`,
   workerNew: `${program}.worker-new/v1`,
   workerList: `${program}.worker-list/v1`,
   workerStop: `${program}.worker-stop/v1`,
@@ -2268,6 +2313,7 @@ export const schemaIds = {
   queue: `${program}.${commands.queue}/v1`,
   queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
+  guardList: `${program}.guard-list/v1`,
   lock: `${program}.${commands.lock}/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
@@ -2290,6 +2336,83 @@ export const flagText = (name: string): string => `--${name}`;
 
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
+
+/**
+ * The ids of the core guards. A guard is one family of checks and rule texts. A recipe adds guards of its own, and its files
+ * hold their ids, like the ids of its approval points. No id is the id of an approval point.
+ */
+export const guardIds = {
+  approvalDelegation: 'approval-delegation',
+  boardEdits: 'board-edits',
+  settingsCheck: 'settings-check',
+  settingsWrite: 'settings-write',
+  cloneRules: 'clone-rules',
+  contextLimits: 'context-limits',
+  deleteGuard: 'delete-guard',
+  dismiss: 'dismiss',
+  fileLinkSafety: 'file-link-safety',
+  folderTrust: 'folder-trust',
+  gitSafety: 'git-safety',
+  hookRuntime: 'hook-runtime',
+  launchCommands: 'launch-commands',
+  machineLimits: 'machine-limits',
+  taskFiles: 'task-files',
+  sessionChecks: 'session-checks',
+  ownerGo: 'owner-go',
+  paneSafety: 'pane-safety',
+  permissionMode: 'permission-mode',
+  proxy: 'proxy',
+  resumeRoutines: 'resume-routines',
+  rootScan: 'root-scan',
+  safetyBlock: 'safety-block',
+  secrets: 'secrets',
+  setupText: 'setup-text',
+  spend: 'spend',
+  workConduct: 'work-conduct',
+  installRules: 'install-rules',
+} as const;
+
+/** The kinds of a guard or a row of it: a check in code, or a rule in the role text. */
+export const guardKinds = { code: 'code', text: 'text' } as const;
+
+/** The two values of a guard. */
+export const guardValues = { on: 'on', off: 'off' } as const;
+
+/** The key of the guard values: the map in the local file, and the map in the shared file that can only tighten. */
+export const guardKeys = { local: 'guards', shared: 'shared_guards' } as const;
+
+/** The mark of a guard, or a row of it, that can harm the machine, the data or the accounts when it is off. */
+export const harmMark = 'H';
+
+/** The default list leaves room for its heading, more line and count line. */
+export const maxGuardListLines = 17;
+
+/**
+ * The words of `guard list`: the titles of the columns, the value of a guard that the list can not read, the words of the
+ * place of a value, the line that tells how many lines the view leaves out, and the line that counts the guards that are off.
+ */
+export const guardListWords = {
+  summary: 'Show the guards and what each one keeps safe.',
+  scopeHelp: 'The list omits integrity checks and guards that are not built yet.',
+  allHelp: 'Show every guard or every row of one family.',
+  familyHelp: 'Show the rows of the guard with this id.',
+  argumentsError: `${commandText(commandLines.guardList)} takes no argument.`,
+  unknownFamily: (id: string): string => `${commandText(commandLines.guardList)}: unknown family "${id}".`,
+  columns: { guard: 'GUARD', value: 'VALUE', default: 'DEFAULT', harm: harmMark, setIn: 'SET IN' },
+  familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
+  unknown: 'unknown',
+  sources: {
+    missing: 'no key',
+    shared: files.config,
+    local: `${files.localConfig} and record`,
+    noRecord: `${files.localConfig} with no record`,
+  },
+  moreLine: (count: number): string => `and ${count} more: run with ${flagText(flags.all)} or ${flagText(flags.json)}`,
+  countLine: (off: number, total: number, harm: number): string =>
+    `${off} of ${total} guards are off. ${harm} of them have the mark ${harmMark}.`,
+  unknownCountLine: (total: number): string =>
+    `The off count is unknown for ${total} guards. The off count with the mark ${harmMark} is unknown.`,
+} as const;
 
 /**
  * The fixed word of each outcome of `lock run` that the program itself decides. The line of an outcome starts with `lockLine`, which
@@ -2363,6 +2486,9 @@ const keyPath = (...parts: readonly string[]): string => parts.join('.');
 
 /** The config key that names the status line command of the owner: `session.statusline`. */
 export const statuslineKeyPath = keyPath(keys.root.session, keys.session.statusline);
+
+/** The config key that sets the idle compaction of the sessions: `session.idle_compaction`. */
+export const idleCompactionKeyPath = keyPath(keys.root.session, keys.session.idleCompaction);
 
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');

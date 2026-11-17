@@ -5,14 +5,15 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
 import { runInTerminal, scriptGate, type Exchange } from './fake-terminal.js';
 import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
+import { scaled } from './load.js';
 
 const gate = scriptGate();
 if (gate === 'skip') console.warn('The case of init.test.ts that needs a fake terminal is skipped: the program script is not installed.');
 
 /** The bounds of a run in the fake terminal: the wait for one prompt, the whole run, and the time limit of the case. */
-const PROMPT_MS = 15_000;
-const TOTAL_MS = 90_000;
-const CASE_MS = 120_000;
+const PROMPT_MS = scaled(15_000);
+const TOTAL_MS = scaled(90_000);
+const CASE_MS = scaled(120_000);
 
 let box: Sandbox;
 
@@ -76,6 +77,8 @@ describe('factory init (built binary)', () => {
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('repo: "acme/web"');
     expect(config).toContain('path: "web"');
+    expect(config).toContain('idle_compaction: false');
+    expect(JSON.parse(await box.read(join(box.node, 'coordinator', '.claude', 'settings.local.json')))).toMatchObject({ idleCompaction: false });
     expect(existsSync(join(box.node, 'web', '.git'))).toBe(true);
   });
 
@@ -884,6 +887,7 @@ describe('factory init: a received factory (built binary)', () => {
     expect(init.stderr).toContain(`This changes the settings of Claude Code in ${join(await realpath(received), 'coordinator', '.claude', 'settings.local.json')}:`);
     expect(init.stderr).toContain('factory hook Stop');
     expect(await box.read(file)).toContain('factory hook statusline');
+    expect(JSON.parse(await box.read(file))).toMatchObject({ idleCompaction: false });
     expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect((await box.git(received, ['status', '--porcelain', '-uall'])).stdout).toBe('');
 

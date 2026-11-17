@@ -51,6 +51,7 @@ import {
   flagText,
   hookNames,
   homeIndex,
+  idleCompactionKeyPath,
   keys,
   lessonLimits,
   maxFileBytes,
@@ -310,6 +311,36 @@ export const checkTracker = (state: DocState<FactoryConfig>): CheckResult => {
   return kind === values.trackerLocal
     ? check(checkIds.tracker, 'ok', `${name} is ${kind}`)
     : check(checkIds.tracker, 'warn', `${name} is ${kind}: its connector comes in a later version of ${program}`);
+};
+
+/**
+ * Compare the idle value in each own session file with the config. The reader uses the writer's own-hook rule.
+ * The worker list has at most `workerRecord.maxEntries` records, so the loop has that bound plus the coordinator.
+ * A failed read never counts as a skipped file. The warning repeats no path, file value or read error.
+ */
+export const checkIdleCompaction = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+  const id = checkIds.idleCompaction;
+  if (state.kind !== 'valid') return notChecked(id, `${files.config} is not valid`);
+  const listed = await listWorkerRecords(deps, home);
+  if (!listed.ok) return failedFrom(id, listed.error);
+  const wanted = state.value.core.session.idle_compaction;
+  const sessions = [
+    { folder: layoutOf(home).coordinatorDir, name: `the ${roles.coordinator}`, restart: commands.reboot },
+    ...listed.value.workers.map((record) => ({
+      folder: workCopyOf(home, record.project, record.id), name: `${roles.worker} ${record.id}`, restart: `${commands.restart} ${record.id}`,
+    })),
+  ];
+  const gaps: string[] = [];
+  for (const session of sessions) {
+    const read = await readHookSettings(deps, session.folder);
+    const found = read.ok && read.value.state === 'plain' ? read.value : null;
+    if (found !== null && (!found.hasOwnHook || found.idleCompaction === wanted)) continue;
+    const reason = found === null ? 'not read' : `idle value does not match ${idleCompactionKeyPath}`;
+    gaps.push(`${session.name}: ${reason}. Run "${commandText(commands.upgrade)}", then "${commandText(session.restart)}".`);
+  }
+  return gaps.length === 0
+    ? check(id, 'ok', `${idleCompactionKeyPath} is ${wanted}`)
+    : check(id, 'warn', gaps.join(' '));
 };
 
 const plural = (count: number, one: string, many: string): string => (count === 1 ? one : many);
@@ -573,12 +604,13 @@ export const checkSetupText = async (deps: Deps, home: string): Promise<CheckRes
 const hookGapOf = (record: WorkerRecord, settings: HookSettingsRead): string | null => {
   const words = roleText.doctor;
   const resume = commandText(resumeLine(record.id));
-  if (settings.state === 'link') return `${words.linkGap(record.id)} ${words.remedies.link(record.id, resume)}`;
-  if (settings.missing.length === 0) return null;
+  if (settings.state === 'link') return `${words.linkGap(record.id, settings.part)} ${words.remedies.link(record.id, resume, settings.part)}`;
+  const missing = settings.state === 'not-parsed' ? hookNames.events : settings.missing;
+  if (missing.length === 0) return null;
   // No own hook at all: `upgrade` leaves such a work copy as it is, because its owner said no to the hook.
-  const none = settings.missing.length === hookNames.events.length;
+  const none = missing.length === hookNames.events.length;
   const { dismiss, create } = startOverCommands(record.id, record.project);
-  return `${words.gap(record.id, settings.missing)} ${none ? words.remedies.recreate(dismiss, create) : words.remedies.upgrade(resume)}`;
+  return `${words.gap(record.id, missing)} ${none ? words.remedies.recreate(dismiss, create) : words.remedies.upgrade(resume)}`;
 };
 
 /** The finding for a work copy whose hook settings the check cannot read, with its one remedy. */
@@ -865,6 +897,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     blocks,
     setupText,
     roleDelivery,
+    idleCompaction,
     children,
     instructionFileCheck,
     proxies,
@@ -884,6 +917,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkNodeBlocks(deps, home, config),
     checkSetupText(deps, home),
     checkRoleDelivery(deps, home, config),
+    checkIdleCompaction(deps, home, config),
     checkChildren(deps, home, config, registry),
     checkInstructionFiles(deps, home),
     hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config),
@@ -910,6 +944,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     roleDelivery,
     checkRoles(config),
     checkTracker(config),
+    idleCompaction,
     children,
     checkSecrets(config),
     ...rootCheckResults(rootScan),

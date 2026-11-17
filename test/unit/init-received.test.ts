@@ -775,6 +775,31 @@ describe('init: the setup acceptance of a received root', () => {
 describe('init: the hook settings of a received factory', () => {
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(HOOK_FILE) ?? 'null');
 
+  it.each([false, true])('uses the shared config value %s in the consent and the write', async (idle) => {
+    const base = sampleConfig();
+    const config = { ...base, core: { ...base.core, session: { ...base.core.session, idle_compaction: idle } } };
+    const { deps } = received({ config }, { ...terminal, prompt: person('y', [], 'y') });
+    deps.seed(HOOK_FILE, JSON.stringify({ ...ownSettingsEntries, idleCompaction: !idle }));
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.prompts.filter((question) => question.startsWith(HOOK_QUESTION))).toEqual([
+      `This changes the settings of Claude Code in ${HOOK_FILE}:\n` +
+      `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml), and replace the value ${!idle}\nWrite this change? [y/N] `,
+    ]);
+    expect(settingsOf(deps)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+  });
+
+  it('rejects an idle value that is not a boolean before any write', async () => {
+    const { deps } = received();
+    const shared = deps.files.get(`${ROOT}/factory.yaml`) ?? '';
+    deps.seed(`${ROOT}/factory.yaml`, shared.replace('idle_compaction: false', 'idle_compaction: "false"'));
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain('session.idle_compaction');
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.files.has(HOOK_FILE)).toBe(false);
+  });
+
   it('shows the hook change after the question about the files, and the person accepts it; then start --dry-run asks and shows nothing', async () => {
     const asked: string[] = [];
     const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y', asked, 'y'), env: { ...ENV, PATH: '/bin' } });

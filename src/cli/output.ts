@@ -20,10 +20,12 @@ export interface CommandOutput {
   readonly failed: boolean;
   /** The exit code of a failed command, when it is not the common failure code. */
   readonly exitCode?: number;
+  /** The text width, including any status symbol. */
+  readonly width?: number;
 }
 
 export interface Style {
-  paint(level: LineLevel, text: string): string;
+  paint(level: LineLevel, text: string, width?: number): string;
 }
 
 interface StyleSettings {
@@ -57,10 +59,11 @@ const SYMBOLS_ASCII: Readonly<Record<LineLevel, string>> = {
 };
 
 export const createStyle = ({ color, unicode }: StyleSettings): Style => ({
-  paint: (level, text) => {
+  paint: (level, text, width) => {
     const symbols = unicode ? SYMBOLS_UNICODE : SYMBOLS_ASCII;
     const symbol = symbols[level];
-    const line = symbol === '' ? text : `${symbol} ${text}`;
+    const decorated = symbol === '' ? text : `${symbol} ${text}`;
+    const line = width === undefined ? decorated : displayLine(decorated, width);
     const ansi = ANSI_BY_LEVEL[level];
     return color && ansi !== '' ? `${ansi}${line}${ANSI_RESET}` : line;
   },
@@ -96,7 +99,7 @@ export const renderInternalError = (cause: unknown): string =>
 
 export const renderText =(output: CommandOutput, style: Style, quiet: boolean): string => {
   const shown = output.lines.filter((line) => !quiet || line.level === 'warn' || line.level === 'fail');
-  return shown.map((line) => `${style.paint(line.level, printable(line.text))}\n`).join('');
+  return shown.map((line) => `${style.paint(line.level, printable(line.text), output.width)}\n`).join('');
 };
 
 /**
