@@ -28,6 +28,12 @@ const countOf = (report: MachineReport, verdict: FactVerdict): number =>
  * The verdict on the first line, then one line for each fact. A failed limit or an unknown fact does not fail the command. The
  * power is in the JSON only: it is no fact, and it changes neither the lines nor the verdict.
  */
+export const machineFactsOf = (report: MachineReport, power: Power) => ({
+  verdict: machineVerdict(report),
+  facts: report,
+  [powerKeys.power]: { [powerKeys.source]: power.source, [powerKeys.percent]: power.percent },
+});
+
 export const machineOutput = (home: string, report: MachineReport, power: Power): CommandOutput => {
   const verdict = machineVerdict(report);
   const counts = `${countOf(report, 'ok')} ok, ${countOf(report, 'fail')} fail, ${countOf(report, 'unknown')} unknown`;
@@ -39,9 +45,7 @@ export const machineOutput = (home: string, report: MachineReport, power: Power)
   const json = {
     schema: schemaIds.machine,
     home,
-    verdict,
-    facts: report,
-    [powerKeys.power]: { [powerKeys.source]: power.source, [powerKeys.percent]: power.percent },
+    ...machineFactsOf(report, power),
   };
   return { lines, json, warnings: [], failed: false };
 };

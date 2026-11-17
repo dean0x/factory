@@ -229,17 +229,19 @@ const logAnswer = (id: string, input: DecisionLogInput): CommandOutput =>
     decider: input.decider,
   });
 
+export const requestRowsOf = (requests: readonly BoardRequest[]) => requests.map(({ id, title, options, openedAt, group }) => ({
+  id,
+  title,
+  options,
+  [requestRowKeys.openedAt]: openedAt,
+  [requestRowKeys.group]: group,
+}));
+
 const listAnswer = (requests: readonly BoardRequest[]): CommandOutput => ({
   lines: requestView(requests),
   json: {
     schema: schemaIds.requestList,
-    requests: requests.map(({ id, title, options, openedAt, group }) => ({
-      id,
-      title,
-      options,
-      [requestRowKeys.openedAt]: openedAt,
-      [requestRowKeys.group]: group,
-    })),
+    requests: requestRowsOf(requests),
   },
   warnings: [],
   failed: false,
