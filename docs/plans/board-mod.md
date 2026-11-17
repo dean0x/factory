@@ -103,7 +103,7 @@ Behavior:
 Test (`test/unit/board.test.ts`, fake deps, a seeded home):
 - `--json` gives the full document, compared with `toEqual`.
 - The text is the heading lines plus the lines of each section view, for the same fixture.
-- A broken `board.json` gives `items: null` and one fault. The other sections still show, and the exit is 0.
+- A broken `board.json` gives `items: null`, `queue: null` and two faults (items and queue). Other sections still show. The exit is 0.
 - `--width 39` and `--width 121` give a usage error. `--width 40` cuts each line to at most 40 characters.
 - A home that is not found gives `factory.error/v1` with `--json`.
 
