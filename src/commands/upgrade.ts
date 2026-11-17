@@ -25,6 +25,7 @@ import { locateHomeFolder, type NodeIdReader } from '../core/home.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
+import { readGuardState } from '../core/guard-records.js';
 import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { blockRenamesOf } from '../migrate/files.js';
@@ -48,7 +49,8 @@ import { requireNoLostIds } from '../state/board-commit.js';
 import { guardFolderLabel, installGuard } from '../state/guard.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import { withStateLock } from '../state/state-lock.js';
-import type { SetupTexts } from '../templates/types.js';
+import { workerFileTemplatesFor } from '../templates/index.js';
+import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import {
   applyMoves,
   backup,
@@ -335,8 +337,14 @@ export const runUpgrade = async (
   if (!root.ok) return root;
   const stateGitignore = await planStateGitignore(deps, layout);
   if (!stateGitignore.ok) return stateGitignore;
-  const blockSet = await planBlockSet(config.value, local.value, upgrade, setup.value.texts, (parsed) =>
-    effectiveModes(deps, home, parsed),
+  let allOnPackage: readonly BlockTemplate[] | undefined;
+  const blockSet = await planBlockSet(
+    config.value, local.value, upgrade, setup.value.texts,
+    (parsed) => effectiveModes(deps, home, parsed),
+    async (parsed) => {
+      allOnPackage = workerFileTemplatesFor(parsed, null);
+      return (await readGuardState(deps, home, parsed, 'always')).values;
+    },
   );
   if (!blockSet.ok) return blockSet;
 
@@ -398,14 +406,23 @@ export const runUpgrade = async (
   if (!configText.ok) return configText;
   const localText = localFileText(config.value, local.value, upgrade);
   if (!localText.ok) return localText;
+  let localNotices: readonly string[] = [];
+  if (localText.value !== null && upgrade.local.notices !== undefined) {
+    const raw = local.value.kind === 'create'
+      ? migratedFile(config.value, upgrade.config)
+      : migratedFile(local.value, upgrade.local);
+    if (!raw.ok) return raw;
+    localNotices = upgrade.local.notices(local.value.kind === 'create' ? upgrade.localPartOf(raw.value) : raw.value);
+  }
 
   // A role text above the cap is a warning only: the run writes its files, and a worker refuses the text until it is shorter.
-  const roleSizeWarning = roleTextSizeWarning(blockSet.value.templates, commandText(commands.upgrade));
+  const roleSizeWarning = roleTextSizeWarning(blockSet.value.templates, commandText(commands.upgrade), allOnPackage);
   const roleSizeWarnings = roleSizeWarning === null ? [] : [roleSizeWarning];
 
   const lines: OutLine[] = [
     ...planLines(config.value, local.value, state.value, files, stateGitignore.value, boardKey.value, guard.value, root.value, blocks, upgrade),
     ...resumeLines(changes),
+    ...localNotices.map((text): OutLine => ({ level: 'ok', text })),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
     ...setup.value.warnings.map((text): OutLine => ({ level: 'warn', text })),
     ...roleSizeWarnings.map((text): OutLine => ({ level: 'warn', text })),

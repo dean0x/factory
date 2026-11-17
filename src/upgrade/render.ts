@@ -4,6 +4,8 @@ import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { commitPaths, requireStateRepoCommit, unstagePaths, type RepoPaths } from '../core/git.js';
 import { ok } from '../core/result.js';
+import { allOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import { setupBlockNames, type CommandName } from '../names.js';
 import type { ApprovalModes } from '../recipes/index.js';
 import { layoutOf, type Layout } from '../state/layout.js';
@@ -116,11 +118,12 @@ export const renderCoordinatorText = (
   config: FactoryConfig,
   modes: ApprovalModes,
   command: CommandName,
+  guards: GuardValues = allOn,
 ): Promise<CliResult<CoordinatorRender>> =>
   renderTemplates(
     deps,
     home,
-    blockTemplatesFor(blockInputOf(config, NO_SETUP, modes)).filter((template) => template.target === 'claudeFile'),
+    blockTemplatesFor(blockInputOf(config, NO_SETUP, modes, guards)).filter((template) => template.target === 'claudeFile'),
     MODE_WRITES,
     command,
   );

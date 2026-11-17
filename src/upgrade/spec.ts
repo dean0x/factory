@@ -14,7 +14,9 @@ import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
 import { fileSteps, rootMoves, type BlockRename, type FileStep, type RootMove } from '../migrate/files.js';
 import { isRecord, type SchemaParser, type TextParser, type VersionSpec } from '../migrate/inspect.js';
+import { allOn } from '../guards/effective.js';
 import { retiredGuardIds } from '../guards/registry.js';
+import type { GuardValues } from '../guards/types.js';
 import { guardConfigWords, guardKeys } from '../names.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
@@ -59,14 +61,17 @@ export interface UpgradeSpec {
   localPartOf(config: unknown): unknown;
   /**
    * The managed blocks of the node that a config value describes, with the setup texts of the root and the effective
-   * mode of each approval point. The value holds the keys of both files, in the current schema versions. `modesOf` gets
-   * the parsed config, because the effective modes follow its node id and its local values.
+   * mode of each approval point and guard values. The value holds both files in the current schema versions.
+   * Both callbacks get the parsed config, because their values follow its node id and local values.
    */
-  blocksOf(config: unknown, setup: SetupTexts, modesOf: ModesOf): Promise<CliResult<BlockSet>>;
+  blocksOf(config: unknown, setup: SetupTexts, modesOf: ModesOf, guardsOf?: GuardsOf): Promise<CliResult<BlockSet>>;
 }
 
 /** The effective mode of each approval point of a parsed config. */
 export type ModesOf = (config: FactoryConfig) => Promise<ApprovalModes>;
+
+/** The effective guard values of a parsed config. */
+export type GuardsOf = (config: FactoryConfig) => Promise<GuardValues>;
 
 export const finisher =
   <T>(schema: SchemaParser<T>, render: (value: T) => string) =>
@@ -104,11 +109,11 @@ export const localFinisher = (retired: readonly string[] = retiredGuardIds): Req
  */
 const blocksOfNode =
   (registry: RecipeRegistry) =>
-  async (config: unknown, setup: SetupTexts, modesOf: ModesOf): Promise<CliResult<BlockSet>> => {
+  async (config: unknown, setup: SetupTexts, modesOf: ModesOf, guardsOf: GuardsOf = async () => allOn): Promise<CliResult<BlockSet>> => {
     const { shared, local } = splitConfigValue(config);
     const parsed = parseConfig(shared, local, registry);
     if (!parsed.success) return failure(describeIssues(parsed.error));
-    const input = blockInputOf(parsed.data, setup, await modesOf(parsed.data));
+    const input = blockInputOf(parsed.data, setup, await modesOf(parsed.data), await guardsOf(parsed.data));
     return ok({
       templates: blockTemplatesFor(input),
       renames: roleBlockRenames(parsed.data.entry, input.layer),

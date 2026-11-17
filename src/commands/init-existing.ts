@@ -18,6 +18,8 @@ import {
 import { entryProblemOf, markerProblemOf, reasonOf, rootRefusalOf } from '../core/home.js';
 import { recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
+import { readGuardState } from '../core/guard-records.js';
+import type { GuardValues } from '../guards/types.js';
 import { err, ok } from '../core/result.js';
 import {
   commands,
@@ -111,6 +113,7 @@ type Repair =
 interface Checked {
   readonly root: ReceivedRoot;
   readonly config: FactoryConfig;
+  readonly guards: GuardValues;
   readonly standing: Standing;
   readonly repair: Repair;
   /** True when the state folder is a repo that the run writes the delete guard into. A folder that the run makes gets it from `makeStateFolder`. */
@@ -218,6 +221,7 @@ const checkExisting = async (
   return ok({
     root: root.value,
     config: config.value,
+    guards: (await readGuardState(deps, home, config.value, 'when-off')).values,
     standing: standing.value,
     repair: repair.value,
     guardDue,
@@ -333,8 +337,10 @@ const localChangeOf = async (
 };
 
 /** The text of the marker, from the same templates that make a new state folder. */
-const stateFilesFor = (config: FactoryConfig, rendered: SetupTexts, points: readonly ApprovalPoint[]): CliResult<readonly StateFile[]> => {
-  const templates = blockTemplatesFor(blockInputOf(config, rendered, ownerModes(points)));
+const stateFilesFor = (
+  config: FactoryConfig, rendered: SetupTexts, points: readonly ApprovalPoint[], guards: GuardValues,
+): CliResult<readonly StateFile[]> => {
+  const templates = blockTemplatesFor(blockInputOf(config, rendered, ownerModes(points), guards));
   const worker = workerTextOf(templates);
   return worker.ok ? stateFilesOf(templates, worker.value, queueKeyOf(config.entry)) : worker;
 };
@@ -394,7 +400,7 @@ const planOf = async (
   let stateFiles: readonly StateFile[] = [];
   let marker: string | null = null;
   if (repair.kind !== 'none') {
-    const made = stateFilesFor(config, renderedTexts(decision, setup), points);
+    const made = stateFilesFor(config, renderedTexts(decision, setup), points, checked.guards);
     if (!made.ok) return made;
     stateFiles = made.value;
     if (repair.kind === 'marker') {
@@ -606,7 +612,7 @@ const applyExisting = async (
   // that count, so a point whose record failed stays `owner`. A run that changes no mode renders nothing.
   const change = plan.modeChange;
   const tightened =
-    change === null ? null : await renderCoordinatorText(deps, layout.home, config, tightModes(points, change), commands.init);
+    change === null ? null : await renderCoordinatorText(deps, layout.home, config, tightModes(points, change), commands.init, checked.guards);
   const records =
     standing.registration === 'registered'
       ? await recordApprovals(deps, layout.home, id, points, plan.approvals)
@@ -616,7 +622,7 @@ const applyExisting = async (
     ...config,
     core: { ...config.core, approval: plan.approvals.modes },
   });
-  const settled = change === null ? null : await renderCoordinatorText(deps, layout.home, config, approval, commands.init);
+  const settled = change === null ? null : await renderCoordinatorText(deps, layout.home, config, approval, commands.init, checked.guards);
   const accepted = await recordAcceptance(deps, plan.acceptance);
   const renders = tightened !== null && settled !== null ? { tightened, settled } : null;
   return ok({

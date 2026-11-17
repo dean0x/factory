@@ -9,6 +9,7 @@ import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
+import { isRecord } from '../../src/migrate/inspect.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
 import { boardKeys, commands, env, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
@@ -45,6 +46,11 @@ import {
 } from '../helpers/fake-deps.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
+import { readGuardState } from '../../src/core/guard-records.js';
+import type { GuardValues } from '../../src/guards/types.js';
+import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
+import { loadConfig } from '../helpers/package-registry.js';
+import { countReadsOf } from '../helpers/read-count.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
@@ -262,6 +268,126 @@ describe('upgrade: guard config finishers', () => {
     'refuses malformed local config instead of a partial rewrite',
     (raw) => expect(localFinisher(['retired-fixture-guard']).finish(raw)).toMatchObject({ ok: false }),
   );
+});
+
+describe('upgrade: effective guard values', () => {
+  const STORE = '/state/factory/guard-records.json';
+  const OFF: GuardValues = { 'install-rules': 'off', 'resume-routines': 'off', 'approval-merge': 'off', 'approval-release': 'off' };
+
+  const seedGuards = (deps: FakeDeps, values: GuardValues = OFF): void => {
+    deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(values)}\n`);
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: Object.fromEntries(Object.entries(values).map(([id, value]) => [id, { value, at: '2030-01-02T03:04:05.678Z' }])),
+    }] }));
+  };
+
+  it.each(Object.keys(OFF))('renders the confirmed off value of %s and keeps every effective value with one store read', async (id) => {
+    const { deps } = await makeNode();
+    seedGuards(deps, { [id]: 'off' });
+    const config = await loadConfig(deps, HOME);
+    if (!config.ok) throw new Error(config.error.message);
+    const before = await readGuardState(deps, HOME, config.value, 'always');
+    const local = text(deps, LOCAL);
+    const store = text(deps, STORE);
+    const counted = countReadsOf(deps, STORE);
+    success(await upgrade(counted.deps));
+    const templates = blockTemplatesFor(blockInputOf(config.value, {
+      coordinator: fileTemplates.setupCoordinator, worker: fileTemplates.setupWorker,
+    }, config.value.core.approval, before.values));
+    expect((await inspectBlocks(deps, HOME, templates)).every((block) => planBlock(block, false).action === 'current')).toBe(true);
+    expect(counted.count()).toBe(1);
+    expect(text(deps, LOCAL)).toBe(local);
+    expect(text(deps, STORE)).toBe(store);
+    expect((await readGuardState(deps, HOME, config.value, 'always')).values).toEqual(before.values);
+  });
+
+  it('plans confirmed off text in a dry run without a write', async () => {
+    const { deps } = await makeNode();
+    seedGuards(deps);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(output.json).toMatchObject({ changed: true, blocks: expect.arrayContaining([
+      expect.objectContaining({ name: 'worker', action: 'render' }),
+      expect.objectContaining({ name: 'coordinator', action: 'render' }),
+    ]) });
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it.each(['missing', 'on', 'other-node', 'other-root', 'invalid', 'link', 'shared'] as const)(
+    'keeps guard text on when the off value has no matching record: %s', async (fault) => {
+      const { deps } = await makeNode(fault === 'link' ? { links: { [STORE]: '/outside/store' } } : {});
+      seedGuards(deps, { 'install-rules': 'off' });
+      if (fault === 'missing') deps.files.delete(STORE);
+      if (fault === 'on') deps.seed(STORE, text(deps, STORE).replace('"value":"off"', '"value":"on"'));
+      if (fault === 'other-node') deps.seed(STORE, text(deps, STORE).replace('"node":"demo"', '"node":"other"'));
+      if (fault === 'other-root') deps.seed(STORE, text(deps, STORE).replace(HOME, '/w/other'));
+      if (fault === 'invalid') deps.seed(STORE, '{invalid');
+      if (fault === 'shared') deps.seed(CONFIG, `${text(deps, CONFIG)}\nshared_guards: {install-rules: on}\n`);
+      const before = snapshot(deps);
+      expect(success(await upgrade(deps)).json).toMatchObject({ changed: false });
+      expect(snapshot(deps)).toEqual(before);
+    },
+  );
+
+  it('keeps the all-on setup allowance in the size warning when install text is off', async () => {
+    const { deps } = await makeNode();
+    seedGuards(deps, { 'install-rules': 'off' });
+    const setup = 'x'.repeat(roleText.maxChars);
+    deps.seed(`${HOME}/setup/roles/worker.md`, setup);
+    await acceptFiles(deps, HOME, 'demo', ['setup/coordinator.md', 'setup/roles/worker.md']);
+    const config = await loadConfig(deps, HOME);
+    if (!config.ok) throw new Error(config.error.message);
+    const free = roleText.maxChars - composeRoleText(workerFileTemplatesFor(config.value, null)).length - roleText.joiner.length;
+    const size = composeRoleText(workerFileTemplatesFor(config.value, setup, { 'install-rules': 'off' })).length;
+    const output = success(await upgrade(deps));
+    expect(output.warnings).toEqual([
+      `${roleText.tooLargeText(size, 'characters')}. ${roleText.remedies.shorten(free, 'factory upgrade')}`,
+    ]);
+  });
+
+  it('keeps guard values and their effective state through a split config rewrite', async () => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin', ...INDEX_ENV }, run: handler });
+    seedSchema1Node(deps, HOME);
+    const guards: GuardValues = { 'install-rules': 'off', 'resume-routines': 'on', 'approval-merge': 'off' };
+    const shared = { 'approval-merge': 'on' };
+    deps.seed(CONFIG, `${text(deps, CONFIG)}\nguards: ${JSON.stringify(guards)}\nshared_guards: ${JSON.stringify(shared)}\n`);
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: Object.fromEntries(Object.entries(guards).map(([id, value]) => [id, { value, at: '2030-01-02T03:04:05.678Z' }])),
+    }] }));
+    const counted = countReadsOf(deps, STORE);
+    success(await upgrade(counted.deps));
+    expect(counted.count()).toBe(1);
+    const config = await loadConfig(deps, HOME);
+    if (!config.ok) throw new Error(config.error.message);
+    expect(config.value.core).toMatchObject({ guards, shared_guards: shared });
+    const state = await readGuardState(deps, HOME, config.value, 'always');
+    expect(state.values).toMatchObject({ 'install-rules': 'off', 'resume-routines': 'on', 'approval-merge': 'on' });
+    const templates = blockTemplatesFor(blockInputOf(config.value, { coordinator: null, worker: null }, config.value.core.approval, state.values));
+    expect((await inspectBlocks(deps, HOME, templates)).every((block) => planBlock(block, false).action === 'current')).toBe(true);
+  });
+
+  it('prints one notice when the local rewrite drops retired guard ids and keeps other values', async () => {
+    const { deps } = await makeNode();
+    deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: {retired-fixture-guard: off, install-rules: off}\n`);
+    const file = localFinisher(['retired-fixture-guard']);
+    const spec: UpgradeSpec = { ...currentSpec, ...fixedBlocks(layer1Blocks), local: {
+      ...currentSpec.local,
+      spec: { ...currentSpec.local.spec, supported: 2, schema: z.looseObject({ schema: z.literal(2) }) },
+      migrations: [step('schema', 1)],
+      notices: file.notices,
+      finish: (raw) => {
+        const finished = file.finish(isRecord(raw) ? { ...raw, schema: 1 } : raw);
+        return finished.ok ? ok(finished.value.replace('schema: 1', 'schema: 2')) : finished;
+      },
+    } };
+    const output = success(await upgrade(deps, spec));
+    expect(lineTexts(output).filter((line) => line.includes('Removed retired guard ids:'))).toEqual([
+      'Removed retired guard ids: retired-fixture-guard.',
+    ]);
+    expect(parseYamlText(text(deps, LOCAL))).toMatchObject({ ok: true, value: { guards: { 'install-rules': 'off' } } });
+    expect(text(deps, LOCAL)).not.toContain('retired-fixture-guard');
+  });
 });
 
 describe('upgrade: when nothing changes', () => {

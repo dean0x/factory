@@ -33,6 +33,8 @@ import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-f
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
+import type { GuardValues } from '../../src/guards/types.js';
+import { countReadsOf } from '../helpers/read-count.js';
 
 const ROOT = '/w/node';
 const STATE = `${ROOT}/.factory`;
@@ -712,6 +714,30 @@ describe('init: the text of the coordinator follows a changed mode of a register
   const writesOf = (deps: FakeDeps, from = 0): string[] =>
     deps.atomicWrites.slice(from).filter((path) => [LOCAL, INDEX, COORDINATOR_FILE, RECORDS].includes(path));
 
+  it('keeps confirmed off guard text in both renders of a changed approval mode with one store read', async () => {
+    const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) });
+    const guards: GuardValues = { 'approval-merge': 'off', 'resume-routines': 'off', 'install-rules': 'off' };
+    deps.seed(LOCAL, `${deps.files.get(LOCAL) ?? ''}\nguards: ${JSON.stringify(guards)}\n`);
+    const store = '/state/factory/guard-records.json';
+    const record = JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT, prefix: null,
+      values: Object.fromEntries(Object.entries(guards).map(([id, value]) => [id, { value, at: '2030-01-02T03:04:05.678Z' }])),
+    }] });
+    deps.seed(store, record);
+    const counted = countReadsOf(deps, store);
+    const result = await runInit(counted.deps, options());
+    expect(result.ok).toBe(true);
+    const expected = blockTemplatesFor(blockInputOf(configOf({}), { coordinator: null, worker: null }, DELEGATED, guards))
+      .filter((template) => template.target === 'claudeFile').map((template) => {
+        const rendered = renderBlock(template);
+        if (!rendered.ok) throw new Error(rendered.error.message);
+        return rendered.value;
+      });
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(appendBlocks('', expected));
+    expect(counted.count()).toBe(1);
+    expect(deps.files.get(store)).toBe(record);
+    expect((await loadConfig(deps, ROOT))).toMatchObject({ ok: true, value: { core: { guards } } });
+  });
+
   it('names the new mode in the text after the run, and prints no line that asks for an upgrade', async () => {
     const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) });
     const result = await runInit(deps, options());
@@ -1070,6 +1096,30 @@ describe('init: an entry with another node id', () => {
 });
 
 describe('init: a root with no state folder', () => {
+  it('restores the worker file with confirmed off guard values and leaves the guard files unchanged', async () => {
+    const { deps } = existing({ state: 'absent' });
+    const guards: GuardValues = { 'install-rules': 'off' };
+    deps.seed(LOCAL, `${deps.files.get(LOCAL) ?? ''}\nguards: ${JSON.stringify(guards)}\n`);
+    const local = deps.files.get(LOCAL);
+    const store = '/state/factory/guard-records.json';
+    const record = JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT, prefix: null,
+      values: { 'install-rules': { value: 'off', at: '2030-01-02T03:04:05.678Z' } },
+    }] });
+    deps.seed(store, record);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    const expected = blockTemplatesFor(blockInputOf(configOf({}), {
+      coordinator: COORDINATOR_TEXT, worker: WORKER_TEXT,
+    }, configOf({}).core.approval, guards)).filter((template) => template.target === 'workerFile').map((template) => {
+      const rendered = renderBlock(template);
+      if (!rendered.ok) throw new Error(rendered.error.message);
+      return rendered.value;
+    });
+    expect(deps.files.get(`${STATE}/roles/worker.md`)).toBe(appendBlocks('', expected));
+    expect(deps.files.get(LOCAL)).toBe(local);
+    expect(deps.files.get(store)).toBe(record);
+  });
+
   it('makes the state folder as the received path does, registers the root, and the root rule passes', async () => {
     const { deps, log } = existing({ state: 'absent', origin: 'own' });
     const before = outsideState(deps);
