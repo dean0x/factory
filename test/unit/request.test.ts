@@ -135,6 +135,7 @@ describe('request add', () => {
         ],
         [decisionKeys.openedAt]: at,
         [decisionKeys.group]: requestGroups.now,
+        [decisionKeys.kind]: 'decision',
       },
     ]);
     expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.waiting]]);
@@ -180,7 +181,7 @@ describe('request add', () => {
     expect(linesOf(await run(repo, ADD))).toEqual(['Added D-8: Pick a plan']);
   });
 
-  it('has no subcommand that changes a request, and a second add leaves the first request as it was', async () => {
+  it('refuses update, and a second add leaves the first request as it was', async () => {
     const repo = await boardNode();
     valueOf(await run(repo, ADD));
     const first = waitingOf(repo).items[0];
@@ -375,11 +376,11 @@ describe('request list', () => {
     expect(lines[19]).toBe('8 more requests.');
   });
 
-  it('prints the JSON document with the title as it is stored, one entry for each request, and null and now for a row from before the two keys', async () => {
+  it('keeps the old JSON keys and adds the default kind and the stored question for an old row', async () => {
     const repo = await boardNode({ waiting: waitingText([entry('D-1')]) });
     expect(valueOf(await run(repo, { words: ['list'] })).json).toEqual({
       schema: 'factory.request-list/v1',
-      requests: [{ id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: null, group: 'now' }],
+      requests: [{ id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: null, group: 'now', kind: 'decision', question: 'A question?' }],
     });
   });
 
@@ -393,10 +394,35 @@ describe('request list', () => {
     expect(valueOf(await run(repo, { words: ['list'] })).json).toEqual({
       schema: 'factory.request-list/v1',
       requests: [
-        { id: 'D-1', title: 'Pick a plan', options: ['a', 'b'], openedAt: first, group: requestGroups.now },
-        { id: 'D-2', title: 'Other', options: ['a', 'b'], openedAt: second, group: requestGroups.later },
+        { id: 'D-1', title: 'Pick a plan', options: ['a', 'b'], openedAt: first, group: requestGroups.now, kind: 'decision', question: ADD.question },
+        { id: 'D-2', title: 'Other', options: ['a', 'b'], openedAt: second, group: requestGroups.later, kind: 'decision', question: ADD.question },
       ],
     });
+  });
+
+  it.each([
+    ['missing', undefined, 'decision'],
+    ['unknown', 'other', 'decision'],
+    ['not text', 7, 'decision'],
+    ['decision', 'decision', 'decision'],
+    ['command', 'command', 'command'],
+    ['information', 'information', 'information'],
+  ])('reads a %s kind (%j) as %s without a new text column', async (_name, stored, expected) => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1', { kind: stored })]) });
+    expect((await listedRows(repo))[0]?.['kind']).toBe(expected);
+    expect(linesOf(await run(repo, { words: ['list'] })).slice(1).map((line) => line.split(/ {2,}/))).toEqual([
+      ['ID', 'TITLE', 'OPTIONS'], ['D-1', 'Request D-1', 'a'],
+    ]);
+  });
+
+  it.each([
+    ['missing', undefined, null],
+    ['not text', 7, null],
+    ['empty text', '', ''],
+    ['text', '  Which plan?  ', '  Which plan?  '],
+  ])('reads a %s question as text or null', async (_name, stored, expected) => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1', { question: stored })]) });
+    expect((await listedRows(repo))[0]?.['question']).toBe(expected);
   });
 
   it.each([
@@ -458,7 +484,7 @@ describe('request close', () => {
     valueOf(await run(repo, { words: ['close', 'D-2'] }));
     expect(waitingOf(repo).items).toEqual([kept]);
     expect(await listedRows(repo)).toEqual([
-      { id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: '2030-01-02T03:04:05.678Z', group: requestGroups.later },
+      { id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: '2030-01-02T03:04:05.678Z', group: requestGroups.later, kind: 'decision', question: 'A question?' },
     ]);
   });
 

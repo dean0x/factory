@@ -1,6 +1,6 @@
 import { isRecord } from '../migrate/inspect.js';
-import { decisionKeys, optionKeys, requestGroups } from '../names.js';
-import type { BoardRequest, RequestGroup } from './contract.js';
+import { decisionKeys, optionKeys, requestGroups, requestKinds } from '../names.js';
+import type { BoardRequest, RequestGroup, RequestKind } from './contract.js';
 import type { WaitingDoc, WaitingItem } from './files.js';
 import { storedTimeOf } from './stored-time.js';
 
@@ -32,6 +32,17 @@ const groupOf = (item: WaitingItem): RequestGroup => {
   return Object.values(requestGroups).find((known) => known === group) ?? requestGroups.now;
 };
 
+/** A missing or unknown kind reads as decision for the list. The strict read checks the stored kind. */
+const kindOf = (item: WaitingItem): RequestKind => {
+  const kind = item.record[decisionKeys.kind];
+  return Object.values(requestKinds).find((known) => known === kind) ?? requestKinds.decision;
+};
+
+const questionOf = (item: WaitingItem): string | null => {
+  const question = item.record[decisionKeys.question];
+  return typeof question === 'string' ? question : null;
+};
+
 export const requestsOf = (waiting: WaitingDoc): readonly BoardRequest[] =>
   waiting.items.map((item) => ({
     id: item.id,
@@ -39,4 +50,6 @@ export const requestsOf = (waiting: WaitingDoc): readonly BoardRequest[] =>
     options: optionKeysOf(item),
     openedAt: storedTimeOf(item.record[decisionKeys.openedAt]),
     group: groupOf(item),
+    kind: kindOf(item),
+    question: questionOf(item),
   }));

@@ -233,12 +233,14 @@ const listAnswer = (requests: readonly BoardRequest[]): CommandOutput => ({
   lines: requestView(requests),
   json: {
     schema: schemaIds.requestList,
-    requests: requests.map(({ id, title, options, openedAt, group }) => ({
+    requests: requests.map(({ id, title, options, openedAt, group, kind, question }) => ({
       id,
       title,
       options,
       [requestRowKeys.openedAt]: openedAt,
       [requestRowKeys.group]: group,
+      [requestRowKeys.kind]: kind,
+      [requestRowKeys.question]: question,
     })),
   },
   warnings: [],

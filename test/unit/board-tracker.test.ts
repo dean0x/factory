@@ -237,7 +237,9 @@ describe('a hosted tracker kind reads the local files; the local kind writes', (
     expect(connector.kind).toBe(kind);
     expect(valueOf(await connector.listItems({ all: true })).map((item) => item.id)).toEqual(['B-1']);
     expect(valueOf(await connector.listTracks())).toEqual([]);
-    expect(valueOf(await connector.listRequests()).map((request) => request.id)).toEqual(['D-1']);
+    expect(valueOf(await connector.listRequests())).toEqual([
+      { id: 'D-1', title: 'Open', options: ['a'], openedAt: null, group: 'now', kind: 'decision', question: 'Why?' },
+    ]);
     expect(valueOf(await connector.listQueue())).toEqual([]);
     expect(valueOf(await connector.readChanges(null))).toEqual({ events: [], cursor: null });
     expect(repo.deps.warned).toEqual([]);

@@ -152,6 +152,7 @@ export interface ChangesRead {
  * One request that waits for the owner, as the waiting file shows it. The reader checks the id only, so a title that a hand edit
  * left out is null. The options are the keys of the options, in order. The open time is null for a row that holds no exact time
  * (a row from before the key, or a hand edit). A group that is missing or is no word of `requestGroups` reads as `now`.
+ * A missing or unknown kind reads as `decision`. The question is text or null.
  */
 export interface BoardRequest {
   readonly id: string;
@@ -159,6 +160,8 @@ export interface BoardRequest {
   readonly options: readonly string[];
   readonly openedAt: string | null;
   readonly group: RequestGroup;
+  readonly kind: RequestKind;
+  readonly question: string | null;
 }
 
 /** The request that a close took off the waiting file. */
