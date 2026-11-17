@@ -94,6 +94,7 @@ interface Setup {
   readonly hookSettings?: string;
   /** How the factory folder came to this machine. Default: no origin, which counts as received. */
   readonly origin?: 'own' | 'received';
+  readonly links?: Readonly<Record<string, string>>;
   /** A terminal window with this answer to the question about the hook settings. Default: no terminal window. */
   readonly answer?: string;
   /** The mark of the active machine: of this machine, or of another one. Default: no mark. */
@@ -227,6 +228,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
       return handler(call);
     },
     fetch: setup.fetch ?? answers,
+    ...(setup.links === undefined ? {} : { links: setup.links }),
     ...(setup.answer === undefined ? {} : { stdinIsTTY: true, stdoutIsTTY: true, prompt: () => ok(setup.answer ?? '') }),
   });
   const stuckProcess = (): number | undefined => {
@@ -376,6 +378,36 @@ const expectNothingStopped = (made: Made): void => {
   expect(countOf(made, 'kill-pane')).toBe(0);
   expect(countOf(made, 'kill-session')).toBe(0);
 };
+
+describe.each(['restart', 'reboot'] as const)('%s: linked folders', (command) => {
+  describe.each(['own', 'received'] as const)('%s root', (origin) => {
+    it('exits 4 for a linked work copy, shows the current remedy, and starts no pane', async () => {
+      const made = await make({ origin, links: { [`${COPIES}/alpha`]: '/elsewhere/folder' } });
+      made.deps.seedDir('/elsewhere/folder');
+      const error = await failed(command === 'restart' ? restart(made, 'alpha') : reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toBe('work-copies/web/alpha is a link, so factory does not use it');
+      expect(error.hint).toBe('Replace the link with a plain file inside the factory folder, then run "factory doctor".');
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+      expect(countOf(made, 'new-window')).toBe(0);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+
+    it('exits 4 for a linked .claude folder, names a plain folder, and starts no pane', async () => {
+      const made = await make({ origin, links: { [`${COPIES}/alpha/.claude`]: '/elsewhere/folder' } });
+      made.deps.seedDir('/elsewhere/folder');
+      const error = await failed(command === 'restart' ? restart(made, 'alpha') : reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toBe('work-copies/web/alpha/.claude is a link, so factory does not use it');
+      expect(error.hint).toBe('Make work-copies/web/alpha/.claude a plain folder, or remove it, then run "factory doctor".');
+      expectNothingStopped(made);
+      expect(countOf(made, 'split-window')).toBe(0);
+      expect(countOf(made, 'new-window')).toBe(0);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+  });
+});
 
 describe('shutdown', () => {
   it('says that nothing runs and exits 0 when the tmux session does not run', async () => {

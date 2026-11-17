@@ -2089,6 +2089,30 @@ describe('worker stop and resume: a record that is not the record of its worker 
   });
 });
 
+describe.each(['own', 'received'] as const)('worker resume: linked folders, %s root', (origin) => {
+  it('exits 4 for a linked work copy, shows the current remedy, and starts no pane', async () => {
+    const made = await withWorkers({ origin, links: { [COPY]: '/elsewhere/folder' }, seed: { '/elsewhere/folder': null } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toBe('work-copies/web/alpha is a link, so factory does not use it');
+    expect(error.hint).toBe('Replace the link with a plain file inside the factory folder, then run "factory doctor".');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.events).not.toContain('tmux new-window');
+    expect(made.events).not.toContain('tmux new-session');
+  });
+
+  it('exits 4 for a linked .claude folder, names a plain folder, and starts no pane', async () => {
+    const made = await withWorkers({ origin, links: { [`${COPY}/.claude`]: '/elsewhere/folder' }, seed: { '/elsewhere/folder': null } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toBe('work-copies/web/alpha/.claude is a link, so factory does not use it');
+    expect(error.hint).toBe('Make work-copies/web/alpha/.claude a plain folder, or remove it, then run "factory doctor".');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.events).not.toContain('tmux new-window');
+    expect(made.events).not.toContain('tmux new-session');
+  });
+});
+
 describe('worker resume: the code of a refused role text after the root checks', () => {
   const SETUP_FILE = layoutOf(HOME).setupWorkerFile;
 
