@@ -142,6 +142,7 @@ const ownGroup = (event: string): Record<string, unknown> => ({
 const ownSettings = (): Record<string, unknown> => ({
   hooks: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroup(event)]])),
   statusLine: { type: 'command', command: 'factory hook statusline' },
+  idleCompaction: false,
 });
 
 const settingsFileOf = (): string => join(box.node, 'coordinator', '.claude', 'settings.local.json');
@@ -539,6 +540,35 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(result.stderr).toContain('factory hook Stop');
     expect(result.stderr).toContain('factory hook statusline');
     expect(result.stderr).toContain('--yes');
+    expect(await treeOf(box.node)).toEqual(before);
+    await noSession();
+  });
+
+  it('starts with no write and one remedy line for only the idle value without a terminal', async () => {
+    await initNode();
+    const settings = ownSettings();
+    const text = `${JSON.stringify({ hooks: settings['hooks'], statusLine: settings['statusLine'] })}\n`;
+    await writeFile(settingsFileOf(), text, { mode: 0o600 });
+    const before = await stat(settingsFileOf());
+    const result = await startFactory();
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stderr.trim().split('\n')).toHaveLength(1);
+    expect(result.stderr).toContain('factory upgrade --yes');
+    expect(await readFile(settingsFileOf(), 'utf8')).toBe(text);
+    expect((await stat(settingsFileOf())).mtimeMs).toBe(before.mtimeMs);
+    expect(await waitForLaunch()).toEqual(['launched']);
+  });
+
+  it('refuses the yes flag for only the idle value inside a factory session without a terminal', async () => {
+    await initNode();
+    const settings = ownSettings();
+    const text = `${JSON.stringify({ hooks: settings['hooks'], statusLine: settings['statusLine'] })}\n`;
+    await writeFile(settingsFileOf(), text, { mode: 0o600 });
+    const before = await treeOf(box.node);
+    const result = await box.run(['start', '--home', box.node, '--yes'], { env: { ...tmuxEnv, FACTORY_SESSION: 'demo' } });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('--yes gives no consent inside a factory session');
+    expect(await readFile(settingsFileOf(), 'utf8')).toBe(text);
     expect(await treeOf(box.node)).toEqual(before);
     await noSession();
   });
