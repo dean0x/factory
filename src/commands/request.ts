@@ -14,7 +14,6 @@ import { requestView } from '../board/list-view.js';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
-import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import {
   approvalOptions,
@@ -36,7 +35,7 @@ import {
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { requireCoordinatorCaller } from '../workers/panes.js';
-import { openBoard, type OpenBoard } from './board-open.js';
+import { openBoard, recordApprovalMode, type OpenBoard } from './board-open.js';
 import { shown, usageFor } from './board-words.js';
 
 export interface RequestOptions {
@@ -358,11 +357,10 @@ const hasOwnerPrefix = (decision: string, prefix: string, display: string): bool
   return true;
 };
 
-const relayScopeOf = async (deps: Deps, { config, home }: OpenBoard): Promise<readonly string[]> => {
-  const point = config.entry.recordCheck?.point;
+const relayScopeOf = async (deps: Deps, board: OpenBoard): Promise<readonly string[]> => {
+  const point = board.config.entry.recordCheck?.point;
   if (point === undefined) return [];
-  const modes = await effectiveModes(deps, home, config);
-  return modes[point] === roles.owner ? [point] : [];
+  return (await recordApprovalMode(deps, board, point)) === roles.owner ? [point] : [];
 };
 
 /** Use the recipe rules and the current open items before the connector takes the write lock. */

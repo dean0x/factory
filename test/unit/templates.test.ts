@@ -117,7 +117,8 @@ const guardedBody = (body: string, guards: GuardValues): string =>
     .split('\n')
     .filter((line) =>
       !(guards[guardIds.installRules] === guardValues.off && line.startsWith('- Do not install outside')) &&
-      !(guards[guardIds.resumeRoutines] === guardValues.off && line.startsWith('- To compact this session')),
+      !(guards[guardIds.resumeRoutines] === guardValues.off && line.startsWith('- To compact this session')) &&
+      !(guards['approval-merge'] === guardValues.off && line.startsWith('- For a delegated merge,')),
     )
     .map((line) => {
       const point = points.find((candidate) => line.startsWith(`- \`${candidate.id}\` (`));
@@ -128,7 +129,8 @@ const guardedBody = (body: string, guards: GuardValues): string =>
 
 describe.each([1, 2])('guard values in layer %i templates', (layer) => {
   it.each(guardRenderSets)('changes only the selected guard text for %s', (_label, guards) => {
-    const expected = blockTemplatesFor(blockInput(layer)).map((block) => ({
+    const modes = guards['approval-merge'] === guardValues.off ? { ...softwareOwnerModes, merge: 'delegated' as const } : softwareOwnerModes;
+    const expected = blockTemplatesFor(blockInput(layer, { modes })).map((block) => ({
       ...block,
       body: guardedBody(block.body, guards),
     }));
@@ -153,7 +155,9 @@ describe.each(values.approvalModes)('approval text with mode %s', (mode) => {
 it('with the merge approval guard off, the coordinator text keeps the head SHA, green CI and review rule, because the merge quality guard stays on', () => {
   const blocks = blockTemplatesFor(withGuards(1, { 'approval-merge': guardValues.off }));
   const body = blocks.find((block) => block.name === 'coordinator')?.body ?? '';
-  expect(body).toContain('No approval is needed');
+  expect(body).toContain('No approval is needed for a merge');
+  expect(body).not.toContain('On a typed go, close the linked request');
+  expect(body).not.toContain('For a delegated merge,');
   expect(body).toContain('Merge only at the full head SHA that you checked, with CI green at that SHA.');
   expect(body).toContain('Before a merge, check on the primary source that the review is posted and the change is releasable at merge.');
 });

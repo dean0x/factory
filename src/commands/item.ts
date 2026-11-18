@@ -11,7 +11,6 @@ import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../
 import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { boardKeys, commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, places, roles, schemaIds } from '../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
@@ -19,7 +18,7 @@ import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { requireCoordinatorCaller } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, type WorkerRecord } from '../workers/registry.js';
-import { openBoard, type OpenBoard } from './board-open.js';
+import { openBoard, recordApprovalMode, type OpenBoard } from './board-open.js';
 import { parseFieldWords, shown, usageFor } from './board-words.js';
 
 export interface ItemOptions {
@@ -382,8 +381,8 @@ const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded): Command
  * `item record`: the record check of the recipe of the node runs, and only a result that passed is written. A recipe with no record
  * check makes this a usage error (exit 2) with no write. The reference is checked first, so a bad one is a usage error before the item
  * is read and before the check reaches the network. The local checks come next (the item id, the tracker kind, the stage of the check
- * in the recipe, the closed state, the item), so the check makes no call for a request that the board refuses. The worker that the
- * item names at the time of the check goes to the write, which tests it again under the lock.
+ * in the recipe, the closed state, the item). The approval check runs before the recipe check and again under the lock.
+ * The write also checks the worker again under the lock.
  */
 const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction): Promise<CliResult<CommandOutput>> => {
   const { connector, config } = board;
@@ -406,8 +405,8 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   if (!items.ok) return items;
   const item = items.value.find((candidate) => candidate.id === action.id);
   if (item === undefined) return usageError(`${files.board} has no item ${shown(action.id)}`);
-  const modes = await effectiveModes(deps, board.home, config);
-  const approval = { point: hook.point, mode: modes[hook.point] ?? roles.owner };
+  const mode = await recordApprovalMode(deps, board, hook.point);
+  const approval = { point: hook.point, mode: mode ?? roles.owner };
   const approved = await connector.checkApproval(action.id, approval, ref.value);
   if (!approved.ok) return approved;
   const worker = workerOf(item, config.core.board?.worker_field);

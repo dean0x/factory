@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as decide from '../../src/board/decide.js';
 import { parseDecisionLog, parseWaiting } from '../../src/board/files.js';
@@ -64,6 +65,17 @@ const proofCases = [
   { name: 'foreign relay decider', items: [], rows: [{ ...relay, decider: requestDeciders.delegate }], stored: noStore, proof: 'error', passes: false },
   { name: 'store read fault', items: [], rows: [relay], stored: storeFault, proof: 'error', passes: false },
 ] as const;
+
+describe('approval check: static checks of the source', () => {
+  it.each(['board/decide.ts', 'board/local.ts', 'commands/item.ts'])('%s imports no decision command module', (path) => {
+    const file = join(__dirname, '..', '..', 'src', path);
+    const source = readFileSync(file, 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const imported = [...code.matchAll(/\b(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g)]
+      .map((match) => resolve(dirname(file), match[1] ?? ''));
+    expect(imported.filter((name) => /[/\\](?:decide-read|commands[/\\]decide)(?:\.[cm]?[jt]s)?$/.test(name))).toEqual([]);
+  });
+});
 
 describe('approval verdict', () => {
   it.each(proofCases)('uses the proof from decide read for $name, not its exit code', async ({ items, rows, stored, proof, passes }) => {

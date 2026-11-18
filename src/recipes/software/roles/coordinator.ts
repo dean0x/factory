@@ -152,9 +152,10 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
     '- The reference and head must match the values from GitHub.',
     '- If an approval check fails, the command writes no record and names only the request id, if known.',
     '- If the record refuses, show the refusal to the {{owner}} and follow the remedy before you try again.',
-  ] : [
-    '- For a delegated merge, use only `{{decideCommand}} <id> <option>`, run by the {{owner}}.',
-  ]),
+  ] : [{
+    guards: [softwareGuardIds.approvalMerge],
+    lines: ['- For a delegated merge, use only `{{decideCommand}} <id> <option>`, run by the {{owner}}.'],
+  }]),
   '',
   '## After an upgrade',
   '',

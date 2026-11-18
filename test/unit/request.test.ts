@@ -7,6 +7,8 @@ import { commandTable, parseFlags, renderCommandHelp } from '../../src/cli/table
 import { runDecide } from '../../src/commands/decide.js';
 import { runDecideRead } from '../../src/commands/decide-read.js';
 import { runRequest, type RequestOptions } from '../../src/commands/request.js';
+import type { FactoryConfig } from '../../src/config/schema.js';
+import { recordGuards } from '../../src/core/guard-records.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
 import { requestHashOf } from '../../src/core/request-hash.js';
 import { ok } from '../../src/core/result.js';
@@ -1017,6 +1019,21 @@ describe('request close: approval links', () => {
     valueOf(await recordDelegation(terminal, { root: HOME, node: 'demo', point, mode: 'delegated' }));
     const before = filesOf(repo);
     expect(await close(repo)).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining('approval point') } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('refuses a linked relay with exit 2 when the merge approval guard is off', async () => {
+    const base = sampleConfigWithBoard();
+    const config: FactoryConfig = { ...base, core: { ...base.core, guards: { 'approval-merge': 'off' } } };
+    const repo = await boardNode({ config, waiting: waitingText([linkedEntry()]) });
+    valueOf(await recordGuards({ ...repo.deps, stdinIsTTY: true, stdoutIsTTY: true }, {
+      root: HOME, node: config.core.node.id, change: [{ guard: { id: 'approval-merge', wired: true }, value: 'off' }],
+    }));
+    const before = filesOf(repo);
+    const error = errorOf(await close(repo));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('approval point');
     expect(filesOf(repo)).toEqual(before);
     expect(repo.commits).toEqual([]);
   });

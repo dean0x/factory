@@ -1,4 +1,4 @@
-import { blockNames, layers, values } from '../../names.js';
+import { blockNames, guardValues, layers, values } from '../../names.js';
 import { coordinatorValuesFor, fillTemplate, linesFor, workerValuesFor } from '../../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../../templates/types.js';
 import { approvalLines, type RecipeRoles } from '../entry.js';
@@ -9,6 +9,8 @@ import { MANAGER_PARTS } from './roles/manager.js';
 import { WORKER_PARTS } from './roles/worker.js';
 
 type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeof blockNames.manager;
+
+const [mergeApproval] = softwareApprovalPoints;
 
 /**
  * The worker block lives in the worker file in the state folder, so its paths are written from the factory folder. It names
@@ -42,7 +44,7 @@ const coordinatorFor = (input: BlockInput): BlockTemplate => ({
     coordinatorLines(
       approvalLines(softwareApprovalPoints, input.modes, input.guards),
       input.guards,
-      input.modes[softwareRecordCheck.point] !== values.approvalModes[1],
+      input.guards[mergeApproval.guard] !== guardValues.off && input.modes[softwareRecordCheck.point] !== values.approvalModes[1],
     ),
     coordinatorValuesFor(input),
   ),

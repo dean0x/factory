@@ -5,6 +5,7 @@ import { exitCodeOf, failure, usageError, type CliError, type CliResult } from '
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { recordGuards } from '../../src/core/guard-records.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { toolNames } from '../../src/core/tools.js';
@@ -693,6 +694,29 @@ describe('item record with the software recipe: the record of a merge', () => {
 });
 
 describe('item record: linked approval', () => {
+  const withMergeApprovalOff = async (waiting?: string): Promise<MergeWorld> => {
+    const base = sampleConfigWithBoard();
+    const config: FactoryConfig = { ...base, core: { ...base.core, guards: { 'approval-merge': 'off' } } };
+    const world = await mergeWorld({ config, decisionLog: logOf(), ...(waiting === undefined ? {} : { waiting }) });
+    valueOf(await recordGuards({ ...world.repo.deps, stdinIsTTY: true, stdoutIsTTY: true }, {
+      root: HOME, node: config.core.node.id, change: [{ guard: { id: 'approval-merge', wired: true }, value: 'off' }],
+    }));
+    return world;
+  };
+
+  it('records a merge with no linked request when the merge approval guard is off', async () => {
+    const world = await withMergeApprovalOff();
+    expect(await runMerge(world)).toMatchObject({ ok: true });
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', [boardKeys.mergedPrHead]: HEAD_SHA });
+  });
+
+  it('refuses an open linked request when the merge approval guard is off', async () => {
+    const world = await withMergeApprovalOff(waitingOf(approvalRequest('D-2', MERGE_LINK)));
+    expect(await runMerge(world)).toMatchObject({ ok: false, error: { kind: 'failure', message: 'request "D-2" is still open' } });
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
   it('requires a linked approval before it checks the project or calls gh', async () => {
     const world = await mergeWorld({ decisionLog: logOf(), record: false });
     expect(await runMerge(world)).toMatchObject({ ok: false, error: { kind: 'failure', message: 'there is no linked approval request' } });
