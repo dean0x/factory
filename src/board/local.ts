@@ -279,7 +279,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     const verdict = (stored: Awaited<ReturnType<typeof readDecisionStore>>): CliResult<void> =>
       approvalVerdict({ docs: docs.value, linked, stored, rules, mode: approval.mode, ref, head });
     if (settled === null || approval.mode !== roles.owner) return verdict(ok({ record: null }));
-    if (place === null || place.path === null) return verdict(err('the owner store has no path'));
+    if (place === null || place.path === null) return verdict(err(`the ${roles.owner} store has no path`));
     return verdict(await readDecisionStore(deps, place, settled.id));
   };
 

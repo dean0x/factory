@@ -717,9 +717,9 @@ describe('item record: linked approval', () => {
     expectUntouched(world.repo, MERGE_BOARD);
   });
 
-  it('requires a linked approval before it checks the project or calls gh', async () => {
+  it('requires a linked approval after it accepts the project and before it calls gh', async () => {
     const world = await mergeWorld({ decisionLog: logOf(), record: false });
-    expect(await runMerge(world)).toMatchObject({ ok: false, error: { kind: 'failure', message: 'there is no linked approval request' } });
+    expect(await runMerge(world, { project: 'web' })).toMatchObject({ ok: false, error: { kind: 'failure', message: 'there is no linked approval request' } });
     expect(world.gh.calls).toEqual([]);
     expectUntouched(world.repo, MERGE_BOARD);
   });

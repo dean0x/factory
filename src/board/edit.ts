@@ -904,7 +904,7 @@ export const checkRequestClose = (
   if (!link.ok) return link;
   if (link.value !== null && settlement?.relayed === true) {
     if (!relayScope.includes(link.value.point)) return usageError(`the approval point of ${id} does not allow a relay`);
-    if (!optionKeysOf(found).includes(settlement.decision)) return usageError(`the relayed decision for ${id} must be an option key of the request`);
+    if (!optionKeysOf(found).includes(settlement.decision)) return usageError(`the relayed decision for ${id} must be an option key of the ${requestWords.request}`);
   }
   return ok({ entry: found, link: link.value, settlement });
 };

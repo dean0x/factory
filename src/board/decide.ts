@@ -16,6 +16,7 @@ import {
   decideDocContext,
   decideProof,
   type decideProofKinds,
+  decideWords,
   decisionKeys,
   decisionLogKeys,
   files,
@@ -391,7 +392,7 @@ const namesItem = (fields: unknown, item: string): boolean =>
   );
 
 const approvalLinkFault = (id: string | null): Err<CliError> =>
-  failure(id === null ? 'a linked approval row has no request id' : `the link of ${requestWords.request} ${shown(id)} is invalid`);
+  failure(id === null ? `a linked approval row has no ${requestWords.request} id` : `the link of ${requestWords.request} ${shown(id)} is invalid`);
 
 const openApprovalOf = (waiting: WaitingDoc, item: string, point: string, rules: RequestLinkRules | undefined): CliResult<string | null> => {
   for (const { id, record } of waiting.items) {
@@ -410,7 +411,7 @@ const settledLinkOf = (row: Stored, item: string, rules: RequestLinkRules | unde
 
   // An answer takes its link from the request text, not from the display keys of the row.
   const text = textOrNull(row[decisionLogKeys.request]);
-  const request = text === null ? failure('the answer has no request text') : answeredRequestOf(text);
+  const request = text === null ? failure(`the answer has no ${requestWords.request} text`) : answeredRequestOf(text);
   if (!request.ok) return rowNamesItem ? request : ok(null);
   const fields = request.value[decisionKeys.fields];
   return namesItem(fields, item) ? linkOfFields(fields, rules) : ok(null);
@@ -454,18 +455,21 @@ export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }
   if (linked.open.value !== null) {
     return failure(
       `${requestWords.request} ${shown(linked.open.value)} is still open`,
-      `Run "${commandText(commands.decide)}" with this id and an option. If it has an answer, run the command again with the same option.`,
+      `Run "${commandText(commands.decide)}" with this id and an option. If it has an answer, run "${commandText(commands.decide)}" again with the same option.`,
     );
   }
   if (mode !== roles.owner) return ok(undefined);
   if (!linked.settled.ok) return linked.settled;
-  if (linked.settled.value === null) return failure('there is no linked approval request', ADD_APPROVAL);
+  if (linked.settled.value === null) return failure(`there is no linked approval ${requestWords.request}`, ADD_APPROVAL);
 
   const { id, link } = linked.settled.value;
   const name = `${requestWords.request} ${shown(id)}`;
   const proof = proofOf(id, ok(docs), stored, rules);
   if (proof.kind === decideProof.relayed && stored.ok && stored.value.record !== null) {
-    return failure(`${name} also has an owner store answer`, 'Ask the owner to resolve the answer before you continue.');
+    return failure(
+      `${name} also has an ${roles.owner} store answer`,
+      `Run "${commandText(commands.decide)} ${decideWords.read} ${id}" to see the answer. Ask the ${roles.owner} to resolve the conflict.`,
+    );
   }
   const go = (proof.kind === decideProof.record && proof.option === approvalOptions.go) ||
     (proof.kind === decideProof.relayed && proof.settled && proof.decision === approvalOptions.go);
@@ -474,7 +478,10 @@ export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }
     return failure(`${name} has no settled approval`, ADD_APPROVAL);
   }
   if (head !== null && (proof.link.ref !== ref || proof.link.head !== head)) {
-    return failure(`${name} does not match the reference and head`, 'Add a new request for the new head.');
+    return failure(
+      `${name} does not match the reference and head`,
+      `Add a new ${requestWords.request} for the new head with "${commandText(commandLines.requestAdd)}".`,
+    );
   }
   return ok(undefined);
 };

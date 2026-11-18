@@ -1,6 +1,6 @@
 import { allOn } from '../../../guards/effective.js';
 import type { GuardValues } from '../../../guards/types.js';
-import { flagText, guardIds } from '../../../names.js';
+import { flagText, guardIds, requestWords } from '../../../names.js';
 import { linesFor, type TextPart } from '../../../templates/fill.js';
 import { mergedStage, softwareBoard, softwareStages } from '../board.js';
 import { softwareGuardIds } from '../guard-parts.js';
@@ -124,14 +124,14 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '- The exit code of `{{decideCommand}} read` grants no approval.',
   '- For a release, use only `{{decideCommand}} <id> <option>`, run by the {{owner}}.',
   ...(relayGo ? [
-    '- In owner mode, a go typed in the {{coordinator}} pane with the exact {{owner}} prefix permits the merge.',
+    '- In {{owner}} mode, a go typed in the {{coordinator}} pane with the exact {{owner}} prefix permits the merge.',
     '- Read the exact prefix in the safety block.',
     '- {{Program}} can not verify who typed the go or whether it had the exact prefix.',
-    '- When the PR is ready, add a linked approval request for the item, PR number and full head SHA.',
+    `- When the PR is ready, add a linked approval ${requestWords.request} for the item, PR number and full head SHA.`,
     '- Use `{{requestApprovalCommand}}`.',
     '- If the add fails, fix the cause before you continue.',
-    '- On a typed go, close the linked request with `{{requestApprovalRelayCommand}}`.',
-    '- If the go comes before the request, add the linked request and close it at once.',
+    `- On a typed go, close the linked ${requestWords.request} with \`{{requestApprovalRelayCommand}}\`.`,
+    `- If the go comes before the ${requestWords.request}, add the linked ${requestWords.request} and close it at once.`,
     '- If the close refuses, do not merge.',
     '- Show the refusal to the {{owner}}.',
     '- If an {{owner}} store answer exists, ask the {{owner}} to run `{{decideCommand}}` again with the same option.',
@@ -140,17 +140,17 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
     '- Never use a typed go to override a store answer with another option.',
     '- If the answer is `{{approvalStopOption}}`, do not merge.',
     '- Ask the {{owner}} what must change.',
-    '- If the {{owner}} uses `{{decideCommand}}`, use only a settled `{{approvalGoOption}}` whose request hash matches.',
-    '- After a relay, get {{owner}} proof only with a new request and `{{decideCommand}}`.',
+    `- If the {{owner}} uses \`{{decideCommand}}\`, use only a settled \`{{approvalGoOption}}\` whose ${requestWords.request} hash matches.`,
+    `- After a relay, get {{owner}} proof only with a new ${requestWords.request} and \`{{decideCommand}}\`.`,
     '- Before the merge, check that the settled approval matches the PR number and full head SHA.',
     '- Merge with `gh pr merge --match-head-commit HEAD N`, with the head from the approval row.',
-    '- If the head changes, check the new head and ask for a new approval on a linked request.',
+    `- If the head changes, check the new head and ask for a new approval on a linked ${requestWords.request}.`,
     '- If the merge fails for another reason, stop and show the {{owner}} the failure.',
     '- After the merge succeeds, run `{{itemRecordCommand}}`.',
-    '- In owner mode, an open linked request blocks the record.',
-    '- The last settled linked row in log order needs a relayed `{{approvalGoOption}}` or a store `{{approvalGoOption}}` whose request hash matches.',
+    `- In {{owner}} mode, an open linked ${requestWords.request} blocks the record.`,
+    `- The last settled linked row in log order needs a relayed \`{{approvalGoOption}}\` or a store \`{{approvalGoOption}}\` whose ${requestWords.request} hash matches.`,
     '- The reference and head must match the values from GitHub.',
-    '- If an approval check fails, the command writes no record and names only the request id, if known.',
+    `- If an approval check fails, the command writes no record and names only the ${requestWords.request} id, if known.`,
     '- If the record refuses, show the refusal to the {{owner}} and follow the remedy before you try again.',
   ] : [{
     guards: [softwareGuardIds.approvalMerge],
@@ -164,7 +164,7 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '- Drop each workaround that a new rule replaces. Judge by kind, not by the exact command.',
   '- A change of the {{worker}} field to pass the guard of a dismiss is a workaround. `{{itemUpdateCommand}}` now refuses it. Use `{{itemUnassignCommand}}`.',
   ...(relayGo ? [
-    '- For an item merged before the upgrade, add a linked request with the merged head and get an answer.',
+    `- For an item merged before the upgrade, add a linked ${requestWords.request} with the merged head and get an answer.`,
   ] : []),
   '',
   '## Start of a session',
