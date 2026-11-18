@@ -15,7 +15,7 @@ import {
   type WorkerResumeRequest,
 } from '../../src/workers/launch.js';
 import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
-import { seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup, STATE_ENV } from '../helpers/role-delivery.js';
+import { ownSettingsWithRules, seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup, STATE_ENV } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { atWait, endsPane, startsSession, withProgram, type Program } from '../helpers/worker-program.js';
@@ -93,7 +93,7 @@ const make = (setup: Setup = {}): Made => {
   });
   for (const folder of setup.work ?? [COPY]) {
     base.seedDir(folder);
-    seedOwnHooks(base, folder);
+    seedOwnHooks(base, folder, HOME);
   }
   const deps: FakeDeps = {
     ...base,
@@ -616,7 +616,7 @@ describe('the launch of a worker: the settings of the work copy', () => {
 
   it('goes on after a warning, prints the warning at once, and keeps the launch', async () => {
     const made = make();
-    put(made, JSON.stringify({ ...ownSettingsEntries, model: 'sonnet' }));
+    put(made, JSON.stringify({ ...ownSettingsWithRules(HOME, COPY), model: 'sonnet' }));
     await launched(made, { proxy: null });
     expect(made.deps.warned).toHaveLength(1);
     expect(made.deps.warned[0]).toContain('is a settings file in a work copy');
@@ -625,7 +625,7 @@ describe('the launch of a worker: the settings of the work copy', () => {
 
   it('gives no warning for the settings file that the program writes itself', async () => {
     const made = make();
-    put(made, `${JSON.stringify(ownSettingsEntries, null, 2)}\n`);
+    put(made, `${JSON.stringify(ownSettingsWithRules(HOME, COPY), null, 2)}\n`);
     await launched(made, { proxy: null });
     expect(made.deps.warned).toEqual([]);
   });

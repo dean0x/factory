@@ -20,7 +20,7 @@ import {
 } from '../helpers/fake-deps.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
-import { seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
+import { ownSettingsWithRules, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
@@ -184,7 +184,7 @@ const markText = (machine: string): string =>
 const seedWorker = async (deps: FakeDeps, id: Id, spec: WorkerSpec): Promise<void> => {
   must(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${COPIES}/${id}`, branch: `worker/${id}` }));
   deps.seedDir(`${COPIES}/${id}`);
-  deps.seed(`${COPIES}/${id}/.claude/settings.local.json`, spec.settings ?? OWN_SETTINGS);
+  deps.seed(`${COPIES}/${id}/.claude/settings.local.json`, spec.settings ?? `${JSON.stringify(ownSettingsWithRules(HOME, `${COPIES}/${id}`), null, 2)}\n`);
   if (spec.event === null) return;
   deps.seed(workerPathsOf(HOME, id).lastSessionFile, `${SESSION[id]}\n`);
   const marker = spec.marker === undefined ? id : spec.marker;

@@ -4,7 +4,7 @@ import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink, w
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
-import { DIST, makeSandbox, removeOpenSandboxes, PREFIX_RECORD_NOTICE, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, PREFIX_RECORD_NOTICE, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
 import { loadNote, scaled } from './load.js';
 
@@ -140,9 +140,10 @@ const ownGroup = (event: string): Record<string, unknown> => ({
 });
 
 /** The settings of Claude Code that the program writes into the coordinator folder. The command texts are the contract. */
-const ownSettings = (): Record<string, unknown> => ({
+const ownSettings = async (): Promise<Record<string, unknown>> => ({
   hooks: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroup(event)]])),
   statusLine: { type: 'command', command: 'factory hook statusline' },
+  permissions: { deny: await ownDenyRules(box, join(box.node, 'coordinator')) },
 });
 
 const settingsFileOf = (): string => join(box.node, 'coordinator', '.claude', 'settings.local.json');
@@ -558,7 +559,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(result.stderr).toContain('factory hook SessionStart');
     expect(await waitForLaunch()).toEqual(['launched']);
 
-    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual(ownSettings());
+    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual(await ownSettings());
     expect((await stat(settingsFileOf())).mode & 0o777).toBe(0o600);
     const added = (await treeOf(box.node)).filter((path) => !before.includes(path));
     // The start of a new session also writes the machine id and commits the mark of the active machine in the state folder.
@@ -576,7 +577,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     await writeFile(settingsFileOf(), '{"model":"opus"}\n');
     const result = await startFactory('--yes');
     expect(result.code).toBe(0);
-    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual({ model: 'opus', ...ownSettings() });
+    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual({ model: 'opus', ...await ownSettings() });
     await waitForLaunch();
   });
 
@@ -632,7 +633,7 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(result.code).toBe(0);
     expect(await waitForLaunch()).toEqual(['launched']);
 
-    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual(ownSettings());
+    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual(await ownSettings());
     expect((await stat(settingsFileOf())).mode & 0o777).toBe(0o600);
     expect(await readFile(join(box.node, 'factory.local.yaml'), 'utf8')).toContain('statusline: "echo owner-line"');
 

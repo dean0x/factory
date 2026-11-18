@@ -36,6 +36,7 @@ import { acceptSetupText } from '../helpers/setup-acceptance.js';
 import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { countReadsOf } from '../helpers/read-count.js';
+import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 
 const ROOT = '/w/node';
 const STATE = `${ROOT}/.factory`;
@@ -181,7 +182,7 @@ const existing = (made: Existing = {}, extra: FakeOptions = {}) => {
   }
   if (made.unaccepted !== true) acceptSetupText(deps, ROOT, made.id ?? 'demo', tracked, texts);
   if (made.hookInPlace === false) deps.seedDir(COORDINATOR);
-  else deps.seed(HOOK_FILE, JSON.stringify(ownSettingsEntries));
+  else deps.seed(HOOK_FILE, JSON.stringify(ownSettingsWithRules(ROOT, COORDINATOR)));
   const entry = made.entry === undefined ? (made.id ?? 'demo') : made.entry;
   if (entry !== null) {
     registerRoot(deps, ROOT, entry, [`${ROOT}/web`]);
@@ -1669,7 +1670,7 @@ describe('init: the hook settings of a registered root', () => {
     const { deps } = existing({ hookInPlace: false });
     const result = await runInit(deps, options({ yes: true }));
     expect(result.ok).toBe(true);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(ownSettingsWithRules(ROOT, COORDINATOR));
     expect(deps.warned.filter((text) => text.startsWith(HOOK_QUESTION))).toEqual([expect.stringContaining(HOOK_FILE)]);
     expect(result.ok && result.value.json['files']).toContain('coordinator/.claude/settings.local.json');
   });
@@ -1681,7 +1682,7 @@ describe('init: the hook settings of a registered root', () => {
     expect(result.ok).toBe(true);
     const order = asked.map((question) => (question.includes('Accept these files?') ? 'files' : question.startsWith(HOOK_QUESTION) ? 'hook' : 'other'));
     expect(order.filter((kind) => kind !== 'other')).toEqual(['files', 'hook']);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(ownSettingsWithRules(ROOT, COORDINATOR));
   });
 
   it('goes on after a no, writes no file, and names the command in the notice', async () => {
