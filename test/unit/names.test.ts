@@ -1936,7 +1936,9 @@ describe('the names of the guards', () => {
       channelRemedy: 'Run the guard command in your terminal window, outside a session.',
     });
     expect(guardRecordWords.unreadable).toBe('The guard store cannot be read.');
-    expect(guardRecordWords.unreadableRemedy).toContain('factory guard confirm');
+    expect(guardRecordWords.unreadableRemedy).toBe(
+      'move the file away to turn every guard on and remove the prefix records of every node',
+    );
   });
 
   it('names the guard summary, doctor notice and own file rules by their effects', () => {

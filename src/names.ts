@@ -2423,7 +2423,7 @@ export const guardRecordWords = {
   readFault: (path: string, reason: string): string => `The guard store ${path} cannot be read: ${reason}. Run "${commandText(commands.doctor)}".`,
   writeFault: (reason: string): string => `The guard store cannot be changed: ${reason}. Run "${commandText(commands.doctor)}".`,
   invalidChange: 'The guard change has no valid node, factory folder or value.',
-  unreadableRemedy: `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to recover the guard store.`,
+  unreadableRemedy: `move the file away to turn every guard on and remove the prefix records of every ${roles.node}`,
 } as const;
 
 /** Parts of the one-line guard summary at start. */

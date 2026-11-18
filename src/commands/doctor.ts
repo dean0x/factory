@@ -51,6 +51,7 @@ import {
   commandLines,
   guardDenyWords,
   guardDoctorWords,
+  guardRecordWords,
   guardStartWords,
   guardKeys,
   dirs,
@@ -871,7 +872,7 @@ const checkGuards = async (
   }
   if (state.fault !== null) {
     const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
-    failures.push(`${path}: ${state.fault}; move the file away to turn every guard on and remove the prefix records of every ${roles.node}`);
+    failures.push(`${path}: ${state.fault}; ${guardRecordWords.unreadableRemedy}`);
   } else if (state.prefix === null) {
     warnings.push(`${guardStartWords.noPrefixRecord}; run "${commandText(commandLines.guardConfirm)}"`);
   } else if (state.prefix.hash !== sha256Hex(config.value.core.owner.prefix)) {

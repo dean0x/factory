@@ -149,7 +149,7 @@ describe.each(values.approvalModes)('approval text with mode %s', (mode) => {
   });
 });
 
-it('keeps merge head, green CI and posted review checks when merge approval is off', () => {
+it('with the merge approval guard off, the coordinator text keeps the head SHA, green CI and review rule, because the merge quality guard stays on', () => {
   const blocks = blockTemplatesFor(withGuards(1, { 'approval-merge': guardValues.off }));
   const body = blocks.find((block) => block.name === 'coordinator')?.body ?? '';
   expect(body).toContain('No approval is needed');
