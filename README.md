@@ -535,7 +535,12 @@ Run `factory decide read <D-n> [--json] [--home DIR]` to check one request on th
 
 The first text line gives the verdict. Each verdict includes the node id and the real path of the factory folder. With `--json`, the command prints `factory.decide-read/v1`. The `title`, `question` and `decision` keys hold display text, not the verdict. The command escapes hidden characters in these values.
 
-Only `record` gives exit code 0. The option comes from the owner store, not the board. Each other verdict gives exit code 1 and says `no owner proof`.
+The command uses these exit codes:
+
+- `record` gives exit code 0. The option comes from the owner store, not the board.
+- Every other verdict gives exit code 1 and says `no owner proof`.
+- No id, a bad id, an extra argument, `--note` or an unknown flag such as `--from` gives exit code 2. With no id, the command says `not in this version`.
+- The command stops with exit code 4 if the tracker kind is not `local` or the state guard is off.
 
 | Verdict | Meaning |
 | --- | --- |
@@ -548,8 +553,6 @@ Only `record` gives exit code 0. The option comes from the owner store, not the 
 | `error` | The command could not read or check the request or its record. A bad stored link also gives this verdict. |
 
 The output is not proof and grants no approval. Only a match in the owner store proves the answer.
-
-A bad id, extra argument or unsupported flag such as `--note` or `--from` gives exit code 2. With no id, the command says `not in this version` and gives exit code 2. The command gives exit code 4 if the tracker kind is not `local` or the state guard is off.
 
 ### Dismiss a worker
 
