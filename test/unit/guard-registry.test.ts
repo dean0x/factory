@@ -201,7 +201,8 @@ describe('the guards of a recipe', () => {
       deps: recordDeps, rowSites: software.rows.flatMap((row) => row.sites), exceptions: recordExceptions, maxDepth: 40,
     });
     expect(result.faults).toEqual([]);
-    expect(result.sites.filter((site) => site.symbol === 'guardOn')).toEqual([]);
+    const renders = ['linesFor', 'approvalLines', 'blockTemplatesFor'];
+    expect(result.sites.filter((site) => renders.includes(site.symbol))).toEqual([]);
   });
 
   it('retires no guard id yet', () => {
@@ -1084,7 +1085,7 @@ describe('the record path source scan', () => {
 
   it('fails at the depth cap instead of accepting an incomplete scan', () => {
     const result = sourceScan.traceSitesOf({ 'src/a.ts': 'const next = () => 1; export const start = () => next();' }, start, {
-      deps: {}, exceptions: [{ path: 'src/a.ts', symbol: 'start', reason: 'Reads config only.' }], maxDepth: 1,
+      deps: {}, rowSites: start, exceptions: [{ path: 'src/a.ts', symbol: 'start', reason: 'Reads config only.' }], maxDepth: 1,
     });
     expect(result.faults).toEqual(expect.arrayContaining([expect.stringContaining('depth cap')]));
   });
@@ -1118,6 +1119,20 @@ describe('the record path source scan', () => {
     expect(sourceScan.traceSitesOf(sources, start, { ...options, exceptions: [{ ...exception, reason: '' }] }).faults.length).toBeGreaterThan(0);
   });
 
+  it('fails for an exception at an unreachable row site', () => {
+    const sources = { 'src/a.ts': 'const mergeConfig = () => 1; export const start = () => 1;' };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: {}, rowSites: [exception], exceptions: [exception], maxDepth: 10 });
+    expect(result.faults).toContain('src/a.ts:mergeConfig: exception site was not reached');
+  });
+
+  it('fails for an exception at a reached site outside the registry rows', () => {
+    const sources = { 'src/a.ts': 'const mergeConfig = () => 1; export const start = () => mergeConfig();' };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: {}, rowSites: [], exceptions: [exception], maxDepth: 10 });
+    expect(result.faults).toContain('src/a.ts:mergeConfig: exception site is not a registry row site');
+  });
+
   it('fails for a hidden row-site call under an excepted function', () => {
     const sources = {
       'src/a.ts': 'const hiddenRow = () => 1; const mergeConfig = () => hiddenRow(); export const start = () => mergeConfig();',
@@ -1134,7 +1149,7 @@ describe('the record path source scan', () => {
       'src/store.ts': 'export const readGuardStore = (deps) => deps.guards;',
     };
     const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
-    expect(sourceScan.traceSitesOf(sources, start, { deps: {}, exceptions: [exception], maxDepth: 10 }).faults).toContain('src/store.ts:readGuardStore: guard value read');
+    expect(sourceScan.traceSitesOf(sources, start, { deps: {}, rowSites: [exception], exceptions: [exception], maxDepth: 10 }).faults).toContain('src/store.ts:readGuardStore: guard value read');
   });
 });
 

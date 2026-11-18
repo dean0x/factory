@@ -314,7 +314,7 @@ const moduleOf = (path: string, file: ts.SourceFile): SourceModule => {
 export interface TraceOptions {
   readonly deps: Readonly<Record<string, RowSite>>;
   readonly rowSites?: readonly RowSite[];
-  /** An exception permits only its own row site; its body still has to pass the scan. */
+  /** Each exception must name a reached registry row site; its body must still pass the scan. */
   readonly exceptions?: readonly (RowSite & { readonly reason: string })[];
   readonly maxDepth: number;
 }
@@ -380,6 +380,12 @@ export const traceSitesOf = (sources: Readonly<Record<string, string>>, roots: r
     for (const target of next.values()) visit(target, depth + 1, nextAncestors);
   };
   for (const root of roots) visit(root, 0, new Set());
+  const rowKeys = new Set((options.rowSites ?? []).map((site) => `${site.path}:${site.symbol}`));
+  for (const exception of options.exceptions ?? []) {
+    const key = `${exception.path}:${exception.symbol}`;
+    if (!seen.has(key)) faults.add(`${key}: exception site was not reached`);
+    if (!rowKeys.has(key)) faults.add(`${key}: exception site is not a registry row site`);
+  }
   return { sites: [...seen.values()], faults: [...faults] };
 };
 
