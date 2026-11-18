@@ -379,7 +379,7 @@ describe('the read of the board files', () => {
 
 describe('the stages of the recipe', () => {
   it('gives the stage list of the recipe, and an empty list for a recipe with no stages', () => {
-    expect(stagesOf(softwareBoard)).toEqual(['ticket', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released']);
+    expect(stagesOf(softwareBoard)).toEqual(['ticket', 'planning', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released']);
     expect(stagesOf({})).toEqual([]);
   });
 
@@ -391,6 +391,15 @@ describe('the stages of the recipe', () => {
 
   it('takes a listed stage', () => {
     expect(valueOf(requireStage(softwareBoard, 'review'))).toBe('review');
+  });
+
+  it('puts planning right after ticket, and lets an item skip it', async () => {
+    expect(stagesOf(softwareBoard).slice(0, 3)).toEqual(['ticket', 'planning', 'plan-approved']);
+    expect(valueOf(requireStage(softwareBoard, 'planning'))).toBe('planning');
+    const connector = connectorOf(await repoWith(EMPTY_BOARD));
+    const added = valueOf(await connector.addItem({ title: 'Skip planning', fields: { priority: 'P1' } }));
+    const moved = valueOf(await connector.moveItem(added.id, { stage: 'plan-approved' }));
+    expect(moved).toEqual({ id: added.id, from: 'ticket', to: 'plan-approved', changed: true });
   });
 
   it('refuses an unknown stage with exit 2 and lists the stages', () => {
@@ -579,7 +588,7 @@ describe('the local connector: the contract suite', () => {
     return {
       connector: connectorOf(repo),
       states: { first: 'open', other: 'doing', closed: 'done' },
-      stages: { first: 'ticket', next: 'plan-approved' },
+      stages: { first: 'ticket', next: 'planning' },
       fields: { add: { priority: 'P1' }, update: { priority: 'P2', type: 'bug' } },
       doc: DOC_PATH,
     };

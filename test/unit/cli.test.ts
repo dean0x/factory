@@ -1171,7 +1171,7 @@ describe('the item and track commands in the command line', () => {
         stage: 'ticket',
         track: null,
         epic: null,
-        stages: ['ticket', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released'],
+        stages: ['ticket', 'planning', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released'],
         docs: [],
       },
     });

@@ -2,7 +2,7 @@ import type { RecipeBoard } from '../entry.js';
 import { softwareQueueKey } from './words.js';
 
 /** The stages of an item on the software board, in order. A new item gets the first one. */
-export const softwareStages = ['ticket', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released'] as const;
+export const softwareStages = ['ticket', 'planning', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released'] as const;
 
 type SoftwareStage = (typeof softwareStages)[number];
 
