@@ -5,6 +5,8 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import type { FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
 import type { AttachedEnd, Deps } from '../core/deps.js';
+import { readGuardState, type GuardReadState } from '../core/guard-records.js';
+import type { GuardValues } from '../guards/types.js';
 import { gitVersionProblem, requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
@@ -180,10 +182,10 @@ type Recovery = RecoveryReport | null;
  * stays 0, with one exception: a git that can not list its config scopes stops the run (exit 1) before any worker runs. `runStart`
  * makes that check before it makes the session, so the claim meets the fault only for a caller that did not.
  */
-const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers): Promise<CliResult<Recovery>> => {
+const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers, guards: GuardValues | undefined): Promise<CliResult<Recovery>> => {
   const claimed = await claimActiveMachine(deps, home);
   if (!claimed.ok) return claimed;
-  const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers });
+  const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers, guards });
   if (recovered.ok) return ok(recovered.value);
   deps.warn(`The ${roles.worker}s are not resumed: ${recovered.error.message}. ${recovered.error.hint ?? ''}`.trimEnd());
   return ok(null);
@@ -245,12 +247,13 @@ export const startAgain = async (
   home: string,
   config: FactoryConfig,
   answers: ProxyAnswers,
+  guards: GuardValues,
 ): Promise<CliResult<RestartedSession>> => {
   const plan = await planStart(deps, home, config, answers);
   if (!plan.ok) return plan;
   const started = await startSession(deps, config.core.node.id, plan.value.steps);
   if (!started.ok) return started;
-  const workers = await recoverSession(deps, home, config, answers);
+  const workers = await recoverSession(deps, home, config, answers, guards);
   if (!workers.ok) return workers;
   const { proxy, resumeId, warnings } = plan.value;
   return ok({
@@ -377,7 +380,7 @@ const settleHook = async (
 };
 
 /**
- * The steps of `start` that change a file before it launches the coordinator: the safety block rendered again when it is out of
+ * The steps of `start` that change a file before it launches the coordinator: the safety and role blocks rendered again when out of
  * date (design 4.8), and the hook settings of the coordinator. A command that starts the coordinator itself without `start`
  * (`reboot` outside the session) runs them before its first stop, so a stop in these steps leaves the session as it is. The
  * command has no yes flag, so the hook settings need an answer on a terminal window when they are not in place.
@@ -387,8 +390,9 @@ export const renderStartFiles = async (
   home: string,
   config: FactoryConfig,
   command: CommandName,
+  guards: GuardReadState,
 ): Promise<CliResult<void>> => {
-  const safety = await requireSafetyBlock(deps, home, config, false);
+  const safety = await requireSafetyBlock(deps, home, config, guards, false);
   if (!safety.ok) return safety;
   const hook = await settleHook(deps, home, { yes: false, dryRun: false, command });
   return hook.ok ? ok(undefined) : hook;
@@ -502,7 +506,8 @@ export const runStart = async (
   const clean = requireRootClean(settled === null ? scan : withSetupAccepted(scan));
   if (!clean.ok) return clean;
   // The safety block comes after the root checks and before any tool check, proxy request or launch, also in a dry run.
-  const safety = await requireSafetyBlock(deps, home, loaded.value, dryRun);
+  const guards = await readGuardState(deps, home, loaded.value, 'always');
+  const safety = await requireSafetyBlock(deps, home, loaded.value, guards, dryRun);
   if (!safety.ok) return safety;
   // The setup blocks come after the link rule of the coordinator file, from the bytes that the acceptance hashed.
   if (settled !== null) {
@@ -560,7 +565,7 @@ export const runStart = async (
     if (!started.ok) return started;
   }
   // The recovery runs only for a session that this run made, and before the person is in the session.
-  const recoveryResult = planned === null ? ok(null) : await recoverSession(deps, home, loaded.value, answers);
+  const recoveryResult = planned === null ? ok(null) : await recoverSession(deps, home, loaded.value, answers, guards.values);
   if (!recoveryResult.ok) return recoveryResult;
   const recovery = recoveryResult.value;
   // A session that runs already resumes no worker. It claims the mark and names the workers that have no pane.

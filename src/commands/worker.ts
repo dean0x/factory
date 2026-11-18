@@ -13,6 +13,7 @@ import {
   type HookConsentRequest,
 } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
+import type { GuardValues } from '../guards/types.js';
 import { addWorkTree, branchExists, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
@@ -313,6 +314,7 @@ const makeWorker = async (
   plan: NewWorkerPlan,
   yes: boolean,
   assignment: string | null,
+  guards: GuardValues,
 ): Promise<CliResult<{ readonly paneId: string; readonly proxy: string | null; readonly warnings: readonly string[] }>> => {
   const { id, project, clone, workCopy, branch } = plan;
   const made = await addWorkTree(deps, clone, branch, workCopy);
@@ -334,7 +336,7 @@ const makeWorker = async (
     deps.warn(declinedHookText(hook.value.file, commandLines.workerNew, hookSessions.workCopy));
   }
   for (const line of machineWarnings(await gatherMachine(deps, home, config.core.limits))) deps.warn(line);
-  const launched = await launchWorker(deps, { home, config, workerId: id, workCopy, retry: resumeLine(id) });
+  const launched = await launchWorker(deps, { home, config, guards, workerId: id, workCopy, retry: resumeLine(id) });
   if (!launched.ok) return { ...launched, error: keptCopy(launched.error, plan, home, false) };
   return ok(launched.value);
 };
@@ -377,12 +379,12 @@ const runNew = async (
   const tracked = await requireCleanTrackedSettings(deps, home, plan.value.clone, plan.value.workCopy);
   if (!tracked.ok) return tracked;
   // A role text that no session could get stops the command here, so that no work copy, no branch and no record are made for it.
-  const role = await requireRoleText(deps, { home, config, retry: newLine(id, options.project) });
+  const role = await requireRoleText(deps, { home, config, guards: prepared.value.guards.values, retry: newLine(id, options.project) });
   if (!role.ok) return role;
   const consent = await requireHookConsent(deps, hookRequestOf(plan.value.workCopy, options.yes), tracked.value.localText);
   if (!consent.ok) return consent;
 
-  const made = await makeWorker(deps, home, config, plan.value, options.yes, assignment.value);
+  const made = await makeWorker(deps, home, config, plan.value, options.yes, assignment.value, prepared.value.guards.values);
   if (!made.ok) return made;
   const { workCopy, branch, project } = plan.value;
   const copy = assignment.value === null ? null : assignmentFileOf(home, id);
@@ -568,6 +570,7 @@ const runResume = async (
     workerId: id,
     workCopy: record.value.workCopy,
     retry: resumeLine(id),
+    guards: prepared.value.guards.values,
     deadPanes: panes.value.dead,
     ...(chosen.value.kind === 'resume' ? { resumeId: chosen.value.sessionId } : {}),
   });

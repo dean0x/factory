@@ -32,6 +32,7 @@ import { listPanes, readPanes } from '../workers/panes.js';
 import { recoverWorkers, type RecoveryReport } from '../workers/recovery.js';
 import { listWorkerRecords, requireRecord } from '../workers/registry.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
+import type { GuardValues } from '../guards/types.js';
 import { prepareLaunch, prepareRoot } from './launch-checks.js';
 import { coordinatorResumeLine, renderStartFiles, requireSessionGit, startAgain } from './start.js';
 
@@ -222,7 +223,7 @@ export const runRestart = async (
   const listed = await listPanes(deps, session);
   if (!listed.ok) return listed;
   const panes = listed.value.filter((row) => row.worker === id);
-  const checked = await checkTargets(deps, { home, config, session, again, panes, launches: [record.value] });
+  const checked = await checkTargets(deps, { home, config, session, again, panes, launches: [record.value], guards: prepared.value.guards.values });
   if (!checked.ok) return checked;
   const resumeId = checked.value.get(id);
   if (resumeId === undefined) {
@@ -241,6 +242,7 @@ export const runRestart = async (
     workCopy: record.value.workCopy,
     retry: resumeLine(id),
     resumeId,
+    guards: prepared.value.guards.values,
     proxyAnswers,
   });
   if (!launched.ok) return err(notStarted(launched.error, id, stopped.value));
@@ -268,6 +270,7 @@ interface RebootRun {
   readonly home: string;
   readonly session: string;
   readonly config: FactoryConfig;
+  readonly guards: GuardValues;
   readonly notes: readonly string[];
   /** One set of answers for the run, so each proxy is asked once (the start path and the recovery use it). */
   readonly answers: ProxyAnswers;
@@ -278,7 +281,7 @@ const rebootInside = async (deps: Deps, run: RebootRun, panes: readonly PaneRow[
   const { home, session, config, notes, answers } = run;
   const stopped = await stopWorkers(deps, { home, session, panes });
   if (stopped.fault !== null) return err(rebootFault(stopped.fault, stopped.stopped, false));
-  const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers });
+  const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers, guards: run.guards });
   if (!recovered.ok) return err(rebootFault(recovered.error, stopped.stopped, false));
   return ok({
     lines: [
@@ -304,7 +307,7 @@ const rebootOutside = async (
   const { home, session, config, notes, answers } = run;
   const ended = panes === null ? ok(NOTHING_ENDED) : await endSession(deps, { home, session, panes, command: commands.reboot });
   if (!ended.ok) return ended;
-  const started = await startAgain(deps, home, config, answers);
+  const started = await startAgain(deps, home, config, answers, run.guards);
   if (!started.ok) return err(rebootFault(started.error, ended.value.stopped, true));
   const { proxy, coordinatorResumed, workers, warnings } = started.value;
   return ok({
@@ -338,7 +341,7 @@ const rebootOutside = async (
  * after the stop (exit 1). Outside the session, the git checks of
  * `start` come next (exit 1): a git older than 2.26 stops the reboot before the first stop. With no session, nothing stops and the
  * start path recovers the workers as `start` does.
- * Outside the session, the steps of `start` that change a file come first (the safety block rendered again, and the hook
+ * Outside the session, the steps of `start` that change a file come first (the safety and role blocks rendered again, and the hook
  * settings), before the first stop. Then the session ends as `shutdown` ends it, and it starts again with its recovery. Inside the session (the pane
  * of the caller is a pane of it), only the workers stop and start again, and the coordinator pane stays. A fault after the first
  * stop names the workers that stopped, and its remedy finishes the reboot (`rebootFault`).
@@ -367,6 +370,7 @@ export const runReboot = async (
     again: commands.reboot,
     panes: running ?? [],
     launches: listed === null ? [] : listed.value.workers,
+    guards: prepared.value.guards.values,
   });
   if (!checked.ok) return checked;
   const inside = running !== null && runsInside(deps, running);
@@ -376,7 +380,7 @@ export const runReboot = async (
     const gitReady = await requireSessionGit(deps, home, commands.reboot);
     if (!gitReady.ok) return gitReady;
   }
-  const run: RebootRun = { home, session, config, notes, answers: newProxyAnswers() };
+  const run: RebootRun = { home, session, config, notes, guards: prepared.value.guards.values, answers: newProxyAnswers() };
   if (running !== null) {
     // The launches come after the stop, so their proxies are asked first: a proxy that does not answer stops nothing.
     const wishes = [
@@ -386,9 +390,12 @@ export const runReboot = async (
     const proxies = await requireProxies(deps, config, wishes, run.answers);
     if (!proxies.ok) return proxies;
   }
-  if (running !== null && inside) return rebootInside(deps, run, running);
+  if (running !== null && inside) {
+    for (const note of prepared.value.launchNotes) deps.warn(note);
+    return rebootInside(deps, run, running);
+  }
   // Outside the session, the coordinator starts as `start` starts it, so the steps of `start` that change a file come first.
-  const rendered = await renderStartFiles(deps, home, config, commands.reboot);
+  const rendered = await renderStartFiles(deps, home, config, commands.reboot, prepared.value.guards);
   if (!rendered.ok) return rendered;
   return rebootOutside(deps, run, running);
 };

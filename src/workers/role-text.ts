@@ -238,11 +238,11 @@ export const roleFaultRefusal = (fault: RoleFault, context: RoleRemedyContext): 
  */
 export const requireRoleText = async (
   deps: Deps,
-  input: { readonly home: string; readonly config: FactoryConfig; readonly retry: string },
+  input: { readonly home: string; readonly config: FactoryConfig; readonly retry: string; readonly guards?: GuardValues | undefined },
 ): Promise<CliResult<void>> => {
   const { home, config, retry } = input;
-  const guards = await readGuardState(deps, home, config, 'when-off');
-  const read = await readRoleText(deps, { home, config, guards: guards.values });
+  const guards = input.guards ?? (await readGuardState(deps, home, config, 'when-off')).values;
+  const read = await readRoleText(deps, { home, config, guards });
   if (!read.ok) return read;
   return read.value.kind === 'ok' ? ok(undefined) : roleFaultRefusal(read.value.fault, { retry });
 };

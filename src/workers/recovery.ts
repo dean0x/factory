@@ -2,6 +2,7 @@ import type { CliError, CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import type { GuardValues } from '../guards/types.js';
 import { commands, commandText, lastSeen, roles } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { readOwnCoordinatorSession, readOwnLastSeen } from './last-seen.js';
@@ -61,6 +62,7 @@ export interface RecoveryRequest {
   /** The node home, the root of the config repo: an absolute path. */
   readonly home: string;
   readonly config: FactoryConfig;
+  readonly guards?: GuardValues | undefined;
   /** The proxy answers of the run. The caller makes them once, so each proxy is asked once for the whole run. */
   readonly proxyAnswers: ProxyAnswers;
 }
@@ -109,6 +111,7 @@ const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: Worke
     retry: resumeLine(id),
     resumeId: seen.value.line[keys.sessionId],
     proxyAnswers,
+    guards: request.guards,
   });
   if (!launched.ok) {
     deps.warn(failedWarning(id, launched.error));

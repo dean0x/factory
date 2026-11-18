@@ -4,6 +4,7 @@ import type { FactoryConfig } from '../config/schema.js';
 import { hookSettingsPlaceOf, missingHookEvents } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import type { GuardValues } from '../guards/types.js';
 import { toolNames } from '../core/tools.js';
 import { commandLines, commands, commandText, flags, flagText, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
 import { parseJsonText } from '../state/load.js';
@@ -174,6 +175,7 @@ export interface RoleDeliveryRequest {
   /** The node home, the root of the config repo: an absolute path. */
   readonly home: string;
   readonly config: FactoryConfig;
+  readonly guards?: GuardValues | undefined;
   readonly workerId: string;
   /** The work copy of the worker: `work-copies/<project>/<id>` of the node home, which the caller has checked. */
   readonly workCopy: string;
@@ -203,7 +205,7 @@ export const requireRoleDelivery = async (deps: Deps, request: RoleDeliveryReque
   const remedy = roleText.hookRemedy({ again: commandText(again), ...startOverCommands(workerId, basename(dirname(workCopy))) });
   const hooks = await requireOwnHooks(deps, { folder: workCopy, then: again, remedy });
   if (!hooks.ok) return hooks;
-  return requireRoleText(deps, { home, config, retry: commandText(again) });
+  return requireRoleText(deps, { home, config, guards: request.guards, retry: commandText(again) });
 };
 
 /**
