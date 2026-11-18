@@ -5,8 +5,11 @@ import {
   approvalLinkLabels,
   boardIds,
   boardTextLimits,
+  commands,
+  commandText,
   decisionKeys,
   decisionLogKeys,
+  keys,
   optionKeys,
   requestFieldKeys,
   requestGroups,
@@ -31,7 +34,7 @@ export const requestTitleOf = (item: WaitingItem): string | null => {
 };
 
 /** The keys of the options of a waiting entry, in order. An option with no text key is left out. */
-const optionKeysOf = (item: WaitingItem): readonly string[] => {
+export const optionKeysOf = (item: WaitingItem): readonly string[] => {
   const options = item.record[decisionKeys.options];
   if (!Array.isArray(options)) return [];
   return options.flatMap((option): string[] => {
@@ -81,6 +84,8 @@ const LOG_LINK_KEYS = [decisionLogKeys.point, decisionLogKeys.boardItem, decisio
 
 type LinkParts = Readonly<Record<keyof RequestLink, unknown>>;
 const linkFault = (reason: string) => failure(`the ${requestWords.request} link ${reason}`);
+
+export const approvalLinkRemedy = `Run "${commandText(commands.doctor)}" to check the board files. Check the ${keys.root.recipe} link rules. If necessary, restore a valid state from trusted history. A new ${requestWords.request} does not clear the invalid row.`;
 
 /** Stored faults are failures, never usage errors. No stored value supplies the error text. */
 const linkOfParts = (parts: LinkParts, rules: RequestLinkRules | undefined): CliResult<RequestLink> => {

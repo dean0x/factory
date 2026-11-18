@@ -13,7 +13,7 @@ import type {
   RequestSettlement,
 } from '../../src/board/contract.js';
 import { strictRequestOf, type DecideRequest } from '../../src/board/decide.js';
-import { changeItemIn, checkPatch, checkSettlement, closeRequestIn } from '../../src/board/edit.js';
+import { changeItemIn, checkPatch, checkRequestClose, checkSettlement, closeRequestIn } from '../../src/board/edit.js';
 import { resolveFields, declaredFields } from '../../src/board/fields.js';
 import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readDecisionLog, readWaiting } from '../../src/board/files.js';
 import { boardJsonText } from '../../src/board/json.js';
@@ -49,10 +49,12 @@ import {
 } from '../../src/names.js';
 import type { CheckedRecord } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
+import { softwareRecordCheck } from '../../src/recipes/software/record.js';
 import { layoutOf, stateRel } from '../../src/state/layout.js';
 import { describeBoardContract } from '../contract/board-contract.js';
+import { APPROVAL_ID, APPROVAL_LINK, approvalRelay, approvalRequest } from '../helpers/approval-go.js';
 import { boardRepo, type BoardRepo } from '../helpers/board-repo.js';
-import { createFakeDeps, exited, withFailingWrites } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, withFailingWrites, withFsWatch } from '../helpers/fake-deps.js';
 import { HOOK, linkAt } from '../helpers/guard-fixture.js';
 import { publishBoard } from '../helpers/publish-recipe.js';
 import { sampleBoard } from '../helpers/sample-config.js';
@@ -2607,7 +2609,8 @@ describe('the checked settlement of a close', () => {
   it('closes a request with the text and the decider that checkSettlement gave', () => {
     const { waiting, log } = docs();
     const checked = valueOf(checkSettlement({ decider: requestDeciders.delegate, decision: '  Use plan A  ' }));
-    const edited = valueOf(closeRequestIn(valueOf(waiting), valueOf(log), 'D-1', DATE, checked));
+    const close = valueOf(checkRequestClose(valueOf(waiting), valueOf(log), 'D-1', checked, [], undefined));
+    const edited = closeRequestIn(valueOf(waiting), valueOf(log), close, DATE);
     expect(edited.closed).toEqual({ id: 'D-1', title: 'Pick a plan', decider: requestDeciders.delegate });
     expect(edited.log).toEqual({ rows: [{ item: 'D-1: Pick a plan', decision: 'Use plan A', date: DATE, decider: requestDeciders.delegate }] });
   });
@@ -2615,9 +2618,9 @@ describe('the checked settlement of a close', () => {
   it('does not compile a settlement that checkSettlement did not check', () => {
     const { waiting, log } = docs();
     const raw: RequestSettlement = { decider: requestDeciders.coordinator, decision: 'Yes' };
-    // @ts-expect-error The settlement of closeRequestIn is the one that checkSettlement made.
-    const edited = closeRequestIn(valueOf(waiting), valueOf(log), 'D-1', DATE, raw);
-    expect(edited.ok).toBe(true);
+    // @ts-expect-error The settlement of checkRequestClose is the one that checkSettlement made.
+    const close = checkRequestClose(valueOf(waiting), valueOf(log), 'D-1', raw, [], undefined);
+    expect(close.ok).toBe(true);
   });
 });
 
@@ -2641,7 +2644,61 @@ const itemAfter = (repo: BoardRepo, id: string): Readonly<Record<string, unknown
   return found.record;
 };
 
+const DELEGATED_CHECK = { point: softwareRecordCheck.point, mode: 'delegated' } as const;
+const OWNER_CHECK = { ...DELEGATED_CHECK, mode: 'owner' } as const;
+const RECORD_LINK = { ...APPROVAL_LINK, ref: '12', head: PR_HEAD };
+const RECORD_RELAY = approvalRelay(APPROVAL_ID, undefined, RECORD_LINK);
+const RECORD_RULES = { points: [softwareRecordCheck.point], parseRef: softwareRecordCheck.parseRef, parseHead: softwareRecordCheck.parseHead };
+
+describe('the local connector: close a linked request', () => {
+  it('keeps the request open when the owner store has no path', async () => {
+    const waiting = waitingOf(approvalRequest());
+    const repo = await boardRepo({ board: boardWith([workItem()]), waiting, env: {} });
+    const connector = connectorOf(repo, { requestLinkRules: RECORD_RULES });
+    const result = await connector.closeRequest(APPROVAL_ID, { decider: 'coordinator', relayed: true, decision: 'approve' }, [RECORD_LINK.point]);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('owner store') } });
+    expect(repo.textOf(fileNames.waiting)).toBe(waiting);
+    expect(repo.commits).toEqual([]);
+  });
+});
+
 describe('the local connector: record a passed check', () => {
+  it('reads each decision file and the owner store once under the state lock', async () => {
+    const repo = await boardRepo({ board: boardWith([workItem()]), decisionLog: logOf(RECORD_RELAY), env: PERSON_ENV });
+    repo.deps.seed(DECISIONS_PATH, jsonOf({ schema: 1, records: [] }));
+    const paths = [BOARD_PATH, WAITING_PATH, LOG_PATH, DECISIONS_PATH];
+    const reads: { path: string; locked: boolean }[] = [];
+    const deps = withFsWatch(repo.deps, (method, path) => {
+      if (method.startsWith('read') && paths.includes(path)) reads.push({ path, locked: repo.deps.files.has(LOCK_FILE) });
+    });
+    const connector = connectorOf({ ...repo, deps }, { requestLinkRules: RECORD_RULES });
+
+    expect(await connector.recordChecked('B-1', checkedRecord(), 'w1', OWNER_CHECK)).toMatchObject({ ok: true });
+    expect(reads).toHaveLength(paths.length);
+    expect(reads).toEqual(expect.arrayContaining(paths.map((path) => ({ path, locked: true }))));
+  });
+
+  it('refuses a relay when the owner store has no path', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await boardRepo({ board, decisionLog: logOf(RECORD_RELAY), env: {} });
+    const connector = connectorOf(repo, { requestLinkRules: RECORD_RULES });
+    expect(await connector.recordChecked('B-1', checkedRecord(), 'w1', OWNER_CHECK)).toMatchObject({
+      ok: false, error: { kind: 'failure', message: expect.stringContaining(APPROVAL_ID) },
+    });
+    expectUntouched(repo, board);
+  });
+
+  it('refuses an already recorded item with a new open linked request', async () => {
+    const board = boardWith([workItem({ status: 'done', stage: 'merged', merged_pr_head: PR_HEAD })]);
+    const waiting = jsonOf({ intro: '', groups: [], items: [approvalRequest('D-2', RECORD_LINK)] });
+    const repo = await repoWith(board, { waiting });
+    const connector = connectorOf(repo, { requestLinkRules: RECORD_RULES });
+    expect(await connector.recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK)).toMatchObject({
+      ok: false, error: { kind: 'failure', message: 'request "D-2" is still open' },
+    });
+    expectUntouched(repo, board);
+  });
+
   const ROWS = [
     { name: 'First', items: ['B-1', 'B-2'], release: true },
     { name: 'Alone', items: ['B-1'], note: 'only this one' },
@@ -2652,7 +2709,7 @@ describe('the local connector: record a passed check', () => {
   it('sets the merged stage, the closed state and the PR head, and keeps the merge commit out of the item', async () => {
     const repo = await repoWith(boardWith([workItem({ zeta: 1 }), item('B-2')]));
     const at = repo.deps.now().toISOString();
-    const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(done.changed).toBe(true);
     expect(done.item.status).toBe('done');
     expect(done.item.stage).toBe('merged');
@@ -2662,7 +2719,7 @@ describe('the local connector: record a passed check', () => {
 
   it('takes the item out of each queue row that lists it, drops a row that becomes empty, and keeps the other rows', async () => {
     const repo = await repoWith(boardWith([workItem(), item('B-2')], { [QUEUE]: ROWS }));
-    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(valueOf(boardAfter(repo)).queue).toEqual([
       { name: 'First', items: ['B-2'], release: true },
       { name: 'Other', items: ['B-2'] },
@@ -2672,7 +2729,7 @@ describe('the local connector: record a passed check', () => {
 
   it('makes one commit of the board file, and its message names the stage and the summary of the check', async () => {
     const repo = await repoWith(boardWith([workItem()]));
-    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(repo.commits).toHaveLength(1);
     expect(repo.commits[0]?.staged).toEqual([fileNames.board]);
     expect(repo.commits[0]?.message).toContain('merged');
@@ -2684,18 +2741,18 @@ describe('the local connector: record a passed check', () => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
     const connector = connectorOf(repo);
-    expect(exitOf(await connector.recordChecked('B-1', checkedRecord({ stage: 'unlisted' }), 'w1'))).toBe(2);
+    expect(exitOf(await connector.recordChecked('B-1', checkedRecord({ stage: 'unlisted' }), 'w1', DELEGATED_CHECK))).toBe(2);
     expectUntouched(repo, board);
-    valueOf(await connector.recordChecked('B-1', checkedRecord({ stage: 'released' }), 'w1'));
+    valueOf(await connector.recordChecked('B-1', checkedRecord({ stage: 'released' }), 'w1', DELEGATED_CHECK));
     expect(itemAfter(repo, 'B-1')).toMatchObject({ stage: 'released', status: 'done' });
   });
 
   it('is a success with no commit when the same record is made again', async () => {
     const repo = await repoWith(boardWith([workItem()], { [QUEUE]: ROWS }));
     const connector = connectorOf(repo);
-    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
+    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     const written = repo.textOf(fileNames.board);
-    const again = valueOf(await connector.recordChecked('B-1', checkedRecord({ summary: `PR 12, merge commit ${'c'.repeat(40)}` }), 'w1'));
+    const again = valueOf(await connector.recordChecked('B-1', checkedRecord({ summary: `PR 12, merge commit ${'c'.repeat(40)}` }), 'w1', DELEGATED_CHECK));
     expect(again.changed).toBe(false);
     expect(repo.commits).toHaveLength(1);
     expect(repo.textOf(fileNames.board)).toBe(written);
@@ -2704,7 +2761,7 @@ describe('the local connector: record a passed check', () => {
   it('records the item and takes it out of the queue when the item holds the stage, the state and the head and a queue row lists it', async () => {
     const recorded = workItem({ status: 'done', stage: 'merged', merged_pr_head: PR_HEAD });
     const repo = await repoWith(boardWith([recorded, item('B-2')], { [QUEUE]: ROWS }));
-    const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(done.changed).toBe(true);
     expect(repo.commits).toHaveLength(1);
     expect(valueOf(boardAfter(repo)).queue).toEqual([
@@ -2718,14 +2775,14 @@ describe('the local connector: record a passed check', () => {
   it('exits 1 and writes nothing when the item records another PR head', async () => {
     const board = boardWith([workItem({ merged_pr_head: 'd'.repeat(40), status: 'done', stage: 'merged' })]);
     const repo = await repoWith(board);
-    expect(exitOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(1);
+    expect(exitOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK))).toBe(1);
     expectUntouched(repo, board);
   });
 
   it('exits 1 and writes nothing when another item records the PR head already, and names that item and the command in the remedy', async () => {
     const board = boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: PR_HEAD })], { [QUEUE]: ROWS });
     const repo = await repoWith(board);
-    const error = errorOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    const error = errorOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('B-2');
     expect(error.message).not.toContain(PR_HEAD);
@@ -2735,14 +2792,14 @@ describe('the local connector: record a passed check', () => {
 
   it('records the item when the other items record other PR heads', async () => {
     const repo = await repoWith(boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: 'd'.repeat(40) })]));
-    expect(valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1')).changed).toBe(true);
+    expect(valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK)).changed).toBe(true);
   });
 
   it('keeps a rerun of the same item a success with no commit, whatever the other items record', async () => {
     const repo = await repoWith(boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: 'd'.repeat(40) })]));
     const connector = connectorOf(repo);
-    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
-    expect(valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1')).changed).toBe(false);
+    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
+    expect(valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK)).changed).toBe(false);
     expect(repo.commits).toHaveLength(1);
   });
 
@@ -2754,7 +2811,7 @@ describe('the local connector: record a passed check', () => {
   ])('exits 1 and writes nothing when the worker field holds %s since the check', async (_name, stored, worker) => {
     const board = boardWith([stored], { [QUEUE]: ROWS });
     const repo = await repoWith(board);
-    const error = errorOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), worker));
+    const error = errorOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), worker, DELEGATED_CHECK));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('B-1');
     expectUntouched(repo, board);
@@ -2762,7 +2819,7 @@ describe('the local connector: record a passed check', () => {
 
   it('records the merge of an item that has no worker when the check bound none', async () => {
     const repo = await repoWith(boardWith([item('B-1', { stage: 'review' })]));
-    expect(valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), null)).changed).toBe(true);
+    expect(valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), null, DELEGATED_CHECK)).changed).toBe(true);
   });
 
   it.each([
@@ -2771,7 +2828,7 @@ describe('the local connector: record a passed check', () => {
   ])('exits 2 and writes nothing for %s', async (_name, id) => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
-    expect(exitOf(await connectorOf(repo).recordChecked(id, checkedRecord(), 'w1'))).toBe(2);
+    expect(exitOf(await connectorOf(repo).recordChecked(id, checkedRecord(), 'w1', DELEGATED_CHECK))).toBe(2);
     expectUntouched(repo, board);
   });
 
@@ -2779,7 +2836,7 @@ describe('the local connector: record a passed check', () => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
     const bare = connectorOf(repo, { recipe: { queueKey: QUEUE } });
-    expect(exitOf(await bare.recordChecked('B-1', checkedRecord(), 'w1'))).toBe(2);
+    expect(exitOf(await bare.recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK))).toBe(2);
     expectUntouched(repo, board);
   });
 
@@ -2787,14 +2844,14 @@ describe('the local connector: record a passed check', () => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
     const { closed: _closed, ...open } = sampleBoard();
-    expect(exitOf(await connectorOf(repo, { config: open }).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(2);
+    expect(exitOf(await connectorOf(repo, { config: open }).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK))).toBe(2);
     expectUntouched(repo, board);
   });
 
   it('stops with exit 4 for a hosted tracker kind, before it reads the board', async () => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
-    expect(exitOf(await connectorOf(repo, { tracker: 'github' }).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(4);
+    expect(exitOf(await connectorOf(repo, { tracker: 'github' }).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK))).toBe(4);
     expectUntouched(repo, board);
   });
 });
@@ -3205,20 +3262,20 @@ describe('the local connector: the time of the last stage change', () => {
     const repo = await repoWith(boardWith([workItem({ [boardKeys.stageAt]: STAGE_AT })]));
     repo.deps.advance(5_000);
     const at = timeOf(repo);
-    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(itemAfter(repo, 'B-1')).toMatchObject({ stage: 'merged', status: 'done', [boardKeys.stageAt]: at });
   });
 
   it('keeps the stored time when a record finds the stage that it sets', async () => {
     const repo = await repoWith(boardWith([workItem({ stage: 'merged', [boardKeys.stageAt]: STAGE_AT }), item('B-2')]));
     repo.deps.advance(5_000);
-    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(itemAfter(repo, 'B-1')).toMatchObject({ status: 'done', [boardKeys.stageAt]: STAGE_AT });
   });
 
   it('adds no time when a record finds the stage that it sets on an item that has none', async () => {
     const repo = await repoWith(boardWith([workItem({ stage: 'merged' })]));
-    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(Object.hasOwn(itemAfter(repo, 'B-1'), boardKeys.stageAt)).toBe(false);
   });
 
@@ -3226,9 +3283,9 @@ describe('the local connector: the time of the last stage change', () => {
     const repo = await repoWith(boardWith([workItem()]));
     const connector = connectorOf(repo);
     const at = timeOf(repo);
-    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
+    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     repo.deps.advance(5_000);
-    const again = valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
+    const again = valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1', DELEGATED_CHECK));
     expect(again.changed).toBe(false);
     expect(repo.commits).toHaveLength(1);
     expect(stageAtOf(repo, 'B-1')).toBe(at);

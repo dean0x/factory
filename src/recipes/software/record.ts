@@ -5,6 +5,7 @@ import { ok } from '../../core/result.js';
 import { toolNames } from '../../core/tools.js';
 import { files, flags, flagText, keys, program, roles } from '../../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../entry.js';
+import { softwareApprovalPoints } from './approval.js';
 import { mergedStage } from './board.js';
 import { githubRepoOf, mergeCheck, parsePrNumber, readMergedPr, RECORD_COMMAND, RECORD_READER } from './github-pr.js';
 
@@ -46,6 +47,7 @@ const checkMergedPr = async (deps: Deps, input: RecordCheckInput): Promise<CliRe
 /** The record check of the software recipe: a PR that is merged into the default branch, from the branch of the worker or of a former worker. */
 export const softwareRecordCheck: RecordCheck = {
   stage: mergedStage,
+  point: softwareApprovalPoints[0].id,
   summary: 'record a merged PR',
   refHelp:
     `the number of the PR. ${program} reads the PR with ${toolNames.gh} and records the merge only when the PR is merged ` +

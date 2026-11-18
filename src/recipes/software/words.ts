@@ -1,4 +1,4 @@
-import { commands, commandText, lockWords, program, workerCommands } from '../../names.js';
+import { commands, commandText, flags, lockWords, program, workerCommands } from '../../names.js';
 import type { GlossaryEntry } from '../entry.js';
 
 /**
@@ -89,8 +89,8 @@ export const standingRoutines = {
   commands: [commandText(`${commands.worker} ${workerCommands.watch}`), prWatchCommand],
 } as const;
 
-/** The flag of `pr watch` that only this recipe owns. The other flags of the command are flags of the core. */
-export const prFlags = { head: 'head' } as const;
+/** The flag that pins `pr watch` to a head. */
+export const prFlags = { head: flags.head } as const;
 
 /** The id of the JSON document that `pr watch` prints. */
 export const prWatchSchemaId = `${program}.pr-watch/v1`;

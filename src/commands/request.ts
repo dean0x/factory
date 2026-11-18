@@ -6,9 +6,10 @@ import type {
   RequestClosed,
   RequestDecider,
   RequestField,
+  RequestLink,
   RequestSettlement,
 } from '../board/contract.js';
-import { checkRequestId } from '../board/edit.js';
+import { checkItemId, checkRequestId } from '../board/edit.js';
 import { isReservedFreeForm } from '../board/free-request.js';
 import { requestView } from '../board/list-view.js';
 import { usageError, type CliResult } from '../cli/errors.js';
@@ -16,11 +17,14 @@ import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import {
+  approvalOptions,
   commandLines,
   commands,
   commandText,
+  files,
   flags,
   flagText,
+  prefixPlaceholders,
   relayedMarker,
   requestCommands,
   requestDeciders,
@@ -32,7 +36,7 @@ import {
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { requireCoordinatorCaller } from '../workers/panes.js';
-import { openBoard, type OpenBoard } from './board-open.js';
+import { openBoard, recordApprovalMode, type OpenBoard } from './board-open.js';
 import { shown, usageFor } from './board-words.js';
 
 export interface RequestOptions {
@@ -59,12 +63,18 @@ export interface RequestOptions {
   readonly relayed: boolean;
   /** With add: the asker puts the request in the group `later`. Without it the request is in the group `now`. */
   readonly later: boolean;
+  /** With add: all three flags bind the request to the record point of the recipe. */
+  readonly item?: string | undefined;
+  readonly ref?: string | undefined;
+  readonly head?: string | undefined;
 }
+
+type LinkFlags = Omit<RequestLink, 'point'>;
 
 type Subcommand = (typeof requestCommands)[keyof typeof requestCommands];
 
 type Action =
-  | { readonly kind: typeof requestCommands.add; readonly input: DecisionAskInput }
+  | { readonly kind: typeof requestCommands.add; readonly input: DecisionAskInput; readonly link: LinkFlags | undefined }
   | { readonly kind: typeof requestCommands.list }
   | { readonly kind: typeof requestCommands.close; readonly id: string; readonly settlement: RequestSettlement | undefined }
   | { readonly kind: typeof requestCommands.log; readonly input: DecisionLogInput }
@@ -77,7 +87,10 @@ const SUBCOMMANDS = Object.values(requestCommands).join(', ');
  * Only doc adds context to an open request; it does not replace the request text.
  */
 const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
-  [requestCommands.add]: [flags.title, flags.question, flags.option, flags.recommend, flags.later, flags.kind, flags.field, flags.why, flags.doc],
+  [requestCommands.add]: [
+    flags.title, flags.question, flags.option, flags.recommend, flags.later, flags.kind, flags.field, flags.why, flags.doc,
+    flags.item, flags.ref, flags.head,
+  ],
   [requestCommands.list]: [],
   [requestCommands.close]: [flags.madeBy, flags.decision, flags.relayed],
   [requestCommands.log]: [flags.title, flags.madeBy, flags.decision],
@@ -102,6 +115,9 @@ const refuseStrayFlags = (subcommand: Subcommand, options: RequestOptions): CliR
     [flags.field, options.fields.length > 0],
     [flags.why, options.whys.length > 0],
     [flags.doc, options.docs.length > 0],
+    [flags.item, options.item !== undefined],
+    [flags.ref, options.ref !== undefined],
+    [flags.head, options.head !== undefined],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.request} ${subcommand}`)}`);
@@ -145,6 +161,21 @@ const parseOptions = (words: readonly string[], recommend: string | undefined, w
     const why = reasons.get(option.key);
     return why === undefined ? option : { ...option, why };
   }));
+};
+
+const parseLinkFlags = (options: RequestOptions, choices: readonly DecisionOption[]): CliResult<LinkFlags | undefined> => {
+  const { item, ref, head } = options;
+  if (item === undefined && ref === undefined && head === undefined) return ok(undefined);
+  if (item === undefined || ref === undefined || head === undefined) {
+    return needsUsage(`${flagText(flags.item)}, ${flagText(flags.ref)} and ${flagText(flags.head)} go together`);
+  }
+  const valid = checkItemId(item);
+  if (!valid.ok) return valid;
+  const { go, stop } = approvalOptions;
+  if (choices.length !== 2 || !choices.some(({ key }) => key === go) || !choices.some(({ key }) => key === stop)) {
+    return needsUsage(`a linked ${requestWords.request} needs exactly the option keys ${go} and ${stop}`);
+  }
+  return ok({ item: valid.value, ref, head });
 };
 
 const DECIDERS: readonly RequestDecider[] = Object.values(requestDeciders);
@@ -200,6 +231,8 @@ const parseAction = (options: RequestOptions): CliResult<Action> => {
       }
       const parsed = parseOptions(options.options, options.recommend, options.whys);
       if (!parsed.ok) return parsed;
+      const link = parseLinkFlags(options, parsed.value);
+      if (!link.ok) return link;
       const fields = parseLabelled(options.fields);
       if (!fields.ok) return fields;
       if (isReservedFreeForm(options.title, fields.value)) {
@@ -207,7 +240,7 @@ const parseAction = (options: RequestOptions): CliResult<Action> => {
           `The ${flagText(flags.askOwner)} form of ${commands.dismiss} opens this ${requestWords.request}.`);
       }
       const group = options.later ? requestGroups.later : requestGroups.now;
-      return ok({ kind: subcommand, input: {
+      return ok({ kind: subcommand, link: link.value, input: {
         title: options.title, question: options.question, options: parsed.value, group,
         ...(options.kind === undefined ? {} : { kind: options.kind }),
         fields: fields.value, docs: options.docs,
@@ -316,12 +349,48 @@ const requireRelayer = async (deps: Deps, board: OpenBoard, id: string): Promise
   return caller.ok ? ok(undefined) : caller;
 };
 
+/** Only the node and date slots vary. The literal parts must occur in order, with the exact letter case. */
+const hasOwnerPrefix = (decision: string, prefix: string, display: string): boolean => {
+  const parts = prefix.split(prefixPlaceholders.node).flatMap((part) => part.split(prefixPlaceholders.date));
+  let offset = 0;
+  for (const part of parts) {
+    const text = part.replaceAll(prefixPlaceholders.owner, () => display);
+    const found = decision.indexOf(text, offset);
+    if (found === -1) return false;
+    offset = found + text.length;
+  }
+  return true;
+};
+
+const relayScopeOf = async (deps: Deps, board: OpenBoard): Promise<readonly string[]> => {
+  const point = board.config.entry.recordCheck?.point;
+  if (point === undefined) return [];
+  return (await recordApprovalMode(deps, board, point)) === roles.owner ? [point] : [];
+};
+
+/** Use the recipe rules and the current open items before the connector takes the write lock. */
+const resolveLink = async (board: OpenBoard, link: LinkFlags): Promise<CliResult<RequestLink>> => {
+  const check = board.config.entry.recordCheck;
+  if (check === undefined) return needsUsage(`the ${roles.recipe} has no record check for a linked ${requestWords.request}`);
+  const ref = check.parseRef(link.ref);
+  if (!ref.ok) return ref;
+  const head = check.parseHead(link.head);
+  if (!head.ok) return head;
+  const items = await board.connector.listItems({ all: false });
+  if (!items.ok) return items;
+  if (!items.value.some((item) => item.id === link.item)) return needsUsage(`${files.board} has no open item ${shown(link.item)}`);
+  return ok({ point: check.point, item: link.item, ref: ref.value, head: head.value });
+};
+
 const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<CliResult<CommandOutput>> => {
   const { connector } = board;
   switch (action.kind) {
     case requestCommands.add: {
-      const id = await connector.askDecision(action.input);
-      return id.ok ? ok(addAnswer(id.value, action.input)) : id;
+      const link = action.link === undefined ? ok(undefined) : await resolveLink(board, action.link);
+      if (!link.ok) return link;
+      const input = link.value === undefined ? action.input : { ...action.input, link: link.value };
+      const id = await connector.askDecision(input);
+      return id.ok ? ok(addAnswer(id.value, input)) : id;
     }
     case requestCommands.list: {
       const requests = await connector.listRequests();
@@ -332,8 +401,13 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       if (relayed) {
         const relayer = await requireRelayer(deps, board, action.id);
         if (!relayer.ok) return relayer;
+        const { prefix, display } = board.config.core.owner;
+        if (hasOwnerPrefix(action.settlement.decision, prefix, display)) {
+          return needsUsage(`the relayed decision must not include the ${roles.owner} prefix`);
+        }
       }
-      const closed = await connector.closeRequest(action.id, action.settlement);
+      const relayScope = relayed ? await relayScopeOf(deps, board) : [];
+      const closed = await connector.closeRequest(action.id, action.settlement, relayScope);
       return closed.ok ? ok(closeAnswer(closed.value, relayed)) : closed;
     }
     case requestCommands.log: {

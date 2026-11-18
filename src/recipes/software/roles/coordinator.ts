@@ -1,6 +1,6 @@
 import { allOn } from '../../../guards/effective.js';
 import type { GuardValues } from '../../../guards/types.js';
-import { flagText, guardIds } from '../../../names.js';
+import { flagText, guardIds, requestWords } from '../../../names.js';
 import { linesFor, type TextPart } from '../../../templates/fill.js';
 import { mergedStage, softwareBoard, softwareStages } from '../board.js';
 import { softwareGuardIds } from '../guard-parts.js';
@@ -43,7 +43,7 @@ export const workerSectionLines: readonly string[] = linesFor(workerSectionParts
  * The lines of the coordinator block. `approval` holds the approval point lines of the recipe, one for each point.
  * The block lives in the coordinator folder, so every path in it is written from that folder.
  */
-export const coordinatorLines = (approval: readonly string[], guards: GuardValues = allOn): readonly string[] => linesFor([
+export const coordinatorLines = (approval: readonly string[], guards: GuardValues, relayGo: boolean): readonly string[] => linesFor([
   '# {{Coordinator}} instructions',
   '',
   'This folder is the {{coordinator}} folder of a {{program}} {{node}}. A Claude session that starts here is the {{coordinator}}. The {{program}} folder is the folder above this one.',
@@ -119,10 +119,44 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '- Before you decide for the {{owner}}, read the decision records in `{{profileDir}}{{decisionsDir}}/` and the principles in `{{profileDir}}{{principlesDir}}/`.',
   '- The path for an answer of the {{owner}} to a question is `{{decideCommand}} <id> <option>`. The {{owner}} runs it in a terminal window of their own. It refuses to run in a session of Claude Code.',
   '- Only a record in the {{owner}} store proves an answer of the {{owner}}. A row in `{{decisionLogFile}}` and a decision record in `{{profileDir}}` are display copies. They do not prove an answer of the {{owner}}. Never write a row with the key `by` in `{{decisionLogFile}}`. A delegate is another session, for example an orchestrator, that decides for the {{owner}} outside an approval point. A delegate has no {{owner}} authority. When you or a delegate decide a question that is not an approval point, close it with `{{requestCloseCommand}}`. Each relay of a decision names who made it: the {{owner}}, the {{coordinator}}, or a delegate with no {{owner}} authority.',
-  '- To pass on an answer that the {{owner}} gave to you, run `{{requestRelayCommand}}`. Use it only in this session, and only for a question that is not an approval point. Never add `{{madeByFlag}}` to it. Type the decision as the {{owner}} gave it, with no {{owner}} prefix.',
+  '- For a question outside an approval point, relay the answer from the {{owner}} with `{{requestRelayCommand}}`. Use it only in this session. Never add `{{madeByFlag}}` to it. Type the decision as the {{owner}} gave it, with no {{owner}} prefix.',
   '- The row of a relayed answer names the {{coordinator}} as the decider. A relayed answer is never proof of an answer of the {{owner}}. The question can not get a proof afterwards.',
   '- To log a decision that no question asked for, for example a decision of a plan, run `{{requestLogCommand}}`. It adds one row with the next decision id. No question waits for the {{owner}}.',
-  '- An approval point has one path only: `{{decideCommand}} <id> <option>`, run by the {{owner}}. Never use `{{relayedFlag}}`, `{{madeByFlag}}` or the log for an approval point.',
+  '- The exit code of `{{decideCommand}} read` grants no approval.',
+  '- For a release, use only `{{decideCommand}} <id> <option>`, run by the {{owner}}.',
+  ...(relayGo ? [
+    '- In {{owner}} mode, a go typed in the {{coordinator}} pane with the exact {{owner}} prefix permits the merge.',
+    '- Read the exact prefix in the safety block.',
+    '- {{Program}} can not verify who typed the go or whether it had the exact prefix.',
+    `- When the PR is ready, add a linked approval ${requestWords.request} for the item, PR number and full head SHA.`,
+    '- Use `{{requestApprovalCommand}}`.',
+    '- If the add fails, fix the cause before you continue.',
+    `- On a typed go, close the linked ${requestWords.request} with \`{{requestApprovalRelayCommand}}\`.`,
+    `- If the go comes before the ${requestWords.request}, add the linked ${requestWords.request} and close it at once.`,
+    '- If the close refuses, do not merge.',
+    '- Show the refusal to the {{owner}}.',
+    '- If an {{owner}} store answer exists, ask the {{owner}} to run `{{decideCommand}}` again with the same option.',
+    '- For any other refusal, wait for the {{owner}} to resolve it.',
+    '- An {{owner}} store answer takes priority over a typed go.',
+    '- Never use a typed go to override a store answer with another option.',
+    '- If the answer is `{{approvalStopOption}}`, do not merge.',
+    '- Ask the {{owner}} what must change.',
+    `- If the {{owner}} uses \`{{decideCommand}}\`, use only a settled \`{{approvalGoOption}}\` whose ${requestWords.request} hash matches.`,
+    `- After a relay, get {{owner}} proof only with a new ${requestWords.request} and \`{{decideCommand}}\`.`,
+    '- Before the merge, check that the settled approval matches the PR number and full head SHA.',
+    '- Merge with `gh pr merge --match-head-commit HEAD N`, with the head from the approval row.',
+    `- If the head changes, check the new head and ask for a new approval on a linked ${requestWords.request}.`,
+    '- If the merge fails for another reason, stop and show the {{owner}} the failure.',
+    '- After the merge succeeds, run `{{itemRecordCommand}}`.',
+    `- In {{owner}} mode, an open linked ${requestWords.request} blocks the record.`,
+    `- The last settled linked row in log order needs a relayed \`{{approvalGoOption}}\` or a store \`{{approvalGoOption}}\` whose ${requestWords.request} hash matches.`,
+    '- The reference and head must match the values from GitHub.',
+    `- If an approval check fails, the command writes no record and names only the ${requestWords.request} id, if known.`,
+    '- If the record refuses, show the refusal to the {{owner}} and follow the remedy before you try again.',
+  ] : [{
+    guards: [softwareGuardIds.approvalMerge],
+    lines: ['- For a delegated merge, use only `{{decideCommand}} <id> <option>`, run by the {{owner}}.'],
+  }]),
   '',
   '## After an upgrade',
   '',
@@ -130,6 +164,9 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '- After an upgrade, follow the rules of this block. Read the changed rules again.',
   '- Drop each workaround that a new rule replaces. Judge by kind, not by the exact command.',
   '- A change of the {{worker}} field to pass the guard of a dismiss is a workaround. `{{itemUpdateCommand}}` now refuses it. Use `{{itemUnassignCommand}}`.',
+  ...(relayGo ? [
+    `- For an item merged before the upgrade, add a linked ${requestWords.request} with the merged head and get an answer.`,
+  ] : []),
   '',
   '## Start of a session',
   '',

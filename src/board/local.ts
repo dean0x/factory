@@ -3,7 +3,7 @@ import { failure, safetyRefusal, usageError, type CliError, type CliResult } fro
 import { displayLine } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { decisionIdsOf, decisionPlaceOf, readDecisionProof, readDecisionStore, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
+import { decisionIdsOf, decisionPlaceOf, readDecisionProof, readDecisionStore, readScopedDecisions, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import {
@@ -35,12 +35,15 @@ import type {
   DecisionRequestRead,
   DocLinked,
   ItemMoved,
-  ItemRecorded,
   ItemUnassigned,
   LocalBoard,
   QueueRowSet,
+  RecordApproval,
 } from './contract.js';
-import { addNewRemedy, decideLogRow, proofOf, recheckRequest, requestStateOf, requireLogRoom, requireOpen, strictRequestOf, type RequestState } from './decide.js';
+import {
+  addNewRemedy, approvalVerdict, decideLogRow, linkedApprovalsOf, proofOf, recheckRequest, requestStateOf,
+  requireLogRoom, requireOpen, strictRequestOf, type RequestState,
+} from './decide.js';
 import { buildDecisionRecord, decisionRecordPath } from './decision-record.js';
 import {
   addItemIn,
@@ -59,6 +62,7 @@ import {
   checkQueueRow,
   checkRecorded,
   checkRequestId,
+  checkRequestClose,
   checkSettlement,
   checkWorkerField,
   closeItemIn,
@@ -128,8 +132,9 @@ const commitMessages = {
   setQueueRow: 'chore: change the queue',
 } as const;
 
+const approvalFiles = [files.waiting, files.decisionLog] as const;
 /** The files of a write of a decision. The board is among them, so the check of its queue key runs under the lock. */
-const decisionFiles = [files.waiting, files.decisionLog, files.board] as const;
+const decisionFiles = [...approvalFiles, files.board] as const;
 
 /** The date of a row of the decision log is the first 10 characters of an ISO time: `2030-01-02`. */
 const DATE_CHARS = 10;
@@ -241,15 +246,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     return done.ok ? spec.resultOf(done.value.doc, done.value.value) : done;
   };
 
-  /**
-   * The waiting file and the decision log as the helper read them. The board is checked too, so a board with the old queue key or a
-   * board that is not valid stops a write of a decision as it stops a write of an item.
-   */
-  const decisionDocsOf = (texts: BoardTexts): CliResult<{ readonly waiting: WaitingDoc; readonly log: DecisionLogDoc }> => {
-    const board = textIn(texts, files.board);
-    if (!board.ok) return board;
-    const checkedBoard = parseBoard(board.value, queueKey);
-    if (!checkedBoard.ok) return checkedBoard;
+  const approvalDocsOf = (texts: BoardTexts): CliResult<{ readonly waiting: WaitingDoc; readonly log: DecisionLogDoc }> => {
     const waitingText = textIn(texts, files.waiting);
     if (!waitingText.ok) return waitingText;
     const waiting = parseWaiting(waitingText.value);
@@ -258,6 +255,36 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     if (!logText.ok) return logText;
     const log = parseDecisionLog(logText.value);
     return log.ok ? ok({ waiting: waiting.value, log: log.value }) : log;
+  };
+
+  /** A decision write checks the board as well as the waiting file and the log. */
+  const decisionDocsOf = (texts: BoardTexts): ReturnType<typeof approvalDocsOf> => {
+    const board = textIn(texts, files.board);
+    if (!board.ok) return board;
+    const checkedBoard = parseBoard(board.value, queueKey);
+    return checkedBoard.ok ? approvalDocsOf(texts) : checkedBoard;
+  };
+
+  const approvalPlaceOf = async (approval: RecordApproval): Promise<CliResult<DecisionPlace | null>> =>
+    approval.mode === roles.owner ? decisionPlaceOf(deps, layout.home, options.node) : ok(null);
+
+  const approvalOf = async (
+    texts: BoardTexts, id: string, approval: RecordApproval, place: DecisionPlace | null, ref: string, head: string | null,
+  ): Promise<CliResult<void>> => {
+    const docs = approvalDocsOf(texts);
+    if (!docs.ok) {
+      return failure(
+        `cannot check approval: check ${files.waiting} and ${files.decisionLog}`,
+        `Run "${commandText(commands.doctor)}" to check the board files.`,
+      );
+    }
+    const rules = options.requestLinkRules;
+    const linked = linkedApprovalsOf(docs.value.waiting, docs.value.log, id, approval.point, rules);
+    const verdict = (stored: Awaited<ReturnType<typeof readScopedDecisions>>): CliResult<void> =>
+      approvalVerdict({ docs: docs.value, linked, stored, rules, mode: approval.mode, ref, head });
+    if (approval.mode !== roles.owner || !linked.settled.ok || linked.settled.value.length === 0) return verdict(ok([]));
+    if (place === null || place.path === null) return verdict(err(`the ${roles.owner} store has no path`));
+    return verdict(await readScopedDecisions(deps, place));
   };
 
   const noPlace = (): Err<CliError> =>
@@ -484,21 +511,34 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       return itemWrite(commitMessages.updateItem(id), (doc) => changeItemIn(doc, id, changes.value, setup.config?.worker_field));
     },
 
-    async recordChecked(id, checked, worker) {
+    async checkApproval(id, approval, ref) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkItemId(id);
+      if (!valid.ok) return valid;
+      const place = await approvalPlaceOf(approval);
+      if (!place.ok) return place;
+      const texts = await readBoardFiles(deps, layout, approvalFiles);
+      return texts.ok ? approvalOf(texts.value, id, approval, place.value, ref, null) : texts;
+    },
+
+    async recordChecked(id, checked, worker, approval) {
       const local = requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
       const ready = checkRecorded(setup, checked);
       if (!ready.ok) return ready;
-      return boardWrite<boolean, ItemRecorded>({
-        message: recordMessage(id, checked),
-        edit: (doc) => recordCheckedIn(doc, setup, id, checked, worker, deps.now().toISOString()),
-        resultOf: (doc, changed) => {
-          const found = itemIn(doc, id);
-          return found.ok ? ok({ item: found.value, changed }) : found;
-        },
+      const place = await approvalPlaceOf(approval);
+      if (!place.ok) return place;
+      const edit = boardChange((doc) => recordCheckedIn(doc, setup, id, checked, worker, deps.now().toISOString()));
+      const done = await commit(decisionFiles, recordMessage(id, checked), async (texts) => {
+        const approved = await approvalOf(texts, id, approval, place.value, checked.ref, checked.head);
+        return approved.ok ? edit(texts) : approved;
       });
+      if (!done.ok) return done;
+      const found = itemIn(done.value.doc, id);
+      return found.ok ? ok({ item: found.value, changed: done.value.value }) : found;
     },
 
     async unassignItem(id) {
@@ -656,7 +696,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       return waiting.ok ? ok(requestsOf(waiting.value)) : waiting;
     },
 
-    async closeRequest(id, settlement) {
+    async closeRequest(id, settlement, relayScope = []) {
       const local = requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkRequestId(id);
@@ -670,12 +710,15 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         if (!read.ok) return read;
         const stored = await storedIdsOf(place.value);
         if (!stored.ok) return stored;
-        const edited = closeRequestIn(read.value.waiting, read.value.log, id, deps.now().toISOString().slice(0, DATE_CHARS), settled.value);
-        if (!edited.ok) return edited;
+        const { waiting: currentWaiting, log: currentLog } = read.value;
+        const checked = checkRequestClose(currentWaiting, currentLog, id, settled.value, relayScope, options.requestLinkRules);
+        if (!checked.ok) return checked;
+        if (checked.value.link !== null && checked.value.settlement?.relayed && place.value.path === null) return noPlace();
         if (stored.value.includes(id)) return answeredCannotClose(id);
-        const waiting = newText(files.waiting, edited.value.waiting, parseWaiting);
+        const edited = closeRequestIn(currentWaiting, currentLog, checked.value, deps.now().toISOString().slice(0, DATE_CHARS));
+        const waiting = newText(files.waiting, edited.waiting, parseWaiting);
         if (!waiting.ok) return waiting;
-        const log = newText(files.decisionLog, edited.value.log, parseDecisionLog);
+        const log = newText(files.decisionLog, edited.log, parseDecisionLog);
         if (!log.ok) return log;
         const room = requireLogRoom(log.value.text);
         if (!room.ok) return room;
@@ -684,7 +727,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
             [files.waiting, waiting.value.text],
             [files.decisionLog, log.value.text],
           ]),
-          value: edited.value.closed,
+          value: edited.closed,
         });
       });
     },

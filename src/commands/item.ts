@@ -18,7 +18,7 @@ import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { requireCoordinatorCaller } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, type WorkerRecord } from '../workers/registry.js';
-import { openBoard, type OpenBoard } from './board-open.js';
+import { openBoard, recordApprovalMode, type OpenBoard } from './board-open.js';
 import { parseFieldWords, shown, usageFor } from './board-words.js';
 
 export interface ItemOptions {
@@ -381,8 +381,8 @@ const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded): Command
  * `item record`: the record check of the recipe of the node runs, and only a result that passed is written. A recipe with no record
  * check makes this a usage error (exit 2) with no write. The reference is checked first, so a bad one is a usage error before the item
  * is read and before the check reaches the network. The local checks come next (the item id, the tracker kind, the stage of the check
- * in the recipe, the closed state, the item), so the check makes no call for a request that the board refuses. The worker that the
- * item names at the time of the check goes to the write, which tests it again under the lock.
+ * in the recipe, the closed state, the item). The approval check runs before the recipe check and again under the lock.
+ * The write also checks the worker again under the lock.
  */
 const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction): Promise<CliResult<CommandOutput>> => {
   const { connector, config } = board;
@@ -411,9 +411,13 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   if (!branches.ok) return branches;
   const input = await checkInputOf(deps, board, action, ref.value, worker.value, branches.value);
   if (!input.ok) return input;
+  const mode = await recordApprovalMode(deps, board, hook.point);
+  const approval = { point: hook.point, mode: mode ?? roles.owner };
+  const approved = await connector.checkApproval(action.id, approval, ref.value);
+  if (!approved.ok) return approved;
   const checked = await hook.check(deps, input.value);
   if (!checked.ok) return checked;
-  const recorded = await connector.recordChecked(action.id, checked.value, worker.value);
+  const recorded = await connector.recordChecked(action.id, checked.value, worker.value, approval);
   return recorded.ok ? ok(recordedAnswer(checked.value, recorded.value)) : recorded;
 };
 

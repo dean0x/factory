@@ -1,13 +1,16 @@
-import { blockNames, layers } from '../../names.js';
+import { blockNames, guardValues, layers, values } from '../../names.js';
 import { coordinatorValuesFor, fillTemplate, linesFor, workerValuesFor } from '../../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../../templates/types.js';
 import { approvalLines, type RecipeRoles } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
+import { softwareRecordCheck } from './record.js';
 import { coordinatorLines } from './roles/coordinator.js';
 import { MANAGER_PARTS } from './roles/manager.js';
 import { WORKER_PARTS } from './roles/worker.js';
 
 type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeof blockNames.manager;
+
+const [mergeApproval] = softwareApprovalPoints;
 
 /**
  * The worker block lives in the worker file in the state folder, so its paths are written from the factory folder. It names
@@ -35,10 +38,14 @@ const managerFor = (input: BlockInput): BlockTemplate => ({
  */
 const coordinatorFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.coordinator,
-  version: 8,
+  version: 9,
   target: 'claudeFile',
   body: fillTemplate(
-    coordinatorLines(approvalLines(softwareApprovalPoints, input.modes, input.guards), input.guards),
+    coordinatorLines(
+      approvalLines(softwareApprovalPoints, input.modes, input.guards),
+      input.guards,
+      input.guards[mergeApproval.guard] !== guardValues.off && input.modes[softwareRecordCheck.point] !== values.approvalModes[1],
+    ),
     coordinatorValuesFor(input),
   ),
 });

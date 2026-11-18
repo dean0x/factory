@@ -128,6 +128,7 @@ export interface RecordCheckInput {
  * keeps the locked write, the queue clean-up, the kept head, the worker binding and the rerun. The recipe keeps what is checked
  * and the words for it.
  * - `stage` is the stage that a passed check sets. The recipe must list it.
+ * - `point` is the id of the approval point for this record. The recipe must list it.
  * - `summary` is the part of the help of `item` that says what the recipe records.
  * - `refHelp` is the help of the reference flag for this recipe.
  * - `parseRef` checks the reference before the board is read. A bad reference is a usage error (exit 2).
@@ -137,6 +138,7 @@ export interface RecordCheckInput {
  */
 export interface RecordCheck {
   readonly stage: string;
+  readonly point: string;
   readonly summary: string;
   readonly refHelp: string;
   readonly parseRef: (text: string) => CliResult<string>;

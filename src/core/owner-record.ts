@@ -409,13 +409,17 @@ interface DecisionStoreRead {
   readonly record: Readonly<DecisionRecord> | null;
 }
 
+/** Read the decision records for this node and real root. */
+export const readScopedDecisions = async (deps: Deps, place: DecisionPlace): Promise<Result<readonly DecisionRecord[], string>> => {
+  if (place.path === null) return ok([]);
+  const records = await readDecisionRecords(deps, place.path);
+  return records.ok ? ok(recordsOfPlace(deps, place, records.value)) : records;
+};
+
 /** Read one record for this id, node and real root. */
 export const readDecisionStore = async (deps: Deps, place: DecisionPlace, id: string): Promise<Result<DecisionStoreRead, string>> => {
-  if (place.path === null) return ok({ record: null });
-  const records = await readDecisionRecords(deps, place.path);
-  if (!records.ok) return records;
-  const scoped = recordsOfPlace(deps, place, records.value);
-  return ok({ record: scoped.find((record) => record.id === id) ?? null });
+  const records = await readScopedDecisions(deps, place);
+  return records.ok ? ok({ record: records.value.find((record) => record.id === id) ?? null }) : records;
 };
 
 /**

@@ -446,7 +446,7 @@ describe('factory upgrade (built binary)', () => {
   });
 
   it.each([
-    [1, 'coordinator', 7, 8],
+    [1, 'coordinator', 8, 9],
     [2, 'manager', 3, 4],
   ])(
     'on layer %i it writes the block %s of version %i again as version %i, and leaves the worker and safety labels as they are',
@@ -861,7 +861,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(names).toContain('orders');
     expect(await readdir(join(state, 'roles'))).toEqual(['worker.md']);
     const node = JSON.parse(await box.read(join(state, 'node.json'))) as Record<string, unknown>;
-    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 8, safety: 2, worker: 5 } });
+    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 9, safety: 2, worker: 5 } });
 
     const changes = await box.git(state, ['diff', '--name-status', '-M', 'HEAD~1', 'HEAD']);
     expect(changes.stdout).toContain('protocol.md');

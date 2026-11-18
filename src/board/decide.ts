@@ -5,6 +5,8 @@ import { canonicalRequestText, requestHashOf } from '../core/request-hash.js';
 import { ok, type Err, type Result } from '../core/result.js';
 import { isRecord } from '../migrate/inspect.js';
 import {
+  approvalLinkLabels,
+  approvalOptions,
   boardIds,
   boardLimits,
   boardTextLimits,
@@ -14,9 +16,12 @@ import {
   decideDocContext,
   decideProof,
   type decideProofKinds,
+  decideWords,
   decisionKeys,
   decisionLogKeys,
   files,
+  flags,
+  flagText,
   maxDisplayWidth,
   maxFileBytes,
   optionKeys,
@@ -28,11 +33,12 @@ import {
   roles,
   waitingKeys,
 } from '../names.js';
+import type { ApprovalMode } from '../recipes/entry.js';
 import type { RequestDecider, RequestField, RequestGroup, RequestKind, RequestLink } from './contract.js';
 import { docPathIssue, isDecider, shown } from './edit.js';
 import { jsonText, type DecisionRecordOption, type DecisionRecordRequest } from './decision-record.js';
 import type { DecisionLogDoc, WaitingDoc } from './files.js';
-import { answeredRequestOf, linkOfFields, linkOfRow, type RequestLinkRules } from './requests.js';
+import { answeredRequestOf, approvalLinkRemedy, linkOfFields, linkOfRow, type RequestLinkRules } from './requests.js';
 import { storedTimeOf } from './stored-time.js';
 import { visibleLineIssue } from './text.js';
 
@@ -303,18 +309,20 @@ interface ProofContext {
 
 export type RequestProof = ProofContext & (
   | { readonly kind: typeof decideProof.record; readonly option: string; readonly at: string }
-  | { readonly kind: Exclude<(typeof decideProofKinds)[number], typeof decideProof.record>; readonly option: null }
+  | { readonly kind: typeof decideProof.relayed; readonly option: null; readonly settled: boolean }
+  | { readonly kind: Exclude<(typeof decideProofKinds)[number], typeof decideProof.record | typeof decideProof.relayed>; readonly option: null }
 );
 
 const emptyProofContext: ProofContext = { at: null, link: null, title: null, question: null, decision: null, decider: null };
 
 type DecisionDocs = { readonly waiting: WaitingDoc; readonly log: DecisionLogDoc };
+type StoredDecision = Result<{ readonly record: Readonly<DecisionRecord> | null }, string>;
 
 /** Classify the board state against the scoped store record. A row is never proof on its own. */
 export const proofOf = (
   id: string,
   docs: CliResult<DecisionDocs>,
-  stored: Result<{ readonly record: Readonly<DecisionRecord> | null }, string>,
+  stored: StoredDecision,
   rules: RequestLinkRules | undefined,
 ): RequestProof => {
   const fault: RequestProof = { ...emptyProofContext, kind: decideProof.error, option: null };
@@ -335,9 +343,13 @@ export const proofOf = (
   if (state.kind === 'closed' || relayed || decider !== null) {
     return {
       ...emptyProofContext,
-      kind: relayed ? decideProof.relayed : decideProof.closed, option: null, link: rowLink.value,
+      option: null, link: rowLink.value,
       at: textOrNull(row[decisionLogKeys.date]), title: rowTitle, decision: textOrNull(row[decisionLogKeys.decision]),
-      decider: relayed ? roles.coordinator : decider,
+      ...(relayed ? {
+        kind: decideProof.relayed, decider: roles.coordinator,
+        // A marked row can appear in a read. Only a complete close can settle an approval request.
+        settled: state.kind === 'closed' && decider === roles.coordinator && row[decisionLogKeys.relayed] === relayedMarker,
+      } : { kind: decideProof.closed, decider }),
     };
   }
 
@@ -359,6 +371,155 @@ export const proofOf = (
   if (record === null) return { ...context, kind: state.kind === 'open' ? decideProof.open : decideProof.none, option: null };
   if (requestText === null || record.hash !== requestHashOf(requestText)) return { ...context, kind: decideProof.mismatch, option: null };
   return { ...context, kind: decideProof.record, option: record.option, at: record.at };
+};
+
+interface LinkedApproval {
+  readonly id: string;
+  readonly link: RequestLink;
+}
+
+interface LinkedApprovals {
+  readonly open: CliResult<string | null>;
+  readonly settled: CliResult<readonly LinkedApproval[]>;
+}
+
+/** Check which item a field names even if the rest of its link is invalid. */
+const namesItem = (fields: unknown, item: string): boolean =>
+  Array.isArray(fields) && fields.some((field: unknown) =>
+    isRecord(field) && field[requestFieldKeys.label] === approvalLinkLabels.item && field[requestFieldKeys.text] === item,
+  );
+
+const approvalLinkFault = (id: string | null): Err<CliError> =>
+  failure(
+    id === null ? `a linked approval row has no ${requestWords.request} id` : `the link of ${requestWords.request} ${shown(id)} is invalid`,
+    approvalLinkRemedy,
+  );
+
+const openApprovalOf = (waiting: WaitingDoc, item: string, point: string, rules: RequestLinkRules | undefined): CliResult<string | null> => {
+  for (const { id, record } of waiting.items) {
+    const fields = record[decisionKeys.fields];
+    if (!namesItem(fields, item)) continue;
+    const link = linkOfFields(fields, rules);
+    if (!link.ok) return approvalLinkFault(id);
+    if (link.value?.point === point) return ok(id);
+  }
+  return ok(null);
+};
+
+const settledLinkOf = (row: Stored, item: string, rules: RequestLinkRules | undefined): CliResult<RequestLink | null> => {
+  const rowNamesItem = row[decisionLogKeys.boardItem] === item;
+  if (!Object.hasOwn(row, decisionLogKeys.by)) return rowNamesItem ? linkOfRow(row, rules) : ok(null);
+
+  // An answer takes its link from the request text, not from the display keys of the row.
+  const text = textOrNull(row[decisionLogKeys.request]);
+  const request = text === null ? failure(`the answer has no ${requestWords.request} text`) : answeredRequestOf(text);
+  if (!request.ok) return rowNamesItem ? request : ok(null);
+  const fields = request.value[decisionKeys.fields];
+  return namesItem(fields, item) ? linkOfFields(fields, rules) : ok(null);
+};
+
+/** Select the open request or the settled rows in append order. The file size cap bounds both scans. */
+export const linkedApprovalsOf = (
+  waiting: WaitingDoc, log: DecisionLogDoc, item: string, point: string, rules: RequestLinkRules | undefined,
+): LinkedApprovals => {
+  const open = openApprovalOf(waiting, item, point, rules);
+  if (!open.ok || open.value !== null) return { open, settled: ok([]) };
+
+  const settled: LinkedApproval[] = [];
+  for (const { id, record } of log.rows) {
+    const link = settledLinkOf(record, item, rules);
+    if (!link.ok) return { open, settled: approvalLinkFault(id) };
+    if (link.value?.point !== point) continue;
+    if (id === null) return { open, settled: approvalLinkFault(id) };
+    settled.push({ id, link: link.value });
+  }
+  return { open, settled: ok(settled) };
+};
+
+interface ApprovalCheck {
+  readonly docs: DecisionDocs;
+  readonly linked: LinkedApprovals;
+  /** The store records for this node and real root. */
+  readonly stored: Result<readonly DecisionRecord[], string>;
+  readonly rules: RequestLinkRules | undefined;
+  readonly mode: ApprovalMode;
+  readonly ref: string;
+  /** Null before the external check: defer both the reference and the head comparison. */
+  readonly head: string | null;
+}
+
+const sameApprovalLink = (first: RequestLink | null, second: RequestLink): boolean =>
+  first?.item === second.item && first.point === second.point && first.ref === second.ref && first.head === second.head;
+
+/** A stop blocks by id. To clear it, an approve needs proof for the same link. */
+const ownerStopOf = (
+  settled: readonly LinkedApproval[], link: RequestLink, records: ReadonlyMap<string, DecisionRecord>,
+  docs: DecisionDocs, rules: RequestLinkRules | undefined,
+): string | null => {
+  for (let index = settled.length - 1; index >= 0; index -= 1) {
+    const entry = settled[index];
+    if (entry === undefined || !sameApprovalLink(entry.link, link)) continue;
+    const record = records.get(entry.id);
+    if (record?.option === approvalOptions.stop) return entry.id;
+    if (record?.option !== approvalOptions.go) continue;
+    const proof = proofOf(entry.id, ok(docs), ok({ record }), rules);
+    if (proof.kind === decideProof.record && sameApprovalLink(proof.link, link)) return null;
+  }
+  return null;
+};
+
+const ADD_APPROVAL = `Add a linked ${requestWords.request} with "${commandText(commandLines.requestAdd)}" and the current head of the reference. Answer it with "${commandText(commands.decide)}", or relay a new go with "${commandText(commandLines.requestClose)} ${flagText(flags.relayed)}".`;
+
+/** Only a settled go for this link permits a record in owner mode. */
+export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }: ApprovalCheck): CliResult<void> => {
+  if (!linked.open.ok) return linked.open;
+  if (linked.open.value !== null) {
+    return failure(
+      `${requestWords.request} ${shown(linked.open.value)} is still open`,
+      `Run "${commandText(commands.decide)}" with this id and an option. If it has an answer, run "${commandText(commands.decide)}" again with the same option.`,
+    );
+  }
+  if (mode !== roles.owner) return ok(undefined);
+  if (!linked.settled.ok) return linked.settled;
+  const newest = linked.settled.value.at(-1);
+  if (newest === undefined) return failure(`there is no linked approval ${requestWords.request}`, ADD_APPROVAL);
+
+  const { id, link } = newest;
+  const name = `${requestWords.request} ${shown(id)}`;
+  if (!stored.ok) {
+    return failure(
+      `cannot read the ${roles.owner} store for ${name}`,
+      `Run "${commandText(commands.doctor)}" for diagnostics. Check the state path. Restore access to the ${roles.owner} store.`,
+    );
+  }
+  const records = new Map(stored.value.map((record) => [record.id, record]));
+  const stop = ownerStopOf(linked.settled.value, link, records, docs, rules);
+  if (stop !== null) {
+    return failure(
+      `the ${roles.owner} answered ${approvalOptions.stop} on ${requestWords.request} ${shown(stop)}`,
+      `Add a new linked approval ${requestWords.request} for the same reference and head. The ${roles.owner} must use "${commandText(commands.decide)}" to save an ${approvalOptions.go} answer in the ${roles.owner} store.`,
+    );
+  }
+  const record = records.get(id) ?? null;
+  const proof = proofOf(id, ok(docs), ok({ record }), rules);
+  if (proof.kind === decideProof.relayed && record !== null) {
+    return failure(
+      `${name} also has an ${roles.owner} store answer`,
+      `Run "${commandText(commands.decide)} ${decideWords.read} ${id}" to see the answer. Ask the ${roles.owner} to resolve the conflict.`,
+    );
+  }
+  const go = (proof.kind === decideProof.record && proof.option === approvalOptions.go) ||
+    (proof.kind === decideProof.relayed && proof.settled && proof.decision === approvalOptions.go);
+  if (!go || !sameApprovalLink(proof.link, link)) {
+    return failure(`${name} has no settled approval`, ADD_APPROVAL);
+  }
+  if (head !== null && (link.ref !== ref || link.head !== head)) {
+    return failure(
+      `${name} does not match the reference and head`,
+      `Add a new ${requestWords.request} for the new head with "${commandText(commandLines.requestAdd)}".`,
+    );
+  }
+  return ok(undefined);
 };
 
 export const addNewRemedy = `Add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}".`;

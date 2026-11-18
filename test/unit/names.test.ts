@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   address,
+  approvalOptions,
   blockNames,
   boardKeys,
   boardTextLimits,
@@ -1679,9 +1680,20 @@ describe('the names of the board records', () => {
     expect(commandLines.itemDoc).toBe(`${commands.item} ${itemCommands.doc}`);
   });
 
-  it('names the flags of the record and of the relayed close', () => {
-    expect(flags.ref).toBe('ref');
+  it('names the flags of a request link', () => {
+    expect(flags).toMatchObject({ item: 'item', ref: 'ref', head: 'head' });
+  });
+
+  it('names the flag of the relayed close', () => {
     expect(flags.relayed).toBe('relayed');
+  });
+
+  it('fixes the option keys of a linked approval request', () => {
+    expect(approvalOptions).toEqual({ go: 'approve', stop: 'stop' });
+  });
+
+  it('gives the linked approval option keys to the templates', () => {
+    expect(templateValues).toMatchObject({ approvalGoOption: 'approve', approvalStopOption: 'stop' });
   });
 
   it('reserves the two item keys, so that no owner field can take their name', () => {

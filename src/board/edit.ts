@@ -5,6 +5,7 @@ import { dotRuleReason, type NameCompare } from '../core/place-rule.js';
 import { projectFolderKey } from '../core/project-path.js';
 import { ok, type Err } from '../core/result.js';
 import {
+  approvalLinkLabels,
   boardIds,
   boardKeys,
   boardLimits,
@@ -52,13 +53,14 @@ import type {
   RequestGroup,
   RequestKind,
   RequestField,
+  RequestLink,
   RequestSettlement,
   TrackAddInput,
 } from './contract.js';
 import { declaredFields, itemTarget, resolveFields, rowTarget, type FieldInput } from './fields.js';
-import type { BoardDoc, DecisionLogDoc, WaitingDoc } from './files.js';
+import type { BoardDoc, DecisionLogDoc, WaitingDoc, WaitingItem } from './files.js';
 import { rowItemsOf, rowNameOf, rowReleaseGroupOf } from './queue.js';
-import { requestTitleOf } from './requests.js';
+import { approvalLinkRemedy, linkOfFields, optionKeysOf, requestTitleOf, type RequestLinkRules } from './requests.js';
 import { firstStageOf, requireSettableStage, requireStage, stagesOf } from './stages.js';
 import { holdsBreak, lineIssue, visibleLineIssue } from './text.js';
 import { trackIdIssue, trackNameIssue } from './tracks.js';
@@ -274,13 +276,26 @@ const requestKindOf = (value: string | undefined): CliResult<RequestKind> => {
   }
 };
 
-const requestFieldsOf = (input: readonly RequestField[]): CliResult<readonly RequestField[]> => {
-  if (input.length > boardTextLimits.maxRequestFields) return usageError(`a ${requestWords.request} holds at most ${boardTextLimits.maxRequestFields} fields`);
+const LINK_LABELS: ReadonlySet<string> = new Set(Object.values(approvalLinkLabels));
+
+const requestFieldsOf = (input: readonly RequestField[], link: RequestLink | undefined): CliResult<readonly RequestField[]> => {
+  const linkFields: readonly RequestField[] = link === undefined ? [] : [
+    { label: approvalLinkLabels.point, text: link.point },
+    { label: approvalLinkLabels.item, text: link.item },
+    { label: approvalLinkLabels.ref, text: link.ref },
+    { label: approvalLinkLabels.head, text: link.head },
+  ];
+  if (input.length + linkFields.length > boardTextLimits.maxRequestFields) {
+    return usageError(`a ${requestWords.request} holds at most ${boardTextLimits.maxRequestFields} fields`);
+  }
   const labels = new Set<string>();
   const fields: RequestField[] = [];
-  for (const field of input) {
+  for (const [index, field] of [...linkFields, ...input].entries()) {
     const label = shownLineOf(`field ${requestFieldKeys.label}`, field.label, boardTextLimits.maxFieldLabelChars);
     if (!label.ok) return label;
+    if (index >= linkFields.length && LINK_LABELS.has(label.value.toLowerCase())) {
+      return usageError(`the field label ${shown(label.value)} is reserved for a ${requestWords.request} link`);
+    }
     if (labels.has(label.value)) return usageError(`the field label ${shown(label.value)} is used twice`);
     const text = shownLineOf(`field ${requestFieldKeys.text}`, field.text, boardTextLimits.maxFieldTextChars);
     if (!text.ok) return text;
@@ -310,7 +325,7 @@ const requestDocsOf = (input: readonly string[]): CliResult<readonly string[]> =
 export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecision> => {
   const kind = requestKindOf(input.kind);
   if (!kind.ok) return kind;
-  const fields = requestFieldsOf(input.fields ?? []);
+  const fields = requestFieldsOf(input.fields ?? [], input.link);
   if (!fields.ok) return fields;
   const docs = requestDocsOf(input.docs ?? []);
   if (!docs.ok) return docs;
@@ -867,34 +882,56 @@ export const checkLogEntry = (input: DecisionLogInput): CliResult<CheckedLogEntr
   return settlement.ok ? ok({ title: title.value, settlement: settlement.value }) : settlement;
 };
 
-/**
- * Take a request off the waiting file and add a row for it to the decision log, so the number of the request stays used. The row
- * holds the id and the title in its `item` text, the decision text and the date. With a settlement, the decision text is the text of
- * the settlement and the row names its decider; without one, the text says that the request closed with no answer. A relayed
- * settlement adds the fixed relayed marker (`relayedMarker`) to the row. The row never holds the owner key `by`, so no reader counts
- * it as an owner answer. A request that is not in the waiting file is a usage error (exit 2).
- * A log that names the id already is a failure (exit 1), because the log would name the id twice. Every other entry of both files
- * stays as it is.
- */
-export const closeRequestIn = (
+interface CheckedClose {
+  readonly entry: WaitingItem;
+  readonly link: RequestLink | null;
+  readonly settlement: CheckedSettlement | undefined;
+}
+
+/** Check the stored request under the lock. Only a linked relay needs a point in scope and a stored option key. */
+export const checkRequestClose = (
   waiting: WaitingDoc,
   log: DecisionLogDoc,
   id: string,
-  date: string,
-  settlement?: CheckedSettlement,
-): CliResult<RequestCloseEdit> => {
+  settlement: CheckedSettlement | undefined,
+  relayScope: readonly string[],
+  rules: RequestLinkRules | undefined,
+): CliResult<CheckedClose> => {
   const found = waiting.items.find((entry) => entry.id === id);
   if (found === undefined) return usageError(`${files.waiting} has no ${requestWords.request} ${shown(id)}`);
   if (log.rows.some((row) => row.id === id)) return failure(`${files.decisionLog}: the id ${id} is used already`);
-  const title = requestTitleOf(found);
+  const link = linkOfFields(found.record[decisionKeys.fields], rules);
+  if (!link.ok) return failure(`${requestWords.request} ${shown(id)}: ${link.error.message}`, approvalLinkRemedy);
+  if (link.value !== null && settlement?.relayed === true) {
+    if (!relayScope.includes(link.value.point)) return usageError(`the approval point of ${id} does not allow a relay`);
+    if (!optionKeysOf(found).includes(settlement.decision)) return usageError(`the relayed decision for ${id} must be an option key of the ${requestWords.request}`);
+  }
+  return ok({ entry: found, link: link.value, settlement });
+};
+
+/** Move the checked request to the log. Copy its link, if present. The row never holds the owner key `by`. */
+export const closeRequestIn = (
+  waiting: WaitingDoc,
+  log: DecisionLogDoc,
+  { entry, link, settlement }: CheckedClose,
+  date: string,
+): RequestCloseEdit => {
+  const { id } = entry;
+  const title = requestTitleOf(entry);
   const row = {
     [decisionLogKeys.item]: title === null ? id : `${id}: ${title.trim()}`,
     [decisionLogKeys.decision]: settlement?.decision ?? requestWords.closedDecision,
     [decisionLogKeys.date]: date,
     ...(settlement === undefined ? {} : { [decisionLogKeys.decider]: settlement.decider }),
     ...(settlement?.relayed === true ? { [decisionLogKeys.relayed]: relayedMarker } : {}),
+    ...(link === null ? {} : {
+      [decisionLogKeys.point]: link.point,
+      [decisionLogKeys.boardItem]: link.item,
+      [decisionLogKeys.ref]: link.ref,
+      [decisionLogKeys.head]: link.head,
+    }),
   };
-  return ok({ ...settleRequestIn(waiting, log, id, row), closed: { id, title, decider: settlement?.decider ?? null } });
+  return { ...settleRequestIn(waiting, log, id, row), closed: { id, title, decider: settlement?.decider ?? null } };
 };
 
 /**

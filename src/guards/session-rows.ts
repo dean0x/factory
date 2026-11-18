@@ -269,6 +269,29 @@ const ownerGoRows: readonly GuardRow[] = [
     ],
   }),
   codeRow({
+    id: 'linked-relay-scope',
+    guard: guardIds.ownerGo,
+    name: `A linked ${requestWords.request} allows a relay only at the record point in ${owner} mode and only with an option key of that ${requestWords.request}`,
+    applies: commandLines.requestClose,
+    harm: true,
+    sites: [
+      ...at('src/commands/request.ts', 'relayScopeOf', 'execute'),
+      ...at('src/board/edit.ts', 'checkRequestClose'),
+    ],
+  }),
+  codeRow({
+    id: 'item-record-approval',
+    guard: guardIds.ownerGo,
+    name: `An open linked ${requestWords.request} blocks the record. In ${owner} mode, the last settled linked ${requestWords.request} must have a go for the same reference and head`,
+    applies: commandLines.itemRecord,
+    harm: true,
+    sites: [
+      ...at('src/commands/item.ts', 'recordChecked'),
+      ...at('src/board/local.ts', 'createLocalBoard'),
+      ...at('src/board/decide.ts', 'linkedApprovalsOf', 'approvalVerdict'),
+    ],
+  }),
+  codeRow({
     id: 'owner-row-under-lock',
     guard: guardIds.ownerGo,
     name: `The answer of the ${owner} is written under the state lock, and a decision record is never overwritten`,

@@ -3,20 +3,24 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { exitCodeOf, failure, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { localBoardOf } from '../../src/commands/board-open.js';
 import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { recordGuards } from '../../src/core/guard-records.js';
+import { recordDelegation } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { toolNames } from '../../src/core/tools.js';
-import { boardKeys, commandLines, commands, commandText, files as fileNames, maxFileBytes, stateLock } from '../../src/names.js';
+import { approvalOptions, boardKeys, commandLines, commands, commandText, files as fileNames, maxFileBytes, program, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import type { CheckedRecord, RecipeRegistry, RecordCheck, RecordCheckInput } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { mergeCheck } from '../../src/recipes/software/github-pr.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { branchOf, workCopyOf, writeWorkerRecord } from '../../src/workers/registry.js';
-import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
+import { APPROVAL_ID, APPROVAL_LINK, approvalAnswer, approvalRelay, approvalRequest } from '../helpers/approval-go.js';
+import { boardNode, boardText, itemRecord, type BoardNodeOptions } from '../helpers/board-node.js';
 import { inPane } from '../helpers/coordinator-pane.js';
-import { BOARD_PATH, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
+import { BOARD_PATH, LAYOUT, LOG_PATH, WAITING_PATH, type BoardRepo } from '../helpers/board-repo.js';
 import { exited, missingProgram, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { HOME } from '../helpers/guard-fixture.js';
 import { publishBoard, publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
@@ -534,6 +538,11 @@ describe('item with a hosted tracker kind', () => {
 const MERGE_SHA = 'a'.repeat(40);
 const HEAD_SHA = 'b'.repeat(40);
 const WORKER = 'alpha';
+const MERGE_LINK = { ...APPROVAL_LINK, ref: '12', head: HEAD_SHA };
+const MERGE_RELAY = approvalRelay(APPROVAL_ID, approvalOptions.go, MERGE_LINK);
+const STORE_PATH = join('/state', program, fileNames.ownerDecisions);
+const waitingOf = (...items: ReturnType<typeof approvalRequest>[]): string => JSON.stringify({ intro: '', groups: [], items });
+const logOf = (...rows: Record<string, unknown>[]): string => JSON.stringify({ rows });
 
 /** What `gh pr view --json` gives for PR 12 of the sample project, merged into main from the branch of the worker. */
 const goodPr = (change: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -601,19 +610,17 @@ interface MergeWorld {
   readonly gh: Gh;
 }
 
-interface MergeSetup {
-  readonly board?: string;
-  readonly config?: FactoryConfig;
+interface MergeSetup extends Pick<BoardNodeOptions, 'board' | 'config' | 'waiting' | 'decisionLog'> {
   /** The answer of gh. Default: the good PR. */
   readonly answer?: RunHandler;
   /** False: the worker has no record. */
   readonly record?: boolean;
 }
 
-const mergeWorld = async (setup: MergeSetup = {}): Promise<MergeWorld> => {
-  const repo = await boardNode({ board: setup.board ?? MERGE_BOARD, ...(setup.config === undefined ? {} : { config: setup.config }) });
-  if (setup.record !== false) await recordWorker(repo);
-  return { repo, gh: withGh(repo.deps, setup.answer ?? answering(goodPr())) };
+const mergeWorld = async ({ record = true, answer = answering(goodPr()), ...setup }: MergeSetup = {}): Promise<MergeWorld> => {
+  const repo = await boardNode({ board: MERGE_BOARD, decisionLog: logOf(MERGE_RELAY), ...setup });
+  if (record) await recordWorker(repo);
+  return { repo, gh: withGh(repo.deps, answer) };
 };
 
 const runMerge = (world: MergeWorld, overrides: Partial<ItemOptions> = {}, registry: RecipeRegistry = recipes): Promise<CliResult<CommandOutput>> =>
@@ -684,6 +691,229 @@ describe('item record with the software recipe: the record of a merge', () => {
       summary: `PR 12, merge commit ${MERGE_SHA}`,
       changed: true,
     });
+  });
+});
+
+describe('item record: linked approval', () => {
+  const withMergeApprovalOff = async (waiting?: string): Promise<MergeWorld> => {
+    const base = sampleConfigWithBoard();
+    const config: FactoryConfig = { ...base, core: { ...base.core, guards: { 'approval-merge': 'off' } } };
+    const world = await mergeWorld({ config, decisionLog: logOf(), ...(waiting === undefined ? {} : { waiting }) });
+    valueOf(await recordGuards({ ...world.repo.deps, stdinIsTTY: true, stdoutIsTTY: true }, {
+      root: HOME, node: config.core.node.id, change: [{ guard: { id: 'approval-merge', wired: true }, value: 'off' }],
+    }));
+    return world;
+  };
+
+  it('records a merge with no linked request when the merge approval guard is off', async () => {
+    const world = await withMergeApprovalOff();
+    expect(await runMerge(world)).toMatchObject({ ok: true });
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', [boardKeys.mergedPrHead]: HEAD_SHA });
+  });
+
+  it('refuses an open linked request when the merge approval guard is off', async () => {
+    const world = await withMergeApprovalOff(waitingOf(approvalRequest('D-2', MERGE_LINK)));
+    expect(await runMerge(world)).toMatchObject({ ok: false, error: { kind: 'failure', message: 'request "D-2" is still open' } });
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  const missingApproval = {
+    ok: false, error: {
+      kind: 'failure',
+      message: 'there is no linked approval request',
+      hint: `Add a linked request with "${commandText(commandLines.requestAdd)}" and the current head of the reference. `
+        + `Answer it with "${commandText(commands.decide)}", or relay a new go with "${commandText(commandLines.requestClose)} --relayed".`,
+    },
+  };
+
+  it('requires a linked approval when only the config turns the merge approval guard off', async () => {
+    const base = sampleConfigWithBoard();
+    const config: FactoryConfig = { ...base, core: { ...base.core, guards: { 'approval-merge': 'off' } } };
+    const world = await mergeWorld({ config, decisionLog: logOf() });
+    expect(await runMerge(world)).toMatchObject(missingApproval);
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('requires a linked approval after it accepts the project and before it calls gh', async () => {
+    const world = await mergeWorld({ decisionLog: logOf(), record: false });
+    expect(await runMerge(world, { project: 'web' })).toMatchObject(missingApproval);
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('accepts a settled owner answer with a matching store record', async () => {
+    const { row, record } = approvalAnswer(approvalRequest(APPROVAL_ID, MERGE_LINK));
+    const world = await mergeWorld({ decisionLog: logOf(row) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [record] }));
+    expect(await runMerge(world)).toMatchObject({ ok: true });
+    expect(world.repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
+  });
+
+  const ownerStop = approvalAnswer(approvalRequest('D-2', MERGE_LINK), approvalOptions.stop);
+  const relayAfterStop = approvalRelay('D-3', approvalOptions.go, MERGE_LINK);
+  const stopRefusal = {
+    ok: false, error: {
+      kind: 'failure',
+      message: 'the owner answered stop on request "D-2"',
+      hint: `Add a new linked approval request for the same reference and head. The owner must use "${commandText(commands.decide)}" to save an approve answer in the owner store.`,
+    },
+  };
+
+  it('refuses a relayed approve after an owner stop for the same link', async () => {
+    const world = await mergeWorld({ decisionLog: logOf(ownerStop.row, relayAfterStop) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [ownerStop.record] }));
+
+    expect(await runMerge(world)).toEqual(stopRefusal);
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('checks for an owner stop again after gh returns', async () => {
+    const world = await mergeWorld();
+    const gh = withGh(world.repo.deps, () => {
+      world.repo.deps.seed(LOG_PATH, logOf(MERGE_RELAY, ownerStop.row, relayAfterStop));
+      world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [ownerStop.record] }));
+      return exited(0, JSON.stringify(goodPr()));
+    });
+
+    expect(await runMerge({ ...world, gh })).toEqual(stopRefusal);
+    expect(gh.calls).toHaveLength(1);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('lets a later owner approve clear a stop in log order', async () => {
+    const go = approvalAnswer(approvalRequest('D-4', MERGE_LINK));
+    const lastRelay = approvalRelay('D-5', approvalOptions.go, MERGE_LINK);
+    const world = await mergeWorld({ decisionLog: logOf(ownerStop.row, relayAfterStop, { ...go.row, date: '2029-01-02' }, lastRelay) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [{ ...go.record, at: '2029-01-02T03:04:05.678Z' }, ownerStop.record] }));
+
+    expect(await runMerge(world)).toMatchObject({ ok: true });
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', [boardKeys.mergedPrHead]: HEAD_SHA });
+  });
+
+  it('keeps a stop when the owner approve comes first in the log', async () => {
+    const earlierGo = approvalAnswer(approvalRequest(APPROVAL_ID, MERGE_LINK));
+    const world = await mergeWorld({ decisionLog: logOf({ ...earlierGo.row, date: '2031-01-02' }, ownerStop.row, relayAfterStop) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [ownerStop.record, { ...earlierGo.record, at: '2031-01-02T03:04:05.678Z' }] }));
+
+    expect(await runMerge(world)).toEqual(stopRefusal);
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('does not let an owner approve with a request hash mismatch clear a stop', async () => {
+    const go = approvalAnswer(approvalRequest('D-4', MERGE_LINK));
+    const world = await mergeWorld({ decisionLog: logOf(ownerStop.row, go.row, relayAfterStop) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [ownerStop.record, { ...go.record, hash: '0'.repeat(64) }] }));
+
+    expect(await runMerge(world)).toEqual(stopRefusal);
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it.each([{ ref: '13' }, { head: 'c'.repeat(40) }])('does not block a relayed approve with an owner stop for another reference or head: %j', async (other) => {
+    const stop = approvalAnswer(approvalRequest('D-2', { ...MERGE_LINK, ...other }), approvalOptions.stop);
+    const world = await mergeWorld({ decisionLog: logOf(stop.row, relayAfterStop) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [stop.record] }));
+
+    expect(await runMerge(world)).toMatchObject({ ok: true });
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', [boardKeys.mergedPrHead]: HEAD_SHA });
+  });
+
+  it.each([{ ref: '13' }, { head: 'c'.repeat(40) }])('refuses a settled approval for another reference or head: %j', async (mismatch) => {
+    const world = await mergeWorld({ decisionLog: logOf({ ...MERGE_RELAY, ...mismatch }) });
+    expect(await runMerge(world)).toMatchObject({ ok: false, error: { kind: 'failure', message: `request "${APPROVAL_ID}" does not match the reference and head` } });
+    expect(world.gh.calls).toHaveLength(1);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('checks for an open request again after gh returns', async () => {
+    const world = await mergeWorld();
+    const gh = withGh(world.repo.deps, () => {
+      world.repo.deps.seed(WAITING_PATH, waitingOf(approvalRequest('D-2', MERGE_LINK)));
+      return exited(0, JSON.stringify(goodPr()));
+    });
+    expect(await runMerge({ ...world, gh })).toMatchObject({ ok: false, error: { kind: 'failure', message: 'request "D-2" is still open' } });
+    expect(gh.calls).toHaveLength(1);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  const storeFault = {
+    kind: 'failure', message: `cannot read the owner store for request "${APPROVAL_ID}"`,
+    hint: `Run "${commandText(commands.doctor)}" for diagnostics. Check the state path. Restore access to the owner store.`,
+  };
+  const doctorHint = `Run "${commandText(commands.doctor)}" to check the board files.`;
+
+  it('refuses a linked approval when the owner store has no path', async () => {
+    const world = await mergeWorld({ record: false });
+    const board = localBoardOf({ ...world.repo.deps, env: {} }, HOME, sampleConfigWithBoard(), commands.item);
+    expect(await board.checkApproval(MERGE_LINK.item, { point: MERGE_LINK.point, mode: 'owner' }, MERGE_LINK.ref)).toMatchObject({
+      ok: false, error: storeFault,
+    });
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('asks for a new linked request when the owner store has no record of the answer', async () => {
+    const { row } = approvalAnswer(approvalRequest(APPROVAL_ID, MERGE_LINK));
+    const world = await mergeWorld({ decisionLog: logOf(row) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [] }));
+    expect(await runMerge(world)).toMatchObject({
+      ok: false, error: {
+        kind: 'failure', message: `request "${APPROVAL_ID}" has no settled approval`, hint: expect.stringContaining('Add a linked request'),
+      },
+    });
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it.each([
+    ['waiting file', WAITING_PATH, expect.stringContaining(fileNames.waiting), doctorHint],
+    ['decision log', LOG_PATH, expect.stringContaining(fileNames.decisionLog), doctorHint],
+    ['owner store', STORE_PATH, storeFault.message, storeFault.hint],
+  ])('exits 1 when the %s becomes invalid during the gh call', async (_name, path, message, hint) => {
+    const world = await mergeWorld();
+    const gh = withGh(world.repo.deps, () => {
+      world.repo.deps.seed(path, JSON.stringify({ 'Private request text': true }));
+      return exited(0, JSON.stringify(goodPr()));
+    });
+    const error = errorOf(await runMerge({ ...world, gh }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error).toMatchObject({ message, hint });
+    expect(JSON.stringify(error)).not.toContain('Private request text');
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('refuses an already recorded item when a linked request opens', async () => {
+    const world = await mergeWorld();
+    valueOf(await runMerge(world));
+    const written = world.repo.textOf(fileNames.board);
+    world.repo.deps.seed(WAITING_PATH, waitingOf(approvalRequest('D-2', MERGE_LINK)));
+    expect(await runMerge(world)).toMatchObject({ ok: false, error: { kind: 'failure', message: 'request "D-2" is still open' } });
+    expect(world.gh.calls).toHaveLength(1);
+    expect(world.repo.commits).toHaveLength(1);
+    expect(world.repo.textOf(fileNames.board)).toBe(written);
+  });
+
+  const delegatedConfig = (): FactoryConfig => {
+    const base = sampleConfigWithBoard();
+    return { ...base, core: { ...base.core, approval: { ...base.core.approval, [MERGE_LINK.point]: 'delegated' } } };
+  };
+
+  it.each([false, true])('requires a matching delegation record to skip settled approval: %s', async (backed) => {
+    const world = await mergeWorld({ config: delegatedConfig(), decisionLog: logOf() });
+    if (backed) valueOf(await recordDelegation({ ...world.repo.deps, stdinIsTTY: true }, { root: HOME, node: 'demo', point: MERGE_LINK.point, mode: 'delegated' }));
+    expect(await runMerge(world)).toMatchObject({ ok: backed });
+    expect(world.gh.calls).toHaveLength(backed ? 1 : 0);
+  });
+
+  it('refuses an open linked request in effective delegated mode', async () => {
+    const world = await mergeWorld({ config: delegatedConfig(), waiting: waitingOf(approvalRequest('D-2', MERGE_LINK)) });
+    valueOf(await recordDelegation({ ...world.repo.deps, stdinIsTTY: true }, { root: HOME, node: 'demo', point: MERGE_LINK.point, mode: 'delegated' }));
+    expect(await runMerge(world)).toMatchObject({ ok: false, error: { kind: 'failure', message: 'request "D-2" is still open' } });
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
   });
 });
 
@@ -846,7 +1076,13 @@ describe('item record with the software recipe: the local checks come before any
     const config = sampleConfigWithBoard();
     const hosted: FactoryConfig = { ...config, core: { ...config.core, tracker: { kind: 'github', items: 'acme/items', decisions: 'acme/decisions', watch_interval: '5m' } } };
     const world = await mergeWorld({ config: hosted });
-    expect(exitOf(await runMerge(world))).toBe(4);
+    const approvalPaths = [WAITING_PATH, LOG_PATH, STORE_PATH];
+    const touched: string[] = [];
+    const deps = withFsWatch(world.gh.deps, (_method, path) => {
+      if (approvalPaths.includes(path)) touched.push(path);
+    });
+    expect(exitOf(await runMerge({ ...world, gh: { ...world.gh, deps } }))).toBe(4);
+    expect(touched).toEqual([]);
     expect(world.gh.calls).toEqual([]);
     expectUntouched(world.repo, MERGE_BOARD);
   });
@@ -983,6 +1219,7 @@ describe('item record with the software recipe: the base branch of a project tha
 
 describe('item record: the record check belongs to the recipe of the node', () => {
   const PROOF_BOARD = boardText([itemRecord('B-1', { status: 'doing', stage: 'proof' })], []).replace('"merge"', `"${publishBoard.queueKey}"`);
+  const PROOF_LOG = logOf(approvalRelay(APPROVAL_ID, approvalOptions.go, { ...APPROVAL_LINK, point: 'publish', ref: '7', head: 'proof-1' }));
 
   const publishConfig = (): FactoryConfig => {
     const base = sampleConfigWithBoard();
@@ -1000,6 +1237,7 @@ describe('item record: the record check belongs to the recipe of the node', () =
   /** The record check of the publishing recipe: it reads no GitHub, and it keeps the head `proof-1`. */
   const proofCheck = (verdict: 'pass' | 'fail' = 'pass'): RecordCheck => ({
     stage: 'approved',
+    point: 'publish',
     summary: 'record a signed proof',
     refHelp: 'the number of the proof',
     parseRef: (text) => {
@@ -1020,7 +1258,7 @@ describe('item record: the record check belongs to the recipe of the node', () =
   const recording = (overrides: Partial<ItemOptions> = {}): Partial<ItemOptions> => ({ words: ['record', 'B-1'], ref: '7', project: 'web', ...overrides });
 
   it('is a usage error with no write for a recipe that has no record check', async () => {
-    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig(), decisionLog: PROOF_LOG });
     const touched: string[] = [];
     const watched = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
     const error = errorOf(await runItem(watched, { ...BASE, ...recording() }, publishRegistry));
@@ -1032,7 +1270,7 @@ describe('item record: the record check belongs to the recipe of the node', () =
   });
 
   it('writes the stage and the head that the check of the recipe gives, with the output line of the check, and calls no gh', async () => {
-    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig(), decisionLog: PROOF_LOG });
     const gh = withGh(repo.deps, () => failure('no gh in this recipe'));
     checkCalls.length = 0;
     const text = plainText(valueOf(await runItem(gh.deps, { ...BASE, ...recording() }, registryWith(proofCheck()))));
@@ -1047,7 +1285,7 @@ describe('item record: the record check belongs to the recipe of the node', () =
   });
 
   it('reruns with no second commit and says that the record is made already', async () => {
-    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig(), decisionLog: PROOF_LOG });
     const registry = registryWith(proofCheck());
     valueOf(await runItem(repo.deps, { ...BASE, ...recording() }, registry));
     const again = plainText(valueOf(await runItem(repo.deps, { ...BASE, ...recording() }, registry)));
@@ -1056,14 +1294,14 @@ describe('item record: the record check belongs to the recipe of the node', () =
   });
 
   it('exits 1 with no write when the check fails', async () => {
-    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig(), decisionLog: PROOF_LOG });
     const error = errorOf(await runItem(repo.deps, { ...BASE, ...recording() }, registryWith(proofCheck('fail'))));
     expect(exitCodeOf[error.kind]).toBe(1);
     expectUntouched(repo, PROOF_BOARD);
   });
 
   it('exits 2 for a reference that the recipe refuses, before the item is read and before the check runs', async () => {
-    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig(), decisionLog: PROOF_LOG });
     const touched: string[] = [];
     const watched = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
     checkCalls.length = 0;
@@ -1077,7 +1315,7 @@ describe('item record: the record check belongs to the recipe of the node', () =
   });
 
   it('exits 2 with no write when the recipe does not list the stage of its check', async () => {
-    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig(), decisionLog: PROOF_LOG });
     checkCalls.length = 0;
     const error = errorOf(await runItem(repo.deps, { ...BASE, ...recording() }, registryWith({ ...proofCheck(), stage: 'unlisted' })));
     expect(exitCodeOf[error.kind]).toBe(2);
