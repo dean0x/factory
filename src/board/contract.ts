@@ -1,6 +1,6 @@
 import type { CliResult } from '../cli/errors.js';
 import type { requestDeciders, requestGroups, requestKinds } from '../names.js';
-import type { CheckedRecord } from '../recipes/entry.js';
+import type { ApprovalMode, CheckedRecord } from '../recipes/entry.js';
 import type { DecideRequest, RequestProof } from './decide.js';
 
 /**
@@ -201,6 +201,11 @@ export interface DecisionLogInput {
   readonly decision: string;
 }
 
+export interface RecordApproval {
+  readonly point: string;
+  readonly mode: ApprovalMode;
+}
+
 /** What `recordChecked` did: the item after the write, and whether the board changed. A record that was made already changes nothing. */
 export interface ItemRecorded {
   readonly item: BoardItem;
@@ -377,13 +382,14 @@ export interface LocalBoard extends BoardConnector {
    * owner. The value is the new number. It writes no owner record and no profile record.
    */
   logDecision(input: DecisionLogInput): Promise<CliResult<string>>;
+  checkApproval(id: string, approval: RecordApproval, ref: string): Promise<CliResult<void>>;
   /**
-   * Record a check of the recipe that passed (`checked`), in one commit: the stage of the check, the closed state, the head of the
-   * check, and the item taken out of each queue row that lists it. `worker` is the worker that the check bound to the item (null for
-   * none). The item must still hold that worker under the lock, else the record stops with exit 1 and writes nothing. A record that
-   * is made already, with the same head, changes nothing; a record of another head is exit 1.
+   * Check approval again under the state lock with the reference and head from the recipe check.
+   * The check runs even if the board has the same record. The item must still name the worker, or name none if `worker` is null.
+   * On success, commit only the board file with the new stage, closed state and head. Remove the item from each queue row.
+   * The same record makes no change. A different head on the item gives exit 1 and makes no change.
    */
-  recordChecked(id: string, checked: CheckedRecord, worker: string | null): Promise<CliResult<ItemRecorded>>;
+  recordChecked(id: string, checked: CheckedRecord, worker: string | null, approval: RecordApproval): Promise<CliResult<ItemRecorded>>;
   /**
    * Take the worker off an item: delete the worker key, keep the state and the stage, and add the former worker to the list of
    * former workers of the item. This is the only way to remove a worker from an item.

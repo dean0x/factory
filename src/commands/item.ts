@@ -11,6 +11,7 @@ import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../
 import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { boardKeys, commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, places, roles, schemaIds } from '../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
@@ -405,6 +406,10 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   if (!items.ok) return items;
   const item = items.value.find((candidate) => candidate.id === action.id);
   if (item === undefined) return usageError(`${files.board} has no item ${shown(action.id)}`);
+  const modes = await effectiveModes(deps, board.home, config);
+  const approval = { point: hook.point, mode: modes[hook.point] ?? roles.owner };
+  const approved = await connector.checkApproval(action.id, approval, ref.value);
+  if (!approved.ok) return approved;
   const worker = workerOf(item, config.core.board?.worker_field);
   if (!worker.ok) return worker;
   const branches = branchesOf(item, worker.value);
@@ -413,7 +418,7 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   if (!input.ok) return input;
   const checked = await hook.check(deps, input.value);
   if (!checked.ok) return checked;
-  const recorded = await connector.recordChecked(action.id, checked.value, worker.value);
+  const recorded = await connector.recordChecked(action.id, checked.value, worker.value, approval);
   return recorded.ok ? ok(recordedAnswer(checked.value, recorded.value)) : recorded;
 };
 
