@@ -66,6 +66,7 @@ See [the mod guide](plugins/factory-board/README.md) for the options and update 
 | `factory item unassign ID` | Take the worker off an item. Run it in the coordinator pane. See "Use the local board". |
 | `factory track add ID --name TEXT [--roadmap]`, `factory track list` | Add a track to the board, or list the tracks. A track is a named stream of work. See "Use the local board". |
 | `factory request add\|list\|close\|log\|doc` | Put a question for the owner in the waiting file, list the open requests, close one with no answer, with a decision of the coordinator or a delegate, or with an answer of the owner that the coordinator passes on, log a decision that no request asked for, or link a doc to an open request. See "Use the local board". |
+| `factory decide read <D-n> [--json] [--home DIR]` | Show whether one local request has a match in the owner store. It changes nothing. See [Read a decision](#read-a-decision). |
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. `queue set` takes `--release-group TEXT`, and `queue show` lists the rows under one heading for each group. See "Use the local board". |
 | `factory guard list` | Show the guards, their effective values, their defaults, their sources and the harm mark `H`. `--all` shows every guard. `--family NAME` shows the rows of one guard. `--json` also gives record times and marks each guard that this version cannot set. It only reads. See "Guards". |
 | `factory guard set ID on\|off` | Set one guard in the local file and record the change. `--all on\|off` sets every guard that this version can set. Run it in a terminal window outside factory and Claude Code sessions. Off needs consent. See "Guards". |
@@ -540,9 +541,34 @@ The command is `factory decide <D-n> <option> [--note TEXT] [--home DIR]`. It sh
 - **What it writes.** It writes the owner store record first. Then it writes one row in `decision-log.json`, one profile record `decision-profile/decisions/<yyyy-mm-dd>-d-<n>[-<slug>].md` and one line at the top of `decision-profile/log.md`, in one commit in the state repo. The log row keeps the canonical request text, with all its context keys. The profile record shows the kind, ordered fields and the reason of the asker for each option. It uses the same text escape as the other record values. Missing kind and fields produce no `Kind:` or `Field:` line. The profile record shows no doc paths. The note is one line of 1 to 500 characters. It goes into the profile record only.
 - **A second answer.** A request has one answer. `decide` with another option on a request that has a record exits with code 1 and changes nothing. To change an answer, add a new request. If a stop came after the owner store record and before the commit, run the same command again to finish the copies.
 - **The next number.** `request add` counts the records of this node and this real root in the owner decision file. `request close` refuses a request that has a record. `request add` and `request close` exit with code 1 when the owner decision file cannot be read.
-- **Other limits.** A board kind other than `local` refuses `decide` with exit code 4 until FAC-M11 and FAC-M3. `factory decide read` is not in this version and exits with code 2.
+- **Tracker kind.** The answer form exits with code 4 when the tracker kind is not `local`.
 
 The review desk page only reads. A page answer is a board event: it shows and wakes, and it records nothing. Only `factory decide` records a decision.
+
+### Read a decision
+
+Run `factory decide read <D-n> [--json] [--home DIR]` to check one request on the local board. The read works in any session. It takes no lock and changes no files.
+
+The first text line gives the verdict. Each verdict includes the node id and the real path of the factory folder. With `--json`, the command prints `factory.decide-read/v1`. The `title`, `question` and `decision` keys hold display text, not the verdict. The command escapes hidden characters in these values.
+
+The command uses these exit codes:
+
+- `record` gives exit code 0. The option comes from the owner store, not the board.
+- Every other verdict gives exit code 1 and says `no owner proof`.
+- No id, a bad id, an extra argument, `--note` or an unknown flag such as `--from` gives exit code 2. With no id, the command says `not in this version`.
+- The command stops with exit code 4 if the tracker kind is not `local` or the state guard is off.
+
+| Verdict | Meaning |
+| --- | --- |
+| `record` | An owner store record matches the request text. |
+| `relayed` | The coordinator passed on an answer. The verdict says `this read grants no approval`. The text form labels the answer `Relayed text (not proof)`. |
+| `closed` | The request closed with no owner answer. This includes a decision by the coordinator or a delegate. |
+| `open` | The request is open and has no owner store record. |
+| `none` | The request has no owner store record and is not open or closed. This includes an unknown id. |
+| `mismatch` | An owner store record exists but the request text does not match it. |
+| `error` | The command could not read or check the request or its record. A bad stored link also gives this verdict. |
+
+The output is not proof and grants no approval. Only a match in the owner store proves the answer.
 
 ### Dismiss a worker
 

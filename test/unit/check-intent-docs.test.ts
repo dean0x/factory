@@ -4,7 +4,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { checkIds } from '../../src/names.js';
+import { checkIds, decideProofKinds } from '../../src/names.js';
 
 const ROOT = join(__dirname, '..', '..');
 const SCRIPT = join(ROOT, 'scripts', 'check-intent-docs.sh');
@@ -1203,9 +1203,10 @@ describe('docs of the board of each track', () => {
     expect(item).toContain('The local board part states this as a limit.');
   });
 
-  it('adds no decide row to the Commands table of the README and no decide command to the guide', () => {
+  it('lists the read form in the README command table and leaves the answer form and guide as they are', () => {
     const commands = part(readme, '## Commands', '\n### Make a factory');
-    expect(commands).not.toMatch(/^\| `factory decide/m);
+    expect(commands).toMatch(/^\| `factory decide read <D-n>/m);
+    expect(commands).not.toMatch(/^\| `factory decide <D-n>/m);
     expect(docsText('quick-start.md')).not.toContain('factory decide');
   });
 
@@ -1239,6 +1240,16 @@ describe('docs of the owner store record and decide', () => {
     (line.includes('decision-log.json') || line.includes('log row')) && line.includes('`by: owner`') && !line.includes('display cop');
   const KNOWN_LIMIT_16 =
     'The review desk page only reads. A page answer is a board event: it shows and wakes, and it records nothing. Only `factory decide` records a decision.';
+
+  it.each([
+    ['README', part(readme, '### Read a decision', '\n### ')],
+    ['design', part(design, '**Read a decision.**', '\n\n**Board accounts.**')],
+  ])('%s documents the read form, its proof kinds and its exit codes', (_file, section) => {
+    expect(section).toContain('`factory decide read <D-n> [--json] [--home DIR]`');
+    for (const kind of decideProofKinds) expect(section).toContain(`\`${kind}\``);
+    for (const code of [0, 1, 2, 4]) expect(section).toContain(`exit code ${code}`);
+    expect(section).toContain('no owner proof');
+  });
 
   it('README names decide, and says it refuses inside Claude Code, so the owner runs it in an own terminal window and not as a paste', () => {
     const section = part(readme, '### Answer a decision', '\n### ');
