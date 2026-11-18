@@ -134,9 +134,14 @@ describe('approval verdict', () => {
     expect(verdictOf([], [{ ...relay, decision: approvalOptions.stop }], noStore, { head: null })).toMatchObject(refusal(APPROVAL_ID));
   });
 
-  it('refuses a link fault on an older row for the item', () => {
+  it('refuses a link fault on an older row for the item and gives a recovery hint', () => {
     const broken = { ...approvalRelay('D-2'), head: 'Private head' };
-    expect(verdictOf([], [broken, relay])).toMatchObject(refusal('D-2'));
+    expect(verdictOf([], [broken, relay])).toEqual({
+      ok: false, error: {
+        kind: 'failure', message: 'the link of request "D-2" is invalid',
+        hint: 'Check the recipe link rules. If necessary, restore a valid state from trusted history. A new request does not clear the invalid row.',
+      },
+    });
   });
 
   it('refuses a link fault in the request text of an answer for the item', () => {

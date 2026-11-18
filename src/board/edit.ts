@@ -60,7 +60,7 @@ import type {
 import { declaredFields, itemTarget, resolveFields, rowTarget, type FieldInput } from './fields.js';
 import type { BoardDoc, DecisionLogDoc, WaitingDoc, WaitingItem } from './files.js';
 import { rowItemsOf, rowNameOf, rowReleaseGroupOf } from './queue.js';
-import { linkOfFields, optionKeysOf, requestTitleOf, type RequestLinkRules } from './requests.js';
+import { approvalLinkRemedy, linkOfFields, optionKeysOf, requestTitleOf, type RequestLinkRules } from './requests.js';
 import { firstStageOf, requireSettableStage, requireStage, stagesOf } from './stages.js';
 import { holdsBreak, lineIssue, visibleLineIssue } from './text.js';
 import { trackIdIssue, trackNameIssue } from './tracks.js';
@@ -901,7 +901,7 @@ export const checkRequestClose = (
   if (found === undefined) return usageError(`${files.waiting} has no ${requestWords.request} ${shown(id)}`);
   if (log.rows.some((row) => row.id === id)) return failure(`${files.decisionLog}: the id ${id} is used already`);
   const link = linkOfFields(found.record[decisionKeys.fields], rules);
-  if (!link.ok) return link;
+  if (!link.ok) return failure(`${requestWords.request} ${shown(id)}: ${link.error.message}`, approvalLinkRemedy);
   if (link.value !== null && settlement?.relayed === true) {
     if (!relayScope.includes(link.value.point)) return usageError(`the approval point of ${id} does not allow a relay`);
     if (!optionKeysOf(found).includes(settlement.decision)) return usageError(`the relayed decision for ${id} must be an option key of the ${requestWords.request}`);

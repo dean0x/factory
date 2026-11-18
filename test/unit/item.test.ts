@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { exitCodeOf, failure, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { localBoardOf } from '../../src/commands/board-open.js';
 import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { recordGuards } from '../../src/core/guard-records.js';
@@ -761,11 +762,39 @@ describe('item record: linked approval', () => {
     expectUntouched(world.repo, MERGE_BOARD);
   });
 
+  const storeFault = {
+    kind: 'failure', message: `cannot read the owner store for request "${APPROVAL_ID}"`,
+    hint: 'Check the state path. Restore access to the owner store.',
+  };
+  const doctorHint = `Run "${commandText(commands.doctor)}" to check the board files.`;
+
+  it('refuses a linked approval when the owner store has no path', async () => {
+    const world = await mergeWorld({ record: false });
+    const board = localBoardOf({ ...world.repo.deps, env: {} }, HOME, sampleConfigWithBoard(), commands.item);
+    expect(await board.checkApproval(MERGE_LINK.item, { point: MERGE_LINK.point, mode: 'owner' }, MERGE_LINK.ref)).toMatchObject({
+      ok: false, error: storeFault,
+    });
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('asks for a new linked request when the owner store has no record of the answer', async () => {
+    const { row } = approvalAnswer(approvalRequest(APPROVAL_ID, MERGE_LINK));
+    const world = await mergeWorld({ decisionLog: logOf(row) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [] }));
+    expect(await runMerge(world)).toMatchObject({
+      ok: false, error: {
+        kind: 'failure', message: `request "${APPROVAL_ID}" has no settled approval`, hint: expect.stringContaining('Add a linked request'),
+      },
+    });
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
   it.each([
-    ['waiting file', WAITING_PATH, fileNames.waiting],
-    ['decision log', LOG_PATH, fileNames.decisionLog],
-    ['owner store', STORE_PATH, `request "${APPROVAL_ID}" has no settled approval`],
-  ])('exits 1 when the %s becomes invalid during the gh call', async (_name, path, message) => {
+    ['waiting file', WAITING_PATH, expect.stringContaining(fileNames.waiting), doctorHint],
+    ['decision log', LOG_PATH, expect.stringContaining(fileNames.decisionLog), doctorHint],
+    ['owner store', STORE_PATH, storeFault.message, storeFault.hint],
+  ])('exits 1 when the %s becomes invalid during the gh call', async (_name, path, message, hint) => {
     const world = await mergeWorld();
     const gh = withGh(world.repo.deps, () => {
       world.repo.deps.seed(path, JSON.stringify({ 'Private request text': true }));
@@ -773,7 +802,7 @@ describe('item record: linked approval', () => {
     });
     const error = errorOf(await runMerge({ ...world, gh }));
     expect(exitCodeOf[error.kind]).toBe(1);
-    expect(error.message).toContain(message);
+    expect(error).toMatchObject({ message, hint });
     expect(JSON.stringify(error)).not.toContain('Private request text');
     expectUntouched(world.repo, MERGE_BOARD);
   });

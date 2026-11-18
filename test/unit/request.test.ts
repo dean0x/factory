@@ -1011,11 +1011,23 @@ describe('request close: approval links', () => {
     ['a point outside the relay scope', { point: 'release' }, 'approve', 'usage', 'approval point'],
     ['an option label', {}, 'Yes', 'usage', 'option key'],
     ['an option in a different letter case', {}, 'APPROVE', 'usage', 'option key'],
-    ['a malformed link', { head: '123' }, 'approve', 'failure', 'request link'],
   ] as const)('refuses %s and changes no file', async (_name, linkChange, decision, kind, message) => {
     const repo = await boardNode({ waiting: waitingText([linkedEntry(linkChange)]) });
     const before = filesOf(repo);
     expect(await close(repo, { decision })).toMatchObject({ ok: false, error: { kind, message: expect.stringContaining(message) } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('names the request and gives a recovery hint when its link is invalid', async () => {
+    const repo = await boardNode({ waiting: waitingText([linkedEntry({ head: 'Private head' })]) });
+    const before = filesOf(repo);
+    expect(await close(repo)).toEqual({
+      ok: false, error: {
+        kind: 'failure', message: 'request "D-1": the request link has an invalid head',
+        hint: 'Check the recipe link rules. If necessary, restore a valid state from trusted history. A new request does not clear the invalid row.',
+      },
+    });
     expect(filesOf(repo)).toEqual(before);
     expect(repo.commits).toEqual([]);
   });

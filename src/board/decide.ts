@@ -38,7 +38,7 @@ import type { RequestDecider, RequestField, RequestGroup, RequestKind, RequestLi
 import { docPathIssue, isDecider, shown } from './edit.js';
 import { jsonText, type DecisionRecordOption, type DecisionRecordRequest } from './decision-record.js';
 import type { DecisionLogDoc, WaitingDoc } from './files.js';
-import { answeredRequestOf, linkOfFields, linkOfRow, type RequestLinkRules } from './requests.js';
+import { answeredRequestOf, approvalLinkRemedy, linkOfFields, linkOfRow, type RequestLinkRules } from './requests.js';
 import { storedTimeOf } from './stored-time.js';
 import { visibleLineIssue } from './text.js';
 
@@ -390,7 +390,10 @@ const namesItem = (fields: unknown, item: string): boolean =>
   );
 
 const approvalLinkFault = (id: string | null): Err<CliError> =>
-  failure(id === null ? `a linked approval row has no ${requestWords.request} id` : `the link of ${requestWords.request} ${shown(id)} is invalid`);
+  failure(
+    id === null ? `a linked approval row has no ${requestWords.request} id` : `the link of ${requestWords.request} ${shown(id)} is invalid`,
+    approvalLinkRemedy,
+  );
 
 const openApprovalOf = (waiting: WaitingDoc, item: string, point: string, rules: RequestLinkRules | undefined): CliResult<string | null> => {
   for (const { id, record } of waiting.items) {
@@ -462,8 +465,11 @@ export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }
 
   const { id, link } = linked.settled.value;
   const name = `${requestWords.request} ${shown(id)}`;
+  if (!stored.ok) {
+    return failure(`cannot read the ${roles.owner} store for ${name}`, `Check the state path. Restore access to the ${roles.owner} store.`);
+  }
   const proof = proofOf(id, ok(docs), stored, rules);
-  if (proof.kind === decideProof.relayed && stored.ok && stored.value.record !== null) {
+  if (proof.kind === decideProof.relayed && stored.value.record !== null) {
     return failure(
       `${name} also has an ${roles.owner} store answer`,
       `Run "${commandText(commands.decide)} ${decideWords.read} ${id}" to see the answer. Ask the ${roles.owner} to resolve the conflict.`,

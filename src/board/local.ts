@@ -272,7 +272,12 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     texts: BoardTexts, id: string, approval: RecordApproval, place: DecisionPlace | null, ref: string, head: string | null,
   ): Promise<CliResult<void>> => {
     const docs = approvalDocsOf(texts);
-    if (!docs.ok) return failure(`cannot check approval: check ${files.waiting} and ${files.decisionLog}`);
+    if (!docs.ok) {
+      return failure(
+        `cannot check approval: check ${files.waiting} and ${files.decisionLog}`,
+        `Run "${commandText(commands.doctor)}" to check the board files.`,
+      );
+    }
     const rules = options.requestLinkRules;
     const linked = linkedApprovalsOf(docs.value.waiting, docs.value.log, id, approval.point, rules);
     const settled = linked.settled.ok ? linked.settled.value : null;
