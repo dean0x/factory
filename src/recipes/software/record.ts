@@ -1,4 +1,4 @@
-import { failure, type CliResult } from '../../cli/errors.js';
+import { failure, usageError, type CliResult } from '../../cli/errors.js';
 import type { Deps } from '../../core/deps.js';
 import { remoteDefaultBranchOf } from '../../core/git.js';
 import { ok } from '../../core/result.js';
@@ -6,7 +6,7 @@ import { toolNames } from '../../core/tools.js';
 import { files, flags, flagText, keys, program, roles } from '../../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../entry.js';
 import { mergedStage } from './board.js';
-import { githubRepoOf, parsePrNumber, readMergedPr, RECORD_COMMAND, RECORD_READER } from './github-pr.js';
+import { githubRepoOf, mergeCheck, parsePrNumber, readMergedPr, RECORD_COMMAND, RECORD_READER } from './github-pr.js';
 
 /**
  * Check a merged PR on GitHub and give the record that the core writes. The repo comes from the URL of the project, the base is the
@@ -55,5 +55,6 @@ export const softwareRecordCheck: RecordCheck = {
     const number = parsePrNumber(text, flagText(flags.ref));
     return number.ok ? ok(String(number.value)) : number;
   },
+  parseHead: (text) => (mergeCheck.shaPattern.test(text) ? ok(text) : usageError('the head must be 40 lowercase hex digits')),
   check: checkMergedPr,
 };

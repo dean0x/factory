@@ -127,6 +127,7 @@ export interface RecordCheckInput {
  * - `summary` is the part of the help of `item` that says what the recipe records.
  * - `refHelp` is the help of the reference flag for this recipe.
  * - `parseRef` checks the reference before the board is read. A bad reference is a usage error (exit 2).
+ * - `parseHead` checks the stored head form. A bad head is a usage error (exit 2).
  * - `check` reads the proof and gives a `CheckedRecord`, or a failure (exit 1) for every fault and every mismatch.
  */
 export interface RecordCheck {
@@ -134,6 +135,7 @@ export interface RecordCheck {
   readonly summary: string;
   readonly refHelp: string;
   readonly parseRef: (text: string) => CliResult<string>;
+  readonly parseHead: (text: string) => CliResult<string>;
   readonly check: (deps: Deps, input: RecordCheckInput) => Promise<CliResult<CheckedRecord>>;
 }
 

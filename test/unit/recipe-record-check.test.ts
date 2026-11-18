@@ -92,6 +92,20 @@ describe('the software record check: the reference', () => {
   });
 });
 
+describe('the software record check: the head', () => {
+  it('accepts exactly 40 lowercase hex digits without a change', () => {
+    const head = '0123456789abcdef'.repeat(2) + '01234567';
+    expect(softwareRecordCheck.parseHead(head)).toEqual({ ok: true, value: head });
+  });
+
+  it.each(['', 'a'.repeat(39), 'a'.repeat(41), 'A'.repeat(40), 'g'.repeat(40), ` ${HEAD_SHA}`, `${HEAD_SHA}\n`])(
+    'refuses the head %j as a usage error',
+    (text) => {
+      expect(softwareRecordCheck.parseHead(text)).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    },
+  );
+});
+
 describe('the software record check: a merged PR', () => {
   it('gives the stage, the checked reference, the head of the PR and a summary with the merge commit', async () => {
     const fake = world();

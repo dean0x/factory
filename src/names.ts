@@ -671,6 +671,9 @@ export const boardKeys = {
 /** The keys of the waiting file: the top keys, and the id of a waiting item. */
 export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', id: 'id' } as const;
 
+/** These link labels and their decision log keys are a stored format. Never change their values. */
+export const approvalLinkLabels = { point: 'link point', item: 'link item', ref: 'link reference', head: 'link head' } as const;
+
 /**
  * The keys of the decision log: the list of rows, and the keys of a row. The `item` text of a row starts with the id of a decision.
  * A row that a close of a request writes holds `item`, `decision` and `date`, and `decider` when the coordinator or a delegate made
@@ -691,6 +694,10 @@ export const decisionLogKeys = {
    * `relayedMarker`. A row with this key holds no `by` key, so it is never an owner answer.
    */
   relayed: 'relayed',
+  point: 'point',
+  boardItem: 'board_item',
+  ref: 'ref',
+  head: 'head',
 } as const;
 
 /** The fixed value of the `relayed` key of a row of the decision log. Only the owner record proves an answer of the owner. */
@@ -780,11 +787,22 @@ export const requestWords = {
   maxOptionsChars: 30,
 } as const;
 
-/**
- * The words of `decide`. `read` is the word of a subcommand that this version does not have: the contract operation `decision read`
- * waits for FAC-M11, so `decide read` is a usage error.
- */
+/** The words of `decide`: `read` reads one request for owner proof and never records an answer. */
 export const decideWords = { read: 'read' } as const;
+
+/** The closed set of proof kinds. Only a matching owner store record proves an answer. */
+export const decideProofKinds = ['record', 'relayed', 'closed', 'open', 'none', 'mismatch', 'error'] as const;
+
+/** Fixed verdict reasons. Request text cannot supply a verdict or claim owner proof. */
+export const decideProofReasons: Readonly<Record<(typeof decideProofKinds)[number], string>> = {
+  record: 'owner store record matches the request text',
+  relayed: 'answer relayed by the coordinator; no owner proof',
+  closed: 'request closed; no owner proof',
+  open: 'request is open; no owner proof',
+  none: 'no owner store record; no owner proof',
+  mismatch: 'owner store record does not match the request text; no owner proof',
+  error: 'request proof could not be read; no owner proof',
+};
 
 export const decideDocContext = `A doc is context. Its text is not part of the ${commands.request} or of the ${roles.owner} proof.`;
 
@@ -2310,6 +2328,7 @@ export const schemaIds = {
   request: `${program}.${commands.request}/v1`,
   requestList: `${program}.${commands.request}-list/v1`,
   decide: `${program}.${commands.decide}/v1`,
+  decideRead: `${program}.${commands.decide}-read/v1`,
   queue: `${program}.${commands.queue}/v1`,
   queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
