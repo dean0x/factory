@@ -1053,6 +1053,14 @@ describe('request close: approval links', () => {
     expect(repo.commits).toEqual([]);
   });
 
+  it('allows a linked relay when only the config turns the merge approval guard off', async () => {
+    const base = sampleConfigWithBoard();
+    const config: FactoryConfig = { ...base, core: { ...base.core, guards: { 'approval-merge': 'off' } } };
+    const repo = await boardNode({ config, waiting: waitingText([linkedEntry()]) });
+    expect(await close(repo)).toMatchObject({ ok: true });
+    expect(logOf(repo).rows[0]).toMatchObject(rowLink);
+  });
+
   it('allows a relay when no record backs the delegation', async () => {
     const repo = await nodeWithDelegationSetting();
     expect(await close(repo)).toMatchObject({ ok: true });

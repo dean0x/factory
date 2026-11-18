@@ -717,6 +717,17 @@ describe('item record: linked approval', () => {
     expectUntouched(world.repo, MERGE_BOARD);
   });
 
+  it('requires a linked approval when only the config turns the merge approval guard off', async () => {
+    const base = sampleConfigWithBoard();
+    const config: FactoryConfig = { ...base, core: { ...base.core, guards: { 'approval-merge': 'off' } } };
+    const world = await mergeWorld({ config, decisionLog: logOf() });
+    expect(await runMerge(world)).toMatchObject({
+      ok: false, error: { kind: 'failure', message: 'there is no linked approval request' },
+    });
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
   it('requires a linked approval after it accepts the project and before it calls gh', async () => {
     const world = await mergeWorld({ decisionLog: logOf(), record: false });
     expect(await runMerge(world, { project: 'web' })).toMatchObject({ ok: false, error: { kind: 'failure', message: 'there is no linked approval request' } });
