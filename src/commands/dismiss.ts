@@ -451,7 +451,9 @@ const openFreeOf = (
 const askOutput = (id: string, request: string, reused: boolean): CommandOutput => ({
   lines: [
     text(`${reused ? 'Reused' : 'Opened'} ${request} for ${roles.worker} ${id}. This run freed nothing.`),
-    text(`The ${roles.owner} sees the command in "${commandText(`${commands.decide} ${request}`)}" and runs it in a terminal window.`),
+    text(`The ${roles.owner} opens the request with "${commandText(`${commands.decide} ${request} ${requestWords.freeDone.key}`)}" in their own terminal window.`),
+    text(`Confirm only if the ${roles.worker} is free.`),
+    text(`If the ${roles.worker} stays, decline the prompt. Record that result with "${commandText(`${commands.decide} ${request} ${requestWords.freeKept.key}`)}".`),
   ],
   json: { schema: schemaIds.dismiss, closed: true, askOwner: true, freed: false, request, reused },
   warnings: [],

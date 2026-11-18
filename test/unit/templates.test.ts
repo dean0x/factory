@@ -182,7 +182,7 @@ it('keeps the base text and block versions when every guard is on', () => {
     [
       [
         {
-          "hash": "e4622d3b3da7d0ea019ad54cfb54271bfadc79dc2d375659e35609e1d7f35abc",
+          "hash": "28e7e0a27842adad3fde008463bd8de2bc48ce05f3d96261bb7a86f0810d331c",
           "name": "coordinator",
           "target": "claudeFile",
           "version": 8,
@@ -208,7 +208,7 @@ it('keeps the base text and block versions when every guard is on', () => {
       ],
       [
         {
-          "hash": "8b8e4f0364e0e723eb07c41855d3ef8cbf8b332393900c84801481091658be80",
+          "hash": "f13b12f816b1e9628b1d2545ae60643dd6419de4647167da6311b29a787c2cc0",
           "name": "manager",
           "target": "claudeFile",
           "version": 4,
@@ -322,7 +322,7 @@ const summary = (blocks: readonly { name: string; version: number; target: strin
 describe('block templates', () => {
   it('gives layer 1 the coordinator, safety, work rules and worker blocks with their versions and targets', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
-      ['coordinator', 7, 'claudeFile'],
+      ['coordinator', 8, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['work-rules', 1, 'claudeFile'],
       ['worker', 5, 'workerFile'],
@@ -1241,8 +1241,11 @@ it.each([
     'If this ask-owner run fails or is denied, stop and tell the owner.',
     'The ask-owner run does not free the worker. It asks the owner to do it.',
     'Tell the owner the request ID.',
-    `The owner opens the request with \`${commandText(commands.decide)} <request-id>\`.`,
-    'The owner runs the command of the request in another terminal window and then answers the prompt.',
+    `The owner opens the request with \`${commandText(commands.decide)} <request-id> done\` in their own terminal window.`,
+    'The owner runs the commands of the request in another terminal window.',
+    'The owner confirms only if the worker is free.',
+    'If the worker stays, the owner declines the prompt.',
+    `The owner then records that result with \`${commandText(commands.decide)} <request-id> kept\`.`,
     'If the owner answers `kept`, stop.',
     'Never run the command of the request.',
     `Never open a request for a free with \`${commandText(commandLines.requestAdd)}\`.`,
@@ -1916,9 +1919,9 @@ describe('the work rules block of the coordinator', () => {
     expect(rules()).not.toContain(commandText(commandLines.requestLog));
   });
 
-  it('leaves the coordinator block, its version and its approval point lines as they were', () => {
+  it('keeps the work rules separate from the coordinator block', () => {
     const template = layer1Blocks.find((candidate) => candidate.name === 'coordinator');
-    expect(template?.version).toBe(7);
+    expect(template?.version).toBe(8);
     expect(template?.body).not.toContain('Work rules');
     for (const line of approvalLines(points, softwareOwnerModes)) expect(rules()).not.toContain(line);
   });

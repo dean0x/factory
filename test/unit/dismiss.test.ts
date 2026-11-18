@@ -1714,7 +1714,9 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
       expect(result).toMatchObject({ ok: true, value: { failed: false, json: { closed: true, askOwner: true, freed: false, request: 'D-8', reused: false } } });
       if (result.ok) {
         expect(textOf(result.value)).toContain('D-8');
-        expect(textOf(result.value)).toContain('factory decide D-8');
+        expect(textOf(result.value)).toContain('"factory decide D-8 done"');
+        expect(textOf(result.value)).toContain('Confirm only if the worker is free.');
+        expect(textOf(result.value)).toContain('"factory decide D-8 kept"');
         checkText(textOf(result.value));
       }
       expect(writes).toEqual([freeRequestOf({ id: 'alpha', project: 'web', closed: ['B-1'], head: HEAD, checkedAt: given.made.deps.now().toISOString() })]);
