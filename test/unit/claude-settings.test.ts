@@ -342,7 +342,7 @@ describe('hook settings: the change and the consent', () => {
 
 describe('the paths of the own Edit rules', () => {
   const state = '/u/.local/state/factory';
-  const storeNames = ['owner-records.json', 'owner-decisions.json', 'guard-records.json'];
+  const storeNames = ['owner-records.json', 'owner-decisions.json', 'guard-records.json', 'setup-acceptances.json'];
   const expected = (home: string, folder: string, stateHome = state) => [
     `Edit(/${home}/factory.yaml)`,
     `Edit(/${home}/factory.local.yaml)`,
@@ -374,7 +374,7 @@ describe('the paths of the own Edit rules', () => {
       ...expected('/alias/node', '/alias/node/coordinator', '/state-link/factory'),
       ...expected('/real/node', '/real/node/coordinator', '/state/factory'),
     ]));
-    expect(result.value.rules).toHaveLength(12);
+    expect(result.value.rules).toHaveLength(14);
   });
 
   it.each(['*', '?', '[', ']', '{', '}', '(', ')', '\\', '\n'])('omits a path with the pattern character %j and names the path', async (char) => {

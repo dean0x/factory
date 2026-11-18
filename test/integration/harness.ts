@@ -109,6 +109,7 @@ export const ownDenyRules = async (box: Sandbox, folder: string): Promise<readon
     join(state, 'owner-records.json'),
     join(state, 'owner-decisions.json'),
     join(state, 'guard-records.json'),
+    join(state, 'setup-acceptances.json'),
     join(folder, '.claude', 'settings.local.json'),
   ];
   return [...new Set(paths.flatMap((path) => [path, root + path.slice(box.root.length)]))].map((path) => `Edit(/${path})`);

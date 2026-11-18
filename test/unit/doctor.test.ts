@@ -237,6 +237,16 @@ describe('doctor: shared guard state', () => {
     expect(found?.text).toContain('Own file Edit rules are incomplete.');
   });
 
+  it('warns when only the setup acceptance rule is absent', async () => {
+    const deps = await initialized();
+    const file = `${HOME}/coordinator/.claude/settings.local.json`;
+    const deny = await ownDenyRulesOf(deps, HOME, `${HOME}/coordinator`);
+    if (!deny.ok) throw new Error(deny.error.message);
+    const rules = deny.value.rules.filter((rule) => rule !== 'Edit(//state/factory/setup-acceptances.json)');
+    deps.seed(file, JSON.stringify({ ...ownSettingsEntries, permissions: { deny: rules } }));
+    expect((await guardCheck(deps))?.text).toContain('Own file Edit rules are incomplete.');
+  });
+
   it('names every path with no exact rule', async () => {
     const deps = await initialized({ env: { XDG_STATE_HOME: '/state/[local]' } });
     const deny = await ownDenyRulesOf(deps, HOME, `${HOME}/coordinator`);

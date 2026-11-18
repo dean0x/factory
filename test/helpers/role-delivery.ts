@@ -24,6 +24,7 @@ export const ownSettingsWithRules = (home: string, folder: string) => ({
       '/state/factory/owner-records.json',
       '/state/factory/owner-decisions.json',
       '/state/factory/guard-records.json',
+      '/state/factory/setup-acceptances.json',
       `${folder}/.claude/settings.local.json`,
     ].map((path) => `Edit(/${path})`),
   },

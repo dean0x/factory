@@ -5116,6 +5116,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     'Edit(//state/factory/owner-records.json)',
     'Edit(//state/factory/owner-decisions.json)',
     'Edit(//state/factory/guard-records.json)',
+    'Edit(//state/factory/setup-acceptances.json)',
     `Edit(/${file})`,
   ];
   const ownSettingsAt = (file: string) => ({ ...ownSettingsEntries, permissions: { deny: denyRules(file) } });
@@ -5181,6 +5182,22 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     const accepted = success(await upgrade(onTerminal(deps, ['y']).deps, currentSpec, { yes: false }));
     expect(accepted.json).toMatchObject({ hookSettings: [COORDINATOR_SETTINGS] });
     expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
+  });
+
+  it('asks for the setup acceptance rule alone and keeps the file until consent', async () => {
+    const { deps } = await makeNode();
+    const rule = 'Edit(//state/factory/setup-acceptances.json)';
+    const settings = { ...ownSettingsEntries, permissions: { deny: denyRules(COORDINATOR_SETTINGS).filter((entry) => entry !== rule) } };
+    deps.seed(COORDINATOR_SETTINGS, settingsText(settings));
+    const before = snapshot(deps);
+    const terminal = onTerminal(deps, ['n']);
+    success(await upgrade(terminal.deps, currentSpec, { yes: false }));
+    expect(terminal.asked).toEqual([`This changes the settings of Claude Code in ${COORDINATOR_SETTINGS}:\n  permissions.deny: add ${rule}\nWrite this change? [y/N] `]);
+    expect(snapshot(deps)).toEqual(before);
+    success(await upgrade(onTerminal(deps, ['y']).deps, currentSpec, { yes: false }));
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual({
+      ...settings, permissions: { deny: [...settings.permissions.deny, rule] },
+    });
   });
 
   it('adds the two new events to the list of a factory that wrote four', () => {

@@ -48,6 +48,7 @@ const OWN_SETTINGS_WITH_DENY = { ...ownSettingsEntries, permissions: { deny: [
   'Edit(//state/factory/owner-records.json)',
   'Edit(//state/factory/owner-decisions.json)',
   'Edit(//state/factory/guard-records.json)',
+  'Edit(//state/factory/setup-acceptances.json)',
   'Edit(//w/node/coordinator/.claude/settings.local.json)',
 ] } };
 const INDEX = '/state/factory/homes.json';

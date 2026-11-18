@@ -191,7 +191,7 @@ export const ownDenyRulesOf = async (deps: Deps, home: string, folder: string): 
   const paths = [
     resolve(home, files.config),
     resolve(home, files.localConfig),
-    ...[files.ownerRecords, files.ownerDecisions, files.guardRecords].flatMap((name) => {
+    ...[files.ownerRecords, files.ownerDecisions, files.guardRecords, files.setupAcceptances].flatMap((name) => {
       const { path } = userStatePlaceOf(deps, name);
       return path === null ? [] : [path];
     }),
