@@ -52,6 +52,7 @@ import {
   guardDenyWords,
   guardDoctorWords,
   guardRecordWords,
+  guardRecords,
   guardStartWords,
   guardKeys,
   dirs,
@@ -870,9 +871,17 @@ const checkGuards = async (
   for (const guard of definitions) {
     if (!guard.wired && config.value.core.guards[guard.id] === 'off') warnings.push(`${guard.id} is not wired; its value stays on`);
   }
+  const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
+  if (state.recordCount !== null) {
+    parts.push(guardDoctorWords.recordCount(state.recordCount));
+    if (state.recordCount >= guardRecords.warnRecords) {
+      const full = state.recordCount >= guardRecords.maxRecords;
+      const notice = full ? guardDoctorWords.atCap : guardDoctorWords.nearCap;
+      (full ? failures : warnings).push(`${notice} ${path}: ${guardRecordWords.unreadableRemedy}`);
+    }
+  }
   if (state.fault !== null) {
-    const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
-    failures.push(`${path}: ${state.fault}; ${guardRecordWords.unreadableRemedy}`);
+    failures.push(`${path}: ${state.fault}${state.remedy === null ? '' : `; ${state.remedy}`}`);
   } else if (state.prefix === null) {
     warnings.push(`${guardStartWords.noPrefixRecord}; run "${commandText(commandLines.guardConfirm)}"`);
   } else if (state.prefix.hash !== sha256Hex(config.value.core.owner.prefix)) {

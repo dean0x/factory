@@ -69,7 +69,7 @@ export const toolProblems = async (deps: Deps, readVersion: boolean): Promise<re
 /** A launch uses only the prefix whose exact text the owner confirmed. A store fault stops every launch. */
 export const requireConfirmedPrefix = (config: FactoryConfig, guards: GuardReadState): CliResult<void> => {
   if (guards.fault !== null) {
-    return safetyRefusal(guards.fault, `Run "${commandText(commands.doctor)}" to check the guard store.`);
+    return safetyRefusal(guards.fault, guards.remedy ?? `Run "${commandText(commands.doctor)}" to check the guard store.`);
   }
   if (guards.prefix !== null && guards.prefix.hash !== sha256Hex(config.core.owner.prefix)) {
     return safetyRefusal(`the ${roles.owner} prefix differs from its record`, `Run "${commandText(commandLines.guardConfirm)}" to confirm the ${roles.owner} prefix.`);

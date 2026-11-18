@@ -9,7 +9,7 @@ import { guardOf, wiredGuard } from '../../src/guards/build.js';
 import { guardIds, guardRecords, privateFile } from '../../src/names.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { describe, expect, it } from 'vitest';
-import { userStatePathOf } from '../../src/core/private-file.js';
+import { userFileLock, userFileLockPath, userStatePathOf } from '../../src/core/private-file.js';
 import { commandLines, env, files, guardRecordWords } from '../../src/names.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 
@@ -118,6 +118,52 @@ describe('guard store reads and writes', () => {
     expect(deps.files.size).toBe(0);
   });
 
+  it('keeps the store and holder unchanged when the guard lock is busy', async () => {
+    const deps = fixture();
+    const original = storeText([record()]);
+    deps.seed(path, original);
+    deps.seed(userFileLockPath(path), 'other-holder\n');
+    expect(await storeApi.changeGuardStore(deps, path, () => ok([]))).toEqual({ ok: false, error: guardRecordWords.lockBusy });
+    expect(deps.atomicWrites).toEqual([]);
+    expect(deps.files.get(path)).toBe(original);
+    expect(deps.files.get(userFileLockPath(path))).toBe('other-holder\n');
+  });
+
+  it('keeps the store and target unchanged when the guard lock is a link', async () => {
+    const deps = fixture({ links: { [userFileLockPath(path)]: '/other/lock' } });
+    const original = storeText([record()]);
+    deps.seed(path, original);
+    deps.seed('/other/lock', 'other-holder\n');
+    expect(await storeApi.changeGuardStore(deps, path, () => ok([]))).toEqual({ ok: false, error: guardRecordWords.lockLink });
+    expect(deps.atomicWrites).toEqual([]);
+    expect(deps.files.get(path)).toBe(original);
+    expect(deps.files.get('/other/lock')).toBe('other-holder\n');
+    expect(await deps.fs.lstat(userFileLockPath(path))).toEqual(ok('link'));
+  });
+
+  it('leaves a fresh age-only lock with its holder', async () => {
+    const deps = fixture();
+    const lock = userFileLockPath(path);
+    deps.seed(lock, 'other-holder\n');
+    expect(await lockApi.takeAgeLock(deps, lock, userFileLock)).toEqual(ok({ kind: 'held' }));
+    expect(deps.files.get(lock)).toBe('other-holder\n');
+    expect(deps.files.has(`${lock}${userFileLock.takeoverSuffix}`)).toBe(false);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('takes over an older age-only lock and saves the record', async () => {
+    const deps = fixture();
+    deps.seed(path, storeText([record()]));
+    const lock = userFileLockPath(path);
+    deps.seed(lock, 'other-holder\n');
+    deps.advance(userFileLock.staleMs + 1);
+    expect(await storeApi.recordGuards(deps, { root, node: 'demo', change })).toEqual(ok({ warning: null }));
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([record({ [guard.id]: { value: 'off', at: deps.now().toISOString() } })]));
+    expect(deps.atomicWrites).toEqual([path]);
+    expect(deps.files.has(lock)).toBe(false);
+    expect(deps.files.has(`${lock}${userFileLock.takeoverSuffix}`)).toBe(false);
+  });
+
   it('creates and checks the private folder before the lock', async () => {
     const deps = fixture();
     const seen: string[] = [];
@@ -201,6 +247,17 @@ describe('guard store reads and writes', () => {
     expect(JSON.stringify(result)).toContain(String(cap === 'records' ? guardRecords.maxRecords : guardRecords.maxBytes));
     expect(JSON.stringify(result)).toContain('doctor');
     expect(deps.files.get(path)).toBe(original);
+  });
+
+  it('allows a new record after the full store is moved and resets the old node state', async () => {
+    const deps = fixture();
+    const old = record({ [guard.id]: { value: 'off', at } }, { hash: sha256Hex('old prefix'), at });
+    deps.seed(path, storeText(Array.from({ length: guardRecords.maxRecords }, (_, index) => ({ ...old, node: index === 0 ? 'demo' : `node-${index}` }))));
+    expect((await storeApi.recordPrefix(deps, { root, node: 'new-node', prefix: 'new prefix' })).ok).toBe(false);
+    expect(await deps.fs.rename(path, `${path}.saved`)).toEqual(ok(undefined));
+    expect(await storeApi.recordPrefix(deps, { root, node: 'new-node', prefix: 'new prefix' })).toEqual(ok({ warning: null }));
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([{ ...record(), node: 'new-node', prefix: { hash: sha256Hex('new prefix'), at } }]));
+    expect(await storeApi.readGuardState(deps, root, config(), 'always')).toMatchObject({ values: { [guard.id]: 'on' }, prefix: null });
   });
 
   it('keeps the change made when the lock is taken', async () => {
@@ -323,6 +380,15 @@ describe('one guard state read', () => {
     expect(await storeApi.recordGuards(deps, { root: '/alias', node: 'demo', change })).toEqual(ok({ warning: null }));
     expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([record({ [guard.id]: { value: 'off', at } })]));
     expect((await storeApi.readGuardState(deps, '/alias', config(), 'always')).values[guard.id]).toBe('off');
+  });
+
+  it.each([root, `${userHome}/.claude`, stateHome])('keeps the state-folder remedy for a place fault at %s', async (state) => {
+    const deps = fixture({ env: { [env.userHome]: userHome, [env.stateHome]: state }, links: { [stateHome]: root } });
+    const found = await storeApi.readGuardState(deps, root, config(), 'always');
+    expect(found).toMatchObject({ values: { [guard.id]: 'on' }, record: false, prefix: null,
+      fault: guardRecordWords.inside, remedy: guardRecordWords.placeRemedy,
+    });
+    expect(deps.atomicWrites).toEqual([]);
   });
 
   it('returns a fault when the root cannot resolve', async () => {

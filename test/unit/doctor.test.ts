@@ -38,7 +38,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { boardWarnPercent, checkIds, childReasons, dirs, files, guardIds, instructionFiles, lessonLimits, maxFileBytes, roleText } from '../../src/names.js';
+import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText } from '../../src/names.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { allOn } from '../../src/guards/effective.js';
@@ -256,6 +256,42 @@ describe('doctor: shared guard state', () => {
     expect(deny.value.skipped.length).toBeGreaterThan(0);
     for (const path of deny.value.skipped) expect(found?.text).toContain(path);
   });
+
+  it.each([[899, 'ok'], [900, 'warn'], [999, 'warn'], [1000, 'fail']] as const)(
+    'reports %s guard records at the %s level with the reset step', async (count, level) => {
+      const deps = await initialized();
+      const config = sampleConfig();
+      const records = Array.from({ length: count }, (_, index) => ({
+        node: index === 0 ? 'demo' : `node-${index}`, root: index === 0 ? HOME : `/old/node-${index}`, values: {},
+        prefix: { hash: sha256Hex(config.core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
+      }));
+      const text = JSON.stringify({ schema: guardRecords.schema, records });
+      deps.seed(STORE, text);
+      const found = await guardCheck(deps);
+      expect(found?.level).toBe(level);
+      expect(found?.text).toContain(`The guard store holds ${count} of 1000 records.`);
+      if (level !== 'ok') {
+        expect(found?.text).toContain(level === 'fail' ? 'at its record cap' : 'near its record cap');
+        expect(found?.text).toContain(STORE);
+        expect(found?.text).toContain('move the file away');
+        expect(found?.text).toContain('every guard on');
+        expect(found?.text).toContain('prefix records of every node');
+      }
+      expect(deps.files.get(STORE)).toBe(text);
+    },
+  );
+
+  it.each([HOME, '/alias-state'])(
+    'gives the state-folder step for a store place at %s', async (stateHome) => {
+      const deps = await initialized({ links: { '/alias-state': HOME } });
+      const changed = { ...deps, env: { ...deps.env, [env.stateHome]: stateHome } };
+      registerRoot(changed, HOME, 'demo', [], 'own');
+      const found = await guardCheck(changed);
+      expect(found?.level).toBe('fail');
+      expect(found?.text).toContain('Set XDG_STATE_HOME to another absolute folder');
+      expect(found?.text).not.toContain('move the file away');
+    },
+  );
 
   it('fails on a store fault and states the recovery effect', async () => {
     const deps = await initialized();

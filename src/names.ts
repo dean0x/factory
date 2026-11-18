@@ -2357,6 +2357,7 @@ export const guardRecords = {
     at: 'at',
   },
   maxRecords: 1_000,
+  warnRecords: 900,
   maxBytes: maxFileBytes,
 } as const;
 
@@ -2440,6 +2441,9 @@ export const guardStartWords = {
 /** The doctor notice for a node whose local file has no guard values. */
 export const guardDoctorWords = {
   noKey: 'No guards key: every guard is on.',
+  recordCount: (count: number): string => `The guard store holds ${count} of ${guardRecords.maxRecords} records.`,
+  nearCap: 'The guard store is near its record cap.',
+  atCap: 'The guard store is at its record cap.',
 } as const;
 
 /** The names and notice of the Edit rules for files that the program owns. */

@@ -9,7 +9,7 @@ import { ok } from '../../src/core/result.js';
 import { allOn } from '../../src/guards/effective.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import type { GuardValues } from '../../src/guards/types.js';
-import { blockNames, files } from '../../src/names.js';
+import { blockNames, env, files } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { blockInputOf, blockTemplatesFor } from '../../src/templates/index.js';
 import { writeLastSeen } from '../../src/workers/last-seen.js';
@@ -138,6 +138,15 @@ for (const origin of origins) {
           expect(paneStarts(tmux)).toEqual([]);
         });
       }
+      it(`${command} names the state-folder step for a store place fault in the ${origin} folder`, async () => {
+        const { deps, tmux } = await make(origin);
+        const changed = { ...deps, env: { ...deps.env, [env.stateHome]: HOME } };
+        registerRoot(changed, HOME, 'demo', [], origin);
+        const before = fileSnapshot(deps);
+        expectRefusal(await launch(changed, command), 'Set XDG_STATE_HOME to another absolute folder');
+        expect(fileSnapshot(deps)).toEqual(before);
+        expect(paneStarts(tmux)).toEqual([]);
+      });
       it(`${command} refuses a linked worker role file in the ${origin} folder without a read`, async () => {
         const { deps, tmux, config } = await make(origin);
         await confirm(deps, config);

@@ -244,6 +244,8 @@ export interface GuardReadState extends GuardRules {
   readonly record: boolean;
   readonly prefix: GuardRecord[typeof keys.prefix];
   readonly fault: string | null;
+  readonly remedy: string | null;
+  readonly recordCount: number | null;
 }
 
 /** Read at most one store. A failed read supplies only on values to every consumer. */
@@ -252,19 +254,23 @@ export const readGuardState = async (
 ): Promise<GuardReadState> => {
   const guards = guardsFor(config.entry);
   const facts = { node: config.core.node.id, local: config.core.guards, shared: config.core.shared_guards, proxies: config.core.proxies };
-  const stateOf = (root: string, record: GuardRecord | null, fault: string | null): GuardReadState => ({
+  const stateOf = (
+    root: string, record: GuardRecord | null, fault: string | null,
+    details: { readonly remedy?: string; readonly recordCount?: number } = {},
+  ): GuardReadState => ({
     ...guardRulesOf(guards, { ...facts, root, record, fault }), record: record !== null, prefix: record?.prefix ?? null, fault,
+    remedy: details.remedy ?? null, recordCount: details.recordCount ?? null,
   });
   if (need === 'when-off' && !guards.some((guard) => guard.wired && facts.local[guard.id] === guardValues.off)) {
     return stateOf(home, null, null);
   }
   const place = await guardPlaceOf(deps, home);
-  if (!place.ok) return stateOf(home, null, place.error.message);
-  if (place.value.path === null) return stateOf(place.value.root, null, null);
+  if (!place.ok) return stateOf(home, null, place.error.message, place.error.hint === undefined ? {} : { remedy: place.error.hint });
+  if (place.value.path === null) return stateOf(place.value.root, null, null, { recordCount: 0 });
   const read = await readGuardStore(deps, place.value.path);
-  if (!read.ok) return stateOf(place.value.root, null, read.error);
+  if (!read.ok) return stateOf(place.value.root, null, read.error, { remedy: guardRecordWords.unreadableRemedy });
   const key = recordKey(deps, facts.node, place.value.root);
   const found = read.value.find((record) => recordKey(deps, record.node, record.root) === key);
   const record = found === undefined ? null : { ...found, root: place.value.root };
-  return stateOf(place.value.root, record, null);
+  return stateOf(place.value.root, record, null, { recordCount: read.value.length });
 };

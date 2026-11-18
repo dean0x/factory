@@ -1313,7 +1313,9 @@ Run the command in a terminal window outside factory and Claude Code sessions. B
 
 **Confirm the prefix.** `factory guard confirm` shows the full owner prefix and asks for consent, with no as the default. It uses the same terminal rules as `guard set`. A yes records the exact prefix for this node and folder. A new `init` records the prefix only in that terminal channel. An existing node with no prefix record can still start, but start prints a notice that names `factory guard confirm`.
 
-Start, reboot, restart, worker new and worker resume stop with exit code 4 when the prefix differs from its record. Run `factory guard confirm` to confirm the current prefix. An unreadable guard store also stops these launches with exit code 4. Run `factory doctor` to see the fault and remedy. To recover the store, move its file away. This turns every guard on and removes the prefix records of every node. Confirm each prefix again after that step.
+Start, reboot, restart, worker new and worker resume stop with exit code 4 when the prefix differs from its record. Run `factory guard confirm` to confirm the current prefix. An unreadable guard store also stops these launches with exit code 4. Run `factory doctor` to see the fault and remedy.
+
+To recover an unreadable file, move it away. This turns every guard on and removes the prefix records of every node. Confirm each prefix again after that step. If the store lies inside a factory or Claude Code folder, set `XDG_STATE_HOME` to another absolute folder. Launch and doctor name this step instead of the file reset.
 
 Each launch checks role blocks against the current effective guard values, also when no guard record exists for the folder. Start renders intact current role blocks again when their text differs. An edited or missing role block that lacks the text of an on `H` guard stops a launch with exit code 4. The message names the upgrade command that adds or replaces the block. A replacement keeps a backup. Other missing role blocks keep their warning. A failed block write exits with code 1.
 
@@ -1334,7 +1336,9 @@ The default view has at most 20 lines, with at most 17 guard lines. A more line 
 
 Each JSON guard gives its effective `value`, its `source`, its record time in `since`, and whether it is `settable`. The JSON `error` field is `null` when the config loads; otherwise, it holds the load error. The list reads the guard store only when a local value of a settable guard is off. An unreadable store gives one warning, keeps all guards on and leaves the exit code at 0.
 
-Doctor gives one `guards` check with the counts of off guards and off `H` guards. It also names each direct proxy and each unmatched local value. Its JSON output gives the record time of each off guard. Start prints one summary line when it has a value or notice to show.
+Doctor gives one `guards` check with the counts of off guards and off `H` guards. It also names each direct proxy and each unmatched local value. Its JSON output gives the record time of each off guard.
+
+The check counts store records across all nodes. It warns at 900 records and fails at the cap of 1,000 records. The store keeps records of moved or removed folders; it has no automatic pruning. Doctor names the store file to move away to clear the cap. This step turns every guard on and removes the prefix records of every node. Start prints one summary line when it has a value or notice to show.
 
 The common flags `--quiet` and `--no-color` also apply. An unknown family exits with code 2. When the config loads, the list exits with code 0. When the config does not load, the first line shows the load error, and the guard values show `unknown`. The list then exits with the code of the load error.
 
