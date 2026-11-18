@@ -482,16 +482,16 @@ const optionLabel = (option: DecisionRecordOption, chosen: string): string =>
   `  ${option.key}${option.rec === true ? ' (recommended)' : ''}${option.key === chosen ? ' (chosen)' : ''}: `;
 
 /**
- * The block that decide shows before it asks: every request and option key that the hash covers, plus the owner note. Context
- * labels start before the option column; each why is indented below its option. A field label uses the record escape, so its
- * separator is distinct from the field text. Long text wraps with no cut. Each line starts with `BLOCK_MARK`. Doc paths are shown,
- * with a notice that their text is not part of the request or of the owner proof.
+ * Show the request and option keys that the hash covers, plus the owner note. A view can supply a question for the selected
+ * option without a change to the stored request. Context labels start before the option column. The option reason is indented
+ * below its option. A field label uses the record escape to keep its separator distinct from the field text. Long text wraps
+ * with no cut. Each line starts with `BLOCK_MARK`. The doc notice states that the proof does not cover the text of the docs.
  */
-export const requestBlockLines = (request: DecideRequest, chosen: string, note: string | null): readonly string[] =>
+export const requestBlockLines = (request: DecideRequest, chosen: string, note: string | null, question = request.question): readonly string[] =>
   [
     `Decision ${request.id}`,
     ...labeled(LABEL_TITLE, request.title),
-    ...labeled(LABEL_QUESTION, request.question),
+    ...labeled(LABEL_QUESTION, question),
     ...(request.openedAt === null ? [] : labeled(LABEL_OPENED, request.openedAt)),
     ...(request.group === null ? [] : labeled(LABEL_GROUP, request.group)),
     ...(request.kind === null ? [] : labeled(LABEL_KIND, request.kind)),

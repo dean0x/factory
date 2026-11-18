@@ -66,15 +66,26 @@ const parse = (options: DecideOptions): CliResult<Parsed> => {
 
 const addRequestLine = `add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}"`;
 
-const freePreviewOf = (request: DecideRequest, home: string): CliResult<readonly string[]> => {
+type FreePreview =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'kept'; readonly question: string }
+  | { readonly kind: 'done'; readonly lines: readonly string[] };
+
+const freePreviewOf = (request: DecideRequest, option: string, home: string): CliResult<FreePreview> => {
   const worker = freeWorkerOf(request);
   if (!worker.ok) return failure(worker.error.message, `Close it with "${commandText(commandLines.requestClose)} ${request.id}" and tell the ${roles.coordinator}.`);
   const id = worker.value;
-  if (id === null) return ok([]);
+  if (id === null) return ok({ kind: 'none' });
   const issue = homeIssue(home);
   if (issue !== null) return failure(`the ${places.folder} path ${issue}`);
-  return ok(['Run the dry run first. If the checks pass, run the second command.', ...freeCommandLines(id, home)]);
+  if (option === requestWords.freeKept.key) return ok({ kind: 'kept', question: `Does the ${roles.worker} stay?` });
+  if (option !== requestWords.freeDone.key) return ok({ kind: 'none' });
+  return ok({ kind: 'done', lines: ['Run the dry run first. If the checks pass, run the second command.', ...freeCommandLines(id, home)] });
 };
+
+const freeDeclineHint = (id: string, home: string): string =>
+  `If the ${roles.worker} is free, record that result with "${freeAnswerLine(id, requestWords.freeDone.key, home)}". ` +
+  `If the ${roles.worker} stays, record that result with "${freeAnswerLine(id, requestWords.freeKept.key, home)}".`;
 
 /**
  * What the owner decision file holds for the open request. `null`: no record. A time: the record of this answer is there, and no
@@ -155,13 +166,18 @@ export const runDecide = async (deps: Deps, options: DecideOptions, registry: Re
   const read = await connector.decisionRequest(id);
   if (!read.ok) return read;
   const { request, stored, place } = read.value;
-  const preview = freePreviewOf(request, home);
-  if (!preview.ok) return preview;
+  const free = freePreviewOf(request, option, home);
+  if (!free.ok) return free;
   const chosen = chosenOptionOf(request, option);
   if (!chosen.ok) return chosen;
   const orphanAt = orphanTimeOf(stored, id, option);
   if (!orphanAt.ok) return orphanAt;
-  const lines = [...requestBlockLines(request, chosen.value.key, note).map(printable), ...preview.value];
+  const preview = free.value;
+  const question = preview.kind === 'kept' ? preview.question : request.question;
+  const lines = [
+    ...requestBlockLines(request, chosen.value.key, note, question).map(printable),
+    ...(preview.kind === 'done' ? preview.lines : []),
+  ];
   const block = await deps.writeStdout(`${lines.join('\n')}\n`);
   if (!block.ok) return block;
   const answer = await deps.prompt(printable(`Record the answer ${option} for ${id}? [y/N] `));
@@ -169,9 +185,9 @@ export const runDecide = async (deps: Deps, options: DecideOptions, registry: Re
   if (!ACCEPT_ANSWER.test(answer.value.trim())) {
     return usageError(
       'nothing is recorded: the answer was not yes',
-      preview.value.length === 0
-        ? `Run "${commandText(`${commands.decide} ${id} ${option}`)}" again to record the answer.`
-        : `If the ${roles.worker} stays, record that result with "${freeAnswerLine(id, requestWords.freeKept.key, home)}".`,
+      preview.kind === 'done'
+        ? freeDeclineHint(id, home)
+        : `Run "${commandText(`${commands.decide} ${id} ${option}`)}" again to record the answer.`,
     );
   }
   const at = orphanAt.value ?? deps.now().toISOString();

@@ -491,26 +491,58 @@ describe('decide: worker free requests', () => {
     expect(JSON.parse(repo.textOf(fileNames.decisionLog) ?? '')).toMatchObject({ rows: [{ by: 'owner', decision: 'done' }] });
   });
 
-  it('quotes the resolved board home on each command line and uses no stored command text', async () => {
+  it('shows the kept option without free commands or instructions before the prompt', async () => {
+    const repo = await nodeOf({ waiting: waitingOf(freeEntry) });
+    const terminal = atTerminal(repo, () => {
+      const lines = shownOf(repo);
+      expect(lines).toContain('>   kept (chosen): The worker stays.');
+      expect(lines.filter((line) => /^factory dismiss|Run the dry run first\.|run the second command/.test(line))).toEqual([]);
+      return ok('y');
+    });
+
+    valueOf(await decide(terminal.deps, { words: ['D-1', 'kept'] }));
+
+    expect(terminal.asked).toEqual(['Record the answer kept for D-1? [y/N] ']);
+    expect(JSON.parse(repo.textOf(fileNames.decisionLog) ?? '')).toMatchObject({
+      rows: [{ by: 'owner', decision: 'kept', request: textOf(freeEntry) }],
+    });
+  });
+
+  it('quotes the resolved board home in the free commands and both answers after a no to done', async () => {
     const repo = await nodeOf();
     const folder = "owner's home";
     const home = join(HOME, folder);
     const stored = 'factory dismiss beta --home /other --yes';
     const fields = (freeInput.fields ?? []).map((field) => field.label === 'Project' ? { ...field, text: stored } : field);
     await seedBoardAt(repo, home, { ...freeEntry, fields });
+    const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo, () => ok('n'));
 
-    const result = await decide(terminal.deps, { ...FREE_ANSWER, home: folder });
+    const error = errorOf(await decide(terminal.deps, { ...FREE_ANSWER, home: folder }));
 
     expect(terminal.asked).toHaveLength(1);
-    expect(exitOf(result)).toBe(2);
-    expect(errorOf(result).hint).toContain(`factory decide D-1 kept --home '${HOME}/owner'\\''s home'`);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(repo.deps.files).toEqual(before);
+    expect(repo.commits).toEqual([]);
+    expect(error.hint).toContain(`If the worker is free, record that result with "factory decide D-1 done --home '${HOME}/owner'\\''s home'".`);
+    expect(error.hint).toContain(`If the worker stays, record that result with "factory decide D-1 kept --home '${HOME}/owner'\\''s home'".`);
     expect(shownOf(repo).filter((line) => line.startsWith('factory dismiss'))).toEqual([
       `factory dismiss alpha --home '${HOME}/owner'\\''s home'`,
       `factory dismiss alpha --home '${HOME}/owner'\\''s home' --yes`,
     ]);
   });
 
+  it('gives only the same answer after a no to kept', async () => {
+    const repo = await nodeOf({ waiting: waitingOf(freeEntry) });
+    const terminal = atTerminal(repo, () => ok('n'));
+
+    const error = errorOf(await decide(terminal.deps, { words: ['D-1', 'kept'] }));
+
+    expect(error.hint).toBe('Run "factory decide D-1 kept" again to record the answer.');
+  });
+});
+
+describe.each(['done', 'kept'])('decide: checks on worker free requests for %s', (option) => {
   it.each([
     ['a worker id that is not a slug', { fields: [{ label: 'Worker to free', text: 'alpha beta' }] }],
     ['no worker field', { fields: [] }],
@@ -526,7 +558,7 @@ describe('decide: worker free requests', () => {
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo);
 
-    const result = await decide(terminal.deps, FREE_ANSWER);
+    const result = await decide(terminal.deps, { words: ['D-1', option] });
 
     expect(result.ok).toBe(false);
     expect(exitOf(result)).toBe(1);
@@ -545,7 +577,7 @@ describe('decide: worker free requests', () => {
     const before = new Map(repo.deps.files);
     const terminal = atTerminal(repo);
 
-    const result = await decide(terminal.deps, { ...FREE_ANSWER, home });
+    const result = await decide(terminal.deps, { words: ['D-1', option], home });
 
     expect(result.ok).toBe(false);
     expect(exitOf(result)).toBe(1);

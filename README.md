@@ -609,7 +609,9 @@ As the owner, open the request with `factory decide D-n done --home DIR` in your
 factory dismiss alpha --home DIR --yes
 ```
 
-The owner run does not check the closed item or the unassign mark again. It also does not accept a recorded merge head as proof that the branch is pushed. If the worker is free, answer `y` at the prompt. `decide` removes the request from `waiting.json` and records the owner answer. `--yes` alone does not close the request. If the worker stays, answer `n`. Then use `factory decide D-n kept --home DIR` to record that result.
+The owner run does not check the closed item or the unassign mark again. It also does not accept a recorded merge head as proof that the branch is pushed. If the worker is free, answer `y` at the prompt. `decide` removes the request from `waiting.json` and records the owner answer. `--yes` alone does not close the request.
+
+If the worker stays, answer `n`. A no answer records nothing and shows both `decide` commands with the factory folder. If the worker is free, run `factory decide D-n done --home DIR` again. If the worker stays, run `factory decide D-n kept --home DIR`. Both answers check the request form and factory folder. Only `done` shows the steps and commands to free the worker.
 
 ### Stop a worker
 
