@@ -23,6 +23,7 @@ import {
 } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { runDoctor, runInit, runStart } from '../helpers/package-registry.js';
+import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
 import { captureSink } from '../helpers/sink.js';
@@ -30,14 +31,7 @@ import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const ROOT = '/w/recv';
 const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
-const OWN_SETTINGS_WITH_DENY = { ...ownSettingsEntries, permissions: { deny: [
-  'Edit(//w/recv/factory.yaml)',
-  'Edit(//w/recv/factory.local.yaml)',
-  'Edit(//state/factory/owner-records.json)',
-  'Edit(//state/factory/owner-decisions.json)',
-  'Edit(//state/factory/guard-records.json)',
-  'Edit(//w/recv/coordinator/.claude/settings.local.json)',
-] } };
+const OWN_SETTINGS_WITH_DENY = ownSettingsWithRules(ROOT, `${ROOT}/coordinator`);
 const INDEX = '/state/factory/homes.json';
 const ACCEPTANCES = '/state/factory/setup-acceptances.json';
 const RECORDS = '/state/factory/owner-records.json';

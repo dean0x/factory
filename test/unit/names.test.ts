@@ -1248,8 +1248,8 @@ describe('the writers of the approval record and of the setup acceptance', () =>
     expect(source).not.toMatch(/\bsetupAcceptance\b|\bfiles\.setupAcceptances\b/);
   });
 
-  it('has the setup acceptance store file in the setup acceptance writer only', () => {
-    expect(rel(withText(/\bfiles\.setupAcceptances\b/))).toEqual(['core/setup-acceptance.ts']);
+  it('limits the setup acceptance store name to its writer and own file rules', () => {
+    expect(rel(withText(/\bfiles\.setupAcceptances\b/))).toEqual(['core/claude-settings.ts', 'core/setup-acceptance.ts']);
   });
 
   it('lets no module but the code of init pass the limits of init with yes to the setup acceptance writer', () => {

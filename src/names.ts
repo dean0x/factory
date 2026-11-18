@@ -2393,6 +2393,7 @@ export const guardConfirmWords = {
   argumentsError: `${commandText(commandLines.guardConfirm)} takes no arguments or ${flagText(flags.all)} flag.`,
   prefixLabel: 'Owner prefix:',
   differs: 'The owner prefix differs from its saved record.',
+  checkIncomplete: 'The owner prefix check did not complete. Nothing changed.',
   question: 'Confirm this owner prefix? [y/N] ',
   confirmed: 'Recorded the owner prefix for this folder.',
 } as const;

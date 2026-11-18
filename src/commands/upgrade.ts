@@ -39,6 +39,7 @@ import {
   dirs,
   flags,
   flagText,
+  guardConfirmWords,
   guardDoctorWords,
   guardKeys,
   homeIndex,
@@ -355,7 +356,7 @@ export const runUpgrade = async (
   );
   if (!blockSet.ok) return blockSet;
   // The same guard read supplies the render and the gate, before acceptance writes or mode changes.
-  if (prefix.result === null) return failure('The owner prefix check did not complete. Nothing changed.');
+  if (prefix.result === null) return failure(guardConfirmWords.checkIncomplete);
   if (!prefix.result.ok) return prefix.result;
   const setup = await setupPlan.value.accept();
   if (!setup.ok) return setup;

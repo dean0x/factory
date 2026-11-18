@@ -24,7 +24,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { runWorker } from '../helpers/package-registry.js';
-import { SETUP_WORKER, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
+import { SETUP_WORKER, ownSettingsWithRules, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
@@ -46,15 +46,8 @@ const INBOX = '/w/node/.factory/workers/alpha/inbox';
 const BRANCH = 'worker/alpha';
 const COORDINATOR_SETTINGS = '/w/node/coordinator/.claude/settings.local.json';
 const OWN_SETTINGS = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
-const OWN_DENY_RULES = [
-  'Edit(//w/node/factory.yaml)',
-  'Edit(//w/node/factory.local.yaml)',
-  'Edit(//state/factory/owner-records.json)',
-  'Edit(//state/factory/owner-decisions.json)',
-  'Edit(//state/factory/guard-records.json)',
-  'Edit(//w/node/work-copies/web/alpha/.claude/settings.local.json)',
-];
-const WORK_SETTINGS = `${JSON.stringify({ ...ownSettingsEntries, permissions: { deny: OWN_DENY_RULES } }, null, 2)}\n`;
+const OWN_DENY_RULES = ownSettingsWithRules(HOME, COPY).permissions.deny;
+const WORK_SETTINGS = `${JSON.stringify(ownSettingsWithRules(HOME, COPY), null, 2)}\n`;
 const TEMPLATE = '# exclude patterns for git\n*.log\n';
 const FIRST_NEW_PANE = '%3';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
@@ -381,7 +374,7 @@ describe('worker new: the work, in order', () => {
     expect(indexOf(made, 'tmux set-option')).toBeGreaterThan(order[4] ?? 0);
   });
 
-  it.each(['own', 'received'] as const)('writes the six own Edit rules for a new work copy in a %s folder', async (origin) => {
+  it.each(['own', 'received'] as const)('writes the seven own Edit rules for a new work copy in a %s folder', async (origin) => {
     const made = make({ origin });
     await succeeded(made);
     expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? '')).toEqual({ ...ownSettingsEntries, permissions: { deny: OWN_DENY_RULES } });

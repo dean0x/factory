@@ -35,6 +35,7 @@ import {
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
+import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -1021,14 +1022,7 @@ describe('start:the guard summary', () => {
 describe('start:the hook settings of the coordinator', () => {
   const noFile = { hookSettings: false } as const;
   const WRITE_CALLS = ['writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'mkdir', 'chmod', 'copyTree', 'removeEmptyDir'];
-  const ownWithDeny = { ...ownSettingsEntries, permissions: { deny: [
-    'Edit(//w/node/factory.yaml)',
-    'Edit(//w/node/factory.local.yaml)',
-    'Edit(//state/factory/owner-records.json)',
-    'Edit(//state/factory/owner-decisions.json)',
-    'Edit(//state/factory/guard-records.json)',
-    'Edit(//w/node/coordinator/.claude/settings.local.json)',
-  ] } };
+  const ownWithDeny = ownSettingsWithRules(HOME, `${HOME}/coordinator`);
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(SETTINGS_FILE) ?? 'null');
   const launched = (tmux: TmuxLog): boolean => tmux.commands().some((command) => command.startsWith('new-session'));
   /**
