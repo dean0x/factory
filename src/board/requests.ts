@@ -1,6 +1,19 @@
+import { failure, type CliResult } from '../cli/errors.js';
+import { ok } from '../core/result.js';
 import { isRecord } from '../migrate/inspect.js';
-import { decisionKeys, optionKeys, requestGroups, requestKinds } from '../names.js';
-import type { BoardRequest, RequestGroup, RequestKind } from './contract.js';
+import {
+  approvalLinkLabels,
+  boardTextLimits,
+  decisionKeys,
+  decisionLogKeys,
+  optionKeys,
+  requestFieldKeys,
+  requestGroups,
+  requestHash,
+  requestKinds,
+} from '../names.js';
+import type { BoardRequest, RequestGroup, RequestKind, RequestLink } from './contract.js';
+import { checkItemId } from './edit.js';
 import type { WaitingDoc, WaitingItem } from './files.js';
 import { storedTimeOf } from './stored-time.js';
 
@@ -53,3 +66,80 @@ export const requestsOf = (waiting: WaitingDoc): readonly BoardRequest[] =>
     kind: kindOf(item),
     question: questionOf(item),
   }));
+
+/** The recipe supplies its approval point ids and its reference and head parsers. */
+export interface RequestLinkRules {
+  readonly points: readonly string[];
+  readonly parseRef: (text: string) => CliResult<string>;
+  readonly parseHead: (text: string) => CliResult<string>;
+}
+
+const LINK_PARTS = ['point', 'item', 'ref', 'head'] as const;
+const LOG_LINK_KEYS = [decisionLogKeys.point, decisionLogKeys.boardItem, decisionLogKeys.ref, decisionLogKeys.head];
+
+type LinkParts = Readonly<Record<keyof RequestLink, unknown>>;
+
+/** Stored faults are failures, never usage errors. No stored value supplies the error text. */
+const linkOfParts = (parts: LinkParts, rules: RequestLinkRules): CliResult<RequestLink> => {
+  if (typeof parts.point !== 'string' || !rules.points.includes(parts.point)) return failure('the request link has an invalid approval point');
+  if (typeof parts.item !== 'string' || !checkItemId(parts.item).ok) return failure('the request link has an invalid board item');
+  if (typeof parts.ref !== 'string') return failure('the request link has no reference text');
+  const ref = rules.parseRef(parts.ref);
+  if (!ref.ok) return failure('the request link has an invalid reference');
+  if (typeof parts.head !== 'string') return failure('the request link has no head text');
+  const head = rules.parseHead(parts.head);
+  if (!head.ok) return failure('the request link has an invalid head');
+  return ok({ point: parts.point, item: parts.item, ref: ref.value, head: head.value });
+};
+
+/** No board item label means no link. Once present, every link label must occur once with a valid value. */
+export const linkOfFields = (fields: unknown, rules: RequestLinkRules): CliResult<RequestLink | null> => {
+  if (fields === undefined || fields === null) return ok(null);
+  if (!Array.isArray(fields) || fields.length > boardTextLimits.maxRequestFields) {
+    return failure('the request link fields are not a bounded list');
+  }
+  const list: readonly unknown[] = fields;
+  if (!list.some((field) => isRecord(field) && field[requestFieldKeys.label] === approvalLinkLabels.item)) return ok(null);
+  const parts: Record<keyof RequestLink, unknown> = { point: undefined, item: undefined, ref: undefined, head: undefined };
+  const seen = new Set<keyof RequestLink>();
+  for (const field of list) {
+    if (!isRecord(field)) continue;
+    const part = LINK_PARTS.find((candidate) => field[requestFieldKeys.label] === approvalLinkLabels[candidate]);
+    if (part === undefined) continue;
+    if (seen.has(part)) return failure('the request link has a duplicate label');
+    seen.add(part);
+    parts[part] = field[requestFieldKeys.text];
+  }
+  return linkOfParts(parts, rules);
+};
+
+/** Old rows have no link keys. Any partial link is a fault, not an old row. The row remains a display copy. */
+export const linkOfRow = (row: Readonly<Record<string, unknown>>, rules: RequestLinkRules): CliResult<RequestLink | null> => {
+  if (!LOG_LINK_KEYS.some((key) => Object.hasOwn(row, key))) return ok(null);
+  if (!LOG_LINK_KEYS.every((key) => Object.hasOwn(row, key))) return failure('the decision log row has a partial request link');
+  return linkOfParts({
+    point: row[decisionLogKeys.point],
+    item: row[decisionLogKeys.boardItem],
+    ref: row[decisionLogKeys.ref],
+    head: row[decisionLogKeys.head],
+  }, rules);
+};
+
+/** Read only the request inside the hash wrapper. Log fields outside this text cannot supply a link for an owner record. */
+export const linkOfAnswered = (requestText: string, rules: RequestLinkRules): CliResult<RequestLink | null> => {
+  let wrapper: unknown;
+  try {
+    wrapper = JSON.parse(requestText);
+  } catch {
+    return failure('the answered request text is not JSON');
+  }
+  if (
+    !isRecord(wrapper) || Object.keys(wrapper).length !== Object.keys(requestHash.keys).length ||
+    wrapper[requestHash.keys.tag] !== requestHash.tag || wrapper[requestHash.keys.version] !== requestHash.version
+  ) {
+    return failure('the answered request text has an invalid hash wrapper');
+  }
+  const request = wrapper[requestHash.keys.request];
+  if (!isRecord(request)) return failure('the answered request text has no request object');
+  return linkOfFields(request[decisionKeys.fields], rules);
+};

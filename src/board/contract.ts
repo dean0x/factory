@@ -103,6 +103,14 @@ export interface RequestField {
   readonly text: string;
 }
 
+/** A request link binds an approval point to one board item, reference and head. It grants no owner authority. */
+export interface RequestLink {
+  readonly point: string;
+  readonly item: string;
+  readonly ref: string;
+  readonly head: string;
+}
+
 /** A request kind is display data, not authority. Every kind needs 1 to 9 options. */
 export type RequestKind = (typeof requestKinds)[keyof typeof requestKinds];
 
