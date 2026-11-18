@@ -95,7 +95,7 @@ describe('approval verdict', () => {
     const unlinked = approvalAnswer({ ...request, fields: [] });
     const { board_item, point, ref, head } = relay;
     expect(verdictOf([], [{ ...unlinked.row, board_item, point, ref, head }], ok({ record: unlinked.record }))).toMatchObject({
-      ok: false, error: { kind: 'failure', hint: expect.stringMatching(/request add.*merged head.*decide.*request close --relayed/u) },
+      ok: false, error: { kind: 'failure', hint: expect.stringMatching(/request add.*current head of the reference.*decide.*request close --relayed/u) },
     });
   });
 

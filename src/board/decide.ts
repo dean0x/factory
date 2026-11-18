@@ -441,7 +441,7 @@ interface ApprovalCheck {
   readonly head: string | null;
 }
 
-const ADD_APPROVAL = `Add a linked ${requestWords.request} with "${commandText(commandLines.requestAdd)}" and the merged head. Answer it with "${commandText(commands.decide)}", or relay a new go with "${commandText(commandLines.requestClose)} ${flagText(flags.relayed)}".`;
+const ADD_APPROVAL = `Add a linked ${requestWords.request} with "${commandText(commandLines.requestAdd)}" and the current head of the reference. Answer it with "${commandText(commands.decide)}", or relay a new go with "${commandText(commandLines.requestClose)} ${flagText(flags.relayed)}".`;
 
 /** Only a settled go for this link permits a record in owner mode. */
 export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }: ApprovalCheck): CliResult<void> => {
