@@ -599,7 +599,11 @@ Then the pane ends (`kill -TERM`, the way of `worker stop`), the work copy is re
 
 **Ask the owner to free a worker.** If the permission system denies the closed free, do not repeat it. From the coordinator pane, run `dismiss ID --closed --ask-owner` once. If that run fails or is denied, stop and tell the owner. If it succeeds, give the owner the request ID. The coordinator does not run the commands in the request.
 
-The request form checks that the worker meets the closed free rules. It opens a `command` request with group `now`. The request has the title `Free the worker ID` and six fields: `Worker to free`, `Project`, `Closed items`, `Pushed head`, `Checks passed` and `Checked at`. The request has no command or file paths. The run does not end the pane, remove the work copy or write a decision row. A repeat checks the worker again. It reuses an open request only if the form is valid and the project and closed items still match. If the request fails either check, the command exits with code 1 and names the request. Two runs at the same time can open two requests.
+The request form checks that the worker meets the closed free rules. It opens a `command` request with group `now`. The request has the title `Free the worker ID` and six fields: `Worker to free`, `Project`, `Closed items`, `Pushed head`, `Checks passed` and `Checked at`. The request has no command or file paths. The run does not end the pane, remove the work copy or write a decision row.
+
+A repeat checks the worker again. It reuses a request only if the form is valid and the project and closed items still match. After the fetch, it reads the board again to check that the same request is still open. The reuse output shows `Pushed head` and `Checked at` from the original check. It also shows the head that this run checked. A run that reuses a request does not change it.
+
+If an open request fails the form or proof check, the command exits with code 1 and names it. The owner can close it. Two runs at the same time can open two requests.
 
 Use one worker ID and `--closed`. Do not add `--yes` or `--idle`. A wrong form exits with code 2. A caller or path check keeps its usual exit code. Only a local board accepts the request form. A different board kind exits with code 4 before the fetch. A check that the worker does not meet exits with code 1 and names the guard. A request over the size limit or a home with a hidden character also exits with code 1.
 

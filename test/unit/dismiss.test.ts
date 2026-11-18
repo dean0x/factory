@@ -1676,8 +1676,9 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
     const options = { words: ['alpha'], closed: true, askOwner: true };
     const stop = 'Tell the owner why, and stop. The owner can check worker state with "factory status".';
     const waitingOf = (...items: readonly unknown[]) => parseWaiting(JSON.stringify({ intro: '', groups: [], items }));
+    const originalCheckTime = '2030-01-05T10:00:00.000Z';
     const storedRequest = (project = 'web', closed = ['B-1']) => {
-      const input = freeRequestOf({ id: 'alpha', project, closed, head: OLDER, checkedAt: '2030-01-05T10:00:00.000Z' });
+      const input = freeRequestOf({ id: 'alpha', project, closed, head: OLDER, checkedAt: originalCheckTime });
       return { ...input, id: 'D-5' };
     };
     const askWorld = (waiting = waitingOf(), write: Awaited<ReturnType<RequestPort['ask']>> = ok('D-8')) => {
@@ -1724,12 +1725,53 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
       await expectKept(given);
     });
 
-    it('reuses an open request with the same project and closed items after a fresh fetch', async () => {
+    it.each([
+      { name: 'opens a new request', matching: [], request: 'D-8', reused: false, writeCount: 1 },
+      { name: 'reuses the last request', matching: [storedRequest()], request: 'D-5', reused: true, writeCount: 0 },
+    ])('$name after it skips unrelated requests', async ({ matching, request, reused, writeCount }) => {
+      const given = await world();
+      const otherWorker = freeRequestOf({ id: 'beta', project: 'web', closed: ['B-2'], head: OLDER, checkedAt: originalCheckTime });
+      const plain = { title: 'Pick a plan', question: 'Use plan A?', options: [{ key: 'a', text: 'Yes' }] };
+      const waiting = waitingOf({ ...otherWorker, id: 'D-2' }, { ...plain, id: 'D-3' }, { ...plain, id: 'D-4', extra: true }, ...matching);
+      const { port, writes } = askWorld(waiting);
+      expect(await runAsk(given, port)).toMatchObject({ ok: true, value: { json: { request, reused } } });
+      expect(writes).toHaveLength(writeCount);
+      if (!reused) expect(writes[0]?.title).toBe('Free the worker alpha');
+      await expectKept(given);
+    });
+
+    it('reports the original check and the head from the fresh fetch when it reuses a request', async () => {
       const given = await world();
       const { port, writes } = askWorld(waitingOf(storedRequest()));
       const result = await runAsk(given, port);
       expect(result).toMatchObject({ ok: true, value: { json: { request: 'D-5', reused: true } } });
+      const text = result.ok ? textOf(result.value) : '';
+      expect(text).toContain(`Original check in D-5:\nPushed head: ${OLDER}\nChecked at: ${originalCheckTime}`);
+      expect(text).toContain(`Head checked on this run: ${HEAD}`);
       expect(given.made.git.commands().filter((command) => command.startsWith('fetch '))).toHaveLength(1);
+      expect(writes).toEqual([]);
+      await expectKept(given);
+    });
+
+    it('opens a new request if the owner closes the old request during the fetch', async () => {
+      let waiting = waitingOf(storedRequest());
+      const given = await world({ atFetch: () => { waiting = waitingOf(); } });
+      const { port, writes } = askWorld();
+      const result = await runAsk(given, { ...port, waiting: async () => waiting });
+      expect(result).toMatchObject({ ok: true, value: { json: { request: 'D-8', reused: false } } });
+      expect(writes).toEqual([freeRequestOf({ id: 'alpha', project: 'web', closed: ['B-1'], head: HEAD, checkedAt: given.made.deps.now().toISOString() })]);
+      await expectKept(given);
+    });
+
+    it.each([
+      { cause: 'the request no longer matches the closed items', next: waitingOf(storedRequest('web', ['B-2'])), message: 'Close D-5' },
+      { cause: 'the request board read fails', next: failure('the request file is missing'), message: 'cannot read the board: the request file is missing' },
+    ])('stops after the fetch if $cause', async ({ next, message }) => {
+      let waiting = waitingOf(storedRequest());
+      const given = await world({ atFetch: () => { waiting = next; } });
+      const { port, writes } = askWorld();
+      const result = await runAsk(given, { ...port, waiting: async () => waiting });
+      expectRefusal(result, 1, message);
       expect(writes).toEqual([]);
       await expectKept(given);
     });
@@ -1755,13 +1797,13 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
     });
 
     it.each([
-      { extra: true },
-      { options: [{ key: 'done', text: 'The worker is free.' }] },
-      { question: 'Stored question' },
-    ])('refuses a malformed free request before the fetch: %j', async (change) => {
+      { change: { extra: true }, message: 'D-5' },
+      { change: { options: [{ key: 'done', text: 'The worker is free.' }] }, message: 'The owner can close D-5.' },
+      { change: { question: 'Stored question' }, message: 'The owner can close D-5.' },
+    ])('refuses a malformed free request before the fetch: $change', async ({ change, message }) => {
       const given = await world();
       const { port, writes } = askWorld(waitingOf({ ...storedRequest(), ...change }));
-      expectRefusal(await runAsk(given, port), 1, 'D-5');
+      expectRefusal(await runAsk(given, port), 1, message);
       expect(given.made.git.commands()).toEqual([]);
       expect(writes).toEqual([]);
       await expectKept(given);

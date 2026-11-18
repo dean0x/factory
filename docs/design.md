@@ -1220,7 +1220,9 @@ The form checks the caller, the closed item, the unassign mark, the worker state
 
 Before preview or reuse, the command checks that the question, options and six field labels match the form. A match does not prove the facts in the fields.
 
-If an open request for the worker exists, the form reuses it only after the checks pass again. The project and the full list of closed item IDs must match. If the list exceeds the field limit, the command stops before the fetch. If they do not match, the command names the open request and exits with code 1. Two runs at the same time can open two requests because the repeat check runs outside the state lock.
+The form checks open requests before the fetch. The project and the full list of closed item IDs must match. If the list exceeds the field limit, the command stops before the fetch. If the form is not valid or the proof does not match, the command names the request and exits with code 1. The owner can close that request.
+
+After the fetch, the form reads the board again before it reports reuse. It reuses the same request only if it still meets the checks. If the owner closed it during the fetch, the form can open a new request. The reuse output shows the original `Pushed head` and `Checked at` apart from the head that this run checked. The form does not change the reused request. Two runs at the same time can open two requests because the repeat check runs outside the state lock.
 
 The owner verifies the board and runs the dry run before the free. The owner free does not check the closed item or the unassign mark again. A head that the board records after a squash merge can pass the request checks but fail the owner run. If the worker stays, the owner answers `kept`. Only `done` shows commands to free the worker.
 

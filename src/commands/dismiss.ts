@@ -1,5 +1,5 @@
 import type { DecisionLogInput } from '../board/contract.js';
-import { strictRequestOf } from '../board/decide.js';
+import { strictRequestOf, type DecideRequest } from '../board/decide.js';
 import { checkDecision } from '../board/edit.js';
 import type { WaitingDoc } from '../board/files.js';
 import { closedItemsText, freeAnswerLine, freeRequestOf, freeTitleOf, freeWorkerOf, homeIssue, isReservedFreeForm, namedItems } from '../board/free-request.js';
@@ -420,9 +420,10 @@ const openFreeOf = (
   worker: string,
   project: string,
   closed: readonly string[],
-): CliResult<string | null> => {
+  reuseId?: string,
+): CliResult<DecideRequest | null> => {
   const closedItems = closedItemsText(closed);
-  let match: string | null = null;
+  let match: DecideRequest | null = null;
   for (const item of waiting.items) {
     const { id, record } = item;
     const parsed = strictRequestOf({ ...waiting, items: [item] }, id);
@@ -433,29 +434,45 @@ const openFreeOf = (
     }
     const request = parsed.value;
     const target = freeWorkerOf(request);
-    if (!target.ok) return failure(`cannot use ${id}: ${target.error.message}`, STOP);
+    if (!target.ok) return failure(`cannot use ${id}: ${target.error.message}. The ${roles.owner} can close ${id}.`, STOP);
     if (target.value !== worker) continue;
     const fields = request.fields ?? [];
     const fits =
       fields.find((field) => field.label === requestWords.freeProjectLabel)?.text === project &&
       fields.find((field) => field.label === requestWords.freeClosedItemsLabel)?.text === closedItems;
     if (!fits) return failure(`Open ${requestWords.request} ${id} does not match the current proof. Close ${id}.`, STOP);
-    match ??= id;
+    if (reuseId === undefined || id === reuseId) match ??= request;
   }
   return ok(match);
 };
 
-const askOutput = (id: string, request: string, home: string, reused: boolean): CommandOutput => ({
-  lines: [
-    text(`${reused ? 'Reused' : 'Opened'} ${request} for ${roles.worker} ${id}. This run freed nothing.`),
-    text(`The ${roles.owner} opens the ${requestWords.request} with "${freeAnswerLine(request, requestWords.freeDone.key, home)}" in their own terminal window.`),
-    text(`Confirm only if the ${roles.worker} is free.`),
-    text(`If the ${roles.worker} stays, decline the prompt. Record that result with "${freeAnswerLine(request, requestWords.freeKept.key, home)}".`),
-  ],
-  json: { schema: schemaIds.dismiss, closed: true, askOwner: true, freed: false, request, reused },
-  warnings: [],
-  failed: false,
-});
+const askOutput = (
+  id: string,
+  request: string,
+  home: string,
+  check?: { readonly originalFields: DecideRequest['fields']; readonly head: string },
+): CommandOutput => {
+  const reused = check !== undefined;
+  const lines = [text(`${reused ? 'Reused' : 'Opened'} ${request} for ${roles.worker} ${id}. This run freed nothing.`)];
+  if (reused) {
+    lines.push(text(`Original check in ${request}:`));
+    for (const { label, text: value } of check.originalFields ?? []) {
+      if (label === requestWords.freePushedHeadLabel || label === requestWords.freeCheckedAtLabel) lines.push(text(`${label}: ${value}`));
+    }
+    lines.push(text(`Head checked on this run: ${check.head}`));
+  }
+  return {
+    lines: [
+      ...lines,
+      text(`The ${roles.owner} opens the ${requestWords.request} with "${freeAnswerLine(request, requestWords.freeDone.key, home)}" in their own terminal window.`),
+      text(`Confirm only if the ${roles.worker} is free.`),
+      text(`If the ${roles.worker} stays, decline the prompt. Record that result with "${freeAnswerLine(request, requestWords.freeKept.key, home)}".`),
+    ],
+    json: { schema: schemaIds.dismiss, closed: true, askOwner: true, freed: false, request, reused },
+    warnings: [],
+    failed: false,
+  };
+};
 
 const stuckAsk = (reasons: readonly string[]): CommandOutput => ({
   lines: [
@@ -496,9 +513,13 @@ const dismissAskOwner = async (
     return guard === CLOSED_GUARDS.endable ? stopAsk({ ...checked.value.stop, message }) : failure(message, STOP);
   }
   const { record: { project }, work } = checked.value;
-  const waiting = await requests.waiting(deps, home);
-  if (!waiting.ok) return stopAsk({ ...waiting.error, message: `cannot read the board: ${waiting.error.message}` });
-  const old = openFreeOf(waiting.value, id, project, work.closed);
+  const readOpenFree = async (reuseId?: string): Promise<CliResult<DecideRequest | null>> => {
+    const waiting = await requests.waiting(deps, home);
+    return waiting.ok
+      ? openFreeOf(waiting.value, id, project, work.closed, reuseId)
+      : stopAsk({ ...waiting.error, message: `cannot read the board: ${waiting.error.message}` });
+  };
+  const old = await readOpenFree();
   if (!old.ok) return old;
   const issue = homeIssue(home);
   if (issue !== null) return failure(`the ${places.folder} path ${issue}`, STOP);
@@ -512,9 +533,16 @@ const dismissAskOwner = async (
     return failure(guardLine(CLOSED_GUARDS.proof, `the work copy of the ${roles.worker} ${id} has no commit`), STOP);
   }
   if (result.kind !== 'checked') return ok(stuckAsk(result.reasons));
-  if (old.value !== null) return ok(askOutput(id, old.value, home, true));
+  if (old.value !== null) {
+    const current = await readOpenFree(old.value.id);
+    if (!current.ok) return current;
+    if (current.value !== null) {
+      const { id: request, fields: originalFields } = current.value;
+      return ok(askOutput(id, request, home, { originalFields, head: result.head }));
+    }
+  }
   const asked = await requests.ask(deps, home, config, freeRequestOf({ ...facts, head: result.head }));
-  return asked.ok ? ok(askOutput(id, asked.value, home, false)) : stopAsk(asked.error);
+  return asked.ok ? ok(askOutput(id, asked.value, home)) : stopAsk(asked.error);
 };
 
 /** The decision row of a free: the worker, the closed items, the pushed head and the counts of the files that the removal deletes. */
