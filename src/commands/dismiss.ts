@@ -1,5 +1,9 @@
 import type { DecisionLogInput } from '../board/contract.js';
-import { freeTitleOf, namedItems } from '../board/free-request.js';
+import { strictRequestOf } from '../board/decide.js';
+import { checkDecision } from '../board/edit.js';
+import type { WaitingDoc } from '../board/files.js';
+import { freeLabelKey, freeRequestOf, freeTitleOf, freeWorkerOf, homeIssue, isReservedFreeForm, namedItems } from '../board/free-request.js';
+import { requireLocalKind } from '../board/local.js';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import { err, ok, type Result } from '../core/result.js';
 import { displayLine, printable, tableLines, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
@@ -14,12 +18,15 @@ import type { PaneRow } from '../launch/tmux.js';
 import {
   commands,
   commandText,
+  decisionKeys,
   dismissWords,
   flags,
   flagText,
   lastSeen,
   places,
   requestDeciders,
+  requestKinds,
+  requestWords,
   roles,
   schemaIds,
   statusWords,
@@ -48,7 +55,7 @@ import { requireRecord, type WorkerRecord } from '../workers/registry.js';
 import { readStatus } from '../workers/status-read.js';
 import type { WorkerStatus } from '../workers/status.js';
 import type { KnownWorkItem, WorkItemPort } from '../workers/work-items.js';
-import type { DecisionLogPort } from './board-open.js';
+import type { DecisionLogPort, RequestPort } from './board-open.js';
 
 export interface DismissOptions {
   readonly home: string | undefined;
@@ -60,6 +67,8 @@ export interface DismissOptions {
   readonly yes: boolean;
   /** True for `--closed`: the coordinator frees a finished worker in its session. It takes no `--yes` and no `--idle`. */
   readonly closed: boolean;
+  /** Ask the owner to free a finished worker. This form does not free the worker. */
+  readonly askOwner: boolean;
 }
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
@@ -72,6 +81,8 @@ const usage = (what: string): CliResult<never> =>
 
 /** The words of the command line: one id, or `--idle` with no id and no yes flag. `--closed` takes one id and no other mode flag. */
 const checkWords = (options: DismissOptions): CliResult<void> => {
+  if (options.askOwner && !options.closed) return usage(`The owner request requires the form ${flagText(flags.closed)} ${flagText(flags.askOwner)}`);
+  if (options.askOwner && (options.idle || options.yes)) return usage('The owner request form takes no other mode flag');
   if (options.closed && (options.idle || options.yes)) {
     return usage(`${flagText(flags.closed)} takes no ${flagText(options.idle ? flags.idle : flags.yes)}: it is a mode of its own`);
   }
@@ -295,6 +306,18 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
 /** The command of the closed path for a worker: `dismiss ID --closed`. */
 const closedLine = (id: string): string => `${dismissLine(id)} ${flagText(flags.closed)}`;
 
+const againOf = (id: string, askOwner: boolean): string =>
+  askOwner ? `${closedLine(id)} ${flagText(flags.askOwner)}` : closedLine(id);
+
+const STOP = `Tell the ${roles.owner} why, and stop.`;
+
+const CLOSED_GUARDS = {
+  endable: 'dismiss-endable',
+  proof: 'dismiss-closed-proof',
+  unknown: 'dismiss-work-item-unknown',
+  pushed: 'dismiss-pushed',
+} as const;
+
 type ClosedWorkError = { readonly kind: 'read' | 'not-met'; readonly reason: string };
 
 /**
@@ -333,8 +356,8 @@ const refuseClosed = (reason: string, id: string): CliResult<never> =>
 
 type ClosedChecks =
   | { readonly kind: 'checked'; readonly record: WorkerRecord; readonly facts: Facts; readonly entry: WorkerStatus; readonly work: KnownWorkItem }
-  | { readonly kind: 'guard-not-met'; readonly guard: 'dismiss-endable'; readonly reason: string; readonly stop: CliError }
-  | { readonly kind: 'guard-not-met'; readonly guard: 'dismiss-closed-proof' | 'dismiss-work-item-unknown'; readonly reason: string };
+  | { readonly kind: 'guard-not-met'; readonly guard: typeof CLOSED_GUARDS.endable; readonly reason: string; readonly stop: CliError }
+  | { readonly kind: 'guard-not-met'; readonly guard: typeof CLOSED_GUARDS.proof | typeof CLOSED_GUARDS.unknown; readonly reason: string };
 
 /** Check the caller, the worker and the board before the git checks. */
 const closedChecks = async (
@@ -355,11 +378,11 @@ const closedChecks = async (
   const entry = facts.value.entries.find((candidate) => candidate.id === id);
   if (entry === undefined) return failure(`cannot read the state of the ${roles.worker} ${id}`, `Run "${commandText(remedy)}" again.`);
   const endable = requireEndable(entry, remedy);
-  if (!endable.ok) return ok({ kind: 'guard-not-met', guard: 'dismiss-endable', reason: endable.error.message, stop: endable.error });
+  if (!endable.ok) return ok({ kind: 'guard-not-met', guard: CLOSED_GUARDS.endable, reason: endable.error.message, stop: endable.error });
   const work = await closedWorkOf(deps, workItems, home, id);
   if (!work.ok) {
     const { kind, reason } = work.error;
-    const guard = kind === 'read' ? 'dismiss-work-item-unknown' : 'dismiss-closed-proof';
+    const guard = kind === 'read' ? CLOSED_GUARDS.unknown : CLOSED_GUARDS.proof;
     return ok({ kind: 'guard-not-met', guard, reason });
   }
   return ok({ kind: 'checked', record: record.value, facts: facts.value, entry, work: work.value });
@@ -367,8 +390,7 @@ const closedChecks = async (
 
 type ClosedPushed =
   | { readonly kind: 'checked'; readonly plan: DismissPlan; readonly head: string }
-  | { readonly kind: 'stuck'; readonly plan: DismissPlan; readonly reasons: readonly string[] }
-  | { readonly kind: 'no-commit' };
+  | { readonly kind: 'stuck' | 'no-commit'; readonly plan: DismissPlan; readonly reasons: readonly string[] };
 
 /** Check the paths, fetch the remote refs, and judge the head and the state of the work copy. */
 const closedPushed = async (
@@ -383,8 +405,116 @@ const closedPushed = async (
   const inspected = await inspectorOf(deps, home, config, work.mergedPrHeads, remedy)({ id, project });
   if (!inspected.ok) return inspected;
   const { plan, head, reasons } = inspected.value;
-  if (reasons.length > 0) return ok({ kind: 'stuck', plan, reasons });
-  return head === null ? ok({ kind: 'no-commit' }) : ok({ kind: 'checked', plan, head });
+  if (head === null) return ok({ kind: 'no-commit', plan, reasons });
+  return reasons.length > 0 ? ok({ kind: 'stuck', plan, reasons }) : ok({ kind: 'checked', plan, head });
+};
+
+const stopAsk = (error: CliError): CliResult<never> => err({ ...error, hint: STOP });
+
+const guardLine = (guard: (typeof CLOSED_GUARDS)[keyof typeof CLOSED_GUARDS], reason: string): string =>
+  `opened no request: the guard ${guard} is not met: ${reason}`;
+
+const openFreeOf = (
+  waiting: WaitingDoc,
+  worker: string,
+  project: string,
+  closed: readonly string[],
+): CliResult<string | null> => {
+  const closedItems = namedItems(closed);
+  let match: string | null = null;
+  for (const item of waiting.items) {
+    const { id, record } = item;
+    const parsed = strictRequestOf({ ...waiting, items: [item] }, id);
+    if (!parsed.ok) {
+      const title = record[decisionKeys.title];
+      if (typeof title === 'string' && isReservedFreeForm(title, [])) return stopAsk(parsed.error);
+      continue;
+    }
+    const request = parsed.value;
+    const target = freeWorkerOf(request);
+    if (!target.ok) return failure(`cannot use ${id}: ${target.error.message}`, STOP);
+    if (target.value === null) continue;
+    if (request.kind !== requestKinds.command || freeLabelKey(request.title) !== freeLabelKey(freeTitleOf(target.value))) {
+      return failure(`cannot use ${id}: the ${roles.worker} free ${requestWords.request} has the wrong title or kind`, STOP);
+    }
+    if (target.value !== worker) continue;
+    const fields = request.fields ?? [];
+    const fits =
+      fields.find((field) => field.label === requestWords.freeProjectLabel)?.text === project &&
+      fields.find((field) => field.label === requestWords.freeClosedItemsLabel)?.text === closedItems;
+    if (!fits) return failure(`Open request ${id} does not match the current proof. Close ${id}.`, STOP);
+    match ??= id;
+  }
+  return ok(match);
+};
+
+const askOutput = (id: string, request: string, reused: boolean): CommandOutput => ({
+  lines: [
+    text(`${reused ? 'Reused' : 'Opened'} ${request} for ${roles.worker} ${id}. This run freed nothing.`),
+    text(`The ${roles.owner} sees the command in "${commandText(`${commands.decide} ${request}`)}" and runs it in a terminal window.`),
+  ],
+  json: { schema: schemaIds.dismiss, closed: true, askOwner: true, freed: false, request, reused },
+  warnings: [],
+  failed: false,
+});
+
+const dismissAskOwner = async (
+  deps: Deps,
+  options: DismissOptions,
+  registry: RecipeRegistry,
+  workItems: WorkItemPort,
+  requests: RequestPort,
+): Promise<CliResult<CommandOutput>> => {
+  const [id = ''] = options.words;
+  const again = againOf(id, true);
+  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
+  if (!located.ok) return stopAsk(located.error);
+  const { home } = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return stopAsk(loaded.error);
+  const config = loaded.value;
+  const local = requireLocalKind(config.core.tracker.kind, commands.dismiss);
+  if (!local.ok) return stopAsk(local.error);
+  const checkedAt = deps.now().toISOString();
+  const checked = await closedChecks(deps, options, workItems, home, config, again);
+  if (!checked.ok) return stopAsk(checked.error);
+  if (checked.value.kind === 'guard-not-met') {
+    const { guard, reason } = checked.value;
+    const message = guardLine(guard, reason);
+    return guard === CLOSED_GUARDS.endable ? stopAsk({ ...checked.value.stop, message }) : failure(message, STOP);
+  }
+  const { record: { project }, work } = checked.value;
+  const waiting = await requests.waiting(deps, home);
+  if (!waiting.ok) return stopAsk({ ...waiting.error, message: `cannot read the board: ${waiting.error.message}` });
+  const old = openFreeOf(waiting.value, id, project, work.closed);
+  if (!old.ok) return old;
+  const issue = homeIssue(home);
+  if (issue !== null) return failure(`the board home ${issue}`, STOP);
+  const facts = { id, project, closed: work.closed, checkedAt };
+  const cap = checkDecision(freeRequestOf({ ...facts, head: '0'.repeat(64) }));
+  if (!cap.ok) return failure(cap.error.message, STOP);
+  const pushed = await closedPushed(deps, home, config, work, id, project, { ...dismissPlanWords(id), again });
+  if (!pushed.ok) return stopAsk(pushed.error);
+  const result = pushed.value;
+  if (result.kind === 'no-commit') {
+    return failure(guardLine(CLOSED_GUARDS.proof, `the work copy of the ${roles.worker} ${id} has no commit`), STOP);
+  }
+  if (result.kind !== 'checked') {
+    return ok({
+      lines: [
+        fail(guardLine(CLOSED_GUARDS.pushed, 'the work copy is not ready')),
+        ...result.reasons.map((reason) => fail(`${dismissWords.stuck} ${reason}.`)),
+        text(STOP),
+      ],
+      json: { schema: schemaIds.dismiss, closed: true, askOwner: true, freed: false, request: null, reused: false },
+      warnings: [],
+      failed: true,
+      exitCode: 1,
+    });
+  }
+  if (old.value !== null) return ok(askOutput(id, old.value, true));
+  const asked = await requests.ask(deps, home, config, freeRequestOf({ ...facts, head: result.head }));
+  return asked.ok ? ok(askOutput(id, asked.value, false)) : stopAsk(asked.error);
 };
 
 /** The decision row of a free: the worker, the closed items, the pushed head and the counts of the files that the removal deletes. */
@@ -434,7 +564,7 @@ const dismissClosed = async (
   workItems: WorkItemPort,
 ): Promise<CliResult<CommandOutput>> => {
   const [id = ''] = options.words;
-  const again = closedLine(id);
+  const again = againOf(id, false);
   const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
   if (!located.ok) return located;
   const home = located.value.home;
@@ -444,14 +574,14 @@ const dismissClosed = async (
   const checked = await closedChecks(deps, options, workItems, home, config, again);
   if (!checked.ok) return checked;
   if (checked.value.kind === 'guard-not-met') {
-    return checked.value.guard === 'dismiss-endable' ? err(checked.value.stop) : refuseClosed(checked.value.reason, id);
+    return checked.value.guard === CLOSED_GUARDS.endable ? err(checked.value.stop) : refuseClosed(checked.value.reason, id);
   }
   const { record, facts, work } = checked.value;
   const pushed = await closedPushed(deps, home, config, work, id, record.project, dismissPlanWords(id));
   if (!pushed.ok) return pushed;
   const { warnings } = facts;
   const base = { schema: schemaIds.dismiss, home, idle: false, yes: false, closed: true };
-  if (pushed.value.kind === 'stuck') {
+  if (pushed.value.kind !== 'checked') {
     const { plan, reasons } = pushed.value;
     return ok({
       lines: stuckLines(plan, reasons, again),
@@ -461,7 +591,6 @@ const dismissClosed = async (
       exitCode: 1,
     });
   }
-  if (pushed.value.kind === 'no-commit') return failure(`the work copy of the ${roles.worker} ${id} has no commit`, `Run "${commandText(again)}" again.`);
   const { plan, head: pushedHead } = pushed.value;
   const ignored = await ignoredIn(deps, plan);
   if (!ignored.ok) return ignored;
@@ -750,9 +879,11 @@ export const runDismiss = async (
   registry: RecipeRegistry,
   decisions: DecisionLogPort,
   workItems: WorkItemPort,
+  requests: RequestPort,
 ): Promise<CliResult<CommandOutput>> => {
   const checked = checkWords(options);
   if (!checked.ok) return checked;
+  if (options.askOwner) return dismissAskOwner(deps, options, registry, workItems, requests);
   if (options.closed) return dismissClosed(deps, options, registry, decisions, workItems);
   return options.idle ? dismissIdle(deps, options, registry, workItems) : dismissOne(deps, options, registry, workItems);
 };
