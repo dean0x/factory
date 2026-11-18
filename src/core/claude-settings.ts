@@ -16,6 +16,7 @@ import {
   hookCommandOf,
   hookNames,
   hookSessions,
+  idleCompactionKeyPath,
   localFileModes,
   localSettingsFile,
   maxFileBytes,
@@ -24,6 +25,7 @@ import {
   roles,
   settingsCommandType,
   statuslineKeyPath,
+  values,
   type CommandText,
   type HookEvent,
   type HookSession,
@@ -58,6 +60,8 @@ export interface HookGroup {
 export interface OwnSettings {
   readonly hooks: Readonly<Record<string, readonly HookGroup[]>>;
   readonly statusLine: CommandEntry;
+  /** The value of `session.idle_compaction`: Claude Code compacts an idle session when it is true. */
+  readonly idleCompaction: boolean;
 }
 
 const commandEntryOf = (command: string): CommandEntry => ({ type: settingsCommandType, command });
@@ -73,29 +77,45 @@ const ownGroupOf = (event: string): HookGroup => {
 };
 
 /**
- * The exact entries of the program: one group with one own command for each event of the fixed list, and the status line
- * wrapper. A new settings file also holds the own Edit rules for its computed paths. The exact hook and status line
- * entries stay in this constant.
+ * The entries that every settings file of the program holds, whatever the idle compaction value is: one group with one own
+ * command for each event of the fixed list, and the status line wrapper.
+ * A new settings file also holds the own Edit rules for its computed paths.
  */
-export const ownSettingsEntries: OwnSettings = {
+const ownBase: Omit<OwnSettings, 'idleCompaction'> = {
   [claudeSettingKeys.hooks]: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroupOf(event)]])),
   [claudeSettingKeys.statusLine]: commandEntryOf(hookCommandOf(hookNames.statusline)),
 };
+
+/** The exact entries of the program for an idle compaction value. A new settings file holds these entries and nothing else. */
+export const ownSettingsEntriesFor = (idleCompaction: boolean): OwnSettings => ({
+  ...ownBase,
+  [claudeSettingKeys.idleCompaction]: idleCompaction,
+});
+
+/** The own entries with the default idle compaction value. */
+export const ownSettingsEntries: OwnSettings = ownSettingsEntriesFor(values.defaultIdleCompaction);
+
+/**
+ * The only shapes of a settings file that holds nothing but the own entries: the entries with the value true, with the value
+ * false, and the entries of an earlier version, which have no idle compaction key. Any other shape is a foreign file.
+ */
+const ownShapes: readonly Omit<OwnSettings, 'idleCompaction'>[] = [ownSettingsEntriesFor(false), ownSettingsEntriesFor(true), ownBase];
 
 /** The text with the white space outside the strings removed. A valid JSON text stays valid. */
 const compactJson = (text: string): string => text.replace(/("(?:[^"\\]|\\.)*")|\s+/g, '$1');
 
 /**
- * True when the text holds exactly the own entries, alone or with exactly the supplied own rules. The
- * text writes nothing that the parsed file hides. A repeated key and an escape in a
- * name give a text longer or different from the parsed file, so another parser could read another file than this one. The
- * order of the keys and the layout of the text do not count. A text that is not valid JSON is never exact.
+ * True when the text of a settings file holds exactly the entries of the program alone or with exactly the supplied own rules: the parsed file equals one
+ * of the three own shapes (the idle compaction value true, false, or no such key), and the text writes nothing that the parsed
+ * file hides. A repeated key and an escape in a name give a text longer or different from the parsed file, so another parser
+ * could read another file than this one. The order of the keys and the layout of the text do not count. A text that is not
+ * valid JSON is never exact. The check takes no config value, so a missing config can not make a foreign file pass.
  */
 export const isOwnSettingsText = (text: string, rules: readonly string[] = []): boolean => {
   const json = parseJsonText(text);
   if (!json.ok || compactJson(text) !== JSON.stringify(json.value)) return false;
-  const withRules = { ...ownSettingsEntries, permissions: { deny: rules } };
-  return isDeepStrictEqual(json.value, ownSettingsEntries) || (rules.length > 0 && isDeepStrictEqual(json.value, withRules));
+  return ownShapes.some((shape) => isDeepStrictEqual(json.value, shape) ||
+    (rules.length > 0 && isDeepStrictEqual(json.value, { ...shape, permissions: { deny: rules } })));
 };
 
 /** Compare exact own rule targets across written and real paths. Other keys and rule targets stay outside the own file. */
@@ -144,6 +164,8 @@ export interface HookSettingsRequest {
   readonly command: CommandText;
   /** The own Edit rules. With add false, absent rules need a write only when another entry changes. */
   readonly deny?: { readonly rules: readonly string[]; readonly add: boolean };
+  /** The value of `session.idle_compaction`. The file gets this value in the key `idleCompaction`. */
+  readonly idleCompaction: boolean;
 }
 
 /** The part of a request that the consent depends on: a call that never writes has no dry run. */
@@ -151,13 +173,18 @@ export type HookConsentRequest = Omit<HookSettingsRequest, 'dryRun'>;
 
 /**
  * What the call did: it found the entries in place, wrote them, or the person answered no. A dry run that finds a change to
- * make gives the text of the change and writes nothing.
+ * make gives the text of the change and writes nothing. A caller can request a no-consent outcome for an idle-only change
+ * with no terminal. `onlyIdleCompaction` is true when the change holds the idle value alone: the hooks and status line are in place.
  */
 export type HookSettingsOutcome =
   | { readonly kind: 'in-place'; readonly file: string }
   | { readonly kind: 'written'; readonly file: string }
-  | { readonly kind: 'declined'; readonly file: string }
-  | { readonly kind: 'would-write'; readonly file: string; readonly change: string };
+  | { readonly kind: 'declined'; readonly file: string; readonly onlyIdleCompaction: boolean }
+  | { readonly kind: 'no-consent'; readonly file: string; readonly onlyIdleCompaction: true }
+  | { readonly kind: 'would-write'; readonly file: string; readonly change: string; readonly onlyIdleCompaction: boolean };
+
+/** The outcome of a no to the question. */
+export type DeclinedOutcome = Extract<HookSettingsOutcome, { readonly kind: 'declined' }>;
 
 /** The most characters of an existing status line that the shown change repeats. */
 const MAX_SHOWN_CHARS = 120;
@@ -340,6 +367,8 @@ interface Change {
   readonly settings: Settings;
   /** One line for each entry that the write adds or replaces. Empty when the entries are in place. */
   readonly lines: readonly string[];
+  /** True when the only line is the one of the idle compaction value: the hooks and the status line are in place. */
+  readonly onlyIdleCompaction: boolean;
 }
 
 interface HooksChange {
@@ -407,7 +436,7 @@ export const missingDenyRules = (settings: unknown, rules: readonly string[]): r
 };
 
 /** Add only absent rules. Refuse unknown shapes so no permission value gets replaced. */
-const addDenyRules = (existing: Settings, rules: readonly string[], file: string, command: CommandText): CliResult<Change> => {
+const addDenyRules = (existing: Settings, rules: readonly string[], file: string, command: CommandText): CliResult<Omit<Change, 'onlyIdleCompaction'>> => {
   const missing = missingDenyRules(existing, rules);
   if (missing.length === 0) return ok({ settings: existing, lines: [] });
   const current = existing[claudeSettingKeys.permissions];
@@ -439,30 +468,64 @@ const statusLineLines = (current: unknown): readonly string[] => {
   ];
 };
 
+/**
+ * The line about the idle compaction value, or none when the file holds the wanted boolean. The write always sets a boolean and
+ * never removes the key. A value that is not a boolean is never shown: the line says only that it is replaced.
+ */
+const idleCompactionLines = (current: unknown, wanted: boolean): readonly string[] => {
+  if (current === wanted) return [];
+  const set = `${claudeSettingKeys.idleCompaction}: set to ${wanted} (${idleCompactionKeyPath} in ${files.config})`;
+  if (current === undefined) return [set];
+  return [typeof current === 'boolean' ? `${set}, and replace the value ${current}` : `${set}, and replace a value that is not true or false`];
+};
+
 /** The settings with the own entries added, and the lines that show the change. Every other key stays as it is. */
 const addOwnEntries = (existing: Settings, file: string, request: HookConsentRequest): CliResult<Change> => {
   const hooks = addHooks(existing[claudeSettingKeys.hooks], file, request.command);
   if (!hooks.ok) return hooks;
   const statusLine = statusLineLines(existing[claudeSettingKeys.statusLine]);
-  const lines = [...hooks.value.lines, ...statusLine];
+  const idle = idleCompactionLines(existing[claudeSettingKeys.idleCompaction], request.idleCompaction);
+  const lines = [...hooks.value.lines, ...statusLine, ...idle];
   const settings = {
     ...existing,
     ...(hooks.value.lines.length === 0 ? {} : { [claudeSettingKeys.hooks]: hooks.value.hooks }),
     ...(statusLine.length === 0 ? {} : { [claudeSettingKeys.statusLine]: ownSettingsEntries.statusLine }),
+    ...(idle.length === 0 ? {} : { [claudeSettingKeys.idleCompaction]: request.idleCompaction }),
   };
-  const rules = request.deny?.add === true || lines.length > 0 ? request.deny?.rules ?? [] : [];
+  const rules = request.deny?.add === true || hooks.value.lines.length > 0 || statusLine.length > 0 ? request.deny?.rules ?? [] : [];
   const deny = addDenyRules(settings, rules, file, request.command);
-  return deny.ok ? ok({ settings: deny.value.settings, lines: [...lines, ...deny.value.lines] }) : deny;
+  return deny.ok ? ok({
+    settings: deny.value.settings,
+    lines: [...lines, ...deny.value.lines],
+    onlyIdleCompaction: hooks.value.lines.length === 0 && statusLine.length === 0 && deny.value.lines.length === 0 && idle.length > 0,
+  }) : deny;
 };
 
 const shownChange = (file: string, lines: readonly string[]): string =>
   [`This changes the settings of Claude Code in ${file}:`, ...lines.map((line) => `  ${line}`)].join('\n');
 
 /**
- * The notice for a no to the hook settings: the effect, and the way to add them later with the command that asked. The
- * session is the kind of the session folder. A worker has its work copy already, so the way to add the settings is a new worker.
+ * The notice for a no to a change that holds only the idle compaction value. The hooks are in place, so the text says nothing
+ * of the hook. A work copy gets its value later from `upgrade`: a second `worker new` makes another worker.
  */
-export const declinedHookText = (file: string, command: CommandText, session: HookSession = hookSessions.coordinator): string => {
+const declinedIdleCompactionText = (file: string, command: CommandText, session: HookSession): string => {
+  const later =
+    session === hookSessions.workCopy ? `run "${commandText(commands.upgrade)}" and answer yes` : `run "${commandText(command)}" again and answer yes`;
+  return (
+    `The settings in ${file} stay as they are, and the hooks are in place. ` +
+    `The sessions of this folder keep the ${claudeSettingKeys.idleCompaction} value that the file holds, or the default of Claude Code when the file holds none. ` +
+    `To choose the value on purpose, set ${idleCompactionKeyPath} in ${files.config}. To write the value later, ${later}.`
+  );
+};
+
+/**
+ * The notice for a no to the settings: the effect, and the way to add them later with the command that asked. The session is the
+ * kind of the session folder. A worker has its work copy already, so the way to add the hook settings is a new worker. A change
+ * that holds only the idle compaction value has its own text.
+ */
+export const declinedHookText = (declined: DeclinedOutcome, command: CommandText, session: HookSession = hookSessions.coordinator): string => {
+  const { file } = declined;
+  if (declined.onlyIdleCompaction) return declinedIdleCompactionText(file, command, session);
   const worker = session === hookSessions.workCopy;
   const later = worker
     ? `The ${roles.worker} gets no role text, so its launch stops. To add the settings, dismiss the ${roles.worker} with "${commandText(commands.dismiss)} ID". ` +
@@ -491,7 +554,7 @@ const yesRefused = (deps: Deps, request: HookConsentRequest, fileExists: boolean
  * The remedy of a stop without consent. It never offers a flag that the next run refuses: the yes flag is offered only when
  * it would count for this session, this kind of session folder and this state of the file.
  */
-const noConsentRemedy = (deps: Deps, request: HookConsentRequest, fileExists: boolean): string => {
+export const noConsentRemedy = (deps: Deps, request: HookConsentRequest, fileExists: boolean): string => {
   const run = `Run "${commandText(request.command)}"`;
   if (yesCounts(deps, { ...request, yes: true }, fileExists)) return `${run} in a terminal window, or add ${flagText(flags.yes)}.`;
   const elsewhere = `${run} outside the ${places.session}, or in a terminal window`;
@@ -500,17 +563,38 @@ const noConsentRemedy = (deps: Deps, request: HookConsentRequest, fileExists: bo
     : `${elsewhere} and answer the question.`;
 };
 
-/** True when the person agrees. The change is shown first: on the terminal in the question, or as a notice with the yes flag. */
-const askConsent = async (deps: Deps, request: HookConsentRequest, shown: string, fileExists: boolean): Promise<CliResult<boolean>> => {
-  if (yesCounts(deps, request, fileExists)) {
-    deps.warn(shown);
-    return ok(true);
+/** The same consent rule serves the check before other writes and the settings writer. */
+const consentRoute = (deps: Deps, request: HookConsentRequest, fileExists: boolean): 'flag' | 'ask-terminal' | 'refused-yes' | 'no-terminal' => {
+  if (yesRefused(deps, request, fileExists)) return 'refused-yes';
+  if (yesCounts(deps, request, fileExists)) return 'flag';
+  return deps.stdinIsTTY && deps.stdoutIsTTY ? 'ask-terminal' : 'no-terminal';
+};
+
+/** The change is shown before consent. No terminal is distinct from a refused flag or a no to the question. */
+const askConsent = async (
+  deps: Deps,
+  request: HookConsentRequest,
+  shown: string,
+  fileExists: boolean,
+): Promise<CliResult<'accepted' | 'declined' | 'no-terminal'>> => {
+  const route = consentRoute(deps, request, fileExists);
+  switch (route) {
+    case 'flag':
+      deps.warn(shown);
+      return ok('accepted');
+    case 'refused-yes':
+      return usageError(shown, noConsentRemedy(deps, request, fileExists));
+    case 'no-terminal':
+      return ok('no-terminal');
+    case 'ask-terminal': {
+      const answer = await deps.prompt(printable(`${shown}\nWrite this change? [y/N] `));
+      return answer.ok ? ok(ACCEPT_ANSWER.test(answer.value.trim()) ? 'accepted' : 'declined') : answer;
+    }
+    default: {
+      const unreachable: never = route;
+      return unreachable;
+    }
   }
-  if (yesRefused(deps, request, fileExists) || !(deps.stdinIsTTY && deps.stdoutIsTTY)) {
-    return usageError(shown, noConsentRemedy(deps, request, fileExists));
-  }
-  const answer = await deps.prompt(printable(`${shown}\nWrite this change? [y/N] `));
-  return answer.ok ? ok(ACCEPT_ANSWER.test(answer.value.trim())) : answer;
 };
 
 /** What a call finds: the target, the text of the file, and the change that the own entries make. Nothing is written. */
@@ -559,7 +643,7 @@ const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliR
  * True when a list of an event of the fixed list holds the own command of that event, under any matcher. An event whose value is
  * not a list holds nothing and does not hide the other events.
  */
-const holdsAnyOwnCommand = (settings: Settings): boolean => {
+export const holdsAnyOwnCommand = (settings: Settings): boolean => {
   const hooks = settings[claudeSettingKeys.hooks];
   return isRecord(hooks) && hookNames.events.some((event) => (groupsOfEvent(hooks, event) ?? []).some((group) => holdsOwnCommand(group, event)));
 };
@@ -608,25 +692,34 @@ const planAfterConsent = async (deps: Deps, request: HookConsentRequest, seen: P
 };
 
 /**
- * Make sure the settings file of the session folder holds the own hooks and the own status line. The checks of the target
- * come first: a link, a real path outside the session folder or inside the user settings folder is a stop (exit 4), and a
- * file that is not a JSON object is a failure (exit 1) that leaves its bytes. Entries in place need no question and no
- * write. Else the change is shown with its target, the person consents, and the write keeps every other key. With no
- * terminal and no consent, the call writes nothing and gives a usage error (exit 2). After the consent, the call reads the
- * file again and plans once more: it writes the change that the person saw on the file as it is then, and when the file
- * changed to a text that gives another change, it writes nothing and gives a failure (exit 1). A dry run makes the same
- * checks, then returns the change with no question and no write.
+ * Make sure the settings file of the session folder holds the own hooks, the own status line and the wanted idle compaction
+ * value. The checks of the target come first: a link, a real path outside the session folder or inside the user settings
+ * folder is a stop (exit 4), and a file that is not a JSON object is a failure (exit 1) that leaves its bytes. Entries in place
+ * need no question and no write. Else the change is shown with its target, the person consents, and the write keeps every other key. With no
+ * terminal and no consent, the call writes nothing and gives a usage error (exit 2). With `noTerminalIdleChange` set to `return-outcome`,
+ * an idle-only change instead gives a no-consent outcome. A refused yes flag still stops with exit 2. After consent, the call
+ * reads the file again and plans once more. It writes only the change that the person saw and keeps other file changes.
+ * A different change stops with exit 1 and no write. A dry run returns the change with no question and no write.
  */
-export const ensureHookSettings = async (deps: Deps, request: HookSettingsRequest): Promise<CliResult<HookSettingsOutcome>> => {
+export const ensureHookSettings = async (
+  deps: Deps,
+  request: HookSettingsRequest,
+  noTerminalIdleChange: 'refuse' | 'return-outcome' = 'refuse',
+): Promise<CliResult<HookSettingsOutcome>> => {
   const planned = await planChange(deps, request);
   if (!planned.ok) return planned;
   const { target, text, change } = planned.value;
   if (change.lines.length === 0) return ok({ kind: 'in-place', file: target.file });
   const shown = shownChange(target.file, change.lines);
-  if (request.dryRun) return ok({ kind: 'would-write', file: target.file, change: shown });
+  const { onlyIdleCompaction } = change;
+  if (request.dryRun) return ok({ kind: 'would-write', file: target.file, change: shown, onlyIdleCompaction });
   const consent = await askConsent(deps, request, shown, text !== null);
   if (!consent.ok) return consent;
-  if (!consent.value) return ok({ kind: 'declined', file: target.file });
+  if (consent.value === 'no-terminal') {
+    if (onlyIdleCompaction && noTerminalIdleChange === 'return-outcome') return ok({ kind: 'no-consent', file: target.file, onlyIdleCompaction });
+    return usageError(shown, noConsentRemedy(deps, request, text !== null));
+  }
+  if (consent.value === 'declined') return ok({ kind: 'declined', file: target.file, onlyIdleCompaction });
   const current = await planAfterConsent(deps, request, planned.value);
   if (!current.ok) return current;
   const info = current.value.text === null ? ok(null) : await deps.fs.statInfo(target.file);
@@ -664,9 +757,8 @@ export const requireHookConsent = async (
   const planned = folder.value === null ? futureFilePlan(request, checkoutText) : await planChange(deps, request);
   if (!planned.ok) return planned;
   const { change, text } = planned.value;
-  const exists = text !== null;
-  const terminal = deps.stdinIsTTY && deps.stdoutIsTTY;
   if (change.lines.length === 0) return ok(undefined);
-  if (!yesRefused(deps, request, exists) && (terminal || yesCounts(deps, request, exists))) return ok(undefined);
-  return usageError(shownChange(target.file, change.lines), noConsentRemedy(deps, request, exists));
+  const route = consentRoute(deps, request, text !== null);
+  if (route === 'flag' || route === 'ask-terminal') return ok(undefined);
+  return usageError(shownChange(target.file, change.lines), noConsentRemedy(deps, request, text !== null));
 };

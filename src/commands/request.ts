@@ -5,6 +5,7 @@ import type {
   DecisionOption,
   RequestClosed,
   RequestDecider,
+  RequestField,
   RequestSettlement,
 } from '../board/contract.js';
 import { checkRequestId } from '../board/edit.js';
@@ -39,6 +40,12 @@ export interface RequestOptions {
   readonly words: readonly string[];
   readonly title: string | undefined;
   readonly question: string | undefined;
+  readonly kind: string | undefined;
+  /** The `LABEL=TEXT` words of the field flag, in order. */
+  readonly fields: readonly string[];
+  /** The `KEY=TEXT` reasons of the why flag. Each key names an option. */
+  readonly whys: readonly string[];
+  readonly docs: readonly string[];
   /** The `KEY=TEXT` words of the option flag, in order. */
   readonly options: readonly string[];
   /** The key of the option that the asker recommends. */
@@ -59,19 +66,21 @@ type Action =
   | { readonly kind: typeof requestCommands.add; readonly input: DecisionAskInput }
   | { readonly kind: typeof requestCommands.list }
   | { readonly kind: typeof requestCommands.close; readonly id: string; readonly settlement: RequestSettlement | undefined }
-  | { readonly kind: typeof requestCommands.log; readonly input: DecisionLogInput };
+  | { readonly kind: typeof requestCommands.log; readonly input: DecisionLogInput }
+  | { readonly kind: typeof requestCommands.doc; readonly id: string; readonly path: string };
 
 const SUBCOMMANDS = Object.values(requestCommands).join(', ');
 
 /**
  * The flags that each subcommand takes, besides the flags that every command takes. A flag of another subcommand is a usage error.
- * No subcommand changes a request that is open: a request is added once and closed once.
+ * Only doc adds context to an open request; it does not replace the request text.
  */
 const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
-  [requestCommands.add]: [flags.title, flags.question, flags.option, flags.recommend, flags.later],
+  [requestCommands.add]: [flags.title, flags.question, flags.option, flags.recommend, flags.later, flags.kind, flags.field, flags.why, flags.doc],
   [requestCommands.list]: [],
   [requestCommands.close]: [flags.madeBy, flags.decision, flags.relayed],
   [requestCommands.log]: [flags.title, flags.madeBy, flags.decision],
+  [requestCommands.doc]: [],
 };
 
 const needsUsage = usageFor(commands.request);
@@ -88,13 +97,28 @@ const refuseStrayFlags = (subcommand: Subcommand, options: RequestOptions): CliR
     [flags.decision, options.decision !== undefined],
     [flags.relayed, options.relayed],
     [flags.later, options.later],
+    [flags.kind, options.kind !== undefined],
+    [flags.field, options.fields.length > 0],
+    [flags.why, options.whys.length > 0],
+    [flags.doc, options.docs.length > 0],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.request} ${subcommand}`)}`);
 };
 
-/** The `KEY=TEXT` words of the option flag as the options of a decision. The option that the recommend flag names gets the mark. */
-const parseOptions = (words: readonly string[], recommend: string | undefined): CliResult<readonly DecisionOption[]> => {
+/** Split at the first equals sign, so the field text keeps any later equals signs. */
+const parseLabelled = (words: readonly string[]): CliResult<readonly RequestField[]> => {
+  const fields: RequestField[] = [];
+  for (const word of words) {
+    const at = word.indexOf(requestWords.optionSeparator);
+    if (at <= 0) return needsUsage(`${flagText(flags.field)} takes LABEL${requestWords.optionSeparator}TEXT, not ${shown(word)}`);
+    fields.push({ label: word.slice(0, at), text: word.slice(at + requestWords.optionSeparator.length) });
+  }
+  return ok(fields);
+};
+
+/** Option and why flags split at the first equals sign. A reason names one option, and recommend marks one option. */
+const parseOptions = (words: readonly string[], recommend: string | undefined, whys: readonly string[]): CliResult<readonly DecisionOption[]> => {
   const options: DecisionOption[] = [];
   for (const word of words) {
     const at = word.indexOf(requestWords.optionSeparator);
@@ -105,7 +129,21 @@ const parseOptions = (words: readonly string[], recommend: string | undefined): 
   if (recommend !== undefined && !options.some((option) => option.key === recommend)) {
     return needsUsage(`${flagText(flags.recommend)} names ${shown(recommend)}, and no ${flagText(flags.option)} has that key`);
   }
-  return ok(options);
+  const reasons = new Map<string, string>();
+  for (const word of whys) {
+    const at = word.indexOf(requestWords.optionSeparator);
+    if (at <= 0) return needsUsage(`${flagText(flags.why)} takes KEY${requestWords.optionSeparator}TEXT, not ${shown(word)}`);
+    const key = word.slice(0, at);
+    if (!options.some((option) => option.key === key)) {
+      return needsUsage(`${flagText(flags.why)} names ${shown(key)}, and no ${flagText(flags.option)} has that key`);
+    }
+    if (reasons.has(key)) return needsUsage(`${flagText(flags.why)} names ${shown(key)} twice`);
+    reasons.set(key, word.slice(at + requestWords.optionSeparator.length));
+  }
+  return ok(options.map((option) => {
+    const why = reasons.get(option.key);
+    return why === undefined ? option : { ...option, why };
+  }));
 };
 
 const DECIDERS: readonly RequestDecider[] = Object.values(requestDeciders);
@@ -159,10 +197,16 @@ const parseAction = (options: RequestOptions): CliResult<Action> => {
       if (options.options.length === 0) {
         return needsUsage(`${subcommand} needs at least one ${flagText(flags.option)} KEY${requestWords.optionSeparator}TEXT`);
       }
-      const parsed = parseOptions(options.options, options.recommend);
+      const parsed = parseOptions(options.options, options.recommend, options.whys);
       if (!parsed.ok) return parsed;
+      const fields = parseLabelled(options.fields);
+      if (!fields.ok) return fields;
       const group = options.later ? requestGroups.later : requestGroups.now;
-      return ok({ kind: subcommand, input: { title: options.title, question: options.question, options: parsed.value, group } });
+      return ok({ kind: subcommand, input: {
+        title: options.title, question: options.question, options: parsed.value, group,
+        ...(options.kind === undefined ? {} : { kind: options.kind }),
+        fields: fields.value, docs: options.docs,
+      } });
     }
     case requestCommands.list: {
       return args.length > 0 ? needsUsage(`${subcommand} takes no argument`) : ok({ kind: subcommand });
@@ -183,6 +227,11 @@ const parseAction = (options: RequestOptions): CliResult<Action> => {
       }
       const { decider, decision } = settlement.value;
       return ok({ kind: subcommand, input: { title: options.title, decider, decision } });
+    }
+    case requestCommands.doc: {
+      const [id, path, ...rest] = args;
+      if (id === undefined || path === undefined || rest.length > 0) return needsUsage(`${subcommand} takes two arguments: ID PATH`);
+      return ok({ kind: subcommand, id, path });
     }
     default: {
       const unreachable: never = subcommand;
@@ -229,17 +278,21 @@ const logAnswer = (id: string, input: DecisionLogInput): CommandOutput =>
     decider: input.decider,
   });
 
+export const requestRowsOf = (requests: readonly BoardRequest[]) => requests.map(({ id, title, options, openedAt, group, kind, question }) => ({
+  id,
+  title,
+  options,
+  [requestRowKeys.openedAt]: openedAt,
+  [requestRowKeys.group]: group,
+  [requestRowKeys.kind]: kind,
+  [requestRowKeys.question]: question,
+}));
+
 const listAnswer = (requests: readonly BoardRequest[]): CommandOutput => ({
   lines: requestView(requests),
   json: {
     schema: schemaIds.requestList,
-    requests: requests.map(({ id, title, options, openedAt, group }) => ({
-      id,
-      title,
-      options,
-      [requestRowKeys.openedAt]: openedAt,
-      [requestRowKeys.group]: group,
-    })),
+    requests: requestRowsOf(requests),
   },
   warnings: [],
   failed: false,
@@ -282,6 +335,17 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       const id = await connector.logDecision(action.input);
       return id.ok ? ok(logAnswer(id.value, action.input)) : id;
     }
+    case requestCommands.doc: {
+      const valid = checkRequestId(action.id);
+      if (!valid.ok) return valid;
+      const caller = await requireCoordinatorCaller(deps, board.home, board.config, `${commandLines.requestDoc} ${action.id} PATH`);
+      if (!caller.ok) return caller;
+      const linked = await connector.linkRequestDoc({ id: action.id, path: action.path });
+      if (!linked.ok) return linked;
+      return ok(answer(`${linked.value ? 'Linked' : 'Already linked'} ${displayLine(action.path)} to ${displayLine(action.id)}.`, {
+        schema: schemaIds.request, action: requestCommands.doc, id: action.id, path: action.path, changed: linked.value,
+      }));
+    }
     default: {
       const unreachable: never = action;
       return unreachable;
@@ -291,11 +355,12 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
 
 /**
  * `request`: add a request for the owner, list the open requests, close one with no answer or with a decision, or log a decision that
- * no request asked for. The words and the flags are checked first (exit 2), then the node is found and the connector runs the action.
- * A relayed close passes on an answer of the owner. It runs only in the pane of the coordinator, and the rule runs after the id
- * check and before the connector reads the decision files. An add, a close or a log is one state commit through the connector, and the connector refuses
- * it for a hosted tracker kind. The number of a new request or of a logged decision is one more than the highest number in the
- * waiting file, in the decision log and in the owner store, found under the lock. A request that is open can not be changed.
+ * no request asked for. The doc action adds a file path to an open request. The words and flags are checked first (exit 2).
+ * Then the node is found and the connector runs the action. A relayed close passes on an answer of the owner.
+ * Both a relayed close and a doc link run only in the pane of the coordinator, after the id check and before the connector.
+ * Each write is one state commit through the connector; a repeated doc link makes none. The connector refuses hosted tracker writes.
+ * The number of a new request or of a logged decision is one more than the highest number in the waiting file,
+ * in the decision log and in the owner store, found under the lock. Only doc adds context to an open request.
  */
 export const runRequest = async (deps: Deps, options: RequestOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);

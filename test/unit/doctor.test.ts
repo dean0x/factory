@@ -10,6 +10,7 @@ import {
   checkConfig,
   checkConfigVersion,
   checkIndex,
+  checkIdleCompaction,
   checkLessons,
   checkNodeId,
   checkInstructionFiles,
@@ -38,7 +39,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText } from '../../src/names.js';
+import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText, workerRecord } from '../../src/names.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { allOn } from '../../src/guards/effective.js';
@@ -54,7 +55,7 @@ import { createFakeDeps, exited, registerRoot, withFsWatch, type FakeDeps, type 
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { OWN_SETTINGS_TEXT, seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup, settingsFileOf } from '../helpers/role-delivery.js';
-import { checkChildren, inspectConfig, runDoctor, runInit } from '../helpers/package-registry.js';
+import { checkChildren, inspectConfig, runDoctor, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -1709,6 +1710,175 @@ describe('doctor: the tracker', () => {
   });
 });
 
+describe('doctor: idle compaction', () => {
+  const coordinator = layoutOf(HOME).coordinatorDir;
+  const copy = `${HOME}/work-copies/web/alpha`;
+  const findingOf = async (deps: FakeDeps): Promise<CheckResult | undefined> =>
+    ((await doctor(deps)).json['checks'] as CheckResult[]).find((result) => result.id === 'idle-compaction');
+  const withWorker = async (deps: FakeDeps): Promise<void> => {
+    expect((await writeWorkerRecord(deps, HOME, { id: 'alpha', project: 'web', workCopy: copy, branch: 'worker/alpha' })).ok).toBe(true);
+  };
+  const seedValue = (deps: FakeDeps, folder: string, idleCompaction: unknown): void =>
+    deps.seed(settingsFileOf(folder), JSON.stringify({ ...ownSettingsEntries, idleCompaction }));
+
+  it.each([false, true])('shows the config value %s when every own session file agrees', async (idle) => {
+    const deps = await initialized();
+    const config = sampleConfig();
+    writeConfig(deps, { ...config, core: { ...config.core, session: { ...config.core.session, idle_compaction: idle } } });
+    await withWorker(deps);
+    seedValue(deps, coordinator, idle);
+    seedValue(deps, copy, idle);
+    const before = new Map(deps.files);
+    expect(await findingOf(deps)).toEqual({ id: 'idle-compaction', level: 'ok', text: `session.idle_compaction is ${idle}` });
+    expect(deps.files).toEqual(before);
+  });
+
+  it.each([
+    ['the coordinator', coordinator, 'factory reboot'],
+    ['worker alpha', copy, 'factory restart alpha'],
+  ])('warns for another, absent or non-boolean value in %s and gives its remedy', async (name, folder, restart) => {
+    const deps = await initialized();
+    await withWorker(deps);
+    seedValue(deps, copy, false);
+    for (const value of [true, undefined, 'private-file-text' + String.fromCodePoint(0x1b, 0x200b), 0, null, {}, []]) {
+      seedValue(deps, folder, value);
+      const finding = await findingOf(deps);
+      expect(finding).toMatchObject({ id: 'idle-compaction', level: 'warn' });
+      expect(finding?.text).toContain(name);
+      expect(finding?.text).toContain(`Run "factory upgrade", then "${restart}"`);
+      expect(finding?.text).not.toContain(HOME);
+      expect(finding?.text).not.toContain('private-file-text');
+    }
+  });
+
+  it('clears the idle warning after upgrade writes the absent value with consent outside a factory session', async () => {
+    const deps = await initialized();
+    deps.seed(settingsFileOf(coordinator), JSON.stringify({ hooks: ownSettingsEntries.hooks }));
+    expect(deps.env['FACTORY_SESSION']).toBeUndefined();
+    expect(await findingOf(deps)).toMatchObject({ level: 'warn', text: expect.stringContaining('the coordinator') });
+    expect((await runUpgrade(deps, { home: HOME, dryRun: false, overwrite: [], yes: true })).ok).toBe(true);
+    expect(JSON.parse(deps.files.get(settingsFileOf(coordinator)) ?? '{}')).toMatchObject({ idleCompaction: false });
+    expect(await findingOf(deps)).toEqual({ id: 'idle-compaction', level: 'ok', text: 'session.idle_compaction is false' });
+  });
+
+  it('warns when the config is true and the session file holds false', async () => {
+    const deps = await initialized();
+    const config = sampleConfig();
+    writeConfig(deps, { ...config, core: { ...config.core, session: { ...config.core.session, idle_compaction: true } } });
+    expect(await findingOf(deps)).toMatchObject({ level: 'warn', text: expect.stringContaining('the coordinator') });
+  });
+
+  it.each([undefined, {}, { idleCompaction: true }, { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'other hook' }] }] } }])(
+    'skips a session file with no own hook (case %#)',
+    async (settings) => {
+      const deps = await initialized();
+      await withWorker(deps);
+      if (settings === undefined) deps.files.delete(settingsFileOf(copy));
+      else deps.seed(settingsFileOf(copy), JSON.stringify(settings));
+      deps.seed(settingsFileOf(coordinator), JSON.stringify({ idleCompaction: true }));
+      expect(await findingOf(deps)).toEqual({ id: 'idle-compaction', level: 'ok', text: 'session.idle_compaction is false' });
+    },
+  );
+
+  it('uses the own command under any matcher even when other events are absent', async () => {
+    const deps = await initialized();
+    deps.seed(settingsFileOf(coordinator), JSON.stringify({
+      hooks: { Notification: [{ matcher: 'other-notice', hooks: [{ type: 'command', command: 'factory hook Notification' }] }] },
+      idleCompaction: true,
+    }));
+    expect(await findingOf(deps)).toMatchObject({ level: 'warn', text: expect.stringContaining('the coordinator') });
+  });
+
+  it.each(['not json', '[]', '{"hooks": []}', '{"hooks": {"Stop": "x"}}', ' '.repeat(maxFileBytes + 1)])(
+    'lists a session file that does not parse as not read (case %#)',
+    async (text) => {
+      const deps = await initialized();
+      await withWorker(deps);
+      deps.seed(settingsFileOf(coordinator), text);
+      deps.seed(settingsFileOf(copy), text);
+      const finding = await findingOf(deps);
+      expect(finding).toMatchObject({ level: 'warn' });
+      expect(finding?.text).toContain('the coordinator: not read');
+      expect(finding?.text).toContain('worker alpha: not read');
+    },
+  );
+
+  it.each([coordinator, copy])('lists a read fault as not read without its error text (case %#)', async (folder) => {
+    const deps = await initialized();
+    await withWorker(deps);
+    seedValue(deps, copy, false);
+    const broken = { ...deps, fs: { ...deps.fs, readTextLimited: async (path: string, max: number) =>
+      path === settingsFileOf(folder) ? failure(`private-file-text at ${path}`) : deps.fs.readTextLimited(path, max) } };
+    const finding = await findingOf(broken);
+    expect(finding).toMatchObject({ level: 'warn', text: expect.stringContaining('not read') });
+    expect(finding?.text).not.toContain('private-file-text');
+    expect(finding?.text).not.toContain(HOME);
+  });
+
+  it.each([coordinator, `${coordinator}/.claude`, settingsFileOf(coordinator), copy, `${copy}/.claude`, settingsFileOf(copy)])(
+    'lists a link as not read and never reads through it (case %#)',
+    async (path) => {
+      const source = await initialized();
+      await withWorker(source);
+      seedValue(source, copy, false);
+      const deps = makeDeps({ links: { [path]: '/elsewhere/private-file-text' } });
+      for (const [file, text] of source.files) deps.seed(file, text);
+      for (const dir of source.dirs) deps.seedDir(dir);
+      const reads: string[] = [];
+      const watched = withFsWatch(deps, (method, file) => { if (method === 'readTextLimited') reads.push(file); });
+      const finding = await findingOf(watched);
+      expect(finding).toMatchObject({ level: 'warn', text: expect.stringContaining('not read') });
+      expect(finding?.text).not.toContain('/elsewhere');
+      expect(finding?.text).not.toContain(HOME);
+      expect(reads).not.toContain(settingsFileOf(path.startsWith(copy) ? copy : coordinator));
+    },
+  );
+
+  it('does not check an invalid config and reads no session settings file', async () => {
+    const deps = await initialized();
+    deps.files.set(`${HOME}/factory.yaml`, 'schema: 2\n');
+    const state = await inspectConfig(deps, HOME);
+    const reads: string[] = [];
+    const watched = withFsWatch(deps, (_method, file) => { reads.push(file); });
+    expect(await checkIdleCompaction(watched, HOME, state)).toEqual({ id: 'idle-compaction', level: 'warn', text: 'not checked: factory.yaml is not valid' });
+    expect(reads).toEqual([]);
+  });
+
+  it('fails when the worker list cannot be read', async () => {
+    const deps = await initialized({ links: { [layoutOf(HOME).workersDir]: '/elsewhere/workers' } });
+    expect(await findingOf(deps)).toMatchObject({ level: 'fail' });
+  });
+
+  it('fails when the worker list exceeds its record bound', async () => {
+    const deps = await initialized();
+    const bounded = { ...deps, fs: { ...deps.fs, list: async (path: string) => path === layoutOf(HOME).workersDir
+      ? ok(Array.from({ length: workerRecord.maxEntries + 1 }, (_, index) => `worker-${index}`)) : deps.fs.list(path) } };
+    deps.seedDir(layoutOf(HOME).workersDir);
+    expect(await findingOf(bounded)).toMatchObject({
+      level: 'fail', text: `cannot list the workers: ${layoutOf(HOME).workersDir} holds more than ${workerRecord.maxEntries} entries.`,
+    });
+  });
+
+  it('keeps file text and paths out of the check in text and JSON', async () => {
+    const deps = await initialized();
+    await withWorker(deps);
+    seedValue(deps, coordinator, 'private-file-text' + String.fromCodePoint(0x1b, 0x200b));
+    seedValue(deps, copy, true);
+    const output = await doctor(deps);
+    const finding = (output.json['checks'] as CheckResult[]).find((result) => result.id === 'idle-compaction');
+    expect(finding).toMatchObject({ level: 'warn' });
+    const line = output.lines.find((entry) => entry.text.startsWith('idle-compaction '));
+    expect(line).toBeDefined();
+    for (const text of [JSON.stringify(finding), JSON.stringify(line)]) {
+      expect(text).not.toContain(HOME);
+      expect(text).not.toContain('settings.local.json');
+      expect(text).not.toContain('private-file-text');
+      expect(text).toContain('the coordinator');
+      expect(text).toContain('worker alpha');
+    }
+  });
+});
+
 describe('doctor: the children', () => {
   const layer2With = (children: FactoryConfig['core']['children']): FactoryConfig => {
     const config = sampleConfig();
@@ -2390,6 +2560,7 @@ describe('doctor: the command', () => {
       'role-delivery',
       'roles',
       'tracker',
+      'idle-compaction',
       'children',
       'secrets',
       'root-repo',
@@ -2409,7 +2580,7 @@ describe('doctor: the command', () => {
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('31 ok, 1 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('32 ok, 1 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -2432,7 +2603,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(32);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(33);
   });
 
   it('finds the node by walking up from the current folder', async () => {
@@ -2913,6 +3084,20 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     expect(outcomes.map((outcome) => outcome.warns)).toEqual([false, true, true, true, true, true]);
   });
 
+  it.each(['not json', '[]', '{"hooks": {"Stop": "x"}}', ' '.repeat(maxFileBytes + 1)])(
+    'keeps the all-events warning and the new-worker remedy for a file that does not parse (case %#)',
+    async (text) => {
+      const deps = await initialized();
+      const workCopy = await withWorker(deps, 'alpha');
+      deps.seed(settingsFileOf(workCopy), text);
+      const result = await check(deps);
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain(`lack the hook of these events: ${Object.keys(ownSettingsEntries.hooks).join(', ')}.`);
+      expect(result.text).toContain('Run "factory dismiss alpha", then "factory worker new alpha --project web"');
+      expect(result.text).not.toContain('factory upgrade');
+    },
+  );
+
   it('warns for hook settings that are a link, reads nothing through the link, and names the link in its remedy', async () => {
     const TARGET = '/elsewhere/settings.json';
     const plain = await initialized();
@@ -2924,6 +3109,24 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
     expect(result.text).toContain('every hook event in 0 of 1 work copies');
     expect(result.text).toContain('Replace the hook settings file of alpha with a plain file');
   });
+
+  it.each([copyOf('alpha'), `${copyOf('alpha')}/.claude`])(
+    'warns for a linked folder at %s and names a plain folder in the remedy',
+    async (path) => {
+      const plain = await initialized();
+      seedOwnHooks(plain, await withWorker(plain, 'alpha'));
+      const linked = withLinks(plain, { [path]: '/elsewhere/settings' });
+      const reads: string[] = [];
+      const watched = withFsWatch(linked, (method, file) => { if (method === 'readTextLimited') reads.push(file); });
+      const result = await check(watched);
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('every hook event in 0 of 1 work copies');
+      expect(result.text).toContain('the hook settings folder of the work copy is a link');
+      expect(result.text).toContain('Replace the hook settings folder of alpha with a plain folder.');
+      expect(result.text).toContain('Run "factory upgrade", then "factory worker resume alpha".');
+      expect(reads).not.toContain(settingsFileOf(copyOf('alpha')));
+    },
+  );
 
   it('fails for a setup text that the owner did not accept, and the one remedy accepts it and runs the check again', async () => {
     const deps = await initialized();

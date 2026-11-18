@@ -98,10 +98,10 @@ const newLine = (id: string, project: string): string =>
   `${commandText(commandLines.workerNew)} ${id} ${flagText(flags.project)} ${project}`;
 
 /** The request for the consent to the hook settings of a work copy. */
-const hookRequestOf = async (deps: Deps, home: string, workCopy: string, yes: boolean): Promise<CliResult<HookConsentRequest>> => {
+const hookRequestOf = async (deps: Deps, home: string, workCopy: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<HookConsentRequest>> => {
   const deny = await ownDenyRulesOf(deps, home, workCopy);
   return deny.ok
-    ? ok({ folder: workCopy, session: hookSessions.workCopy, yes, command: commandLines.workerNew, deny: { rules: deny.value.rules, add: true } })
+    ? ok({ folder: workCopy, session: hookSessions.workCopy, yes, command: commandLines.workerNew, idleCompaction, deny: { rules: deny.value.rules, add: true } })
     : deny;
 };
 
@@ -313,7 +313,7 @@ const makeWorker = async (
   home: string,
   config: FactoryConfig,
   plan: NewWorkerPlan,
-  yes: boolean,
+  hookRequest: HookConsentRequest,
   assignment: string | null,
   guards: GuardValues,
 ): Promise<CliResult<{ readonly paneId: string; readonly proxy: string | null; readonly warnings: readonly string[] }>> => {
@@ -331,12 +331,10 @@ const makeWorker = async (
   }
   const exclude = await ensureCloneExclude(deps, clone);
   if (!exclude.ok) return { ...exclude, error: keptCopy(exclude.error, plan, home, true) };
-  const request = await hookRequestOf(deps, home, workCopy, yes);
-  if (!request.ok) return { ...request, error: keptCopy(request.error, plan, home, true) };
-  const hook = await ensureHookSettings(deps, { ...request.value, dryRun: false });
+  const hook = await ensureHookSettings(deps, { ...hookRequest, dryRun: false });
   if (!hook.ok) return { ...hook, error: keptCopy(hook.error, plan, home, true) };
   if (hook.value.kind === 'declined') {
-    deps.warn(declinedHookText(hook.value.file, commandLines.workerNew, hookSessions.workCopy));
+    deps.warn(declinedHookText(hook.value, commandLines.workerNew, hookSessions.workCopy));
   }
   for (const line of machineWarnings(await gatherMachine(deps, home, config.core.limits))) deps.warn(line);
   const launched = await launchWorker(deps, { home, config, guards, workerId: id, workCopy, retry: resumeLine(id) });
@@ -384,12 +382,12 @@ const runNew = async (
   // A role text that no session could get stops the command here, so that no work copy, no branch and no record are made for it.
   const role = await requireRoleText(deps, { home, config, guards: prepared.value.guards.values, retry: newLine(id, options.project) });
   if (!role.ok) return role;
-  const request = await hookRequestOf(deps, home, plan.value.workCopy, options.yes);
+  const request = await hookRequestOf(deps, home, plan.value.workCopy, options.yes, config.core.session.idle_compaction);
   if (!request.ok) return request;
   const consent = await requireHookConsent(deps, request.value, tracked.value.localText);
   if (!consent.ok) return consent;
 
-  const made = await makeWorker(deps, home, config, plan.value, options.yes, assignment.value, prepared.value.guards.values);
+  const made = await makeWorker(deps, home, config, plan.value, request.value, assignment.value, prepared.value.guards.values);
   if (!made.ok) return made;
   const { workCopy, branch, project } = plan.value;
   const copy = assignment.value === null ? null : assignmentFileOf(home, id);

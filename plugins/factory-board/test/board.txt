@@ -1,0 +1,27 @@
+Requests
+1 open request.
+ID   TITLE            OPTIONS
+D-1  Choose the view  a
+
+Workers
+ID     PROJECT  PANE  STATE    CONTEXT  MARK
+alpha  web      none  unknown  ?
+
+Board
+2 items in 1 track. Closed items are hidden. Use --all to show them.
+TRACK       ITEMS  STAGES
+views       1      B-1 build*: Build the board
+(no track)  1      B-3 no stage: Next item
+
+Queue
+1 row in the queue.
+NO  NAME            ITEMS  RELEASE  NOTE
+group: Next
+1   Ship the board  B-1    true     Check the view
+
+Machine
+[ok] Machine: ok (4 ok, 0 fail, 0 unknown)
+[ok] memory  62% free, at least 20% needed
+[ok] disk    300 GB free, at least 20 GB needed
+[ok] load    2.2 in the last minute, at most 8 allowed
+[ok] cpus    8

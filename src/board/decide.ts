@@ -10,6 +10,7 @@ import {
   commandLines,
   commands,
   commandText,
+  decideDocContext,
   decisionKeys,
   decisionLogKeys,
   files,
@@ -17,14 +18,16 @@ import {
   maxFileBytes,
   optionKeys,
   relayedMarker,
+  requestFieldKeys,
   requestGroups,
+  requestKinds,
   requestWords,
   roles,
   waitingKeys,
 } from '../names.js';
-import type { RequestDecider, RequestGroup } from './contract.js';
-import { isDecider, shown } from './edit.js';
-import type { DecisionRecordOption, DecisionRecordRequest } from './decision-record.js';
+import type { RequestDecider, RequestField, RequestGroup, RequestKind } from './contract.js';
+import { docPathIssue, isDecider, shown } from './edit.js';
+import { jsonText, type DecisionRecordOption, type DecisionRecordRequest } from './decision-record.js';
 import type { DecisionLogDoc, WaitingDoc } from './files.js';
 import { storedTimeOf } from './stored-time.js';
 import { holdsBreak } from './text.js';
@@ -42,14 +45,16 @@ import { holdsBreak } from './text.js';
 type Stored = Readonly<Record<string, unknown>>;
 
 /**
- * A request that passed the strict read, with its canonical text and the hash of that text. The open time and the group are the
- * two keys that `request add` stores beside the four; a row of four keys holds neither, and both are null.
+ * A request that passed the strict read, with its canonical text and the hash of that text. Missing context stays absent: the
+ * open time, group, kind and fields are null, and docs is an empty list. The canonical text keeps the stored form.
  */
 export interface DecideRequest extends DecisionRecordRequest {
   /** The time at which the request was added, as the row holds it, or null for a row with no such key. */
   readonly openedAt: string | null;
   /** The group of the request, or null for a row with no such key. */
   readonly group: RequestGroup | null;
+  /** Checked paths only. The request and its hash do not cover the text of a doc. */
+  readonly docs: readonly string[];
   /** The canonical request text. The log row keeps it as it is, and the owner record hash covers it. */
   readonly canonical: string;
   /** The request hash: SHA-256 of the canonical text, as lowercase hex. */
@@ -77,8 +82,12 @@ const REQUEST_KEYS: readonly string[] = [
   decisionKeys.options,
   decisionKeys.openedAt,
   decisionKeys.group,
+  decisionKeys.kind,
+  decisionKeys.fields,
+  decisionKeys.docs,
 ];
-const OPTION_KEYS: readonly string[] = [optionKeys.key, optionKeys.text, optionKeys.rec];
+const OPTION_KEYS: readonly string[] = [optionKeys.key, optionKeys.text, optionKeys.rec, optionKeys.why];
+const FIELD_KEYS: readonly string[] = [requestFieldKeys.label, requestFieldKeys.text];
 
 /** The words as a phrase: "a, b or c". */
 const listOf = (words: readonly string[]): string => `${words.slice(0, -1).join(', ')} or ${words.at(-1) ?? ''}`;
@@ -118,7 +127,11 @@ const optionOf = (id: string, value: unknown, position: number): CliResult<Decis
   if (rec !== undefined && typeof rec !== 'boolean') {
     return strictFault(id, `has ${label} with a "${optionKeys.rec}" mark that is not true or false`);
   }
-  return ok({ key, text: text.value, ...(rec === true ? { rec: true } : {}) });
+  const why = Object.hasOwn(value, optionKeys.why)
+    ? textFieldOf(id, value[optionKeys.why], `the "${optionKeys.why}" of ${label}`, boardTextLimits.maxWhyChars)
+    : ok(undefined);
+  if (!why.ok) return why;
+  return ok({ key, text: text.value, ...(rec === true ? { rec: true } : {}), ...(why.value === undefined ? {} : { why: why.value }) });
 };
 
 const optionsOf = (id: string, value: unknown): CliResult<readonly DecisionRecordOption[]> => {
@@ -152,14 +165,61 @@ const groupOf = (id: string, record: Stored): CliResult<RequestGroup | null> => 
   return group === undefined ? strictFault(id, `has a "${decisionKeys.group}" that is not ${listOf(Object.values(requestGroups))}`) : ok(group);
 };
 
+/** The kind as stored, or null for an entry with no kind. No default changes the text of an old request. */
+const kindOf = (id: string, record: Stored): CliResult<RequestKind | null> => {
+  if (!Object.hasOwn(record, decisionKeys.kind)) return ok(null);
+  const kind = Object.values(requestKinds).find((known) => known === record[decisionKeys.kind]);
+  return kind === undefined ? strictFault(id, `has a "${decisionKeys.kind}" that is not ${listOf(Object.values(requestKinds))}`) : ok(kind);
+};
+
+const fieldsOf = (id: string, record: Stored): CliResult<readonly RequestField[] | null> => {
+  if (!Object.hasOwn(record, decisionKeys.fields)) return ok(null);
+  const value = record[decisionKeys.fields];
+  if (!Array.isArray(value) || value.length > boardTextLimits.maxRequestFields) {
+    return strictFault(id, `has no list of at most ${boardTextLimits.maxRequestFields} "${decisionKeys.fields}"`);
+  }
+  const list: readonly unknown[] = value;
+  const fields: RequestField[] = [];
+  for (const [index, field] of list.entries()) {
+    const part = `field ${index + 1} of "${decisionKeys.fields}"`;
+    if (!isRecord(field)) return strictFault(id, `has ${part} that is not an object`);
+    if (Object.keys(field).some((key) => !FIELD_KEYS.includes(key))) {
+      return strictFault(id, `has ${part} with a key other than ${listOf(FIELD_KEYS)}`);
+    }
+    const label = textFieldOf(id, field[requestFieldKeys.label], `the label of ${part}`, boardTextLimits.maxFieldLabelChars);
+    if (!label.ok) return label;
+    const text = textFieldOf(id, field[requestFieldKeys.text], `the text of ${part}`, boardTextLimits.maxFieldTextChars);
+    if (!text.ok) return text;
+    if (fields.some((seen) => seen.label === label.value)) return strictFault(id, `has a label twice in "${decisionKeys.fields}"`);
+    fields.push({ label: label.value, text: text.value });
+  }
+  return ok(fields);
+};
+
+const docsOf = (id: string, record: Stored): CliResult<readonly string[]> => {
+  if (!Object.hasOwn(record, decisionKeys.docs)) return ok([]);
+  const value = record[decisionKeys.docs];
+  if (!Array.isArray(value) || value.length > boardTextLimits.maxRequestDocs) {
+    return strictFault(id, `has no list of at most ${boardTextLimits.maxRequestDocs} "${decisionKeys.docs}"`);
+  }
+  const list: readonly unknown[] = value;
+  const docs: string[] = [];
+  for (const path of list) {
+    if (typeof path !== 'string' || docPathIssue(path) !== null) {
+      return strictFault(id, `has a path in "${decisionKeys.docs}" that fails the doc path rule`);
+    }
+    if (docs.includes(path)) return strictFault(id, `has a path twice in "${decisionKeys.docs}"`);
+    docs.push(path);
+  }
+  return ok(docs);
+};
+
 /**
- * The request of the waiting file, read strictly: the id has no leading zero; the entry holds no key beyond the
- * four of the request and the two that `request add` stores (`opened_at` and `group`); a title, a question and the text of an option
- * are one line, within their caps, with no character that the display removes; the option keys are tokens and differ; there are
- * 1 to 9 options; at most one is recommended; an open time, when the entry holds one, is an exact ISO time in UTC; a group, when the
- * entry holds one, is a value of `requestGroups`. Each fault is exit 1 that names the waiting file and says to close and add the
- * request when it was not changed. The texts are not trimmed. The canonical text covers the whole entry, so a row of four keys keeps
- * the text and the hash that it always had, and a row of six keys has a hash of its own.
+ * The request of the waiting file, read strictly: exact request, option and field keys; a canonical id; one-line text within
+ * the write caps, with no hidden character; 1 to 9 options with distinct token keys and at most one recommendation; an exact
+ * stored time and a known group and kind when present; at most 6 fields with distinct labels; at most 5 distinct doc paths that
+ * pass the write rule. Each fault is exit 1 with the restore, close and add remedy. No text is trimmed. The canonical text covers
+ * the whole entry, so entries of four or six keys keep their text and hash. Doc text is not part of the entry or the hash.
  */
 export const strictRequestOf = (waiting: WaitingDoc, id: string): CliResult<DecideRequest> => {
   const found = waiting.items.find((item) => item.id === id);
@@ -179,6 +239,12 @@ export const strictRequestOf = (waiting: WaitingDoc, id: string): CliResult<Deci
   if (!openedAt.ok) return openedAt;
   const group = groupOf(id, record);
   if (!group.ok) return group;
+  const kind = kindOf(id, record);
+  if (!kind.ok) return kind;
+  const fields = fieldsOf(id, record);
+  if (!fields.ok) return fields;
+  const docs = docsOf(id, record);
+  if (!docs.ok) return docs;
   const canonical = canonicalRequestText(record);
   if (!canonical.ok) return strictFault(id, `holds a value that JSON can not hold: ${canonical.error}`);
   return ok({
@@ -188,6 +254,9 @@ export const strictRequestOf = (waiting: WaitingDoc, id: string): CliResult<Deci
     options: options.value,
     openedAt: openedAt.value,
     group: group.value,
+    kind: kind.value,
+    fields: fields.value,
+    docs: docs.value,
     canonical: canonical.value,
     hash: requestHashOf(canonical.value),
   });
@@ -321,6 +390,9 @@ const LABEL_TITLE = 'Title:    ';
 const LABEL_QUESTION = 'Question: ';
 const LABEL_OPENED = 'Opened:   ';
 const LABEL_GROUP = 'Group:    ';
+const LABEL_KIND = 'Kind:     ';
+const LABEL_FIELD = 'Field:    ';
+const LABEL_DOC = 'Doc:      ';
 const LABEL_NOTE = 'Note:     ';
 
 /**
@@ -339,10 +411,10 @@ const optionLabel = (option: DecisionRecordOption, chosen: string): string =>
   `  ${option.key}${option.rec === true ? ' (recommended)' : ''}${option.key === chosen ? ' (chosen)' : ''}: `;
 
 /**
- * The block that decide shows before it asks: the number, the title, the full question, the open time and the group (each only
- * when the row holds it), every option with its key and its text (the recommended one and the chosen one marked) and the note. A
- * long text wraps and no text is cut. Each line starts with `BLOCK_MARK`. The request passed the strict read, so the display shows
- * exactly the text that the hash covers.
+ * The block that decide shows before it asks: every request and option key that the hash covers, plus the owner note. Context
+ * labels start before the option column; each why is indented below its option. A field label uses the record escape, so its
+ * separator is distinct from the field text. Long text wraps with no cut. Each line starts with `BLOCK_MARK`. Doc paths are shown,
+ * with a notice that their text is not part of the request or of the owner proof.
  */
 export const requestBlockLines = (request: DecideRequest, chosen: string, note: string | null): readonly string[] =>
   [
@@ -351,7 +423,14 @@ export const requestBlockLines = (request: DecideRequest, chosen: string, note: 
     ...labeled(LABEL_QUESTION, request.question),
     ...(request.openedAt === null ? [] : labeled(LABEL_OPENED, request.openedAt)),
     ...(request.group === null ? [] : labeled(LABEL_GROUP, request.group)),
+    ...(request.kind === null ? [] : labeled(LABEL_KIND, request.kind)),
+    ...(request.fields ?? []).flatMap((field) => labeled(LABEL_FIELD, `${jsonText(field.label)}: ${field.text}`)),
+    ...request.docs.flatMap((path) => labeled(LABEL_DOC, path)),
+    ...(request.docs.length === 0 ? [] : [decideDocContext]),
     'Options:',
-    ...request.options.flatMap((option) => labeled(optionLabel(option, chosen), option.text)),
+    ...request.options.flatMap((option) => [
+      ...labeled(optionLabel(option, chosen), option.text),
+      ...(option.why === undefined ? [] : labeled(`    Why (${option.key}): `, option.why)),
+    ]),
     ...(note === null ? [] : labeled(LABEL_NOTE, note)),
   ].map((line) => `${BLOCK_MARK}${line}`);

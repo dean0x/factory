@@ -50,6 +50,7 @@ export const commands = {
   node: 'node',
   doctor: 'doctor',
   machine: 'machine',
+  board: 'board',
   worker: 'worker',
   item: 'item',
   track: 'track',
@@ -142,9 +143,9 @@ export const trackCommands = { add: 'add', list: 'list' } as const;
 
 /**
  * The subcommands of `request`. `log` records a decision that no request asked for. The command has no subcommand that changes the
- * options of a request that is open.
+ * options of a request that is open. The one context change is `doc`, which adds a path before the owner answers.
  */
-export const requestCommands = { add: 'add', list: 'list', close: 'close', log: 'log' } as const;
+export const requestCommands = { add: 'add', list: 'list', close: 'close', log: 'log', doc: 'doc' } as const;
 
 /** The subcommands of `queue`. */
 export const queueCommands = { set: 'set', show: 'show' } as const;
@@ -186,6 +187,7 @@ export const commandLines = {
   requestList: `${commands.request} ${requestCommands.list}`,
   requestClose: `${commands.request} ${requestCommands.close}`,
   requestLog: `${commands.request} ${requestCommands.log}`,
+  requestDoc: `${commands.request} ${requestCommands.doc}`,
   queueSet: `${commands.queue} ${queueCommands.set}`,
   queueShow: `${commands.queue} ${queueCommands.show}`,
   lockRun: `${commands.lock} ${lockCommands.run}`,
@@ -231,8 +233,12 @@ export const flags = {
   all: 'all',
   family: 'family',
   follow: 'follow',
+  width: 'width',
   roadmap: 'roadmap',
   question: 'question',
+  kind: 'kind',
+  why: 'why',
+  doc: 'doc',
   option: 'option',
   recommend: 'recommend',
   later: 'later',
@@ -393,6 +399,8 @@ export const claudeSettingKeys = {
   approveMcpList: 'enabledMcpjsonServers',
   /** The setting that tells a session what to do with the input of other sessions: accept it, hold it for approval, or refuse it. */
   crossSessionInbound: 'crossSessionInbound',
+  /** The setting (a boolean) that lets the program compact a session that has had no turn for about one hour. */
+  idleCompaction: 'idleCompaction',
 } as const;
 
 /** The permission mode that accepts file edits with no prompt. A settings file with it gives a warning, not a stop. */
@@ -766,6 +774,7 @@ export const itemWords = {
 export const requestWords = {
   request: commands.request,
   requests: `${commands.request}s`,
+  kind: `${commands.request} kind`,
   columns: { id: 'ID', title: 'TITLE', options: 'OPTIONS' },
   optionSeparator: '=',
   optionKeySeparator: ',',
@@ -779,6 +788,8 @@ export const requestWords = {
  * waits for FAC-M11, so `decide read` is a usage error.
  */
 export const decideWords = { read: 'read' } as const;
+
+export const decideDocContext = `A doc is context. Its text is not part of the ${commands.request} or of the ${roles.owner} proof.`;
 
 /** The words of the output of `queue`. The columns of the owner fields of a row come between the items and the note. */
 export const queueWords = {
@@ -799,6 +810,33 @@ export const queueWords = {
  */
 export const maxDisplayWidth = 120;
 
+/** The facts document of the whole home, and the names of its independent sections. */
+export const boardDocKeys = {
+  home: 'home',
+  requests: requestWords.requests,
+  queue: 'queue',
+  workers: 'workers',
+  items: 'items',
+  itemsMore: 'itemsMore',
+  machine: 'machine',
+  faults: 'faults',
+  section: 'section',
+  error: 'error',
+} as const;
+
+export const boardWords = {
+  minWidth: 40,
+  maxItems: 500,
+  /** Leave time for startup and output inside the pane's shortest process limit of five seconds. */
+  sectionTimeoutMs: 3_000,
+  lateSection: 'Section read timed out.',
+  widthPattern: /^[0-9]+$/,
+  headings: { requests: requestWords.requests, workers: 'Workers', items: 'Board', queue: 'Queue', machine: 'Machine' },
+  fault: 'Cannot read this section',
+  summary: `Show the ${commands.request}s, ${roles.worker}s, board, queue and machine of one ${roles.node}.`,
+  widthDescription: `Text width: a whole number from 40 to ${maxDisplayWidth}.`,
+} as const;
+
 /** The most characters of typed text that a message repeats: a field name, a stage or a key. A longer text is cut. */
 export const maxEchoChars = 40;
 
@@ -818,8 +856,16 @@ export const decisionKeys = {
   openedAt: 'opened_at',
   /** The group of a request: one of `requestGroups`. */
   group: 'group',
+  kind: 'kind',
+  fields: 'fields',
+  docs: 'docs',
 } as const;
-export const optionKeys = { key: 'key', text: 'text', rec: 'rec' } as const;
+export const optionKeys = { key: 'key', text: 'text', rec: 'rec', why: 'why' } as const;
+
+export const requestFieldKeys = { label: 'label', text: 'text' } as const;
+
+/** A request kind is display data. Every kind needs the same options and owner answer. */
+export const requestKinds = { decision: 'decision', command: 'command', information: 'information' } as const;
 
 /** The groups of a request. A new request is in `now`, and the asker puts it in `later` with the `later` flag. */
 export const requestGroups = { now: 'now', later: 'later' } as const;
@@ -843,6 +889,11 @@ export const boardTextLimits = {
   maxReleaseGroupChars: 60,
   /** The most docs that one item holds. A write that would pass it is a usage error. */
   maxItemDocs: 10,
+  maxRequestDocs: 5,
+  maxRequestFields: 6,
+  maxFieldLabelChars: 60,
+  maxFieldTextChars: 200,
+  maxWhyChars: 200,
 } as const;
 
 /**
@@ -1123,6 +1174,7 @@ export const keys = {
     agent: 'agent',
     effort: 'effort',
     model: 'model',
+    idleCompaction: 'idle_compaction',
     proxy: 'proxy',
     statusline: 'statusline',
   },
@@ -1419,7 +1471,7 @@ export const workerRowKeys = {
   hold: 'hold',
 } as const;
 export const workItemDisplayKeys = { title: 'title', stage: 'stage', stageAt: 'stageAt', status: 'status' } as const;
-export const requestRowKeys = { openedAt: 'openedAt', group: 'group' } as const;
+export const requestRowKeys = { openedAt: 'openedAt', group: 'group', kind: 'kind', question: 'question' } as const;
 export const powerKeys = { power: 'power', source: 'source', percent: 'percent' } as const;
 export const powerSources = { ac: 'ac', battery: 'battery', unknown: 'unknown' } as const;
 
@@ -1908,6 +1960,8 @@ export const values = {
   permissionMode: 'auto',
   /** The only agent program that a session starts. */
   agent: 'claude',
+  /** Whether a session may compact itself after about one hour with no turn: off, so that the full context stays. */
+  defaultIdleCompaction: false,
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   noProxy: 'none',
   onFail: ['stop', 'direct'],
@@ -2049,6 +2103,7 @@ export const checkIds = {
   setupText: 'setup-text',
   roles: 'roles',
   tracker: 'tracker',
+  idleCompaction: 'idle-compaction',
   children: 'children',
   secrets: 'secrets',
   permissionMode: 'permission-mode',
@@ -2171,8 +2226,8 @@ export const roleText = {
     /** A work copy whose hook settings lack the own hook of these events: the launch of the worker refuses the same work copy. */
     gap: (id: string, events: readonly HookEvent[]): string =>
       `${id}: the hook settings of the work copy lack the hook of these events: ${events.join(', ')}. The worker does not start until they are in place.`,
-    /** A work copy whose hook settings file is a link: the check reads nothing through it. */
-    linkGap: (id: string): string => `${id}: the hook settings file of the work copy is a link, and the check does not read it.`,
+    /** A work copy with a link at the session folder, its `.claude` folder or the hook settings file. */
+    linkGap: (id: string, part: 'file' | 'folder'): string => `${id}: the hook settings ${part} of the work copy is a link, and the check does not read it.`,
     /** A work copy whose hook settings the check cannot read. `reason` is the read fault. */
     unreadGap: (id: string, reason: string): string => `${id}: the hook settings of the work copy are not checked (${reason}).`,
     remedies: {
@@ -2181,7 +2236,7 @@ export const roleText = {
       /** No own hook is there: `upgrade` leaves such a work copy as it is, so only a new worker asks for the hook settings. */
       recreate: (dismiss: string, create: string): string =>
         `Run "${dismiss}", then "${create}", and answer yes to the question about the hook settings.`,
-      link: (id: string, resume: string): string => `Replace the hook settings file of ${id} with a plain file. ${upgradeThen(resume)}`,
+      link: (id: string, resume: string, part: 'file' | 'folder'): string => `Replace the hook settings ${part} of ${id} with a plain ${part}. ${upgradeThen(resume)}`,
       unread: (id: string): string => `Make the hook settings of ${id} readable, then run "${commandText(commands.doctor)}" again.`,
     },
   },
@@ -2240,6 +2295,7 @@ export const schemaIds = {
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   machine: `${program}.machine/v1`,
+  board: `${program}.${commands.board}/v1`,
   workerNew: `${program}.worker-new/v1`,
   workerList: `${program}.worker-list/v1`,
   workerStop: `${program}.worker-stop/v1`,
@@ -2566,6 +2622,9 @@ const keyPath = (...parts: readonly string[]): string => parts.join('.');
 
 /** The config key that names the status line command of the owner: `session.statusline`. */
 export const statuslineKeyPath = keyPath(keys.root.session, keys.session.statusline);
+
+/** The config key that sets the idle compaction of the sessions: `session.idle_compaction`. */
+export const idleCompactionKeyPath = keyPath(keys.root.session, keys.session.idleCompaction);
 
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');

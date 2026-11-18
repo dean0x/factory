@@ -1,12 +1,13 @@
 import { basename, dirname } from 'node:path';
 import { notReady, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { hookSettingsPlaceOf, missingDenyRules, missingHookEvents, ownDenyRulesOf } from '../core/claude-settings.js';
+import { holdsAnyOwnCommand, hookSettingsPlaceOf, missingDenyRules, missingHookEvents, ownDenyRulesOf } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import type { GuardValues } from '../guards/types.js';
 import { toolNames } from '../core/tools.js';
-import { commandLines, commands, commandText, flags, flagText, guardDenyWords, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
+import { isRecord } from '../migrate/inspect.js';
+import { claudeSettingKeys, commandLines, commands, commandText, flags, flagText, guardDenyWords, hookNames, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import { readCheckedFile, type NamedPath } from './registry.js';
 import { requireRoleText } from './role-text.js';
@@ -119,39 +120,67 @@ export interface SettingsAgeRequest extends SettingsRequest {
   readonly start: number;
 }
 
-/** The checked parts of the hook settings file of a session folder: the `.claude` folder, then the file. */
+/** Check the session folder, its `.claude` folder and the hook settings file, in that order. Do not check parent folders. */
 const settingsPartsOf = (folder: string): { readonly folders: readonly NamedPath[]; readonly file: NamedPath } => {
   const place = hookSettingsPlaceOf(folder);
   return {
-    folders: [{ path: place.claudeFolder, what: 'the settings folder' }],
+    folders: [{ path: folder, what: 'the session folder' }, { path: place.claudeFolder, what: 'the settings folder' }],
     file: { path: place.file, what: 'the hook settings file' },
   };
 };
 
 /**
- * What the hook settings file of a session folder holds, for a check: the hook events that lack the own command, or the link that
- * stops the read. A file that is missing, not JSON, not an object, above the limit or of the wrong kind counts every event as missing.
+ * The hook events that lack the own command and the idle value of a parsed settings file. An absent file has no own hook.
+ * A file that does not parse, exceeds the limit or has the wrong kind has its own state.
+ * A link at the session folder, its `.claude` folder or the file stops the read. Parent folders are not checked.
  */
 export type HookSettingsRead =
-  | { readonly state: 'plain'; readonly file: string; readonly missing: readonly HookEvent[]; readonly missingDeny: readonly string[]; readonly skipped: readonly string[] }
-  | { readonly state: 'link'; readonly file: string; readonly reason: string };
+  | {
+      readonly state: 'plain';
+      readonly file: string;
+      readonly missing: readonly HookEvent[];
+      readonly missingDeny: readonly string[];
+      readonly skipped: readonly string[];
+      readonly idleCompaction: boolean | null;
+      readonly hasOwnHook: boolean;
+    }
+  | { readonly state: 'not-parsed'; readonly file: string }
+  | { readonly state: 'link'; readonly file: string; readonly reason: string; readonly part: 'file' | 'folder' };
 
 /**
  * Read the hook settings file of the session folder and name the events that lack the own command, with the own matcher where an
- * event needs one (`missingHookEvents`). A link in the path is never followed. The read changes nothing.
+ * event needs one (`missingHookEvents`). Refuse a link at the session folder, its `.claude` folder or the file.
+ * Parent folders are not checked. The read changes nothing.
  */
 export const readHookSettings = async (deps: Deps, home: string, folder: string): Promise<CliResult<HookSettingsRead>> => {
   const { folders, file } = settingsPartsOf(folder);
   const read = await readCheckedFile(deps, folders, file, maxFileBytes);
   if (!read.ok) return read;
   const found = read.value;
-  if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason });
-  const json = found.state === 'text' ? parseJsonText(found.text) : null;
-  const settings = json !== null && json.ok ? json.value : undefined;
   const deny = await ownDenyRulesOf(deps, home, folder);
   if (!deny.ok) return deny;
-  return ok({ state: 'plain', file: file.path, missing: missingHookEvents(settings),
-    missingDeny: missingDenyRules(settings, deny.value.rules), skipped: deny.value.skipped });
+  if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason, part: found.part });
+  if (found.state === 'invalid') return ok({ state: 'not-parsed', file: file.path });
+  if (found.state === 'absent') {
+    return ok({ state: 'plain', file: file.path, missing: hookNames.events, missingDeny: deny.value.rules, skipped: deny.value.skipped, idleCompaction: null, hasOwnHook: false });
+  }
+  const json = parseJsonText(found.text);
+  if (!json.ok || !isRecord(json.value)) return ok({ state: 'not-parsed', file: file.path });
+  const settings = json.value;
+  const hooks = settings[claudeSettingKeys.hooks];
+  if (hooks !== undefined && (!isRecord(hooks) || hookNames.events.some((event) => Object.hasOwn(hooks, event) && !Array.isArray(hooks[event])))) {
+    return ok({ state: 'not-parsed', file: file.path });
+  }
+  const idle = settings[claudeSettingKeys.idleCompaction];
+  return ok({
+    state: 'plain',
+    file: file.path,
+    missing: missingHookEvents(settings),
+    missingDeny: missingDenyRules(settings, deny.value.rules),
+    skipped: deny.value.skipped,
+    idleCompaction: typeof idle === 'boolean' ? idle : null,
+    hasOwnHook: holdsAnyOwnCommand(settings),
+  });
 };
 
 /**
@@ -165,15 +194,16 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest & { r
   if (found.state === 'link') {
     return safetyRefusal(
       `cannot use ${found.file}: ${found.reason}`,
-      `Replace the link with a plain file. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
+      `Replace the link with a plain ${found.part}. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
     );
   }
-  if (found.missing.length === 0) {
+  const missing = found.state === 'not-parsed' ? hookNames.events : found.missing;
+  if (found.state === 'plain' && missing.length === 0) {
     if (found.missingDeny.length > 0) deps.warn(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
     return ok(undefined);
   }
   return notReady(
-    `the hook settings ${found.file} lack the events: ${found.missing.join(', ')}`,
+    `the hook settings ${found.file} lack the events: ${missing.join(', ')}`,
     request.remedy ?? `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
   );
 };

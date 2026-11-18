@@ -18,25 +18,25 @@ export interface HookStep {
   readonly warnings: readonly string[];
 }
 
-const requestOf = async (deps: Deps, home: string, yes: boolean): Promise<CliResult<HookConsentRequest>> => {
+const requestOf = async (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<HookConsentRequest>> => {
   const folder = layoutOf(home).coordinatorDir;
   const deny = await ownDenyRulesOf(deps, home, folder);
-  return deny.ok ? ok({ folder, session: hookSessions.coordinator, yes, command: commands.init, deny: { rules: deny.value.rules, add: true } }) : deny;
+  return deny.ok ? ok({ folder, session: hookSessions.coordinator, yes, command: commands.init, idleCompaction, deny: { rules: deny.value.rules, add: true } }) : deny;
 };
 
 /** Stop before the first write when the person can not give the consent later: no terminal window and no yes that counts. */
-export const checkHookConsent = async (deps: Deps, home: string, yes: boolean): Promise<CliResult<void>> => {
-  const request = await requestOf(deps, home, yes);
+export const checkHookConsent = async (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<void>> => {
+  const request = await requestOf(deps, home, yes, idleCompaction);
   return request.ok ? requireHookConsent(deps, request.value) : request;
 };
 
 /** Ask for the hook settings and write them, after the last write of the command. A no goes on with a notice. */
-export const writeHookSettings = async (deps: Deps, home: string, yes: boolean): Promise<CliResult<HookStep>> => {
-  const request = await requestOf(deps, home, yes);
+export const writeHookSettings = async (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<HookStep>> => {
+  const request = await requestOf(deps, home, yes, idleCompaction);
   if (!request.ok) return request;
   const done = await ensureHookSettings(deps, { ...request.value, dryRun: false });
   if (!done.ok) return done;
   if (done.value.kind === 'written') return ok({ written: [relative(home, done.value.file)], warnings: [] });
-  if (done.value.kind === 'declined') return ok({ written: [], warnings: [declinedHookText(done.value.file, commands.init)] });
+  if (done.value.kind === 'declined') return ok({ written: [], warnings: [declinedHookText(done.value, commands.init)] });
   return ok({ written: [], warnings: [] });
 };

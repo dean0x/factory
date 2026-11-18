@@ -305,8 +305,8 @@ export interface Deps {
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;
   now(): Date;
-  /** Wait for `ms` milliseconds. */
-  sleep(ms: number): Promise<void>;
+  /** Wait for `ms` milliseconds. An abort cancels the timer and ends the wait without an error. */
+  sleep(ms: number, signal?: AbortSignal): Promise<void>;
   readonly platform: Platform;
   readonly cwd: string;
   readonly pid: number;

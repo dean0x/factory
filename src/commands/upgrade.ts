@@ -393,7 +393,7 @@ export const runUpgrade = async (
   if (!boardKey.ok) return boardKey;
 
   // The hook settings are planned with no write, so a stop of a check comes before the first write of the run.
-  const hooks = await planHookSettings(deps, home, options.yes);
+  const hooks = await planHookSettings(deps, home, options.yes, blockSet.value.idleCompaction);
   if (!hooks.ok) return hooks;
   // The guard is read last among the plans: it runs git, and a plan that stops the command runs no git command.
   const guard = await planStateGuard(deps, layout);

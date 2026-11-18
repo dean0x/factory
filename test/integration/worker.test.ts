@@ -161,6 +161,7 @@ const ownSettings = async (folder: string): Promise<Record<string, unknown>> => 
   hooks: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroup(event)]])),
   statusLine: { type: 'command', command: 'factory hook statusline' },
   permissions: { deny: await ownDenyRules(box, folder) },
+  idleCompaction: false,
 });
 
 /**

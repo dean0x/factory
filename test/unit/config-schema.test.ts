@@ -1036,7 +1036,7 @@ describe('the shared file and the local file (design 4.4)', () => {
   it('keeps the tracker, the project list, the session way of working and the limits in the shared file', () => {
     const raw = sampleFiles().shared;
     expect(Object.keys(raw).sort()).toEqual(['limits', 'node', 'recipe', 'schema', 'session', 'shared_guards', 'tracker']);
-    expect(Object.keys(raw['session']).sort()).toEqual(['agent', 'effort', 'model', 'permission_mode']);
+    expect(Object.keys(raw['session']).sort()).toEqual(['agent', 'effort', 'idle_compaction', 'model', 'permission_mode']);
     expect(Object.keys(raw['limits'])).toContain('idle_after');
     expect(
       sharedOf((shared) => {

@@ -44,6 +44,11 @@ export interface BlockSet {
   readonly renames: readonly BlockRename[];
   /** The key of the queue in `board.json` (`queueKeyOf`). */
   readonly queueKey: string;
+  /**
+   * `BlockSet` describes the managed blocks, and this field is the settings value that the same parse gives: the value of
+   * `session.idle_compaction` that the hook settings of the session folders get.
+   */
+  readonly idleCompaction: boolean;
 }
 
 export interface UpgradeSpec {
@@ -118,6 +123,7 @@ const blocksOfNode =
       templates: blockTemplatesFor(input),
       renames: roleBlockRenames(parsed.data.entry, input.layer),
       queueKey: queueKeyOf(parsed.data.entry),
+      idleCompaction: parsed.data.core.session.idle_compaction,
     });
   };
 

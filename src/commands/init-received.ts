@@ -521,7 +521,8 @@ export const runReceived = async (
   const decision = await decideAcceptance(asking, { home, node: id, yes: options.yes, setup: setup.value });
   if (!decision.ok) return decision;
   // The hook settings come after the last write. The check of their target and of the consent comes before the first write.
-  const consent = await checkHookConsent(deps, home, options.yes);
+  const idleCompaction = shared.core.session.idle_compaction;
+  const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;
 
   const planned = await planReceived(deps, {
@@ -546,7 +547,7 @@ export const runReceived = async (
   const applied = await applyInit(deps, planned.value);
   if (!applied.ok) return undoClones(deps, cloned.value, [], applied.error);
   // The root is registered. A failure of the hook settings leaves it, and a second run of init finishes the step.
-  const hook = await writeHookSettings(deps, home, options.yes);
+  const hook = await writeHookSettings(deps, home, options.yes, idleCompaction);
   if (!hook.ok) return hook;
   const prefix = await recordInitPrefix(deps, planned.value);
   if (!prefix.ok) return prefix;

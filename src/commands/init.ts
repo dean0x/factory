@@ -1069,7 +1069,9 @@ export const runInit = async (
   const projects = await planProjects(deps, home, projectsOf(deps, options.projects, found), commands.init);
   if (!projects.ok) return projects;
   // The hook settings come after the last write. A run that can not get the consent for them stops here, before any write.
-  const consent = await checkHookConsent(deps, home, options.yes);
+  // A new node has the default idle compaction value, the same value that its config file gets.
+  const idleCompaction = values.defaultIdleCompaction;
+  const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;
   // Git makes the folders above a clone by itself. This run makes the root and its parents first, so that the undo can
   // remove them.
@@ -1084,7 +1086,7 @@ export const runInit = async (
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);
   // The node is made and listed. A failure of the hook settings leaves it, and a second run of init finishes the step.
-  const hook = await writeHookSettings(deps, plan.value.home, options.yes);
+  const hook = await writeHookSettings(deps, plan.value.home, options.yes, idleCompaction);
   if (!hook.ok) return hook;
   const prefix = await recordInitPrefix(deps, plan.value);
   if (!prefix.ok) return prefix;

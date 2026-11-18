@@ -975,6 +975,50 @@ describe('settings files', () => {
     });
 
     it.each([
+      ['false', { ...OWN, idleCompaction: false }],
+      ['true', { ...OWN, idleCompaction: true }],
+      ['no key', { hooks: OWN.hooks, statusLine: OWN.statusLine }],
+      ['the key first', { idleCompaction: true, hooks: OWN.hooks, statusLine: OWN.statusLine }],
+      ['the key between the others', { hooks: OWN.hooks, idleCompaction: false, statusLine: OWN.statusLine }],
+    ])('gives no warning for the own entries with the idle compaction value %s', async (_name, value) => {
+      const deps = make();
+      put(deps, 'coordinator', JSON.stringify(value, null, 2));
+      const found = await scan(deps);
+      expect(of(found, checkIds.permissionMode)).toEqual([]);
+      expect(requireRootClean(found).ok).toBe(true);
+    });
+
+    it.each([
+      ['the string "false"', 'false'],
+      ['the string "true"', 'true'],
+      ['0', 0],
+      ['null', null],
+      ['an object', {}],
+      ['a list', [false]],
+    ])('warns for the own entries with the idle compaction value %s', async (_name, value) => {
+      const deps = make();
+      put(deps, 'coordinator', JSON.stringify({ ...OWN, idleCompaction: value }));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
+      expect(textOf(found, checkIds.permissionMode)).toContain('is a settings file in the coordinator folder');
+    });
+
+    it('warns for a file that repeats the idle compaction key, because a parser may keep the first value', async () => {
+      const deps = make();
+      put(deps, 'coordinator', ownText.replace('{', '{"idleCompaction": true,'));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
+      expect(textOf(found, checkIds.permissionMode)).toContain('is a settings file in the coordinator folder');
+    });
+
+    it('warns for one extra key next to the own entries that have no idle compaction key', async () => {
+      const deps = make();
+      put(deps, 'coordinator', JSON.stringify({ hooks: OWN.hooks, statusLine: OWN.statusLine, model: 'sonnet' }));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
+    });
+
+    it.each([
       ['a setting of the model', { model: 'sonnet' }],
       ['a permission rule', { permissions: { allow: [] } }],
       ['an env value', { env: { OTHER: '1' } }],

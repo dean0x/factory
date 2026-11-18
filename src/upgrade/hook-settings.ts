@@ -21,11 +21,15 @@ interface HookTarget {
   readonly session: HookSession;
 }
 
-/** A settings file that lacks entries: the folder, the file and the change as a person reads it. */
+/**
+ * A settings file that lacks entries: the folder, the file and the change as a person reads it. `idleCompaction` is the value
+ * that the plan used. The apply step writes the same value and does not read the config again.
+ */
 export interface HookChange extends HookTarget {
   readonly file: string;
   readonly change: string;
   readonly rules: readonly string[];
+  readonly idleCompaction: boolean;
 }
 
 /** What the step did: the settings files that it wrote, and the lines to show. */
@@ -52,14 +56,20 @@ const targetsOf = async (deps: Deps, home: string): Promise<CliResult<readonly H
 
 /**
  * The settings files that lack entries. The call asks nothing and writes nothing. A check of a target that stops (a link, a file
- * that is no object) stops the plan with that error. The value is empty when all files are current.
+ * that is no object) stops the plan with that error. The value is empty when all files are current. `idleCompaction` is the
+ * value of `session.idle_compaction` in the config that the run migrates.
  */
-export const planHookSettings = async (deps: Deps, home: string, yes: boolean): Promise<CliResult<readonly HookChange[]>> => {
+export const planHookSettings = async (
+  deps: Deps,
+  home: string,
+  yes: boolean,
+  idleCompaction: boolean,
+): Promise<CliResult<readonly HookChange[]>> => {
   const targets = await targetsOf(deps, home);
   if (!targets.ok) return targets;
   const changes: HookChange[] = [];
   for (const target of targets.value) {
-    const request = { ...target, yes, command: commands.upgrade };
+    const request = { ...target, yes, command: commands.upgrade, idleCompaction };
     const holds = await holdsOwnHook(deps, request);
     if (!holds.ok) return holds;
     if (!holds.value) continue;
@@ -67,7 +77,9 @@ export const planHookSettings = async (deps: Deps, home: string, yes: boolean): 
     if (!deny.ok) return deny;
     const outcome = await ensureHookSettings(deps, { ...request, dryRun: true, deny: { rules: deny.value.rules, add: true } });
     if (!outcome.ok) return outcome;
-    if (outcome.value.kind === 'would-write') changes.push({ ...target, file: outcome.value.file, change: outcome.value.change, rules: deny.value.rules });
+    if (outcome.value.kind === 'would-write') {
+      changes.push({ ...target, file: outcome.value.file, change: outcome.value.change, rules: deny.value.rules, idleCompaction });
+    }
   }
   return ok(changes);
 };
@@ -99,7 +111,13 @@ export const applyHookSettings = async (deps: Deps, changes: readonly HookChange
   const lines: OutLine[] = [];
   for (const [index, change] of changes.entries()) {
     const outcome = await ensureHookSettings(deps, {
-      folder: change.folder, session: change.session, yes, dryRun: false, command: commands.upgrade, deny: { rules: change.rules, add: true },
+      folder: change.folder,
+      session: change.session,
+      yes,
+      dryRun: false,
+      command: commands.upgrade,
+      idleCompaction: change.idleCompaction,
+      deny: { rules: change.rules, add: true },
     });
     if (!outcome.ok) {
       if (outcome.error.kind !== 'usage') return stoppedBy(outcome.error, changed);
