@@ -2750,6 +2750,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   yesFlag: flagText(flags.yes),
   jsonFlag: flagText(flags.json),
   helpFlag: flagText(flags.help),
+  requestWord: requestWords.request,
   requestsWord: requestWords.requests,
   readyFlag: flagText(flags.ready),
   sinceFlag: flagText(flags.since),

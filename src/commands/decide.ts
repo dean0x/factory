@@ -16,6 +16,7 @@ import {
   files,
   flags,
   flagText,
+  places,
   requestWords,
   roles,
   schemaIds,
@@ -71,7 +72,7 @@ const freePreviewOf = (request: DecideRequest, home: string): CliResult<readonly
   const id = worker.value;
   if (id === null) return ok([]);
   const issue = homeIssue(home);
-  if (issue !== null) return failure(`the board home ${issue}`);
+  if (issue !== null) return failure(`the ${places.folder} path ${issue}`);
   return ok(['Run the dry run first. If the checks pass, run the second command.', ...freeCommandLines(id, home)]);
 };
 

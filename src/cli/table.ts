@@ -346,7 +346,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
       },
       [flags.askOwner]: {
         type: 'boolean',
-        description: `With ${flagText(flags.closed)}: check the ${roles.worker} and open a request for the ${roles.owner}. Free nothing.`,
+        description: `With ${flagText(flags.closed)}: check the ${roles.worker} and open a ${requestWords.request} for the ${roles.owner}. Free nothing.`,
       },
     },
     run: (given, deps) =>

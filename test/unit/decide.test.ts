@@ -537,7 +537,7 @@ describe('decide: worker free requests', () => {
   it.each([
     ['a control character', '\x1b'],
     ['a hidden character', String.fromCodePoint(0x200b)],
-  ])('refuses a board home with %s before it shows the request or asks for an answer', async (_name, character) => {
+  ])('refuses a factory folder path with %s before it shows the request or asks for an answer', async (_name, character) => {
     const repo = await nodeOf();
     const home = `${HOME}-${character}`;
     await seedBoardAt(repo, home, freeEntry);
@@ -548,7 +548,7 @@ describe('decide: worker free requests', () => {
 
     expect(result.ok).toBe(false);
     expect(exitOf(result)).toBe(1);
-    expect(errorOf(result).message).toContain('board home');
+    expect(errorOf(result).message).toContain('the factory folder path');
     expectNothingDone(repo, before, terminal);
   });
 });

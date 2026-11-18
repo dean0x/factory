@@ -486,8 +486,8 @@ const dismissRows: readonly GuardRow[] = [
   codeRow({
     id: 'dismiss-ask-owner',
     guard: guardIds.dismiss,
-    name: `The ${coordinator} can ask the ${owner} to free a ${worker} that is ready, but the request frees nothing`,
-    applies: 'Dismiss with the ask-owner flag, request and decide',
+    name: `The ${coordinator} can ask the ${owner} to free a ${worker} that is ready, but the ${requestWords.request} frees nothing`,
+    applies: `Dismiss with the ${flags.askOwner} flag, ${commands.request} and ${commands.decide}`,
     harm: true,
     sites: [
       ...at('src/commands/dismiss.ts', 'dismissAskOwner', 'closedChecks'),

@@ -80,8 +80,8 @@ const usage = (what: string): CliResult<never> =>
 
 /** The words of the command line: one id, or `--idle` with no id and no yes flag. `--closed` takes one id and no other mode flag. */
 const checkWords = (options: DismissOptions): CliResult<void> => {
-  if (options.askOwner && !options.closed) return usage(`The owner request requires the form ${flagText(flags.closed)} ${flagText(flags.askOwner)}`);
-  if (options.askOwner && (options.idle || options.yes)) return usage('The owner request form takes no other mode flag');
+  if (options.askOwner && !options.closed) return usage(`The ${roles.owner} ${requestWords.request} requires the form ${flagText(flags.closed)} ${flagText(flags.askOwner)}`);
+  if (options.askOwner && (options.idle || options.yes)) return usage(`The ${roles.owner} ${requestWords.request} form takes no other mode flag`);
   if (options.closed && (options.idle || options.yes)) {
     return usage(`${flagText(flags.closed)} takes no ${flagText(options.idle ? flags.idle : flags.yes)}: it is a mode of its own`);
   }
@@ -411,7 +411,7 @@ const closedPushed = async (
 const stopAsk = (error: CliError): CliResult<never> => err({ ...error, hint: STOP });
 
 const guardLine = (guard: (typeof CLOSED_GUARDS)[keyof typeof CLOSED_GUARDS], reason: string): string =>
-  `opened no request: the guard ${guard} is not met: ${reason}`;
+  `opened no ${requestWords.request}: the guard ${guard} is not met: ${reason}`;
 
 const openFreeOf = (
   waiting: WaitingDoc,
@@ -437,7 +437,7 @@ const openFreeOf = (
     const fits =
       fields.find((field) => field.label === requestWords.freeProjectLabel)?.text === project &&
       fields.find((field) => field.label === requestWords.freeClosedItemsLabel)?.text === closedItems;
-    if (!fits) return failure(`Open request ${id} does not match the current proof. Close ${id}.`, STOP);
+    if (!fits) return failure(`Open ${requestWords.request} ${id} does not match the current proof. Close ${id}.`, STOP);
     match ??= id;
   }
   return ok(match);
@@ -446,7 +446,7 @@ const openFreeOf = (
 const askOutput = (id: string, request: string, home: string, reused: boolean): CommandOutput => ({
   lines: [
     text(`${reused ? 'Reused' : 'Opened'} ${request} for ${roles.worker} ${id}. This run freed nothing.`),
-    text(`The ${roles.owner} opens the request with "${freeAnswerLine(request, requestWords.freeDone.key, home)}" in their own terminal window.`),
+    text(`The ${roles.owner} opens the ${requestWords.request} with "${freeAnswerLine(request, requestWords.freeDone.key, home)}" in their own terminal window.`),
     text(`Confirm only if the ${roles.worker} is free.`),
     text(`If the ${roles.worker} stays, decline the prompt. Record that result with "${freeAnswerLine(request, requestWords.freeKept.key, home)}".`),
   ],
@@ -498,7 +498,7 @@ const dismissAskOwner = async (
   const old = openFreeOf(waiting.value, id, project, work.closed);
   if (!old.ok) return old;
   const issue = homeIssue(home);
-  if (issue !== null) return failure(`the board home ${issue}`, STOP);
+  if (issue !== null) return failure(`the ${places.folder} path ${issue}`, STOP);
   const facts = { id, project, closed: work.closed, checkedAt };
   const cap = checkDecision(freeRequestOf({ ...facts, head: '0'.repeat(64) }));
   if (!cap.ok) return failure(cap.error.message, STOP);

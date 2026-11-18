@@ -1,6 +1,6 @@
 import { at, codeRow, guardOf, textRow, wiredGuard } from '../../guards/build.js';
 import type { GuardDefinition, GuardRow } from '../../guards/types.js';
-import { commandLines, guardIds, keys, roles } from '../../names.js';
+import { commandLines, guardIds, keys, requestWords, roles } from '../../names.js';
 import { softwareApprovalPoints } from './approval.js';
 import { CONFIG_FILE, COORDINATOR_FILE, SAFETY_FILE, WORKER_FILE, WORK_RULES_FILE, softwareGuardIds } from './guard-parts.js';
 import { softwareRuleRows } from './rule-rows.js';
@@ -233,7 +233,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
   textRow({
     id: 'dismiss-ask-owner-text',
     guard: guardIds.dismiss,
-    name: `After a denied free, the ${coordinator} or ${manager} asks the ${owner} to free the ${worker} and never runs the command of the request`,
+    name: `After a denied free, the ${coordinator} or ${manager} asks the ${owner} to free the ${worker} and never runs the command of the ${requestWords.request}`,
     applies: `Role text of the ${coordinator} and the ${manager}`,
     harm: true,
     sites: at(COORDINATOR_FILE, 'workerSectionLines'),
