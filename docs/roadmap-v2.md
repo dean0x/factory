@@ -72,7 +72,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `adopt` | FAC-M7 |
 | `plugin` (test) | FAC-M11 |
 | `tracker set artifact`, `tracker set plugin:<package>` | FAC-M11 |
-| `decide read` and `watch` for the `local` and `artifact` boards; `start` window `ops` for every kind of board; `doctor` (the check of each board CLI) | FAC-M11 |
+| `decide read <D-n>` for the `local` board | Built in this version |
+| `decide read` for the `artifact` board; `watch` for the `local` and `artifact` boards; `start` window `ops` for every kind of board; `doctor` (the check of each board CLI) | FAC-M11 |
 | `tracker`, `state` (remote, push, pull), `decide read` and `watch` for the `github` board, `item import` | FAC-M3 |
 
 ### FAC-M2: Names, home, roles and schema 2

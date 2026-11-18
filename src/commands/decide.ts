@@ -50,7 +50,7 @@ const parse = (options: DecideOptions): CliResult<Parsed> => {
     );
   }
   const [id = '', option = ''] = options.words;
-  if (id === decideWords.read) return needsUsage(`${commandText(`${commands.decide} ${decideWords.read}`)} is not in this version`);
+  if (id === decideWords.read) return needsUsage(`The answer form does not take ${decideWords.read}. Run ${commandText(`${commands.decide} ${decideWords.read}`)} <D-n>.`);
   if (options.words.length !== 2) {
     return needsUsage(`${commands.decide} takes two arguments: the id of a ${requestWords.request} and the key of an option`);
   }

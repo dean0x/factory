@@ -1,16 +1,14 @@
 import type { CliResult } from '../cli/errors.js';
 import type { requestDeciders, requestGroups, requestKinds } from '../names.js';
 import type { CheckedRecord } from '../recipes/entry.js';
-import type { DecideRequest } from './decide.js';
+import type { DecideRequest, RequestProof } from './decide.js';
 
 /**
  * The board connector contract (design 4.10). Every board connector gives these operations, and the contract suite
  * (`test/contract/board-contract.ts`) runs against each one. The `local` connector keeps the board in the files of the state folder.
  * A hosted tracker kind has no connector in this version: the local connector reads the local files for it and refuses every write.
  *
- * The contract holds no read of a decision answer and no decision writer. The proof read of an owner answer is an export of the
- * owner record module, outside the contract: it reads only the owner decision file. The contract operation `decision read`
- * waits for FAC-M11.
+ * The shared contract holds no decision proof read or answer writer. The local connector has both operations.
  *
  * A stage and an owner field are display data and never proof. A connector keeps every stored key that it does not own.
  */
@@ -101,6 +99,14 @@ export interface DecisionOption {
 export interface RequestField {
   readonly label: string;
   readonly text: string;
+}
+
+/** A request link binds an approval point to one board item, reference and head. It grants no owner authority. */
+export interface RequestLink {
+  readonly point: string;
+  readonly item: string;
+  readonly ref: string;
+  readonly head: string;
 }
 
 /** A request kind is display data, not authority. Every kind needs 1 to 9 options. */
@@ -311,6 +317,12 @@ export interface DecisionRequestRead {
   readonly place: DecisionPlace;
 }
 
+export interface DecisionRead {
+  readonly node: string;
+  readonly root: string;
+  readonly proof: RequestProof;
+}
+
 /** The input of `recordDecision`: the request that the owner saw, the option, the note, and the time of the answer. */
 export interface DecisionRecordCall {
   /** The request as `decisionRequest` gave it. Its hash is checked again under the lock. */
@@ -384,6 +396,8 @@ export interface LocalBoard extends BoardConnector {
    * with an error. A row of the log with an owner key is no answer unless the owner decision file holds the record of its request text.
    */
   decisionRequest(id: string): Promise<CliResult<DecisionRequestRead>>;
+  /** Read the proof status of one request without a lock or write. */
+  decisionRead(id: string): Promise<CliResult<DecisionRead>>;
   /**
    * Record the owner answer: the owner record first, then the board copies in one commit. The state lock holds the checks, the
    * folder of the records, the call of `writeProof` and the commit. A failure after `writeProof` says in its remedy line whether the
