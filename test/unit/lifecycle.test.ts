@@ -8,7 +8,7 @@ import { activeMachine, env, marker, roleText, schemaIds, stateLock, tmuxNames, 
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
-import { claudeFileText } from '../helpers/blocks.js';
+import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
 import {
   createFakeDeps,
   exited,
@@ -20,7 +20,7 @@ import {
 } from '../helpers/fake-deps.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
-import { seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
+import { ownSettingsWithRules, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
@@ -185,7 +185,7 @@ const markText = (machine: string): string =>
 const seedWorker = async (deps: FakeDeps, id: Id, spec: WorkerSpec): Promise<void> => {
   must(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${COPIES}/${id}`, branch: `worker/${id}` }));
   deps.seedDir(`${COPIES}/${id}`);
-  deps.seed(`${COPIES}/${id}/.claude/settings.local.json`, spec.settings ?? OWN_SETTINGS);
+  deps.seed(`${COPIES}/${id}/.claude/settings.local.json`, spec.settings ?? `${JSON.stringify(ownSettingsWithRules(HOME, `${COPIES}/${id}`), null, 2)}\n`);
   if (spec.event === null) return;
   deps.seed(workerPathsOf(HOME, id).lastSessionFile, `${SESSION[id]}\n`);
   const marker = spec.marker === undefined ? id : spec.marker;
@@ -264,6 +264,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   deps.seedDir(RUNTIME_DIR);
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
+  deps.seed(layoutOf(HOME).workerMd, workerFileText(config, noSetupTexts));
   deps.seedDir(COORDINATOR);
   deps.seed(`${COORDINATOR}/CLAUDE.md`, setup.claudeFile ?? claudeFileText(config));
   deps.seed(SETTINGS_FILE, setup.hookSettings ?? OWN_SETTINGS);
@@ -1266,17 +1267,27 @@ describe('reboot', () => {
     const oldSettings = `${JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine })}\n`;
 
     it('starts all sessions with no settings write and one remedy line when no terminal can ask', async () => {
+      const settingsWithoutIdle = (folder: string): string => `${JSON.stringify({
+        hooks: ownSettingsEntries.hooks,
+        statusLine: ownSettingsEntries.statusLine,
+        permissions: ownSettingsWithRules(HOME, folder).permissions,
+      })}\n`;
       const made = await make({
         origin,
-        hookSettings: oldSettings,
-        workers: { alpha: { settings: oldSettings }, beta: { settings: oldSettings }, gamma: { settings: oldSettings } },
+        hookSettings: settingsWithoutIdle(COORDINATOR),
+        workers: {
+          alpha: { settings: settingsWithoutIdle(`${COPIES}/alpha`) },
+          beta: { settings: settingsWithoutIdle(`${COPIES}/beta`) },
+          gamma: { settings: settingsWithoutIdle(`${COPIES}/gamma`) },
+        },
       });
       const output = await succeeded(reboot(made));
       expect(output.json).toMatchObject({ started: true, workers: { resumed: [...IDS], skipped: [], failed: [] } });
       expect(countOf(made, 'new-session')).toBe(1);
       expect(resumesOf(made)).toEqual(SESSION);
-      for (const file of [SETTINGS_FILE, ...IDS.map((id) => `${COPIES}/${id}/.claude/settings.local.json`)]) {
-        expect(made.deps.files.get(file)).toBe(oldSettings);
+      for (const folder of [COORDINATOR, ...IDS.map((id) => `${COPIES}/${id}`)]) {
+        const file = `${folder}/.claude/settings.local.json`;
+        expect(made.deps.files.get(file)).toBe(settingsWithoutIdle(folder));
         expect(made.events).not.toContain(`write ${file}`);
       }
       expect(made.deps.prompts).toEqual([]);

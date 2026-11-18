@@ -1,12 +1,13 @@
 import { basename, dirname } from 'node:path';
 import { notReady, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { holdsAnyOwnCommand, hookSettingsPlaceOf, missingHookEvents } from '../core/claude-settings.js';
+import { holdsAnyOwnCommand, hookSettingsPlaceOf, missingDenyRules, missingHookEvents, ownDenyRulesOf } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import type { GuardValues } from '../guards/types.js';
 import { toolNames } from '../core/tools.js';
 import { isRecord } from '../migrate/inspect.js';
-import { claudeSettingKeys, commandLines, commands, commandText, flags, flagText, hookNames, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
+import { claudeSettingKeys, commandLines, commands, commandText, flags, flagText, guardDenyWords, hookNames, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import { readCheckedFile, type NamedPath } from './registry.js';
 import { requireRoleText } from './role-text.js';
@@ -138,6 +139,8 @@ export type HookSettingsRead =
       readonly state: 'plain';
       readonly file: string;
       readonly missing: readonly HookEvent[];
+      readonly missingDeny: readonly string[];
+      readonly skipped: readonly string[];
       readonly idleCompaction: boolean | null;
       readonly hasOwnHook: boolean;
     }
@@ -149,15 +152,17 @@ export type HookSettingsRead =
  * event needs one (`missingHookEvents`). Refuse a link at the session folder, its `.claude` folder or the file.
  * Parent folders are not checked. The read changes nothing.
  */
-export const readHookSettings = async (deps: Deps, folder: string): Promise<CliResult<HookSettingsRead>> => {
+export const readHookSettings = async (deps: Deps, home: string, folder: string): Promise<CliResult<HookSettingsRead>> => {
   const { folders, file } = settingsPartsOf(folder);
   const read = await readCheckedFile(deps, folders, file, maxFileBytes);
   if (!read.ok) return read;
   const found = read.value;
+  const deny = await ownDenyRulesOf(deps, home, folder);
+  if (!deny.ok) return deny;
   if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason, part: found.part });
   if (found.state === 'invalid') return ok({ state: 'not-parsed', file: file.path });
   if (found.state === 'absent') {
-    return ok({ state: 'plain', file: file.path, missing: hookNames.events, idleCompaction: null, hasOwnHook: false });
+    return ok({ state: 'plain', file: file.path, missing: hookNames.events, missingDeny: deny.value.rules, skipped: deny.value.skipped, idleCompaction: null, hasOwnHook: false });
   }
   const json = parseJsonText(found.text);
   if (!json.ok || !isRecord(json.value)) return ok({ state: 'not-parsed', file: file.path });
@@ -171,6 +176,8 @@ export const readHookSettings = async (deps: Deps, folder: string): Promise<CliR
     state: 'plain',
     file: file.path,
     missing: missingHookEvents(settings),
+    missingDeny: missingDenyRules(settings, deny.value.rules),
+    skipped: deny.value.skipped,
     idleCompaction: typeof idle === 'boolean' ? idle : null,
     hasOwnHook: holdsAnyOwnCommand(settings),
   });
@@ -180,8 +187,8 @@ export const readHookSettings = async (deps: Deps, folder: string): Promise<CliR
  * The hook settings file of the session folder must hold the own command of every hook event of the fixed list (`readHookSettings`).
  * A file that lacks an event is exit 3, and the remedy is `upgrade`, then the command in `then`. A link is exit 4.
  */
-export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Promise<CliResult<void>> => {
-  const settings = await readHookSettings(deps, request.folder);
+export const requireOwnHooks = async (deps: Deps, request: SettingsRequest & { readonly home: string }): Promise<CliResult<void>> => {
+  const settings = await readHookSettings(deps, request.home, request.folder);
   if (!settings.ok) return settings;
   const found = settings.value;
   if (found.state === 'link') {
@@ -191,7 +198,10 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Pro
     );
   }
   const missing = found.state === 'not-parsed' ? hookNames.events : found.missing;
-  if (missing.length === 0) return ok(undefined);
+  if (found.state === 'plain' && missing.length === 0) {
+    if (found.missingDeny.length > 0) deps.warn(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
+    return ok(undefined);
+  }
   return notReady(
     `the hook settings ${found.file} lack the events: ${missing.join(', ')}`,
     request.remedy ?? `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
@@ -202,6 +212,7 @@ export interface RoleDeliveryRequest {
   /** The node home, the root of the config repo: an absolute path. */
   readonly home: string;
   readonly config: FactoryConfig;
+  readonly guards?: GuardValues | undefined;
   readonly workerId: string;
   /** The work copy of the worker: `work-copies/<project>/<id>` of the node home, which the caller has checked. */
   readonly workCopy: string;
@@ -229,9 +240,9 @@ export const startOverCommands = (workerId: string, project: string): { readonly
 export const requireRoleDelivery = async (deps: Deps, request: RoleDeliveryRequest): Promise<CliResult<void>> => {
   const { home, config, workerId, workCopy, again } = request;
   const remedy = roleText.hookRemedy({ again: commandText(again), ...startOverCommands(workerId, basename(dirname(workCopy))) });
-  const hooks = await requireOwnHooks(deps, { folder: workCopy, then: again, remedy });
+  const hooks = await requireOwnHooks(deps, { home, folder: workCopy, then: again, remedy });
   if (!hooks.ok) return hooks;
-  return requireRoleText(deps, { home, config, retry: commandText(again) });
+  return requireRoleText(deps, { home, config, guards: request.guards, retry: commandText(again) });
 };
 
 /**

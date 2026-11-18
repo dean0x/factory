@@ -6,6 +6,7 @@ import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
 import { ok } from '../core/result.js';
+import type { GuardValues } from '../guards/types.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import { toolNames } from '../core/tools.js';
 import { workerLaunchArgv } from '../launch/argv.js';
@@ -103,6 +104,7 @@ export interface WorkerLaunchRequest {
   /** The node home, the root of the config repo: an absolute path. */
   readonly home: string;
   readonly config: FactoryConfig;
+  readonly guards?: GuardValues | undefined;
   /** The id of the worker: a slug. It is the value of the worker mark of the pane. */
   readonly workerId: string;
   /** The work copy of the worker: an absolute folder. The program of the pane starts there. */
@@ -310,7 +312,7 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   if (!folder.ok) return folder;
   const settings = await requireCleanSettings(deps, home, workCopy);
   if (!settings.ok) return settings;
-  const delivery = await requireRoleDelivery(deps, { home, config, workerId, workCopy, again: resumeLine(workerId) });
+  const delivery = await requireRoleDelivery(deps, { home, config, workerId, workCopy, guards: request.guards, again: resumeLine(workerId) });
   if (!delivery.ok) return delivery;
   for (const line of await instructionWarnings(deps, home, workerId, workCopy)) deps.warn(line);
 

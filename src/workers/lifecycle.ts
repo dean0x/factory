@@ -2,6 +2,7 @@ import { err, ok } from '../core/result.js';
 import { failure, notReady, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import type { GuardValues } from '../guards/types.js';
 import { killSessionArgs, type PaneRow } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
 import { commandLines, commands, commandText, env, lastSeen, roles, type CommandName } from '../names.js';
@@ -64,7 +65,7 @@ const withoutWarnings = (deps: Deps): Deps => ({ ...deps, warn: () => undefined 
  */
 const requireLaunchable = async (
   deps: Deps,
-  request: { readonly home: string; readonly config: FactoryConfig; readonly again: string },
+  request: TargetCheck,
   record: WorkerRecord,
 ): Promise<CliResult<void>> => {
   const { home, config, again } = request;
@@ -72,7 +73,7 @@ const requireLaunchable = async (
   if (!folder.ok) return folder;
   const settings = await requireCleanSettings(withoutWarnings(deps), home, record.workCopy);
   if (!settings.ok) return settings;
-  return requireRoleDelivery(deps, { home, config, workerId: record.id, workCopy: record.workCopy, again });
+  return requireRoleDelivery(deps, { home, config, workerId: record.id, workCopy: record.workCopy, guards: request.guards, again });
 };
 
 export interface TargetCheck {
@@ -80,6 +81,7 @@ export interface TargetCheck {
   readonly home: string;
   /** The config of the node: the role text of a worker that starts again is rendered from it. */
   readonly config: FactoryConfig;
+  readonly guards?: GuardValues | undefined;
   /** The tmux session of the node: the id of the node. */
   readonly session: string;
   /** The command that a person runs in another pane, without the program name (`commandText` adds it). */

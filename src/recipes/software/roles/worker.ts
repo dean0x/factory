@@ -1,4 +1,8 @@
-export const WORKER_LINES: readonly string[] = [
+import { allOn } from '../../../guards/effective.js';
+import { guardIds } from '../../../names.js';
+import { linesFor, type TextPart } from '../../../templates/fill.js';
+
+export const WORKER_PARTS: readonly TextPart[] = [
   '# {{Worker}} instructions',
   '',
   '## Role',
@@ -30,7 +34,12 @@ export const WORKER_LINES: readonly string[] = [
   '## Limits',
   '',
   '- Claude Code loads the user rules itself. Do not open a file in the user config folder.',
-  '- Do not install outside your work copy without an {{owner}} go. These need a go: a global package install; a system package tool such as `brew` or `apt`; a script that downloads and runs code; a change to a shell start file or to the search path; a new Claude Code plugin or MCP server; a change to the Claude Code settings. An install of a dependency inside your work copy is allowed.',
+  {
+    guards: [guardIds.installRules],
+    lines: [
+      '- Do not install outside your work copy without an {{owner}} go. These need a go: a global package install; a system package tool such as `brew` or `apt`; a script that downloads and runs code; a change to a shell start file or to the search path; a new Claude Code plugin or MCP server; a change to the Claude Code settings. An install of a dependency inside your work copy is allowed.',
+    ],
+  },
   '',
   '## Milestones',
   '',
@@ -79,3 +88,5 @@ export const WORKER_LINES: readonly string[] = [
   'Write all text in ASD-STE100 Simplified Technical English: reports, questions, release notes and GitHub text.',
   'Code, commands, names and quotes keep their own form.',
 ];
+
+export const WORKER_LINES: readonly string[] = linesFor(WORKER_PARTS, allOn);

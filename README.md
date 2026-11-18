@@ -67,8 +67,10 @@ See [the mod guide](plugins/factory-board/README.md) for the options and update 
 | `factory track add ID --name TEXT [--roadmap]`, `factory track list` | Add a track to the board, or list the tracks. A track is a named stream of work. See "Use the local board". |
 | `factory request add\|list\|close\|log\|doc` | Put a question for the owner in the waiting file, list the open requests, close one with no answer, with a decision of the coordinator or a delegate, or with an answer of the owner that the coordinator passes on, log a decision that no request asked for, or link a doc to an open request. See "Use the local board". |
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. `queue set` takes `--release-group TEXT`, and `queue show` lists the rows under one heading for each group. See "Use the local board". |
-| `factory guard list` | Show the guards, their values, their defaults and the harm mark `H`. `--all` shows every guard. `--family NAME` shows the rows of one guard. `--json` prints every guard and row. It only reads. See "Guards" in `docs/design.md`. |
-| `factory doctor` | Run 32 checks. See "Doctor". |
+| `factory guard list` | Show the guards, their effective values, their defaults, their sources and the harm mark `H`. `--all` shows every guard. `--family NAME` shows the rows of one guard. `--json` also gives record times and marks each guard that this version cannot set. It only reads. See "Guards". |
+| `factory guard set ID on\|off` | Set one guard in the local file and record the change. `--all on\|off` sets every guard that this version can set. Run it in a terminal window outside factory and Claude Code sessions. Off needs consent. See "Guards". |
+| `factory guard confirm` | Show the exact owner prefix and ask for consent to record it for this folder. Run it in a terminal window outside factory and Claude Code sessions. See "Guards". |
+| `factory doctor` | Run 33 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory board [--home DIR] [--width N] [--json]` | Show requests, workers, open items, the queue and machine facts. Text width is 40 to 120 characters, with 120 as the default. `--json` prints `factory.board/v1` and ignores width. A section that cannot be read is `null`, with its reason in `faults`. Other sections remain visible. It changes nothing. |
 | `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
@@ -213,8 +215,8 @@ A project with no origin, or with a local source, works on this machine. The fac
 
 The factory folder holds two config files:
 
-- `factory.yaml` is shared. Git tracks it, and it goes to every machine. It holds the node, the board (`tracker`), the optional `board` block, the session settings, the limits, and the recipe with its projects.
-- `factory.local.yaml` is private. Git ignores it, and it has mode 600. It holds the owner, the proxies, the settings of a worker, the mode of each approval point (`approval`), the links to other nodes (`parent` and `children`) and the local source of a project (`sources`).
+- `factory.yaml` is shared. Git tracks it, and it goes to every machine. It holds the node, the board (`tracker`), the optional `board` block, the session settings, the limits, and the recipe with its projects. The optional `shared_guards` key keeps named guards on.
+- `factory.local.yaml` is private. Git ignores it, and it has mode 600. It holds the owner, the proxies, the settings of a worker, the mode of each approval point (`approval`), the links to other nodes (`parent` and `children`) and the local source of a project (`sources`). The optional `guards` key holds local guard values.
 
 Each file has its own `schema` key. A key stays private only if it is personal, a credential, or true for one machine only. The shared file refuses a private key, and the error names the key and the private file. A proxy entry in `factory.yaml` fails the load, and `start` makes no tmux call.
 
@@ -223,6 +225,20 @@ Each file has its own `schema` key. A key stays private only if it is personal, 
 With `false`, Claude Code keeps the full context after a long wait. The first turn after the prompt cache expires rebuilds that cache at a higher cost. With `true`, Claude Code can compact a large context after about one hour with no turn. factory writes an explicit `idleCompaction` value in the session settings file. An explicit `true` overrides a user-level `idleCompaction: false`. The key does not stop auto-compact at the context limit.
 
 `init` writes the private file with mode 600. `start`, `init`, `node` and `upgrade` set a mode with group or other read bits back to 600 and print a notice. They stop with exit code 4 when the file has a group or other write bit, has another owner, or is a link. `doctor` and a dry run only warn about read bits. With `factory.yaml` and no `factory.local.yaml`, `start`, `doctor` and `node` exit with code 2 and name `init`.
+
+### Guards
+
+A guard groups checks and role rules that keep one thing safe. `factory guard list` shows the effective value and its source. The mark `H` means that harm to the machine, data or accounts is possible with the guard off.
+
+The local key `guards` accepts `on` or `off`. The shared key `shared_guards` accepts `on` only; a shared `on` keeps that guard on. A missing key means on. `init` writes no guard values. A local off takes effect only with the matching record of the owner that `factory guard set` writes.
+
+This version can set `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. Every other guard stays on. The guard `merge-quality` holds the checked head SHA, green CI there and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
+
+For example, run `factory guard set resume-routines off` in your terminal window outside factory and Claude Code sessions. The command lists the guards and asks for consent. `factory guard set resume-routines on` puts the rule back. Both input and output must be terminals. The change takes effect at the next start. `guard set` and `guard confirm` accept no `--json` output.
+
+`factory guard confirm` shows the full owner prefix and asks for consent to record it for this folder. A new `init` records the prefix only in that terminal channel. An existing node with no record can still start, but start prints a notice. A prefix that differs from its record stops start, reboot, restart, worker new and worker resume with exit code 4. Run `factory guard confirm` to confirm the current prefix. An unreadable guard store also stops those launches; run `factory doctor` for the fault and remedy.
+
+`upgrade` adds Edit deny rules for the own config files, owner stores and session settings after consent. Doctor warns when a rule is absent, and start prints a notice without a new question. See "Guards" in `docs/design.md` for the rule order, the role block checks and the store recovery step.
 
 ### The setup text
 
@@ -795,7 +811,7 @@ The state of a line is one of these:
 
 ### Doctor
 
-`factory doctor` runs 32 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 21 checks are new:
+`factory doctor` runs 33 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 22 checks are new:
 
 - `local-file`: the mode, the owner and the type of `factory.local.yaml`.
 - `root`: the factory folder is the top folder of its own git work tree and holds an intact share list. This is a warning.
@@ -818,6 +834,7 @@ The state of a line is one of these:
 - `board-size`: the size of `board.json`, `waiting.json` and `decision-log.json` against the read cap of 1 MiB. A file that reaches 80 percent of the cap is a warning that names the file. A command cannot read a file above the cap. A file that is not there is no fault. The check writes nothing.
 - `lessons`: the lessons file of the coordinator, `.factory/lessons.md`. A file that is not there is no fault. The check fails when the path is a link or not a plain file, when the file is larger than 32768 bytes, or when it holds more than 40 entries. An entry is a line that starts with `Rule:`. The message names the fault and the remedy: replace the link with a plain file, or remove old entries. The check never changes the file.
 - `role-delivery`: the path from the setup text to the worker sessions (see "The role text of a worker"). The line counts the work copies whose hook settings hold the hook of factory for every hook event, gives the size of the role text against the cap of 9000 characters, and names in words the place of the acceptance of the setup text: the file `setup-acceptances.json` in the `factory` folder of your state folder. It gives no full path. No worker is ok, and so is a layer with no worker file. A fault of the role text fails the check, and the message names the remedy. A work copy that lacks the hook for one or more events (the same rule as the launch of a worker, so the check and the launch agree), or whose hook settings file is a link, is a warning. The finding names the missing events and gives one remedy: `factory upgrade`, then `factory worker resume ID`, or, for a work copy with no hook of factory at all, `factory dismiss ID` and a new `factory worker new`. A work copy whose hook settings the check cannot read is "not checked", which is a warning with its own remedy, and a fault of the role text still fails the check. The check reads at most 256 worker records, and a longer list fails it. The check writes nothing.
+- `guards`: the counts of off guards and off `H` guards, each direct proxy, each unmatched local value, the prefix record and the own file rules. A store fault or prefix mismatch fails the check. An absent prefix record or Edit deny rule warns. The JSON output gives the record time of each off guard.
 
 The check `tools` fails when git is older than 2.26, or when `doctor` cannot read the git version.
 

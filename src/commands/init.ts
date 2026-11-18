@@ -23,6 +23,7 @@ import {
   parseGithubRepo,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
+import { recordPrefix, requireGuardChannel } from '../core/guard-records.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
@@ -30,7 +31,9 @@ import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { entryOfText, recordSetupAcceptance, type AcceptanceInput, type ManifestEntry } from '../core/setup-acceptance.js';
 import { describeIssues } from '../core/zod.js';
+import { allOn } from '../guards/effective.js';
 import {
+  commandLines,
   commands,
   commandText,
   defaultOwnerPrefix,
@@ -633,7 +636,7 @@ const checkOptions = async (
   const root = await rootTextsOf(deps, layoutOf(home));
   if (!root.ok) return root;
   const modes = await effectiveModes(deps, home, settings.value);
-  const templates = blockTemplatesFor(blockInputOf(settings.value, root.value.setup, modes));
+  const templates = blockTemplatesFor(blockInputOf(settings.value, root.value.setup, modes, allOn));
   const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
   if (!blocks.ok) return blocks;
   return ok({ ...base, templates, blocks: blocks.value, root: root.value });
@@ -1011,6 +1014,18 @@ export const recordAcceptance = async (
       };
 };
 
+/** Record only after all init files are saved. A failure keeps the files and clones for a later confirmation. */
+export const recordInitPrefix = async (deps: Deps, plan: InitPlan): Promise<CliResult<readonly string[]>> => {
+  const remedy = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the ${roles.owner} prefix.`;
+  const channel = requireGuardChannel(deps, commands.init);
+  if (!channel.ok) return ok([`No ${roles.owner} prefix record was written. ${remedy}`]);
+  const written = await recordPrefix(deps, {
+    root: plan.home, node: plan.config.core.node.id, prefix: plan.config.core.owner.prefix,
+  });
+  if (!written.ok) return failure(`The files stay, but the ${roles.owner} prefix record could not be written: ${written.error.message}`, remedy);
+  return ok(written.value.warning === null ? [] : [written.value.warning]);
+};
+
 /** The projects of the command: the git work trees that the command found come first, when the home is proposed. */
 const projectsOf = (deps: Deps, flagValues: readonly string[], found: readonly string[]): readonly string[] => [
   ...found,
@@ -1073,8 +1088,10 @@ export const runInit = async (
   // The node is made and listed. A failure of the hook settings leaves it, and a second run of init finishes the step.
   const hook = await writeHookSettings(deps, plan.value.home, options.yes, idleCompaction);
   if (!hook.ok) return hook;
+  const prefix = await recordInitPrefix(deps, plan.value);
+  if (!prefix.ok) return prefix;
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
-  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...notes];
+  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...prefix.value, ...notes];
 
   const written = [
     files.config,

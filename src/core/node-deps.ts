@@ -27,7 +27,7 @@ import { isatty } from 'node:tty';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
 import { hookNames } from '../names.js';
-import { checkedFaultOf } from './access.js';
+import { checkedFaultCore, checkedFaultOf } from './access.js';
 import { isSameOrInside } from './paths.js';
 import { ok } from './result.js';
 import {
@@ -257,9 +257,11 @@ const readHandleBounded = async (handle: FileHandle, maxBytes: number): Promise<
 };
 
 /** Check the open file by its own facts, and read it when it passes and the request has a cap. The handle stays open for the caller. */
-const checkOpenFile = async (handle: FileHandle, path: string, request: CheckedOpenRequest): Promise<CheckedOpen> => {
+const checkOpenFile = async (
+  handle: FileHandle, path: string, request: CheckedOpenRequest, faultOf: typeof checkedFaultCore,
+): Promise<CheckedOpen> => {
   const info = infoOf(await handle.stat());
-  const fault = checkedFaultOf(request.uid, info, request.maxBytes);
+  const fault = faultOf(request.uid, info, request.maxBytes);
   if (fault !== null) return { state: 'refused', fault, info, bytes: 0 };
   if (request.maxBytes === null) return { state: 'opened', info, text: null, bytes: 0 };
   const read = await readHandleBounded(handle, request.maxBytes);
@@ -271,7 +273,9 @@ const checkOpenFile = async (handle: FileHandle, path: string, request: CheckedO
   return text.ok ? { state: 'opened', info, text: text.value, bytes: read.size } : { state: 'unreadable', info, bytes: read.size };
 };
 
-const openChecked = async (path: string, request: CheckedOpenRequest): Promise<CliResult<CheckedOpen>> => {
+const openCheckedCore = async (
+  path: string, request: CheckedOpenRequest, faultOf: typeof checkedFaultCore = checkedFaultCore,
+): Promise<CliResult<CheckedOpen>> => {
   const { maxBytes } = request;
   if (maxBytes !== null && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
     return failure(`cannot read ${path}: the cap ${maxBytes} is not a whole number, 0 or more`);
@@ -285,13 +289,16 @@ const openChecked = async (path: string, request: CheckedOpenRequest): Promise<C
     return MISSING_CODES.includes(code) ? ok({ state: 'absent' }) : failure(`cannot open ${path}: ${code}`);
   }
   try {
-    return ok(await checkOpenFile(handle, path, request));
+    return ok(await checkOpenFile(handle, path, request, faultOf));
   } catch (cause) {
     return failure(`cannot read ${path}: ${errorCode(cause)}`);
   } finally {
     await handle.close().catch(() => undefined);
   }
 };
+
+const openChecked = (path: string, request: CheckedOpenRequest): Promise<CliResult<CheckedOpen>> =>
+  openCheckedCore(path, request, checkedFaultOf);
 
 const linkKind = async (path: string): Promise<CliResult<LinkKind | null>> => {
   try {
@@ -313,7 +320,7 @@ const comparablePath = (path: string): string => (process.platform === 'darwin' 
  * last part of the path is a link, also a link whose target does not exist, or when that path is not inside the real
  * path of `within`. The write uses the path that this check returns.
  */
-const checkedTarget = async (path: string, within: string): Promise<CliResult<string>> => {
+const checkedTargetCore = async (path: string, within: string): Promise<CliResult<string>> => {
   const kind = await linkKind(path);
   if (!kind.ok) return kind;
   if (kind.value === 'link') return failure(`cannot write ${path}: it is a link`);
@@ -327,12 +334,16 @@ const checkedTarget = async (path: string, within: string): Promise<CliResult<st
   return ok(target);
 };
 
+const checkedTarget = (path: string, within: string): Promise<CliResult<string>> => checkedTargetCore(path, within);
+
 /**
  * Write beside the target, then rename. The target is never a link, and it is inside the folder that the caller names.
  * The temporary file is new, has a name that others cannot guess, and has its final mode from the start.
  */
-const writeAtomic = async (path: string, text: string, within: string, mode: number | undefined): Promise<CliResult<void>> => {
-  const target = await checkedTarget(path, within);
+const writeAtomicCore = async (
+  path: string, text: string, within: string, mode: number | undefined, targetOf: typeof checkedTargetCore = checkedTargetCore,
+): Promise<CliResult<void>> => {
+  const target = await targetOf(path, within);
   if (!target.ok) return target;
   return guard('write', path, async () => {
     const temporary = `${target.value}.tmp-${process.pid}-${randomBytes(TEMPORARY_SUFFIX_BYTES).toString('hex')}`;
@@ -348,6 +359,9 @@ const writeAtomic = async (path: string, text: string, within: string, mode: num
     }
   });
 };
+
+const writeAtomic = (path: string, text: string, within: string, mode: number | undefined): Promise<CliResult<void>> =>
+  writeAtomicCore(path, text, within, mode, checkedTarget);
 
 /**
  * Remove the file at `path` after a failed write, but only when the path still holds the file that the write created
@@ -433,6 +447,8 @@ const nodeFs: Fs = {
   statInfo,
   lstatInfo,
   openChecked,
+  openCheckedCore: (path, request) => openCheckedCore(path, request),
+  writeTextAtomicCore: (path, text, within, mode) => writeAtomicCore(path, text, within, mode),
   lstat: linkKind,
   chmod: (path, mode) => guard('change the mode of', path, () => chmod(path, mode)),
   realpath: resolved,
@@ -670,10 +686,12 @@ const MAX_PID = 2_147_483_647;
 const FIRST_SIGNALLED_PID = 2;
 
 /** The pid must be a whole number that names one process other than init, and not the process of this program. */
-const checkedPid = (pid: number): CliResult<number> =>
-  Number.isSafeInteger(pid) && pid >= FIRST_SIGNALLED_PID && pid <= MAX_PID && pid !== process.pid
+const checkedPidCore = (pid: number, ownPid: number): CliResult<number> =>
+  Number.isSafeInteger(pid) && pid >= FIRST_SIGNALLED_PID && pid <= MAX_PID && pid !== ownPid
     ? ok(pid)
     : failure(`cannot signal the process ${String(pid)}: it is not the pid of one other process`);
+
+const checkedPid = (pid: number): CliResult<number> => checkedPidCore(pid, process.pid);
 
 /** The signal of a call: TERM ends the process, and 0 only asks whether the process exists. */
 type ProcessSignal = 'SIGTERM' | 0;
@@ -719,7 +737,7 @@ const isZombie = (pid: number): boolean => {
 };
 
 const processRuns = (pid: number): CliResult<boolean> => {
-  const checked = checkedPid(pid);
+  const checked = checkedPidCore(pid, process.pid);
   if (!checked.ok) return checked;
   const signalled = signalProcess(checked.value, 0);
   return signalled.ok && signalled.value ? ok(!isZombie(checked.value)) : signalled;

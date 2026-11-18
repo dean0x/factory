@@ -9,7 +9,7 @@ import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptanc
 import { boardKeys, hookNames, setupAcceptance, stateLock } from '../../src/names.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { oldWordsIn } from '../helpers/old-words.js';
-import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, withoutTmux, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, PREFIX_RECORD_NOTICE, withoutHookNotice, withoutTmux, type RunResult, type Sandbox } from './harness.js';
 import { scaled } from './load.js';
 
 let box: Sandbox;
@@ -383,7 +383,7 @@ describe('factory upgrade (built binary)', () => {
     await symlink(real, linked);
     const home = join(linked, 'factory');
     const init = await box.run(['init', '--yes', '--home', home, '--name', 'demo', '--owner-name', 'Test Owner']);
-    expect({ code: init.code, stderr: withoutHookNotice(init.stderr) }).toEqual({ code: 0, stderr: '' });
+    expect({ code: init.code, stderr: withoutHookNotice(init.stderr) }).toEqual({ code: 0, stderr: PREFIX_RECORD_NOTICE });
     const upgrade = await box.run(['upgrade', '--home', home]);
     expect(upgrade.code).toBe(0);
     expect(upgrade.stdout).toContain('Nothing to upgrade.');
@@ -1202,7 +1202,12 @@ describe('factory upgrade of the hook settings (built binary)', () => {
     const result = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain(`Changed the hook settings in ${copyFile}.`);
-    expect(JSON.parse(await box.read(copyFile))).toEqual(current);
+    const coordinatorRules = await ownDenyRules(box, join(box.node, 'coordinator'));
+    const copyRules = await ownDenyRules(box, join(box.node, 'work-copies', 'web', WORKER_ID));
+    expect(JSON.parse(await box.read(copyFile))).toEqual({
+      ...current,
+      permissions: { deny: [...new Set([...coordinatorRules, ...copyRules])] },
+    });
     expect(JSON.parse(await box.read(coordinatorFile))).toEqual(current);
 
     const again = await box.run(['upgrade', '--home', box.node, '--yes']);
@@ -1231,11 +1236,13 @@ describe('factory upgrade of the hook settings (built binary)', () => {
     const result = await box.run(['upgrade', '--home', box.node, '--yes', '--json']);
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ changed: true, hookSettings: [coordinatorFile, copyFile] });
-    for (const file of [coordinatorFile, copyFile]) {
-      const written: unknown = JSON.parse(await box.read(file));
-      expect(written).toHaveProperty('idleCompaction', false);
-      expect(written).toEqual(current);
-    }
+    const coordinatorRules = await ownDenyRules(box, join(box.node, 'coordinator'));
+    const copyRules = await ownDenyRules(box, join(box.node, 'work-copies', 'web', WORKER_ID));
+    expect(JSON.parse(await box.read(coordinatorFile))).toEqual(current);
+    expect(JSON.parse(await box.read(copyFile))).toEqual({
+      ...current,
+      permissions: { deny: [...new Set([...coordinatorRules, ...copyRules])] },
+    });
 
     const again = await box.run(['upgrade', '--home', box.node, '--yes', '--json']);
     expect(again.code).toBe(0);

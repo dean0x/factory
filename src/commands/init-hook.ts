@@ -1,6 +1,6 @@
 import { relative } from 'node:path';
 import type { CliResult } from '../cli/errors.js';
-import { declinedHookText, ensureHookSettings, requireHookConsent, type HookConsentRequest } from '../core/claude-settings.js';
+import { declinedHookText, ensureHookSettings, ownDenyRulesOf, requireHookConsent, type HookConsentRequest } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { commands, hookSessions } from '../names.js';
@@ -18,29 +18,23 @@ export interface HookStep {
   readonly warnings: readonly string[];
 }
 
-const requestOf = (home: string, yes: boolean, idleCompaction: boolean): HookConsentRequest => ({
-  folder: layoutOf(home).coordinatorDir,
-  session: hookSessions.coordinator,
-  yes,
-  command: commands.init,
-  idleCompaction,
-});
+const requestOf = async (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<HookConsentRequest>> => {
+  const folder = layoutOf(home).coordinatorDir;
+  const deny = await ownDenyRulesOf(deps, home, folder);
+  return deny.ok ? ok({ folder, session: hookSessions.coordinator, yes, command: commands.init, idleCompaction, deny: { rules: deny.value.rules, add: true } }) : deny;
+};
 
-/**
- * Stop before the first write when the person can not give the consent later: no terminal window and no yes that counts.
- * `idleCompaction` is the value of `session.idle_compaction`, the same value that the write gets.
- */
-export const checkHookConsent = (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<void>> =>
-  requireHookConsent(deps, requestOf(home, yes, idleCompaction));
+/** Stop before the first write when the person can not give the consent later: no terminal window and no yes that counts. */
+export const checkHookConsent = async (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<void>> => {
+  const request = await requestOf(deps, home, yes, idleCompaction);
+  return request.ok ? requireHookConsent(deps, request.value) : request;
+};
 
 /** Ask for the hook settings and write them, after the last write of the command. A no goes on with a notice. */
-export const writeHookSettings = async (
-  deps: Deps,
-  home: string,
-  yes: boolean,
-  idleCompaction: boolean,
-): Promise<CliResult<HookStep>> => {
-  const done = await ensureHookSettings(deps, { ...requestOf(home, yes, idleCompaction), dryRun: false });
+export const writeHookSettings = async (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<HookStep>> => {
+  const request = await requestOf(deps, home, yes, idleCompaction);
+  if (!request.ok) return request;
+  const done = await ensureHookSettings(deps, { ...request.value, dryRun: false });
   if (!done.ok) return done;
   if (done.value.kind === 'written') return ok({ written: [relative(home, done.value.file)], warnings: [] });
   if (done.value.kind === 'declined') return ok({ written: [], warnings: [declinedHookText(done.value, commands.init)] });

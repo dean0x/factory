@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { checkFileAddress } from '../comms/address.js';
+import { guardsFor, retiredGuardIds } from '../guards/registry.js';
+import type { Guard, GuardValues } from '../guards/types.js';
 import { isRecord, type SchemaParser } from '../migrate/inspect.js';
 import {
   boardLimits,
@@ -7,6 +9,10 @@ import {
   commandText,
   durationBounds,
   files,
+  guardConfigWords,
+  guardKeys,
+  guardSetWords,
+  guardValues,
   keys,
   layers,
   prefixPlaceholders,
@@ -272,6 +278,7 @@ const sharedCoreSchemaFor = (ids: readonly string[]) =>
     [keys.root.session]: sharedSessionSchema,
     [keys.root.limits]: limitsSchema,
     [keys.root.tracker]: trackerSchema,
+    [guardKeys.shared]: z.record(slug, z.literal(guardValues.on, { error: guardConfigWords.sharedOnOnly })).default({}),
     [keys.root.board]: boardSchema.optional(),
     [keys.root.recipe]: recipeBlockSchemaFor(ids),
   });
@@ -288,6 +295,7 @@ const localFileSchema = z
       .refine((workers) => Object.keys(workers).length <= MAX_WORKERS, { error: 'has too many entries' })
       .default({}),
     [keys.root.approval]: approvalSchema,
+    [guardKeys.local]: z.record(slug, z.enum([guardValues.on, guardValues.off])).default({}),
     [keys.root.parent]: linkSchema.nullable().default(null),
     [keys.root.children]: z.array(linkSchema).max(MAX_CHILDREN).default([]),
     [keys.root.sources]: sourcesSchema,
@@ -375,6 +383,7 @@ const LOCAL_ROOT_KEYS: readonly string[] = [
   keys.root.proxies,
   keys.root.workers,
   keys.root.approval,
+  guardKeys.local,
   keys.root.parent,
   keys.root.children,
   keys.root.sources,
@@ -388,7 +397,11 @@ const localKeyPaths = (raw: unknown): readonly (readonly string[])[] => {
   if (!isRecord(raw)) return [];
   const root = Object.keys(raw)
     .filter((key) => LOCAL_ROOT_KEYS.includes(key) && key !== keys.root.state)
-    .map((key) => [key]);
+    .flatMap((key) => {
+      const value = raw[key];
+      const ids = key === guardKeys.local && isRecord(value) ? Object.keys(value) : [];
+      return ids.length === 0 ? [[key]] : ids.map((id) => [key, id]);
+    });
   const session = raw[keys.root.session];
   const inSession = isRecord(session)
     ? Object.keys(session)
@@ -409,6 +422,18 @@ const olderLayoutPaths = (raw: unknown): readonly (readonly string[])[] => {
     ...(schema2.workersKey in raw ? [[schema2.workersKey]] : []),
     ...(isRecord(approval) && schema2.approvalKey in approval ? [[keys.root.approval, schema2.approvalKey]] : []),
   ];
+};
+
+/** Check guard ids against the entry without a call into any guard value rule. */
+const guardIdIssues = (
+  values: GuardValues,
+  known: readonly Guard[],
+  key: typeof guardKeys.local | typeof guardKeys.shared,
+): readonly z.core.$ZodIssue[] => {
+  const ids = new Set(known.map((guard) => guard.id));
+  return Object.keys(values)
+    .filter((id) => !ids.has(id) || retiredGuardIds.includes(id))
+    .map((id) => customIssue([key, id], guardSetWords.unknownId(id)));
 };
 
 /**
@@ -440,7 +465,14 @@ export const sharedConfigSchemaFor = (registry: RecipeRegistry): SchemaParser<Sh
         return {
           success: false,
           error: errorOf(
-            local.map((path) => customIssue(path, `is a local key: put it in ${files.localConfig}, not in ${files.config}`)),
+            local.map((path) =>
+              customIssue(
+                path,
+                path[0] === guardKeys.local
+                  ? guardConfigWords.localOnly
+                  : `is a local key: put it in ${files.localConfig}, not in ${files.config}`,
+              ),
+            ),
           ),
         };
       }
@@ -451,6 +483,8 @@ export const sharedConfigSchemaFor = (registry: RecipeRegistry): SchemaParser<Sh
       if (entry === undefined) {
         return { success: false, error: errorOf([customIssue([keys.root.recipe, keys.recipe.id], `names no ${roles.recipe} of the registry`)]) };
       }
+      const guardIssues = guardIdIssues(rest.shared_guards, guardsFor(entry), guardKeys.shared);
+      if (guardIssues.length > 0) return { success: false, error: errorOf(guardIssues) };
       const recipe = entry.schema.safeParse(block);
       if (!recipe.success) {
         const issues = recipe.error.issues.map((issue) => ({ ...issue, path: [keys.root.recipe, ...issue.path] }));
@@ -508,7 +542,7 @@ export const mergeConfig = (
         `is not an approval point of the ${roles.recipe} ${shared.recipe.id}. The points are: ${known.join(', ')}`,
       ),
     );
-  const issues = [...unknown, ...sourceIssues(shared, local)];
+  const issues = [...unknown, ...sourceIssues(shared, local), ...guardIdIssues(local.guards, guardsFor(shared.entry), guardKeys.local)];
   if (issues.length > 0) return { success: false, error: errorOf(issues) };
   const { session: sharedSession, ...sharedRest } = shared.core;
   const { session: localSession, approval, ...localRest } = local;
@@ -544,9 +578,10 @@ export const parseConfig = (sharedRaw: unknown, localRaw: unknown, registry: Rec
 
 /** The parts of a combined config that belong in the shared file. */
 export const sharedOf = (config: FactoryConfig): SharedConfig => {
-  const { node, limits, tracker, board, session } = config.core;
+  const { node, limits, tracker, board, session, shared_guards } = config.core;
   return {
     core: {
+      [guardKeys.shared]: shared_guards,
       node,
       limits,
       tracker,
@@ -566,8 +601,9 @@ export const sharedOf = (config: FactoryConfig): SharedConfig => {
 
 /** The parts of a combined config that belong in the local file. */
 export const localOf = (config: FactoryConfig): LocalConfig => {
-  const { owner, session, proxies, workers, approval, parent, children, sources } = config.core;
+  const { owner, session, proxies, workers, approval, parent, children, sources, guards } = config.core;
   return {
+    [guardKeys.local]: guards,
     owner,
     session: { [keys.session.proxy]: session.proxy, [keys.session.statusline]: session.statusline },
     proxies,

@@ -1,4 +1,4 @@
-import { at, codeRow, guardOf, textRow } from '../../guards/build.js';
+import { at, codeRow, guardOf, textRow, wiredGuard } from '../../guards/build.js';
 import type { GuardDefinition, GuardRow } from '../../guards/types.js';
 import { commandLines, guardIds, keys, roles } from '../../names.js';
 import { softwareApprovalPoints } from './approval.js';
@@ -17,17 +17,26 @@ const { coordinator, owner, worker } = roles;
 const [mergePoint, releasePoint] = softwareApprovalPoints;
 
 export const softwareGuards: readonly GuardDefinition[] = [
-  guardOf(
-    softwareGuardIds.approvalMerge,
-    'Approval of a merge',
-    `A merge waits for the go of the ${owner}.`,
-    [`${keys.root.approval}.${mergePoint.id}`],
+  wiredGuard(
+    guardOf(
+      softwareGuardIds.approvalMerge,
+      'Approval of a merge',
+      `A merge waits for the go of the ${owner}.`,
+      [`${keys.root.approval}.${mergePoint.id}`],
+    ),
+  ),
+  wiredGuard(
+    guardOf(
+      softwareGuardIds.approvalRelease,
+      'Approval of a release',
+      `A release waits for the go of the ${owner}.`,
+      [`${keys.root.approval}.${releasePoint.id}`],
+    ),
   ),
   guardOf(
-    softwareGuardIds.approvalRelease,
-    'Approval of a release',
-    `A release waits for the go of the ${owner}.`,
-    [`${keys.root.approval}.${releasePoint.id}`],
+    softwareGuardIds.mergeQuality,
+    'Quality checks before a merge',
+    'A merge uses the checked head SHA, green CI there and a posted review of a releasable change.',
   ),
   guardOf(
     softwareGuardIds.prRules,
@@ -72,7 +81,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
   }),
   textRow({
     id: 'merge-head-text',
-    guard: softwareGuardIds.approvalMerge,
+    guard: softwareGuardIds.mergeQuality,
     name: 'A merge happens only at the full head SHA that was checked, with green CI there, a posted review and a releasable change',
     applies: 'Each merge',
     harm: true,

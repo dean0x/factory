@@ -3,7 +3,9 @@ import { exitCodeFor, failure, type CliResult } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { entryOfText, manifestOf } from '../../src/core/setup-acceptance.js';
-import { roleText } from '../../src/names.js';
+import { files, guardIds, roleText } from '../../src/names.js';
+import { allOn } from '../../src/guards/effective.js';
+import type { GuardValues } from '../../src/guards/types.js';
 import { recipes } from '../../src/recipes/index.js';
 import { workerFileTemplatesFor } from '../../src/templates/index.js';
 import {
@@ -12,6 +14,7 @@ import {
   requireRoleText,
   roleFaultReason,
   roleFaultRefusal,
+  roleTextSizeWarning,
   type RoleFault,
   type RoleRead,
 } from '../../src/workers/role-text.js';
@@ -26,7 +29,7 @@ const NODE = 'demo';
 const DECOY = `${HOME}/.factory/roles/worker.md`;
 const config: FactoryConfig = sampleConfig();
 
-const PACKAGE_ONLY = composeRoleText(workerFileTemplatesFor(config, null));
+const PACKAGE_ONLY = composeRoleText(workerFileTemplatesFor(config, null, allOn));
 /** The most characters of setup text that the cap leaves: the cap, less the package part and the joiner. */
 const FREE = roleText.maxChars - PACKAGE_ONLY.length - roleText.joiner.length;
 
@@ -71,9 +74,44 @@ const worldOf = (world: World = {}): FakeDeps => {
 const read = (deps: Deps): Promise<CliResult<RoleRead>> => readRoleText(deps, { home: HOME, config });
 
 const refused = (fault: RoleFault): CliResult<RoleRead> => ({ ok: true, value: { kind: 'refused', fault } });
+const withGuards = (guards: GuardValues) => ({ home: HOME, config, guards });
+
+describe('worker role text with guard values', () => {
+  const guards: GuardValues = { [guardIds.installRules]: 'off' };
+
+  it.each([null, 'Write tests first.\n'])('renders effective worker rules with setup text %j', async (text) => {
+    const result = await readRoleText(worldOf({ text }), withGuards(guards));
+    const expected = composeRoleText(workerFileTemplatesFor(config, text, guards));
+    expect(expected).not.toBe(composeRoleText(workerFileTemplatesFor(config, text, allOn)));
+    expect(result).toEqual({ ok: true, value: { kind: 'ok', text: expected, chars: expected.length } });
+  });
+
+  it('keeps the all-on setup allowance in a size refusal when a guard is off', async () => {
+    const packageText = composeRoleText(workerFileTemplatesFor(config, null, guards));
+    const setup = 'x'.repeat(roleText.maxChars - packageText.length - roleText.joiner.length + 1);
+    const result = await readRoleText(worldOf({ text: setup }), withGuards(guards));
+    expect(result).toEqual(refused({ kind: 'tooLarge', size: roleText.maxChars + 1, unit: 'characters', free: FREE }));
+  });
+
+  it('uses the effective state for the launch role check', async () => {
+    const deps = worldOf({ text: 'x'.repeat(FREE + 1) });
+    deps.seed(`/state/factory/${files.guardRecords}`, JSON.stringify({ schema: 1, records: [{ node: NODE, root: HOME,
+      values: { [guardIds.installRules]: { value: 'off', at: '2030-01-02T03:04:05.678Z' } }, prefix: null,
+    }] }));
+    const result = await requireRoleText(deps, { home: HOME, config: { ...config, core: { ...config.core, guards } }, retry: 'factory start' });
+    expect(result).toEqual({ ok: true, value: undefined });
+  });
+
+  it('keeps the all-on setup allowance in the rendered size warning', () => {
+    const templates = workerFileTemplatesFor(config, 'x'.repeat(roleText.maxChars), guards);
+    const warning = roleTextSizeWarning(templates, 'factory upgrade', workerFileTemplatesFor(config, null, allOn));
+    expect(warning).toContain(roleText.remedies.shorten(FREE, 'factory upgrade'));
+    expect(warning).toContain(roleText.tooLargeText(composeRoleText(templates).length, 'characters'));
+  });
+});
 
 describe('composeRoleText', () => {
-  const templates = workerFileTemplatesFor(config, 'Owner text.\n');
+  const templates = workerFileTemplatesFor(config, 'Owner text.\n', allOn);
   const body = (name: string): string => templates.find((template) => template.name === name)?.body ?? '';
 
   it('joins the source line, the worker body and the setup worker body, in that order', () => {
@@ -83,7 +121,7 @@ describe('composeRoleText', () => {
   });
 
   it('leaves out the setup worker body when it is absent', () => {
-    expect(composeRoleText(workerFileTemplatesFor(config, null))).toBe([roleText.sourceLine, body('worker')].join(roleText.joiner));
+    expect(composeRoleText(workerFileTemplatesFor(config, null, allOn))).toBe([roleText.sourceLine, body('worker')].join(roleText.joiner));
   });
 
   it('gives the same text for the templates in any order', () => {
@@ -98,7 +136,7 @@ describe('readRoleText: the text of an accepted setup file', () => {
     if (!result.ok || result.value.kind !== 'ok') return;
     const { text, chars } = result.value;
     expect(text.startsWith(`${roleText.sourceLine}${roleText.joiner}`)).toBe(true);
-    expect(text).toBe(composeRoleText(workerFileTemplatesFor(config, 'Write tests first.\n')));
+    expect(text).toBe(composeRoleText(workerFileTemplatesFor(config, 'Write tests first.\n', allOn)));
     expect(text.endsWith('Write tests first.\n')).toBe(true);
     expect(chars).toBe(text.length);
   });

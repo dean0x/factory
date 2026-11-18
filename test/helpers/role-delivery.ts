@@ -14,11 +14,28 @@ export const STATE_ENV = { XDG_STATE_HOME: '/state' } as const;
 /** The text of the settings file that the program writes into a work copy: every own hook entry, and no other key. */
 export const OWN_SETTINGS_TEXT = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
 
+/** The complete own entries for a session in the test state folder. */
+export const ownSettingsWithRules = (home: string, folder: string) => ({
+  ...ownSettingsEntries,
+  permissions: {
+    deny: [
+      `${home}/factory.yaml`,
+      `${home}/factory.local.yaml`,
+      '/state/factory/owner-records.json',
+      '/state/factory/owner-decisions.json',
+      '/state/factory/guard-records.json',
+      '/state/factory/setup-acceptances.json',
+      `${folder}/.claude/settings.local.json`,
+    ].map((path) => `Edit(/${path})`),
+  },
+});
+
 /** The settings file of a work copy. */
 export const settingsFileOf = (workCopy: string): string => `${workCopy}/.claude/settings.local.json`;
 
 /** The work copy holds the own hook entries, so a launch finds the hook that gives the role text. */
-export const seedOwnHooks = (deps: FakeDeps, workCopy: string): void => deps.seed(settingsFileOf(workCopy), OWN_SETTINGS_TEXT);
+export const seedOwnHooks = (deps: FakeDeps, workCopy: string, home?: string): void =>
+  deps.seed(settingsFileOf(workCopy), home === undefined ? OWN_SETTINGS_TEXT : `${JSON.stringify(ownSettingsWithRules(home, workCopy), null, 2)}\n`);
 
 /**
  * The owner wrote this setup text for the worker and accepted it, as it is now, for the node of `sampleConfig`. A node with no setup file and no

@@ -35,6 +35,7 @@ import {
 } from '../core/setup-acceptance.js';
 import { describeIssues } from '../core/zod.js';
 import { refuse } from '../migrate/inspect.js';
+import { allOn } from '../guards/effective.js';
 import { queueKeyOf, type RecipeRegistry } from '../recipes/index.js';
 import {
   commands,
@@ -61,6 +62,7 @@ import {
   blockTexts,
   detectGithubLogin,
   localSettingsOf,
+  recordInitPrefix,
   stateFilesOf,
   type InitOptions,
   type InitPlan,
@@ -547,8 +549,10 @@ export const runReceived = async (
   // The root is registered. A failure of the hook settings leaves it, and a second run of init finishes the step.
   const hook = await writeHookSettings(deps, home, options.yes, idleCompaction);
   if (!hook.ok) return hook;
+  const prefix = await recordInitPrefix(deps, planned.value);
+  if (!prefix.ok) return prefix;
 
-  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings];
+  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...prefix.value];
   const written = [files.localConfig, join(dirs.coordinator, files.claudeMd), `${dirs.state}/`, ...hook.value.written];
   const kept = decision.value.kind === 'declined' ? declinedLines() : [];
   return ok({
@@ -599,7 +603,7 @@ const planReceived = async (deps: Deps, input: ReceivedInput): Promise<CliResult
   const forBlocks = configOf(root.shared, owner, NO_APPROVALS);
   if (!forBlocks.ok) return forBlocks;
   const modes = await effectiveModes(deps, home, forBlocks.value);
-  const templates = blockTemplatesFor(blockInputOf(forBlocks.value, input.rendered, modes));
+  const templates = blockTemplatesFor(blockInputOf(forBlocks.value, input.rendered, modes, allOn));
   const blocks = await blockTexts(deps, root.layout.claudeMd, templates);
   if (!blocks.ok) return blocks;
   const stateFiles = stateFilesOf(templates, blocks.value.workerText, queueKeyOf(forBlocks.value.entry));

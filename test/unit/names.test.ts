@@ -24,6 +24,13 @@ import {
   guardIds,
   guardKinds,
   guardListWords,
+  guardRecords,
+  guardSetWords,
+  guardConfirmWords,
+  guardRecordWords,
+  guardStartWords,
+  guardDoctorWords,
+  guardDenyWords,
   guardValues,
   harmMark,
   heavyLock,
@@ -185,6 +192,7 @@ const WORD_NAMES = [
  */
 const TEXT_NAMES = [
   ...flat(files),
+  guardListWords.notSettable,
   schema1.protocolFile,
   dirs.state,
   dirs.claude,
@@ -1089,9 +1097,9 @@ describe('the approval points of a recipe', () => {
     expect(paths.filter((path) => APPROVAL_IMPORT.test(path))).toHaveLength(4);
   });
 
-  it('keeps the approval file apart: it imports only the names file, and the entry file of the recipe imports it', () => {
+  it('keeps approval names in the recipe and the names file, and the entry file imports them', () => {
     const imports = importPathsOf(readFileSync(APPROVAL_FILE, 'utf8'));
-    expect(imports.filter((path) => !path.endsWith('/names.js'))).toEqual([]);
+    expect(imports.filter((path) => !path.endsWith('/names.js') && path !== './guard-parts.js')).toEqual([]);
     const entry = readFileSync(join(SRC, 'recipes', 'software', 'entry.ts'), 'utf8');
     expect(importPathsOf(entry)).toContain('./approval.js');
   });
@@ -1143,13 +1151,13 @@ describe('the writers of the approval record and of the setup acceptance', () =>
   const importPathsOf = (source: string): string[] =>
     [...source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]/g)].map((match) => match[1] ?? '');
 
-  it('has the store file of the approval record in one module only: the owner record writer', () => {
-    expect(rel(withText(/\bownerRecords\b/))).toEqual(['core/owner-record.ts']);
+  it('limits the approval store name to its writer and own file rules', () => {
+    expect(rel(withText(/\bownerRecords\b/))).toEqual(['core/claude-settings.ts', 'core/owner-record.ts']);
   });
 
-  it('has the owner decision file and its names in one module only: the owner record writer', () => {
-    expect(rel(withText(/\bownerDecisions\b/))).toEqual(['core/owner-record.ts']);
-    expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/owner-record.ts']);
+  it('limits the decision store name to its writer and own file rules', () => {
+    expect(rel(withText(/\bownerDecisions\b/))).toEqual(['core/claude-settings.ts', 'core/owner-record.ts']);
+    expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/claude-settings.ts', 'core/owner-record.ts']);
   });
 
   const writerHits = (source: string, path: string, pattern: RegExp, owners: readonly string[]): readonly string[] =>
@@ -1244,8 +1252,8 @@ describe('the writers of the approval record and of the setup acceptance', () =>
     expect(source).not.toMatch(/\bsetupAcceptance\b|\bfiles\.setupAcceptances\b/);
   });
 
-  it('has the setup acceptance store file in the setup acceptance writer only', () => {
-    expect(rel(withText(/\bfiles\.setupAcceptances\b/))).toEqual(['core/setup-acceptance.ts']);
+  it('limits the setup acceptance store name to its writer and own file rules', () => {
+    expect(rel(withText(/\bfiles\.setupAcceptances\b/))).toEqual(['core/claude-settings.ts', 'core/setup-acceptance.ts']);
   });
 
   it('lets no module but the code of init pass the limits of init with yes to the setup acceptance writer', () => {
@@ -1909,9 +1917,74 @@ describe('the names of the guards', () => {
     expect(terms).toContain('guard');
   });
 
+  it('names the guard store with its own schema, keys and fixed limits', () => {
+    expect(files.guardRecords).toBe('guard-records.json');
+    expect(guardRecords).toEqual({
+      schema: 1,
+      keys: { schema: 'schema', records: 'records', node: 'node', root: 'root', id: 'id', value: 'value', values: 'values', prefix: 'prefix', hash: 'hash', at: 'at' },
+      maxRecords: 1_000,
+      warnRecords: 900,
+      maxBytes: maxFileBytes,
+    });
+    expect(maxFileBytes).toBe(1_048_576);
+    expect(checkIds.guards).toBe('guards');
+    expect(schemaIds.guardSet).toBe(`${program}.guard-set/v1`);
+    expect(schemaIds.guardConfirm).toBe(`${program}.guard-confirm/v1`);
+  });
+
+  it('gives unknown and unsettable ids separate messages that name the list', () => {
+    expect(guardSetWords.unknownId('old-id')).toBe('Unknown guard "old-id". Run "factory guard list".');
+    expect(guardSetWords.notSettable(guardIds.workConduct)).toBe(
+      `Guard "${guardIds.workConduct}" is not settable in this version. Run "factory guard list".`,
+    );
+    expect(guardListWords.notSettable).toBe('not settable in this version');
+    expect(guardSetWords.summary).toBe('Set guards in the local file.');
+    expect(guardConfirmWords.summary).toBe('Confirm the owner prefix for this folder.');
+  });
+
+  it('gives the guard channel four separate refusals and its own remedy', () => {
+    expect(guardRecordWords).toMatchObject({
+      sessionRefused: 'A factory session cannot write a guard record.',
+      claudeRefused: 'A Claude Code session cannot write a guard record.',
+      inputRequired: 'A guard record needs terminal input.',
+      outputRequired: 'A guard record needs terminal output.',
+      channelRemedy: 'Run the guard command in your terminal window, outside a session.',
+    });
+    expect(guardRecordWords.unreadable).toBe('The guard store cannot be read.');
+    expect(guardRecordWords.unreadableRemedy).toBe(
+      'move the file away to turn every guard on and remove the prefix records of every node',
+    );
+  });
+
+  it('names the guard summary, doctor notice and own file rules by their effects', () => {
+    expect(guardStartWords).toMatchObject({ prefix: 'Guards:', noPrefixRecord: 'owner prefix has no record' });
+    expect(guardDoctorWords.noKey).toBe('No guards key: every guard is on.');
+    expect(guardDenyWords).toMatchObject({
+      edit: 'Edit',
+      missing: 'Own file Edit rules are incomplete.',
+      remedy: 'Run "factory upgrade" to add the own file Edit rules.',
+    });
+  });
+
+  it('names the off count, harm count, proxies, unmatched ids and prefix mismatch', () => {
+    expect(guardStartWords.off(2)).toBe('2 off');
+    expect(guardStartWords.harm(1)).toBe('1 with H');
+    expect(guardStartWords.directProxy('session.proxy')).toBe('direct proxy session.proxy');
+    expect(guardStartWords.unmatched('sample-guard')).toBe('unmatched sample-guard');
+    expect(guardStartWords.prefixMismatch).toBe('owner prefix differs from its record');
+  });
+
+  it('keeps the guard store file name and settable mark in names only', () => {
+    const path = join(SRC, 'sample.ts');
+    expect(violationsInText("const a = 'guard-records.json';", path)).toContain(
+      'sample.ts: "guard-records.json" holds the name guard-records.json',
+    );
+    expect(violationsInText("const a = 'not settable in this version';", path)).toHaveLength(1);
+  });
+
   it('words the more line and the count line of the list', () => {
-    expect(guardListWords.moreLine(14)).toBe('and 14 more: run with --all or --json');
-    expect(guardListWords.countLine(3, 31, 2)).toBe('3 of 31 guards are off. 2 of them have the mark H.');
+    expect(guardListWords.moreLine(15)).toBe('and 15 more: run with --all or --json');
+    expect(guardListWords.countLine(3, 32, 2)).toBe('3 of 32 guards are off. 2 of them have the mark H.');
     expect(guardListWords.unknown).toBe('unknown');
   });
 });

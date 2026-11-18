@@ -1,5 +1,15 @@
-import { capitalize, coordinatorTemplateValues, layers, roles, templateValues } from '../names.js';
+import type { GuardValues } from '../guards/types.js';
+import { capitalize, coordinatorTemplateValues, guardValues, layers, roles, templateValues } from '../names.js';
 import type { BlockInput } from './types.js';
+
+export type TextPart = string | { readonly guards: readonly string[]; readonly lines: readonly string[] };
+
+/** Keep an unguarded group, or a group with at least one guard on. An absent value means on. */
+export const linesFor = (parts: readonly TextPart[], values: GuardValues): readonly string[] =>
+  parts.flatMap((part) => {
+    if (typeof part === 'string') return [part];
+    return part.guards.length === 0 || part.guards.some((id) => values[id] !== guardValues.off) ? part.lines : [];
+  });
 
 const PLACEHOLDER = /\{\{([A-Za-z]+)\}\}/g;
 

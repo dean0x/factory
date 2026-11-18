@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseYamlText } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
-import { addChildText, removeChildText, setApprovalText } from '../../src/config/edit.js';
+import { addChildText, removeChildText, setApprovalText, setGuardText } from '../../src/config/edit.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
@@ -160,6 +160,41 @@ describe('remove a child from the config text', () => {
     expect(removeChildText(OWNER_TEXT, 'nobody').ok).toBe(false);
     expect(removeChildText('a: [1\n', 'web').ok).toBe(false);
     expect(removeChildText('x: 1\n', 'web').ok).toBe(false);
+  });
+});
+
+describe('set the guard values in the config text', () => {
+  it('changes only the named guard and keeps comments, blank lines and key order', () => {
+    const original = '# my node\nschema: 1\n\nguards:\n  # keep this note\n  install-rules: on # local rule\n  resume-routines: off\n\nparent: null\n';
+    expect(setGuardText(original, { 'install-rules': 'off' })).toEqual({
+      ok: true,
+      value: original.replace('install-rules: on', 'install-rules: off'),
+    });
+  });
+
+  it('adds new guard ids at the end of a block map', () => {
+    expect(setGuardText('guards: { install-rules: on }\n', { 'resume-routines': 'off' })).toEqual({
+      ok: true,
+      value: 'guards:\n  install-rules: on\n  resume-routines: off\n',
+    });
+  });
+
+  it.each(['schema: 1\n', 'schema: 1\nguards: {}\n'])('adds guard values to an absent or empty map', (text) => {
+    expect(setGuardText(text, { 'install-rules': 'on' })).toEqual({
+      ok: true,
+      value: 'schema: 1\nguards:\n  install-rules: on\n',
+    });
+  });
+
+  it.each(['a: [1\n', '- a\n- b\n', 'guards: 3\n', 'guards: []\n', 'guards: null\n', 'guards:\n', 'guards: {}\nguards: {}\n'])(
+    'refuses invalid text or a guard value that is not a map',
+    (text) => expect(setGuardText(text, { 'install-rules': 'on' })).toMatchObject({ ok: false }),
+  );
+
+  it('does not repeat raw text in an error', () => {
+    const result = setGuardText('private-value: [1\n', { 'install-rules': 'on' });
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.error).not.toContain('private-value');
   });
 });
 

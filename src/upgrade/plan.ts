@@ -36,7 +36,7 @@ import { guardFolderLabel, guardPlanOf, guardPlanWarnings, type GuardPlan } from
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import { renameQueueKey } from './board-key.js';
-import type { BlockSet, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
+import type { BlockSet, GuardsOf, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
 
 const MAX_DIFF_LINES = 3;
 const MAX_DIFF_WIDTH = 100;
@@ -158,10 +158,11 @@ export const planBlockSet = async (
   upgrade: UpgradeSpec,
   setup: SetupTexts,
   modesOf: ModesOf,
+  guardsOf: GuardsOf,
 ): Promise<CliResult<BlockSet>> => {
   const migrated = migratedConfig(config, local, upgrade);
   if (!migrated.ok) return migrated;
-  const set = await upgrade.blocksOf(migrated.value, setup, modesOf);
+  const set = await upgrade.blocksOf(migrated.value, setup, modesOf, guardsOf);
   return set.ok ? set : failure(`${upgrade.config.spec.file}: ${set.error.message}`);
 };
 

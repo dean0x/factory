@@ -4,6 +4,8 @@
  * from the recipe entry in `src/recipes/index.ts`. The texts hold placeholders such as {{owner}}, and the template code fills them.
  */
 
+import { softwareGuardIds } from './guard-parts.js';
+
 const MERGE_PROOF = 'one proof of approval and one proof of assignment for that work';
 const RELEASE_PROOF = 'a release scope that the {{owner}} approved, with the items and the version';
 
@@ -11,6 +13,8 @@ export const softwareApprovalPoints = [
   {
     id: 'merge',
     label: 'merge a pull request',
+    guard: softwareGuardIds.approvalMerge,
+    offText: 'No approval is needed for a merge. Log each merge with `{{requestLogCommand}}`.',
     ownerText: 'A merge waits for the go of the {{owner}}.',
     proof: MERGE_PROOF,
     delegatedText: `The {{owner}} delegated this point. A merge needs ${MERGE_PROOF}.`,
@@ -18,6 +22,8 @@ export const softwareApprovalPoints = [
   {
     id: 'release',
     label: 'release a version',
+    guard: softwareGuardIds.approvalRelease,
+    offText: 'No approval is needed for a release. Log each release with `{{requestLogCommand}}`.',
     ownerText: 'A release waits for the go of the {{owner}}.',
     proof: RELEASE_PROOF,
     delegatedText: `The {{owner}} delegated this point. A release needs ${RELEASE_PROOF}.`,

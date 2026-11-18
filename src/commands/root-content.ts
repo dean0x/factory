@@ -1,7 +1,7 @@
-import { basename, join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { isOwnSettingsText } from '../core/claude-settings.js';
+import { isOwnSettingsTextAt, ownDenyRulesOf } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import {
   blobTextOf,
@@ -574,9 +574,9 @@ const settingsOfFolder = async (
  * itself. A setting that turns off every hook, and a variable of the state folder or the home folder in the env values, are
  * failures where the session must keep its hooks (`requiresHooks` is set). The
  * warning that a settings file is there is not given for a file that holds exactly the entries that the program writes
- * (`isOwnSettingsText`); every other finding stays for such a file.
+ * (`isOwnSettingsTextAt`); every other finding stays for such a file.
  */
-const judgeSettings = (source: SettingsSource, text: string): readonly RootFinding[] => {
+const judgeSettings = async (deps: Deps, source: SettingsSource, text: string, rules: readonly string[] = []): Promise<readonly RootFinding[]> => {
   const id = checkIds.permissionMode;
   const facts = analyzeSettings(text);
   const shown = shownPath(source.display);
@@ -604,7 +604,7 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
       ? []
       : [finding(id, 'fail', `${shown} ${reasons.join(' and ')}`, `${keepStatusLine}Remove the setting from ${shown}, then ${doctorAgain}.`)]),
     ...(facts.valid ? [] : [finding(id, 'warn', `${shown} is not valid JSON, so Claude Code does not read it`, `Fix or remove ${shown}.`)]),
-    ...(source.presence === null || isOwnSettingsText(text)
+    ...(source.presence === null || await isOwnSettingsTextAt(deps, text, rules)
       ? []
       : [finding(id, 'warn', `${shown} is a settings file in ${source.presence}, and the sessions of Claude Code read it`, 'Remove the file, or keep it on purpose.')]),
     ...(source.presence !== null || facts.runsCommands.length === 0
@@ -659,7 +659,7 @@ interface JudgedSources {
 }
 
 /** Reads each source once and judges it. A link is never followed: it is not read. */
-const judgeSources = async (deps: Deps, sources: Iterable<SettingsSource>): Promise<JudgedSources> => {
+const judgeSources = async (deps: Deps, home: string, sources: Iterable<SettingsSource>): Promise<JudgedSources> => {
   const findings: RootFinding[] = [];
   const unread: string[] = [];
   for (const source of sources) {
@@ -669,8 +669,11 @@ const judgeSources = async (deps: Deps, sources: Iterable<SettingsSource>): Prom
       continue;
     }
     const text = await deps.fs.readTextLimited(source.absolute, trackedFiles.maxFileBytes);
-    if (text.ok) findings.push(...judgeSettings(source, text.value));
-    else unread.push(`${shownPath(source.display)} (cannot be read)`);
+    if (text.ok) {
+      const deny = source.presence !== null && text.value.includes('"deny"')
+        ? await ownDenyRulesOf(deps, home, dirname(dirname(source.absolute))) : null;
+      findings.push(...await judgeSettings(deps, source, text.value, deny?.ok === true ? deny.value.rules : []));
+    } else unread.push(`${shownPath(source.display)} (cannot be read)`);
   }
   return { findings, unread };
 };
@@ -702,7 +705,7 @@ export const checkFolderSettings = async (
   presence: string,
 ): Promise<readonly RootFinding[]> => {
   const found = await settingsOfFolder(deps, home, userClaudeFolderOf(deps), { path: folder, presence, requiresHooks: true });
-  const judged = await judgeSources(deps, found.sources);
+  const judged = await judgeSources(deps, home, found.sources);
   return withoutRepeats([...found.findings, ...judged.findings, ...unreadFindings(judged.unread)]);
 };
 
@@ -726,7 +729,7 @@ const trackedText = async (deps: Deps, clone: string, entry: TreeEntry): Promise
  * tree of the clone starts from that commit, so the result is what `checkFolderSettings` gives for `folder` after the checkout:
  * the same judgment (a file that turns off every hook is a failure too), with the same stops for a link and for a file that can
  * not be read. A command that makes the work copy calls this first, so a stop comes before the work copy exists. Git is read, and
- * no call of the file system names `folder`, which may not exist yet. A clone that git can not read is a failure.
+ * the own rules can check the real paths of `folder`, which may not exist yet. A clone that git can not read is a failure.
  */
 export const checkTrackedSettings = async (
   deps: Deps,
@@ -766,7 +769,8 @@ export const checkTrackedSettings = async (
       unread.push(`${shownPath(display)} (${child.mode === LINK_MODE ? 'a link' : 'cannot be read'})`);
       continue;
     }
-    findings.push(...judgeSettings({ absolute, display, presence: folder.presence, requiresHooks: true }, text));
+    const deny = text.includes('"deny"') ? await ownDenyRulesOf(deps, home, folder.path) : null;
+    findings.push(...await judgeSettings(deps, { absolute, display, presence: folder.presence, requiresHooks: true }, text, deny?.ok === true ? deny.value.rules : []));
     if (name === localSettingsFile) localText = text;
   }
   return ok({ findings: withoutRepeats([...findings, ...unreadFindings(unread)]), localText });
@@ -809,7 +813,7 @@ export const scanSettings = async (
     if (kind.value === 'link') unreadTracked.push(`${shownPath(path)} (a link)`);
     else if (kind.value === 'file') sources.set(absolute, { absolute, display: path, presence: null, requiresHooks: false });
   }
-  const judged = await judgeSources(deps, sources.values());
+  const judged = await judgeSources(deps, home, sources.values());
   return withoutRepeats([...findings, ...judged.findings, ...unreadFindings([...unreadTracked, ...judged.unread])]);
 };
 

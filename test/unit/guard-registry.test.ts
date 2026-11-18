@@ -6,9 +6,11 @@ import { glossary } from '../../src/glossary.js';
 import { isRecord } from '../../src/migrate/inspect.js';
 import { recipes } from '../../src/recipes/index.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
-import { guardOf } from '../../src/guards/build.js';
-import { guardRowsFor, guardsFor, retiredGuardIds } from '../../src/guards/registry.js';
-import type { Guard, GuardRow } from '../../src/guards/types.js';
+import { guardOf, wiredGuard } from '../../src/guards/build.js';
+import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
+import type { Guard, GuardRow, GuardValues, RowSite } from '../../src/guards/types.js';
+import { allOn, guardRulesOf } from '../../src/guards/effective.js';
+import { fillTemplate } from '../../src/templates/fill.js';
 import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, keys, roleText } from '../../src/names.js';
 import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
 import { blockInput, softwareRecipe } from '../helpers/blocks.js';
@@ -16,9 +18,68 @@ import { oldWordsIn } from '../helpers/old-words.js';
 import { jargonIn } from '../helpers/plain-words.js';
 import { publishRecipe } from '../helpers/publish-recipe.js';
 import { sampleObject } from '../helpers/sample-config.js';
-import { importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
+import * as sourceScan from '../helpers/source-scan.js';
+import { allSourceFiles, importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
 
 const REPO = join(__dirname, '..', '..');
+
+const nodeSite = (symbol: string): RowSite => ({ path: 'src/core/node-deps.ts', symbol });
+
+/** Each port maps to its own body, not to the full adapter. Unknown ports fail the scan. */
+const recordDeps: Readonly<Record<string, RowSite>> = {
+  'fs.stat': nodeSite('nodeFs.stat'),
+  'fs.lstat': nodeSite('nodeFs.lstat'),
+  'fs.statInfo': nodeSite('nodeFs.statInfo'),
+  'fs.lstatInfo': nodeSite('nodeFs.lstatInfo'),
+  'fs.realpath': nodeSite('nodeFs.realpath'),
+  'fs.openChecked': nodeSite('nodeFs.openChecked'),
+  'fs.openCheckedCore': nodeSite('nodeFs.openCheckedCore'),
+  'fs.writeTextAtomicCore': nodeSite('nodeFs.writeTextAtomicCore'),
+  'fs.readTextLimited': nodeSite('nodeFs.readTextLimited'),
+  'fs.writeTextExclusive': nodeSite('nodeFs.writeTextExclusive'),
+  'fs.writeTextAtomic': nodeSite('nodeFs.writeTextAtomic'),
+  'fs.mkdirOne': nodeSite('nodeFs.mkdirOne'),
+  'fs.rename': nodeSite('nodeFs.rename'),
+  'fs.removeFile': nodeSite('nodeFs.removeFile'),
+  run: nodeSite('createNodeDeps.run'),
+  isRunning: nodeSite('createNodeDeps.isRunning'),
+  randomHex: nodeSite('createNodeDeps.randomHex'),
+  now: nodeSite('createNodeDeps.now'),
+  sleep: nodeSite('createNodeDeps.sleep'),
+  prompt: nodeSite('createNodeDeps.prompt'),
+  warn: nodeSite('createNodeDeps.warn'),
+  writeStdout: nodeSite('createNodeDeps.writeStdout'),
+};
+
+const recordExceptions = [
+  { path: 'src/core/home.ts', symbol: 'locateHome', reason: 'Finds the registered config home, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'chosenHome', reason: 'Chooses the config home, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'envHome', reason: 'Checks the home from the environment against the home index, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'rootProblemOf', reason: 'Checks config home registration, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'rootRefusalOf', reason: 'Describes config home registration faults, not guard values.' },
+  { path: 'src/core/private-file.ts', symbol: 'userStatePathOf', reason: 'Finds the home index path, not the guard store.' },
+  { path: 'src/core/private-file.ts', symbol: 'ownInfo', reason: 'Checks home index file metadata, not guard values.' },
+  { path: 'src/core/paths.ts', symbol: 'requireOutsideUserClaudeFolder', reason: 'Checks the config home path, not the guard store.' },
+  { path: 'src/core/node-deps.ts', symbol: 'runInGroup', reason: 'Runs home lookup git queries, not guard store reads.' },
+  { path: 'src/core/node-deps.ts', symbol: 'runPlain', reason: 'Runs home lookup git queries, not guard store reads.' },
+  { path: 'src/core/zod.ts', symbol: 'describeIssues', reason: 'Formats config and home index parse faults, not guard values.' },
+  { path: 'src/core/zod.ts', symbol: 'joinPath', reason: 'Formats parse fault key paths, not guard values.' },
+  { path: 'src/safety/secrets.ts', symbol: 'hideTokenKey', reason: 'Hides token-like keys in parse faults, not guard values.' },
+  { path: 'src/safety/secrets.ts', symbol: 'looksLikeToken', reason: 'Checks parse fault key text, not guard values.' },
+  { path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Merges parsed config only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'sharedSessionSchema', reason: 'Checks shared session config only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'Checks config limit values only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'boardFieldName', reason: 'Checks config board field names only, not the guard store.' },
+  { path: 'src/names.ts', symbol: 'reservedFieldNames', reason: 'Lists reserved config field names, not guard values.' },
+  { path: 'src/config/schema.ts', symbol: 'localSessionSchema', reason: 'Checks local session config only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'proxySchema', reason: 'Checks proxy config only, not the guard store.' },
+  { path: 'src/safety/proxy.ts', symbol: 'parseProxyUrl', reason: 'Checks a config proxy URL only, not the guard store.' },
+  { path: 'src/comms/address.ts', symbol: 'checkFileAddress', reason: 'Checks config file addresses only, not the guard store.' },
+  { path: 'src/core/clone-url.ts', symbol: 'checkLocalSource', reason: 'Checks local source config only, not the guard store.' },
+  { path: 'src/core/clone-url.ts', symbol: 'parseCloneUrl', reason: 'Parses local source config URLs only, not the guard store.' },
+  { path: 'src/core/clone-url.ts', symbol: 'checkedPath', reason: 'Checks local source config paths only, not the guard store.' },
+  { path: 'src/core/clone-url.ts', symbol: 'reasons', reason: 'Lists source config fault text, not guard values.' },
+];
 
 const software = {
   guards: guardsFor(softwareRecipe),
@@ -57,18 +118,44 @@ const probeAt = (raw: unknown, path: readonly (string | number)[]): unknown => {
 };
 
 describe('the guards of a recipe', () => {
-  it('lists the 28 core guards and the 3 guards of the software recipe, each once', () => {
+  it('lists the 28 core guards and the 4 guards of the software recipe, each once', () => {
     const ids = idsOf(software.guards);
-    expect(ids).toHaveLength(31);
+    expect(ids).toHaveLength(32);
     expect(duplicatesOf(ids)).toEqual([]);
     expect(ids.slice(0, 28)).toEqual(Object.values(guardIds));
-    const points = softwareRecipe.approvalPoints.map((point) => `approval-${point.id}`);
-    expect(ids.slice(28).sort()).toEqual(['pr-rules', ...points].sort());
+    expect(ids.slice(28).sort()).toEqual(['approval-merge', 'approval-release', 'merge-quality', 'pr-rules']);
   });
 
   it('lists only the core guards for a recipe that names no guard', () => {
-    expect(idsOf(guardsFor(publishRecipe))).toEqual(Object.values(guardIds));
-    expect(guardRowsFor(publishRecipe).every((row) => !row.sites.some((site) => site.path.startsWith('src/recipes/')))).toBe(true);
+    const recipe = { ...publishRecipe, guards: [], guardRows: [] };
+    expect(idsOf(guardsFor(recipe))).toEqual(Object.values(guardIds));
+    expect(guardRowsFor(recipe).every((row) => !row.sites.some((site) => site.path.startsWith('src/recipes/')))).toBe(true);
+  });
+
+  it('gives each approval point a guard of its recipe and an off text', () => {
+    for (const recipe of [...recipes, publishRecipe]) {
+      for (const point of recipe.approvalPoints) {
+        expect(recipe.guards.map((guard) => guard.id)).toContain(point.guard);
+        expect(point.offText).toContain('{{requestLogCommand}}');
+        expect(guardsFor(recipe).map((guard) => guard.id)).not.toContain(point.id);
+      }
+    }
+  });
+
+  it('keeps merge quality separate from approval and on even with a recorded local off value', () => {
+    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { 'merge-quality': guardValues.off } });
+    const parsed = parseConfig(shared, local, recipes);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const state = guardRulesOf(software.guards, {
+      node: 'demo', root: '/node', local: parsed.data.core.guards,
+      record: { node: 'demo', root: '/node', values: { 'merge-quality': { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
+    });
+    expect(state.values['merge-quality']).toBe(guardValues.on);
+    expect(software.guards.find((guard) => guard.id === 'merge-quality')).toMatchObject({
+      wired: false, rows: ['merge-head-text'],
+    });
+    expect(software.rows.find((row) => row.id === 'merge-head-text')?.guard).toBe('merge-quality');
   });
 
   it('sets the harm mark for a recipe guard with no rows', () => {
@@ -84,6 +171,38 @@ describe('the guards of a recipe', () => {
   it('gives no guard the id of an approval point', () => {
     const taken = new Set<string>(softwareRecipe.approvalPoints.map((point) => point.id));
     expect(idsOf(software.guards).filter((id) => taken.has(id))).toEqual([]);
+  });
+
+  it('wires only the four text guards of the software recipe', () => {
+    expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
+      guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
+    ]);
+  });
+
+  it('marks a guard as wired without a change to its definition', () => {
+    const definition = guardOf('test-guard', 'Test guard', 'Test work stays safe.', ['test.key']);
+    const wired = wiredGuard(definition);
+    expect(wired).toEqual({ ...definition, wired: true });
+    expect(wired).not.toBe(definition);
+    expect(definition.wired).toBe(false);
+    expect(guardsFor({ ...publishRecipe, guards: [wired] }).at(-1)).toMatchObject({
+      ...definition, wired: true, harm: true, kinds: [], rows: [],
+    });
+  });
+
+  it('keeps the record path separate from every registry row and guard read', () => {
+    expect(recordPathSites.map((site) => site.symbol)).toEqual(expect.arrayContaining([
+      'allOn', 'guardRulesOf', 'requireGuardChannel', 'guardStorePathOf', 'userStatePlaceOf',
+      'readGuardStore', 'changeGuardStore', 'recordGuards', 'recordPrefix', 'readGuardState',
+      'checkedTargetCore', 'checkedPidCore', 'openCheckedCore', 'runGuardSet', 'runGuardConfirm',
+    ]));
+    const sources = Object.fromEntries(allSourceFiles(join(REPO, 'src')).map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
+    const result = sourceScan.traceSitesOf(sources, recordPathSites, {
+      deps: recordDeps, rowSites: software.rows.flatMap((row) => row.sites), exceptions: recordExceptions, maxDepth: 40,
+    });
+    expect(result.faults).toEqual([]);
+    const renders = ['linesFor', 'approvalLines', 'blockTemplatesFor'];
+    expect(result.sites.filter((site) => renders.includes(site.symbol))).toEqual([]);
   });
 
   it('retires no guard id yet', () => {
@@ -235,8 +354,9 @@ describe('the rows of the registry', () => {
         'delegation-wait-text',
         'delegation-session-text',
       ],
-      'approval-merge': ['merge-point-text', 'merge-head-text'],
+      'approval-merge': ['merge-point-text'],
       'approval-release': ['release-point-text'],
+      'merge-quality': ['merge-head-text'],
       'board-edits': [
         'board-flow-stages',
         'board-worker-field',
@@ -507,7 +627,7 @@ describe('the rows of the registry', () => {
         'tracked-clones-warning',
         'tracked-text-paths-warning',
       ],
-      'safety-block': ['safety-block-intact', 'upgrade-block-checks', 'safety-block-insert'],
+      'safety-block': ['owner-prefix-record', 'role-block-render', 'safety-block-intact', 'upgrade-block-checks', 'safety-block-insert'],
       secrets: [
         'token-tracked-text',
         'token-config-values',
@@ -579,7 +699,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(204);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(206);
     expect(softwareRecipe.guardRows).toHaveLength(102);
   });
 
@@ -591,6 +711,20 @@ describe('the rows of the registry', () => {
     const guard = software.guards.find((item) => item.id === guardIds.contextLimits);
     expect(guard?.kinds).toEqual([guardKinds.text]);
     expect(guard?.harm).toBe(false);
+  });
+
+  it.each([
+    { id: 'owner-prefix-record', symbols: ['requireConfirmedPrefix'] },
+    { id: 'role-block-render', symbols: ['requireRoleBlocks', 'conflictingRoleGuard'] },
+  ])('lists the launch check $id under the safety block guard with its called sites', ({ id, symbols }) => {
+    const path = 'src/commands/launch-checks.ts';
+    const source = readFileSync(join(REPO, path), 'utf8');
+    const row = software.rows.find((candidate) => candidate.id === id);
+    expect(row).toMatchObject({ guard: guardIds.safetyBlock, kind: guardKinds.code, harm: true });
+    expect(row?.sites).toEqual(symbols.map((symbol) => ({ path, symbol })));
+    for (const symbol of symbols) {
+      expect(sourceScan.callsOf(source, symbol).length, symbol).toBeGreaterThan(0);
+    }
   });
 
   it('lists the doc place check with its harm mark and its shared name check', () => {
@@ -830,6 +964,42 @@ describe('the text rows of the registry', () => {
   };
 
   const textRows = software.rows.filter((row) => row.kind === guardKinds.text);
+  const wiredRows = textRows.filter((row) => software.guards.some((guard) => guard.id === row.guard && guard.wired));
+  const wiredTextsOf = (guards: GuardValues): Readonly<Record<string, readonly string[]>> => {
+    const blocks = blockTemplatesFor(blockInput(1, { guards }));
+    const coordinator = bodyOf(blocks, blockNames.coordinator);
+    const safety = bodyOf(blocks, blockNames.safety);
+    return {
+      'src/recipes/software/roles/coordinator.ts': [coordinator],
+      'src/recipes/software/roles/worker.ts': [bodyOf(blocks, blockNames.worker)],
+      'src/templates/work-rules.ts': [bodyOf(blocks, blockNames.workRules)],
+      'src/templates/safety.ts': [safety],
+      'src/recipes/software/words.ts': [coordinator],
+      'src/recipes/software/approval.ts': [coordinator, safety],
+      'src/recipes/entry.ts': [coordinator, safety],
+    };
+  };
+
+  it.each(wiredRows)('removes the on text of $id from every cited block when its guard is off', (row) => {
+    const on = wiredTextsOf(allOn);
+    const off = wiredTextsOf({ [row.guard]: guardValues.off });
+    const pieces = FRAGMENTS[row.id] ?? [];
+    const point = softwareRecipe.approvalPoints.find((candidate) => candidate.guard === row.guard);
+    expect(pieces.length, row.id).toBeGreaterThan(0);
+    for (const site of row.sites) {
+      const onTexts = on[site.path] ?? [];
+      const offTexts = off[site.path] ?? [];
+      expect(onTexts.length, site.path).toBeGreaterThan(0);
+      expect(offTexts, site.path).toHaveLength(onTexts.length);
+      for (const text of onTexts) {
+        for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).toContain(piece);
+      }
+      for (const text of offTexts) {
+        for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).not.toContain(piece);
+        if (point !== undefined) expect(text, site.path).toContain(fillTemplate([point.offText]));
+      }
+    }
+  });
 
   it('has a piece of text for each text row, and for no other row', () => {
     expect(idsOf(textRows).sort()).toEqual(Object.keys(FRAGMENTS).sort());
@@ -850,6 +1020,136 @@ describe('the text rows of the registry', () => {
     const all = [...Object.values(TEXT_OF_PATH), ...layer2.map((block) => block.body)].join('\n');
     const missing = Object.entries(FRAGMENTS).flatMap(([id, pieces]) => pieces.filter((piece) => !all.includes(piece)).map((piece) => `${id}: ${piece}`));
     expect(missing).toEqual([]);
+  });
+});
+
+describe('the record path source scan', () => {
+  const start = [{ path: 'src/a.ts', symbol: 'start' }];
+
+  it('follows local helpers, renamed imports, constants and adapter method bodies', () => {
+    const sources = {
+      'src/a.ts': `import { next as step } from './b.js'; export const start = (deps) => step(deps);`,
+      'src/b.ts': 'const helper = (deps) => deps.fs.writeTextAtomic(); export const next = helper;',
+      'src/core/node-deps.ts': 'const FLAGS = 1; const checkedTarget = () => FLAGS; const writeAtomic = () => checkedTarget(); const nodeFs = { writeTextAtomic: () => writeAtomic() };',
+    };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: recordDeps, maxDepth: 10 });
+    expect(result.faults).toEqual([]);
+    expect(result.sites).toEqual(expect.arrayContaining([
+      { path: 'src/b.ts', symbol: 'helper' }, nodeSite('nodeFs.writeTextAtomic'), nodeSite('checkedTarget'), nodeSite('FLAGS'),
+    ]));
+  });
+
+  it('follows relative re-exports to their declaration bodies', () => {
+    const sources = {
+      'src/a.ts': `import { next } from './b.js'; export const start = () => next();`,
+      'src/b.ts': `export * from './c.js';`,
+      'src/c.ts': 'export const next = () => deps.guards;',
+    };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: {}, maxDepth: 10 });
+    expect(result.sites).toContainEqual({ path: 'src/c.ts', symbol: 'next' });
+    expect(result.faults).toContain('src/c.ts:next: guard value read');
+  });
+
+  it('finds the target, pid and open flags through the real adapter methods', () => {
+    const paths = allSourceFiles(join(REPO, 'src'));
+    const sources = Object.fromEntries(paths.map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
+    sources['src/a.ts'] = 'export const start = (deps) => { deps.fs.writeTextAtomicCore(); deps.isRunning(2); deps.fs.openCheckedCore(); };';
+    const result = sourceScan.traceSitesOf(sources, start, { deps: recordDeps, maxDepth: 40 });
+    expect(result.faults).toEqual([]);
+    expect(result.sites).toEqual(expect.arrayContaining([
+      nodeSite('checkedTargetCore'), nodeSite('checkedPidCore'), nodeSite('openCheckedCore'), nodeSite('CHECKED_OPEN_FLAGS'),
+      { path: 'src/core/access.ts', symbol: 'checkedFaultCore' },
+    ]));
+    expect(result.sites).not.toEqual(expect.arrayContaining([nodeSite('checkedTarget')]));
+    expect(result.sites).not.toEqual(expect.arrayContaining([nodeSite('checkedPid')]));
+    expect(result.sites).not.toEqual(expect.arrayContaining([nodeSite('openChecked')]));
+    expect(software.rows.find((row) => row.id === 'atomic-write-target')?.sites).toContainEqual(nodeSite('checkedTarget'));
+    expect(software.rows.find((row) => row.id === 'signal-limits')?.sites).toContainEqual(nodeSite('checkedPid'));
+    expect(software.rows.find((row) => row.id === 'checked-open')?.sites).toContainEqual(nodeSite('openChecked'));
+    const rowSites = software.rows.flatMap((row) => row.sites);
+    expect(rowSites).not.toContainEqual(nodeSite('CHECKED_OPEN_FLAGS'));
+    for (const symbol of ['checkedTargetCore', 'checkedPidCore', 'openCheckedCore']) {
+      expect(rowSites).not.toContainEqual(nodeSite(symbol));
+    }
+  });
+
+  it('follows the clock port without a second port for a method of its result', () => {
+    const sources = {
+      'src/a.ts': 'export const start = (deps) => deps.now().getTime();',
+      'src/core/node-deps.ts': 'const createNodeDeps = () => ({ now: () => new Date() });',
+    };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: recordDeps, maxDepth: 10 });
+    expect(result.faults).toEqual([]);
+    expect(result.sites).toContainEqual(nodeSite('createNodeDeps.now'));
+  });
+
+  it('fails at the depth cap instead of accepting an incomplete scan', () => {
+    const result = sourceScan.traceSitesOf({ 'src/a.ts': 'const next = () => 1; export const start = () => next();' }, start, {
+      deps: {}, rowSites: start, exceptions: [{ path: 'src/a.ts', symbol: 'start', reason: 'Reads config only.' }], maxDepth: 1,
+    });
+    expect(result.faults).toEqual(expect.arrayContaining([expect.stringContaining('depth cap')]));
+  });
+
+  it('fails for an unmapped dependency method and a guard value read', () => {
+    for (const body of ['deps.fs.unknown()', 'deps.guards']) {
+      const result = sourceScan.traceSitesOf({ 'src/a.ts': `export const start = (deps) => ${body};` }, start, { deps: {}, maxDepth: 10 });
+      expect(result.faults.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('refuses dependency aliases that would hide an unmapped method', () => {
+    for (const body of ['const fs = deps.fs; return fs.unknown();', 'const { fs } = deps; return fs.unknown();']) {
+      const result = sourceScan.traceSitesOf({ 'src/a.ts': `export const start = (deps) => { ${body} };` }, start, { deps: {}, maxDepth: 10 });
+      expect(result.faults.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('fails for a missing declaration or relative import', () => {
+    for (const source of ['', `import { next } from './missing.js'; export const start = () => next();`]) {
+      const result = sourceScan.traceSitesOf({ 'src/a.ts': source }, start, { deps: {}, maxDepth: 10 });
+      expect(result.faults.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('allows a row site only with its own named exception and reason', () => {
+    const sources = { 'src/a.ts': 'const mergeConfig = () => 1; export const start = () => mergeConfig();' };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    const options = { deps: {}, rowSites: [exception], exceptions: [exception], maxDepth: 10 };
+    expect(sourceScan.traceSitesOf(sources, start, options).faults).toEqual([]);
+    expect(sourceScan.traceSitesOf(sources, start, { ...options, exceptions: [{ ...exception, reason: '' }] }).faults.length).toBeGreaterThan(0);
+  });
+
+  it('fails for an exception at an unreachable row site', () => {
+    const sources = { 'src/a.ts': 'const mergeConfig = () => 1; export const start = () => 1;' };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: {}, rowSites: [exception], exceptions: [exception], maxDepth: 10 });
+    expect(result.faults).toContain('src/a.ts:mergeConfig: exception site was not reached');
+  });
+
+  it('fails for an exception at a reached site outside the registry rows', () => {
+    const sources = { 'src/a.ts': 'const mergeConfig = () => 1; export const start = () => mergeConfig();' };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: {}, rowSites: [], exceptions: [exception], maxDepth: 10 });
+    expect(result.faults).toContain('src/a.ts:mergeConfig: exception site is not a registry row site');
+  });
+
+  it('fails for a hidden row-site call under an excepted function', () => {
+    const sources = {
+      'src/a.ts': 'const hiddenRow = () => 1; const mergeConfig = () => hiddenRow(); export const start = () => mergeConfig();',
+    };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    const hidden = { path: 'src/a.ts', symbol: 'hiddenRow' };
+    const options = { deps: {}, rowSites: [exception, hidden], exceptions: [exception], maxDepth: 10 };
+    expect(sourceScan.traceSitesOf(sources, start, options).faults).toContain('src/a.ts:hiddenRow: row site requires a named exception with a reason');
+  });
+
+  it('fails for a hidden guard store read under an excepted function', () => {
+    const sources = {
+      'src/a.ts': `import { readGuardStore } from './store.js'; const mergeConfig = (deps) => readGuardStore(deps); export const start = (deps) => mergeConfig(deps);`,
+      'src/store.ts': 'export const readGuardStore = (deps) => deps.guards;',
+    };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    expect(sourceScan.traceSitesOf(sources, start, { deps: {}, rowSites: [exception], exceptions: [exception], maxDepth: 10 }).faults).toContain('src/store.ts:readGuardStore: guard value read');
   });
 });
 

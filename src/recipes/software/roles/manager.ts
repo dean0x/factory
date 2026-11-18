@@ -1,6 +1,8 @@
-import { workerSectionLines } from './coordinator.js';
+import { allOn } from '../../../guards/effective.js';
+import { linesFor, type TextPart } from '../../../templates/fill.js';
+import { workerSectionParts } from './coordinator.js';
 
-export const MANAGER_LINES: readonly string[] = [
+export const MANAGER_PARTS: readonly TextPart[] = [
   '# {{Manager}} instructions',
   '',
   'This folder is a {{program}} {{node}}. A Claude session that starts here is a {{manager}}.',
@@ -22,7 +24,7 @@ export const MANAGER_LINES: readonly string[] = [
   '- A child that you cannot read is unknown. Say so. Do not guess its state.',
   '- Never type into the session of a grandchild. Go through the child that owns it.',
   '',
-  ...workerSectionLines,
+  ...workerSectionParts,
   '',
   '## Priorities and capacity',
   '',
@@ -39,3 +41,5 @@ export const MANAGER_LINES: readonly string[] = [
   '- A {{manager}} does no work at the level of pull requests. Do not review, fix, merge or release a pull request.',
   '- Do not change the files of a child. Ask the child.',
 ];
+
+export const MANAGER_LINES: readonly string[] = linesFor(MANAGER_PARTS, allOn);

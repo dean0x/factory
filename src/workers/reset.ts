@@ -148,6 +148,7 @@ const requireOutOfView = (pane: BoundPane, workerId: string, again: string): Cli
 /** The checks of the process of the pane and of the settings of the work copy. The value is the start of the pane process. */
 const requireFreshSession = async (
   deps: Deps,
+  home: string,
   record: WorkerRecord,
   pane: BoundPane,
   again: string,
@@ -155,7 +156,7 @@ const requireFreshSession = async (
   const start = await paneProcessStart(deps, pane.pid, again);
   if (!start.ok) return start;
   const then = lineFor(commands.restart, record.id);
-  const hooks = await requireOwnHooks(deps, { folder: record.workCopy, then });
+  const hooks = await requireOwnHooks(deps, { home, folder: record.workCopy, then });
   if (!hooks.ok) return hooks;
   const older = await requireSettingsOlderThan(deps, { folder: record.workCopy, then, start: start.value });
   return older.ok ? start : older;
@@ -290,7 +291,7 @@ const checkWorker = async (deps: Deps, request: ResetRequest, again: string): Pr
   if (!live.ok) return live;
   const placed = requireOutOfView(live.value, workerId, again);
   if (!placed.ok) return placed;
-  const start = await requireFreshSession(deps, record.value, live.value, again);
+  const start = await requireFreshSession(deps, home, record.value, live.value, again);
   if (!start.ok) return start;
   const roleTextChecked = await requireRoleText(deps, { home, config, retry: commandText(again) });
   if (!roleTextChecked.ok) return roleTextChecked;

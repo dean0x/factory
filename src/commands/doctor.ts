@@ -1,5 +1,5 @@
 import { join, resolve } from 'node:path';
-import { linesOutsideBlocks, parseBlocks } from '../blocks/managed.js';
+import { sha256Hex, linesOutsideBlocks, parseBlocks } from '../blocks/managed.js';
 import {
   inspectBlocks,
   isAddedAsNewBlock,
@@ -19,6 +19,7 @@ import { folderKey } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
+import { guardStorePathOf, readGuardState, type GuardReadState } from '../core/guard-records.js';
 import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { folderKeyOf } from '../core/paths.js';
@@ -36,14 +37,24 @@ import {
   tmuxVersionOf,
   toolNames,
 } from '../core/tools.js';
+import { allOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
-import type { DocState } from '../migrate/inspect.js';
+import { isRecord, type DocState } from '../migrate/inspect.js';
+import { guardsFor } from '../guards/registry.js';
 import {
   blockNames,
   boardWarnPercent,
   checkIds,
   commandText,
   commands,
+  commandLines,
+  guardDenyWords,
+  guardDoctorWords,
+  guardRecordWords,
+  guardRecords,
+  guardStartWords,
+  guardKeys,
   dirs,
   env,
   files,
@@ -90,6 +101,7 @@ export interface CheckResult {
   readonly id: string;
   readonly level: CheckLevel;
   readonly text: string;
+  readonly since?: Readonly<Record<string, string | null>>;
 }
 
 export interface DoctorOptions {
@@ -332,7 +344,7 @@ export const checkIdleCompaction = async (deps: Deps, home: string, state: DocSt
   ];
   const gaps: string[] = [];
   for (const session of sessions) {
-    const read = await readHookSettings(deps, session.folder);
+    const read = await readHookSettings(deps, home, session.folder);
     const found = read.ok && read.value.state === 'plain' ? read.value : null;
     if (found !== null && (!found.hasOwnHook || found.idleCompaction === wanted)) continue;
     const reason = found === null ? 'not read' : `idle value does not match ${idleCompactionKeyPath}`;
@@ -513,6 +525,7 @@ export const checkNodeBlocks = async (
   deps: Deps,
   home: string,
   state: DocState<FactoryConfig>,
+  guards?: GuardValues,
 ): Promise<CheckResult> => {
   if (state.kind !== 'valid') return notChecked(checkIds.blocks, `${files.config} is not valid`);
   const layout = layoutOf(home);
@@ -520,7 +533,7 @@ export const checkNodeBlocks = async (
   if (!plain.ok) return failedFrom(checkIds.blocks, plain.error);
   const setup = await readSetupTexts(deps, layout, commands.doctor);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
-  const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value));
+  const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value), guards ?? allOn);
   const pending = { ...NO_PENDING_FILES, renames: [...blockRenamesOf(fileSteps), ...roleBlockRenames(input.recipe, input.layer)] };
   // A node state that is not valid gives no record, and every block then counts as recorded.
   const nodeState = await inspectState(deps, home);
@@ -641,21 +654,23 @@ const rolePartOf = (read: CliResult<RoleRead>): RolePart => {
  * workers holds at most `workerRecord.maxEntries` records, so the loop is bounded. The check reads and writes nothing else, and it
  * reads no hook settings file that is a link.
  */
-export const checkRoleDelivery = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+export const checkRoleDelivery = async (
+  deps: Deps, home: string, state: DocState<FactoryConfig>, guards?: GuardValues,
+): Promise<CheckResult> => {
   const id = checkIds.roleDelivery;
   if (state.kind !== 'valid') return notChecked(id, `${files.config} is not valid`);
   const config = state.value;
-  if (workerFileTemplatesFor(config, null).length === 0) return check(id, 'ok', roleText.doctor.noWorkerFile);
+  if (workerFileTemplatesFor(config, null, guards ?? allOn).length === 0) return check(id, 'ok', roleText.doctor.noWorkerFile);
   const listed = await listWorkerRecords(deps, home);
   if (!listed.ok) return failedFrom(id, listed.error);
   const gaps: string[] = [];
   for (const record of listed.value.workers) {
-    const settings = await readHookSettings(deps, workCopyOf(home, record.project, record.id));
+    const settings = await readHookSettings(deps, home, workCopyOf(home, record.project, record.id));
     const gap = settings.ok ? hookGapOf(record, settings.value) : unreadGapOf(record, settings.error.message);
     if (gap !== null) gaps.push(gap);
   }
   const copies = listed.value.workers.length;
-  const part = rolePartOf(await readRoleText(deps, { home, config }));
+  const part = rolePartOf(await readRoleText(deps, { home, config, ...(guards === undefined ? {} : { guards }) }));
   const level = part.level === 'ok' && gaps.length > 0 ? 'warn' : part.level;
   const text = [`${roleText.doctor.hooks(copies - gaps.length, copies)}; ${part.role}.`, ...part.remedy, ...gaps, roleText.doctor.acceptance];
   return check(id, level, text.join(' '));
@@ -871,6 +886,60 @@ export const checkProjectUrls = (state: DocState<FactoryConfig>): readonly Check
   return [check(checkIds.projectUrls, 'ok', text)];
 };
 
+/** One guard diagnosis uses the same state as the block and role checks. The worst fault sets its level. */
+const checkGuards = async (
+  deps: Deps, home: string, config: DocState<FactoryConfig>, state: GuardReadState | null,
+): Promise<CheckResult> => {
+  const id = checkIds.guards;
+  if (config.kind !== 'valid' || state === null) return notChecked(id, `${files.config} is not valid`);
+  const definitions = guardsFor(config.value.entry);
+  const off = definitions.filter((guard) => state.values[guard.id] === 'off');
+  const parts = [guardStartWords.off(off.length), guardStartWords.harm(off.filter((guard) => guard.harm).length),
+    ...state.loosened.filter((part) => !definitions.some((guard) => guard.id === part))];
+  const warnings: string[] = [];
+  const failures: string[] = [];
+  if (isRecord(config.raw) && !Object.hasOwn(config.raw, guardKeys.local)) parts.push(guardDoctorWords.noKey);
+  for (const guard of state.unmatched) warnings.push(`${guardStartWords.unmatched(guard)}: run "${commandText(commandLines.guardSet)} ${guard} on"`);
+  for (const guard of definitions) {
+    if (!guard.wired && config.value.core.guards[guard.id] === 'off') warnings.push(`${guard.id} is not wired; its value stays on`);
+  }
+  const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
+  if (state.recordCount !== null) {
+    parts.push(guardDoctorWords.recordCount(state.recordCount));
+    if (state.recordCount >= guardRecords.warnRecords) {
+      const full = state.recordCount >= guardRecords.maxRecords;
+      const notice = full ? guardDoctorWords.atCap : guardDoctorWords.nearCap;
+      (full ? failures : warnings).push(`${notice} ${path}: ${guardRecordWords.unreadableRemedy}`);
+    }
+  }
+  if (state.fault !== null) {
+    failures.push(`${path}: ${state.fault}${state.remedy === null ? '' : `; ${state.remedy}`}`);
+  } else if (state.prefix === null) {
+    warnings.push(`${guardStartWords.noPrefixRecord}; run "${commandText(commandLines.guardConfirm)}"`);
+  } else if (state.prefix.hash !== sha256Hex(config.value.core.owner.prefix)) {
+    failures.push(`${guardStartWords.prefixMismatch}; run "${commandText(commandLines.guardConfirm)}"`);
+  }
+  const listed = await listWorkerRecords(deps, home);
+  const folders = [layoutOf(home).coordinatorDir, ...(listed.ok ? listed.value.workers.map((record) => workCopyOf(home, record.project, record.id)) : [])];
+  const skipped = new Set<string>();
+  let missing = false;
+  for (const folder of folders) {
+    const settings = await readHookSettings(deps, home, folder);
+    if (!settings.ok || settings.value.state !== 'plain') missing = true;
+    else {
+      missing ||= settings.value.missingDeny.length > 0;
+      for (const path of settings.value.skipped) skipped.add(path);
+    }
+  }
+  if (missing) warnings.push(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
+  for (const path of skipped) warnings.push(`no exact Edit rule for ${path}`);
+  let level: CheckLevel = 'ok';
+  if (warnings.length > 0) level = 'warn';
+  if (failures.length > 0) level = 'fail';
+  return { id, level, text: [...parts, ...warnings, ...failures].join('; '),
+    since: Object.fromEntries(off.map((guard) => [guard.id, state.since[guard.id] ?? null])) };
+};
+
 interface CheckRun {
   readonly results: readonly CheckResult[];
   readonly localMissing: boolean;
@@ -887,6 +956,7 @@ const skippedProxyCheck = (): CheckResult =>
 
 const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CheckRun> => {
   const config = await inspectConfig(deps, home, registry);
+  const guards = config.kind === 'valid' ? await readGuardState(deps, home, config.value, 'always') : null;
   const state = await inspectState(deps, home);
   const rootScan = await scanRoot(deps, home, config.kind === 'valid' ? config.value : null);
   const [
@@ -914,9 +984,9 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkTempFolders(deps, home),
     checkIndex(deps),
     checkNodeId(deps, home, config),
-    checkNodeBlocks(deps, home, config),
+    checkNodeBlocks(deps, home, config, guards?.values),
     checkSetupText(deps, home),
-    checkRoleDelivery(deps, home, config),
+    checkRoleDelivery(deps, home, config, guards?.values),
     checkIdleCompaction(deps, home, config),
     checkChildren(deps, home, config, registry),
     checkInstructionFiles(deps, home),
@@ -932,6 +1002,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
   ]);
   const results = [
     checkConfig(config),
+    await checkGuards(deps, home, config, guards),
     checkConfigVersion(config),
     localFile,
     checkState(state),

@@ -117,7 +117,10 @@ describe('the guard command in the command line', () => {
     expect(result.out).toContain('Usage: factory guard list [--all] [--family NAME] [--home DIR]');
     expect(result.out).toContain('The list omits integrity checks and guards that are not built yet.');
     for (const flag of ['--all', '--family NAME', '--home DIR', '--json']) expect(result.out).toContain(flag);
-    expect(result.out).not.toMatch(/factory guard (?:set|confirm)/);
+    expect(result.out).toContain('factory guard set ID on|off');
+    expect(result.out).toContain('factory guard set --all on|off');
+    expect(result.out).toContain('factory guard confirm');
+    expect(result.out).toContain('--family and --json apply to list only.');
   });
 
   it.each([[[]], [['set']], [['list', 'extra']]])('refuses invalid guard arguments %j before any file read', async (words) => {

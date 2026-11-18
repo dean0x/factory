@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, unlink, writeFi
 import { join, resolve, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
-import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
 import { loadNote, scaled } from './load.js';
 
@@ -157,9 +157,10 @@ const ownGroup = (event: string): Record<string, unknown> => ({
 });
 
 /** The settings of Claude Code that the program writes into a session folder. The command texts are the contract. */
-const ownSettings = (): Record<string, unknown> => ({
+const ownSettings = async (folder: string): Promise<Record<string, unknown>> => ({
   hooks: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroup(event)]])),
   statusLine: { type: 'command', command: 'factory hook statusline' },
+  permissions: { deny: await ownDenyRules(box, folder) },
   idleCompaction: false,
 });
 
@@ -206,7 +207,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect((await stat(join(box.node, '.factory', 'workers', 'alpha', 'inbox'))).isDirectory()).toBe(true);
 
     // The hook settings are in the work copy, and the clone hides the file from git: the work copy is clean.
-    expect(JSON.parse(await readFile(join(copy, '.claude', 'settings.local.json'), 'utf8'))).toEqual(ownSettings());
+    expect(JSON.parse(await readFile(join(copy, '.claude', 'settings.local.json'), 'utf8'))).toEqual(await ownSettings(copy));
     const exclude = await readFile(join(clone, '.git', 'info', 'exclude'), 'utf8');
     expect(exclude.split('\n').filter((line) => line === EXCLUDE_ENTRY)).toHaveLength(1);
     expect((await box.git(copy, ['status', '--porcelain'])).stdout).toBe('');
@@ -251,7 +252,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect([...(await snapshotOf(join(home, '.claude'))), ...(await snapshotOf(join(home, '.claude.json')))]).toEqual(before);
     expect(await readFile(join(box.node, 'factory.local.yaml'), 'utf8')).not.toContain('user-line');
     const copy = join(box.node, 'work-copies', 'web', 'alpha');
-    expect(JSON.parse(await readFile(join(copy, '.claude', 'settings.local.json'), 'utf8'))).toEqual(ownSettings());
+    expect(JSON.parse(await readFile(join(copy, '.claude', 'settings.local.json'), 'utf8'))).toEqual(await ownSettings(copy));
   });
 
   it('names the session of a new worker with the id of the node and the id of the worker', async () => {

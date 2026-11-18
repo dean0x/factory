@@ -1,8 +1,8 @@
 import { guardIds, guardKeys, guardKinds, keys, places, roles } from '../names.js';
 import type { RecipeEntry } from '../recipes/entry.js';
-import { guardOf } from './build.js';
+import { guardOf, wiredGuard } from './build.js';
 import { coreGuardRows } from './core-rows.js';
-import type { Guard, GuardDefinition, GuardRow } from './types.js';
+import type { Guard, GuardDefinition, GuardRow, RowSite } from './types.js';
 
 const { owner, worker } = roles;
 const folder = places.folder;
@@ -127,10 +127,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'A session uses a proxy only when the config names one and the proxy answers.',
     [`${keys.root.session}.${keys.session.proxy}`, `${keys.root.proxies}[].${keys.proxy.onFail}`],
   ),
-  guardOf(
-    guardIds.resumeRoutines,
-    'Resume notes and routines',
-    'A resume file and a standing routine stay inside the folders and the commands that they name.',
+  wiredGuard(
+    guardOf(
+      guardIds.resumeRoutines,
+      'Resume notes and routines',
+      'A resume file and a standing routine stay inside the folders and the commands that they name.',
+    ),
   ),
   guardOf(
     guardIds.rootScan,
@@ -162,11 +164,34 @@ const coreGuards: readonly GuardDefinition[] = [
     'Work conduct',
     'Sessions follow the rules of conduct for commands, refusals and reports.',
   ),
-  guardOf(
-    guardIds.installRules,
-    'Install rules',
-    `A session installs nothing outside its own folder without a go of the ${owner}.`,
+  wiredGuard(
+    guardOf(
+      guardIds.installRules,
+      'Install rules',
+      `A session installs nothing outside its own folder without a go of the ${owner}.`,
+    ),
   ),
+];
+
+/** Sites of the guard record path, separate from the rows of the registry. */
+export const recordPathSites: readonly RowSite[] = [
+  { path: 'src/guards/effective.ts', symbol: 'allOn' },
+  { path: 'src/guards/effective.ts', symbol: 'guardRulesOf' },
+  { path: 'src/core/guard-records.ts', symbol: 'requireGuardChannel' },
+  { path: 'src/core/guard-records.ts', symbol: 'guardStorePathOf' },
+  { path: 'src/core/private-file.ts', symbol: 'userStatePlaceOf' },
+  { path: 'src/core/private-file.ts', symbol: 'absoluteEnv' },
+  ...['ownDenyRulesOf', 'missingDenyRules'].map((symbol) => ({ path: 'src/core/claude-settings.ts', symbol })),
+  ...['readGuardStore', 'changeGuardStore', 'recordGuards', 'recordPrefix', 'readGuardState'].map((symbol) => ({ path: 'src/core/guard-records.ts', symbol })),
+  ...['checkedTargetCore', 'checkedPidCore', 'openCheckedCore', 'CHECKED_OPEN_FLAGS'].map((symbol) => ({ path: 'src/core/node-deps.ts', symbol })),
+  ...['checkedFaultCore', 'accessFaultCore'].map((symbol) => ({ path: 'src/core/access.ts', symbol })),
+  { path: 'src/core/file-lock.ts', symbol: 'takeAgeLock' },
+  ...['visibleTextCore', 'displayLineCore'].map((symbol) => ({ path: 'src/cli/output.ts', symbol })),
+  ...[
+    'runGuardSet', 'runGuardConfirm', 'parseGuardSet', 'readGuardConfigText', 'loadGuardConfig',
+    'requireCurrentGuardConfig', 'writeGuardLocal', 'guardWriteOutput', 'askGuardOff',
+    'readGuardConfigTexts', 'refuseHiddenGuardPrefix',
+  ].map((symbol) => ({ path: 'src/commands/guard-set.ts', symbol })),
 ];
 
 /** The guard ids that older nodes may still hold in a config and that no guard has now. */
