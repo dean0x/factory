@@ -4,6 +4,7 @@ import {
   checkNote,
   chosenOptionOf,
   decideLogRow,
+  proofOf,
   recheckRequest,
   requestBlockLines,
   requestStateOf,
@@ -15,6 +16,7 @@ import {
 import { parseDecisionLog, parseWaiting, type DecisionLogDoc, type WaitingDoc } from '../../src/board/files.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
+import { ok } from '../../src/core/result.js';
 import { commandLines, commandText, files, maxDisplayWidth, maxFileBytes, relayedMarker, requestDeciders, roles } from '../../src/names.js';
 
 /** Characters that tools and editors turn into other characters, so they are built from their code points. */
@@ -435,6 +437,28 @@ describe('the state of a request', () => {
   it('exits 1 for a number that is in both files, also when the row has a by key', () => {
     const row = { ...ROW, by: 'owner' };
     expect(exitCodeOf[errorOf(requestStateOf(waitingOf(entry()), logOf(row), 'D-3')).kind]).toBe(1);
+  });
+});
+
+describe('request proof', () => {
+  const rules = { points: [], parseRef: (text: string) => ok(text), parseHead: (text: string) => ok(text) };
+  const record = { node: 'node', root: '/root', id: 'D-3', option: 'b', at: '2030-01-02T03:04:05.678Z' };
+
+  it('does not accept request text for a different id', () => {
+    const request = canonicalOf(entry({ id: 'D-4' }));
+    const stored = ok({ record: { ...record, hash: requestHashOf(request) } });
+    const docs = ok({ waiting: waitingOf(), log: logOf({ item: 'D-3: Pick', by: 'owner', request }) });
+    expect(proofOf('D-3', docs, stored, rules)).toMatchObject({ kind: 'error', option: null });
+  });
+
+  it.each([
+    [{ relayed: relayedMarker }, 'relayed', 'coordinator'],
+    [{ decider: requestDeciders.delegate }, 'closed', 'delegate'],
+  ] as const)('does not give owner proof when a decision row names a non-owner decider', (mark, kind, decider) => {
+    const request = canonicalOf(entry());
+    const stored = ok({ record: { ...record, hash: requestHashOf(request) } });
+    const docs = ok({ waiting: waitingOf(), log: logOf({ item: 'D-3: Pick', by: 'owner', request, ...mark }) });
+    expect(proofOf('D-3', docs, stored, rules)).toMatchObject({ kind, option: null, decider });
   });
 });
 

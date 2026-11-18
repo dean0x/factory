@@ -125,8 +125,8 @@ export const linkOfRow = (row: Readonly<Record<string, unknown>>, rules: Request
   }, rules);
 };
 
-/** Read only the request inside the hash wrapper. Log fields outside this text cannot supply a link for an owner record. */
-export const linkOfAnswered = (requestText: string, rules: RequestLinkRules): CliResult<RequestLink | null> => {
+/** Read only the request inside the hash wrapper. */
+export const answeredRequestOf = (requestText: string): CliResult<Readonly<Record<string, unknown>>> => {
   let wrapper: unknown;
   try {
     wrapper = JSON.parse(requestText);
@@ -141,5 +141,11 @@ export const linkOfAnswered = (requestText: string, rules: RequestLinkRules): Cl
   }
   const request = wrapper[requestHash.keys.request];
   if (!isRecord(request)) return failure('the answered request text has no request object');
-  return linkOfFields(request[decisionKeys.fields], rules);
+  return ok(request);
+};
+
+/** Log fields outside the hash wrapper cannot supply a link for an owner record. */
+export const linkOfAnswered = (requestText: string, rules: RequestLinkRules): CliResult<RequestLink | null> => {
+  const request = answeredRequestOf(requestText);
+  return request.ok ? linkOfFields(request.value[decisionKeys.fields], rules) : request;
 };
