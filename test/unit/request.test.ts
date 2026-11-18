@@ -981,9 +981,27 @@ describe('request close: approval links', () => {
       options: [{ key: 'approve', text: 'Yes' }, { key: 'stop', text: 'No' }],
     });
   };
-  const close = (repo: BoardRepo, change: Partial<RequestOptions> = {}) => runRequest(inPane(repo.deps, '%0'), {
+  const close = (repo: BoardRepo, change: Partial<RequestOptions> = {}, pane = '%0') => runRequest(inPane(repo.deps, pane), {
     ...BASE, words: ['close', 'D-1'], relayed: true, decision: 'approve', ...change,
   }, recipes);
+
+  it('refuses a linked relay outside the coordinator pane without a write', async () => {
+    const repo = await boardNode({ waiting: waitingText([linkedEntry()]) });
+    const before = filesOf(repo);
+    const result = await close(repo, {}, '%1');
+
+    expect({
+      exitCode: result.ok ? 0 : exitCodeOf[result.error.kind],
+      message: result.ok ? undefined : result.error.message,
+      files: filesOf(repo),
+      commits: repo.commits,
+    }).toEqual({
+      exitCode: 2,
+      message: 'the caller is in the pane %1, but the pane of the coordinator is %0',
+      files: before,
+      commits: [],
+    });
+  });
 
   it.each(['approve', 'stop'])('copies the link for a relay of %s and reports no owner proof', async (decision) => {
     const repo = await nodeWithItem();

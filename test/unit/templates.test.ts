@@ -1182,11 +1182,16 @@ describe('the coordinator text: the board records', () => {
     }
   });
 
-  it.each(['README.md', 'docs/design.md'])('states the coordinator approval rules in %s', (path) => {
+  it.each([
+    ['README.md', 'The relayed row records the go.'],
+    ['docs/design.md', 'The relayed row records the go (§4.10).'],
+  ])('states the coordinator approval rules and relay facts in %s', (path, relayRecord) => {
     const doc = readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
     const rules = [
       ...ownerMergeSentences,
       afterUpgrade,
+      'This is a rule in the coordinator text.',
+      relayRecord,
       'A relayed answer is never proof of an answer of the owner.',
       'The exit code of `factory decide read` grants no approval.',
       decideOnly('a delegated merge'),
@@ -1194,6 +1199,12 @@ describe('the coordinator text: the board records', () => {
     ];
     const missing = rules.filter((rule) => !doc.includes(rule));
     expect(missing).toEqual([]);
+  });
+
+  it('states that a merge can finish before the approval check refuses', () => {
+    const design = readFileSync(new URL('../../docs/design.md', import.meta.url), 'utf8');
+    const risk = '- **A late refusal.** A merge can finish before `item record` finds an approval problem (§6.1).';
+    expect(design.split('\n').find((line) => line.startsWith('- **A late refusal.**'))).toBe(risk);
   });
 
   it('says that the decision log holds the decisions with their decider, and that only the owner store proves an answer', () => {
