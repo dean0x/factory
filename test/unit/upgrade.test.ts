@@ -186,9 +186,12 @@ const managerVersion = layer2Blocks.find((template) => template.name === 'manage
 const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
   layer1Blocks.map((template) => (template.name === name ? { ...template, version: template.version + 1, body } : template));
 
-/** The blocks that the spec gives for every config, whatever its layer. */
+/** Fixed templates use the sample node for the prefix check, also with test-only schema versions. */
 const fixedBlocks = (templates: readonly BlockTemplate[]): Pick<UpgradeSpec, 'blocksOf'> => ({
-  blocksOf: async () => ok({ templates, renames: [], queueKey: softwareQueueKey }),
+  blocksOf: async (_config, _setup, _modesOf, guardsOf) => {
+    await guardsOf(sampleConfig());
+    return ok({ templates, renames: [], queueKey: softwareQueueKey });
+  },
 });
 
 const blocksSpec = (templates: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, ...fixedBlocks(templates) });
@@ -423,6 +426,30 @@ describe('upgrade: effective guard values', () => {
     expect(result.error.message).toBe('the owner prefix differs from its record');
     expect(asked).toEqual([]);
     expect(snapshot(deps)).toEqual(before);
+  });
+
+  it.each([false, true])('requires the prefix check before consent or writes (dry run: %s)', async (dryRun) => {
+    const { deps, gitSince } = await makeNode();
+    const setupFile = `${HOME}/setup/coordinator.md`;
+    deps.seed(setupFile, `${text(deps, setupFile)}\nA changed instruction.\n`);
+    deps.modes.set(LOCAL, 0o644);
+    const spec: UpgradeSpec = { ...currentSpec, blocksOf: async () => ok({
+      templates: withBlock('worker', 'Updated worker text.'), renames: [], queueKey: softwareQueueKey,
+    }) };
+    const before = snapshot(deps);
+    const asked: string[] = [];
+    const result = await upgrade({ ...deps, stdinIsTTY: true, stdoutIsTTY: true, prompt: async (question) => {
+      asked.push(question);
+      return ok('y');
+    } }, spec, { dryRun });
+    expect(result).toMatchObject({ ok: false, error: {
+      kind: 'failure', message: 'The owner prefix check did not complete. Nothing changed.',
+    } });
+    expect(asked).toEqual([]);
+    expect(snapshot(deps)).toEqual(before);
+    expect(deps.modes.get(LOCAL)).toBe(0o644);
+    expect(gitWrites(gitSince())).toEqual([]);
+    expect(settingWrites(gitSince())).toEqual([]);
   });
 
   it('shows the no-key notice only in a dry run with no new json key', async () => {

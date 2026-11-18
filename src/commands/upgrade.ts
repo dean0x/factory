@@ -342,20 +342,21 @@ export const runUpgrade = async (
   const stateGitignore = await planStateGitignore(deps, layout);
   if (!stateGitignore.ok) return stateGitignore;
   let allOnPackage: readonly BlockTemplate[] | undefined;
-  let prefix: CliResult<void> = ok(undefined);
+  const prefix: { result: CliResult<void> | null } = { result: null };
   const blockSet = await planBlockSet(
     config.value, local.value, upgrade, setupPlan.value.texts,
     (parsed) => effectiveModes(deps, home, parsed),
     async (parsed) => {
       allOnPackage = workerFileTemplatesFor(parsed, null, allOn);
       const guards = await readGuardState(deps, home, parsed, 'always');
-      prefix = requireConfirmedPrefix(parsed, guards);
+      prefix.result = requireConfirmedPrefix(parsed, guards);
       return guards.values;
     },
   );
   if (!blockSet.ok) return blockSet;
   // The same guard read supplies the render and the gate, before acceptance writes or mode changes.
-  if (!prefix.ok) return prefix;
+  if (prefix.result === null) return failure('The owner prefix check did not complete. Nothing changed.');
+  if (!prefix.result.ok) return prefix.result;
   const setup = await setupPlan.value.accept();
   if (!setup.ok) return setup;
   const modeNotes = await settleLocalMode(deps, home, !options.dryRun);

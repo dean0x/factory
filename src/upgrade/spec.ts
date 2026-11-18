@@ -14,7 +14,6 @@ import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
 import { fileSteps, rootMoves, type BlockRename, type FileStep, type RootMove } from '../migrate/files.js';
 import { isRecord, type SchemaParser, type TextParser, type VersionSpec } from '../migrate/inspect.js';
-import { allOn } from '../guards/effective.js';
 import { retiredGuardIds } from '../guards/registry.js';
 import type { GuardValues } from '../guards/types.js';
 import { guardConfigWords, guardKeys } from '../names.js';
@@ -63,8 +62,9 @@ export interface UpgradeSpec {
    * The managed blocks of the node that a config value describes, with the setup texts of the root and the effective
    * mode of each approval point and guard values. The value holds both files in the current schema versions.
    * Both callbacks get the parsed config, because their values follow its node id and local values.
+   * Await guardsOf before a successful result. It supplies the prefix check and the guard values.
    */
-  blocksOf(config: unknown, setup: SetupTexts, modesOf: ModesOf, guardsOf?: GuardsOf): Promise<CliResult<BlockSet>>;
+  blocksOf(config: unknown, setup: SetupTexts, modesOf: ModesOf, guardsOf: GuardsOf): Promise<CliResult<BlockSet>>;
 }
 
 /** The effective mode of each approval point of a parsed config. */
@@ -109,7 +109,7 @@ export const localFinisher = (retired: readonly string[] = retiredGuardIds): Req
  */
 const blocksOfNode =
   (registry: RecipeRegistry) =>
-  async (config: unknown, setup: SetupTexts, modesOf: ModesOf, guardsOf: GuardsOf = async () => allOn): Promise<CliResult<BlockSet>> => {
+  async (config: unknown, setup: SetupTexts, modesOf: ModesOf, guardsOf: GuardsOf): Promise<CliResult<BlockSet>> => {
     const { shared, local } = splitConfigValue(config);
     const parsed = parseConfig(shared, local, registry);
     if (!parsed.success) return failure(describeIssues(parsed.error));
