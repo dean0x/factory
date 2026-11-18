@@ -337,14 +337,14 @@ describe('the hook settings of a session folder', () => {
     const deps = make();
     deps.seed(FILE, JSON.stringify({ ...ownSettingsEntries, idleCompaction }));
     const before = new Map(deps.files);
-    expect(valueOf(await readHookSettings(deps, FOLDER))).toMatchObject({ state: 'plain', idleCompaction, hasOwnHook: true, missing: [] });
+    expect(valueOf(await readHookSettings(deps, request.home, FOLDER))).toMatchObject({ state: 'plain', idleCompaction, hasOwnHook: true, missing: [] });
     expect(deps.files).toEqual(before);
   });
 
   it.each([undefined, 'false', 0, null, {}, []])('reads an absent or non-boolean idle value as null: %s', async (idleCompaction) => {
     const deps = make();
     deps.seed(FILE, JSON.stringify({ ...ownSettingsEntries, idleCompaction }));
-    expect(valueOf(await readHookSettings(deps, FOLDER))).toMatchObject({ state: 'plain', idleCompaction: null, hasOwnHook: true });
+    expect(valueOf(await readHookSettings(deps, request.home, FOLDER))).toMatchObject({ state: 'plain', idleCompaction: null, hasOwnHook: true });
   });
 
   it.each([
@@ -357,7 +357,7 @@ describe('the hook settings of a session folder', () => {
   ])('keeps an unreadable shape separate from parsed settings (case %#)', async (text) => {
     const deps = make();
     deps.seed(FILE, text);
-    expect(valueOf(await readHookSettings(deps, FOLDER))).toEqual({ state: 'not-parsed', file: FILE });
+    expect(valueOf(await readHookSettings(deps, request.home, FOLDER))).toEqual({ state: 'not-parsed', file: FILE });
     const refusal = errorOf(await requireOwnHooks(deps, request));
     expect(exitCodeOf[refusal.kind]).toBe(3);
     expect(refusal.message).toContain(`lack the events: ${hookNames.events.join(', ')}`);
@@ -366,11 +366,11 @@ describe('the hook settings of a session folder', () => {
   it.each(['{}', '{"hooks": {}}'])('reads settings with no own hook as plain: %s', async (text) => {
     const deps = make();
     deps.seed(FILE, text);
-    expect(valueOf(await readHookSettings(deps, FOLDER))).toMatchObject({ state: 'plain', idleCompaction: null, hasOwnHook: false });
+    expect(valueOf(await readHookSettings(deps, request.home, FOLDER))).toMatchObject({ state: 'plain', idleCompaction: null, hasOwnHook: false });
   });
 
   it('reads an absent file as plain with no own hook', async () => {
-    expect(valueOf(await readHookSettings(make(), FOLDER))).toMatchObject({ state: 'plain', idleCompaction: null, hasOwnHook: false });
+    expect(valueOf(await readHookSettings(make(), request.home, FOLDER))).toMatchObject({ state: 'plain', idleCompaction: null, hasOwnHook: false });
   });
 
   it.each([
@@ -381,7 +381,7 @@ describe('the hook settings of a session folder', () => {
     const deps = make({ links: { [path]: '/elsewhere/settings' } });
     deps.seed(FILE, JSON.stringify(ownSettingsEntries));
     const readHookDeps = { ...deps, fs: { ...deps.fs, readTextLimited: async () => failure('unexpected read') } };
-    expect(valueOf(await readHookSettings(readHookDeps, FOLDER))).toMatchObject({ state: 'link', part: kind });
+    expect(valueOf(await readHookSettings(readHookDeps, request.home, FOLDER))).toMatchObject({ state: 'link', part: kind });
     const refusal = errorOf(await requireOwnHooks(readHookDeps, request));
     expect(exitCodeOf[refusal.kind]).toBe(4);
     expect(refusal.hint).toBe(`Replace the link with a plain ${kind}. Run "factory upgrade", then "factory restart alpha".`);

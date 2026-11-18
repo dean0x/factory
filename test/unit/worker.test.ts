@@ -840,7 +840,7 @@ describe('worker new: the consent for the hook settings', () => {
   });
 
   it.each([false, true])('uses the config value %s in the prompt and the write after checkout', async (idle) => {
-    const original = { model: 'opus', ...ownSettingsEntries, idleCompaction: !idle };
+    const original = { model: 'opus', ...ownSettingsWithRules(HOME, COPY), idleCompaction: !idle };
     const made = make({ config: configFor(idle), checkout: JSON.stringify(original), tty: true, prompt: () => ok('y') });
     await succeeded(made, { yes: false });
     expect(made.deps.prompts).toEqual([
@@ -863,13 +863,13 @@ describe('worker new: the consent for the hook settings', () => {
   it('writes true into a new file with the yes flag inside a factory session', async () => {
     const made = make({ config: configFor(true), env: { FACTORY_SESSION: 'demo' } });
     await succeeded(made, { yes: true });
-    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? 'null')).toEqual({ ...ownSettingsEntries, idleCompaction: true });
+    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? 'null')).toEqual({ ...ownSettingsWithRules(HOME, COPY), idleCompaction: true });
     expect(made.deps.prompts).toEqual([]);
     expect(made.events).toContain('tmux split-window');
   });
 
   it('keeps the hooks after a no to the idle value and names upgrade as the remedy', async () => {
-    const checkout = JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine });
+    const checkout = JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine, permissions: { deny: OWN_DENY_RULES } });
     const made = make({ checkout, tty: true, prompt: () => ok('n') });
     await succeeded(made, { yes: false });
     expect(made.deps.files.get(SETTINGS_FILE)).toBe(checkout);

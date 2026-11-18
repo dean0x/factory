@@ -16,6 +16,7 @@ import { activeMachine, commands, env, files, hookNames, schemaIds, stateGuard, 
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { allOn } from '../../src/guards/effective.js';
+import { readGuardState } from '../../src/core/guard-records.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -1109,7 +1110,7 @@ describe('start:the hook settings of the coordinator', () => {
   });
 
   describe('the idle compaction value', () => {
-    const oldSettings = { hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine };
+    const oldSettings = { hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine, permissions: ownWithDeny.permissions };
     const oldText = `${JSON.stringify(oldSettings)}\n`;
     const valueLine = '  idleCompaction: set to false (session.idle_compaction in factory.yaml)';
     const skipNotice =
@@ -1143,12 +1144,12 @@ describe('start:the hook settings of the coordinator', () => {
     it.each([false, true])('writes the config value %s at start', async (idle) => {
       const { deps, tmux } = make({ ...noFile, config: configFor(idle) });
       await succeeded(deps, { yes: true });
-      expect(settingsOf(deps)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+      expect(settingsOf(deps)).toEqual({ ...ownWithDeny, idleCompaction: idle });
       expect(launched(tmux)).toBe(true);
     });
 
     it('asks nothing and writes nothing when true matches the config', async () => {
-      const text = JSON.stringify({ ...ownSettingsEntries, idleCompaction: true });
+      const text = JSON.stringify({ ...ownWithDeny, idleCompaction: true });
       const { deps } = make({ config: configFor(true), hookSettings: text });
       await succeeded(deps);
       expect(deps.prompts).toEqual([]);
@@ -1159,7 +1160,7 @@ describe('start:the hook settings of the coordinator', () => {
     it.each([false, true])('uses the config value %s for reboot consent and the write', async (idle) => {
       const config = configFor(idle);
       const { deps } = make({ config, hookSettings: oldText, tty: true, prompt: () => ok('y') });
-      expect(await renderStartFiles(deps, HOME, config, commands.reboot)).toEqual(ok(undefined));
+      expect(await renderStartFiles(deps, HOME, config, commands.reboot, await readGuardState(deps, HOME, config, 'when-off'))).toEqual(ok(undefined));
       expect(deps.prompts).toEqual([
         `This changes the settings of Claude Code in ${SETTINGS_FILE}:\n` +
         `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml)\nWrite this change? [y/N] `,
@@ -1206,7 +1207,7 @@ describe('start:the hook settings of the coordinator', () => {
     it('lets reboot continue without a settings write and prints one remedy line with no terminal', async () => {
       const { deps } = make({ hookSettings: oldText });
       const before = new Map(deps.files);
-      expect(await renderStartFiles(deps, HOME, sampleConfig(), commands.reboot)).toEqual(ok(undefined));
+      expect(await renderStartFiles(deps, HOME, sampleConfig(), commands.reboot, await readGuardState(deps, HOME, sampleConfig(), 'when-off'))).toEqual(ok(undefined));
       expect(new Map(deps.files)).toEqual(before);
       expect(deps.prompts).toEqual([]);
       expect(deps.warned).toEqual([skipNotice]);
@@ -1215,7 +1216,7 @@ describe('start:the hook settings of the coordinator', () => {
     it('stops reboot with exit 2 for hook lines without a terminal and writes nothing', async () => {
       const { deps } = make(noFile);
       const before = new Map(deps.files);
-      const result = await renderStartFiles(deps, HOME, sampleConfig(), commands.reboot);
+      const result = await renderStartFiles(deps, HOME, sampleConfig(), commands.reboot, await readGuardState(deps, HOME, sampleConfig(), 'when-off'));
       expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
       if (!result.ok) expect(result.error.message).toContain('factory hook Stop');
       expect(new Map(deps.files)).toEqual(before);
