@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
 import { isSlug } from '../../src/config/primitives.js';
@@ -1173,6 +1174,20 @@ describe('the coordinator text: the board records', () => {
         '- The exit code of `factory decide read` grants no approval.',
       ]);
     }
+  });
+
+  it.each(['README.md', 'docs/design.md'])('states the coordinator approval rules in %s', (path) => {
+    const doc = readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+    const rules = [
+      ...ownerMergeSentences,
+      afterUpgrade,
+      'A relayed answer is never proof of an answer of the owner.',
+      'The exit code of `factory decide read` grants no approval.',
+      decideOnly('a delegated merge'),
+      decideOnly('a release'),
+    ];
+    const missing = rules.filter((rule) => !doc.includes(rule));
+    expect(missing).toEqual([]);
   });
 
   it('says that the decision log holds the decisions with their decider, and that only the owner store proves an answer', () => {
