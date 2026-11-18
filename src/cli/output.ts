@@ -139,8 +139,11 @@ const escapeOf = (character: string): string => {
   return code <= 0xff ? `\\x${code.toString(16).padStart(2, '0')}` : `\\u{${code.toString(16)}}`;
 };
 
+/** The always-on escape core for text that an owner must see in full. */
+export const visibleTextCore = (value: string): string => value.replace(HIDDEN_CHARACTERS, escapeOf);
+
 /** The text with each control character shown as an escape, so that the screen shows the text of the bytes. */
-export const visibleText = (value: string): string => value.replace(HIDDEN_CHARACTERS, escapeOf);
+export const visibleText = (value: string): string => visibleTextCore(value);
 
 const LINE_BREAKS_AND_TABS = /[\n\r\t]/g;
 
@@ -149,11 +152,13 @@ const LINE_BREAKS_AND_TABS = /[\n\r\t]/g;
  * characters (control, bidi, format, invisible and lone surrogate) are removed, and the line is cut to `width` characters. A pair of code
  * units that make one character is never cut in half.
  */
-export const displayLine = (text: string, width: number = maxDisplayWidth): string => {
+export const displayLineCore = (text: string, width: number = maxDisplayWidth): string => {
   const clean = text.replace(LINE_BREAKS_AND_TABS, ' ').replace(HIDDEN_CHARACTERS, '');
   const cut = clean.slice(0, Math.max(0, width));
   return cut.length < clean.length && /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
 };
+
+export const displayLine = (text: string, width: number = maxDisplayWidth): string => displayLineCore(text, width);
 
 /**
  * The same rule as HIDDEN_CHARACTERS, as a copy with no global flag. A global regex keeps `lastIndex` between two calls of `.test`,

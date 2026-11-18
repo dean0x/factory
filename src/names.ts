@@ -2362,7 +2362,25 @@ export const guardRecords = {
 
 /** The words of the guard value command. */
 export const guardSetWords = {
-  summary: 'Set one guard in the local file.',
+  summary: 'Set guards in the local file.',
+  argumentsError: `Use "${commandText(commandLines.guardSet)} ID on|off" or "${commandText(commandLines.guardSet)} ${flagText(flags.all)} on|off". Run "${commandText(commandLines.guardList)}" to see the guards.`,
+  badValue: 'The guard value must be on or off.',
+  idWithAll: `Do not name a guard with ${flagText(flags.all)}.`,
+  nextStart: 'The guard value takes effect at the next start.',
+  offQuestion: 'Turn these guards off? [y/N] ',
+  declined: 'Nothing changed: the answer was not yes.',
+  skipped: (count: number): string => `${count} guards are not settable in this version.`,
+  changedFile: (file: string): string => `${file} changed after its read. Run the guard command again.`,
+  unsafeFile: (file: string): string => `${file} must be a plain file of this user, with no group or other write access.`,
+  unsafeFileRemedy: `Check the file and its access mode, then run "${commandText(commands.doctor)}".`,
+  unreadableFile: (file: string): string => `${file} cannot be read as bounded UTF-8 text.`,
+  set: (count: number, value: string): string => `Set ${count} guard values to ${value}.`,
+  recordFailedOn: `The local value is on, but the guard record could not be saved. Run "${commandText(commands.doctor)}".`,
+  noJson: (command: string): string => `${commandText(command)} has no ${flagText(flags.json)} output.`,
+  listOnly: (flag: string): string => `${flagText(flag)} applies to ${commandText(commandLines.guardList)} only.`,
+  allHelp: `With list: show every row. With set: set every guard that this version can set.`,
+  commandSummary: 'List, set and confirm guards.',
+  listFlagsHelp: `${flagText(flags.family)} and ${flagText(flags.json)} apply to list only.`,
   unknownId: (id: string): string => `Unknown guard "${id}". Run "${commandText(commandLines.guardList)}".`,
   notSettable: (id: string): string =>
     `Guard "${id}" is not settable in this version. Run "${commandText(commandLines.guardList)}".`,
@@ -2371,6 +2389,11 @@ export const guardSetWords = {
 /** The words of the owner prefix command. */
 export const guardConfirmWords = {
   summary: 'Confirm the owner prefix for this folder.',
+  argumentsError: `${commandText(commandLines.guardConfirm)} takes no arguments or ${flagText(flags.all)} flag.`,
+  prefixLabel: 'Owner prefix:',
+  differs: 'The owner prefix differs from its saved record.',
+  question: 'Confirm this owner prefix? [y/N] ',
+  confirmed: 'Recorded the owner prefix for this folder.',
 } as const;
 
 /** Guard record checks and their remedies have words of their own. */

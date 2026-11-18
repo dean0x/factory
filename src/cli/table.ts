@@ -5,6 +5,7 @@ import { runDecide } from '../commands/decide.js';
 import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
 import { runGuardList } from '../commands/guard-list.js';
+import { runGuardConfirm, runGuardSet } from '../commands/guard-set.js';
 import { runHook, startEvent } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
 import { runItem } from '../commands/item.js';
@@ -38,6 +39,7 @@ import {
   flagText,
   guardCommands,
   guardListWords,
+  guardSetWords,
   helpTopics,
   hookNames,
   itemCommands,
@@ -379,16 +381,24 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
   },
   {
     name: commands.guard,
-    summary: `${guardListWords.summary} ${guardListWords.scopeHelp}`,
-    usage: `${commandText(commandLines.guardList)} [${flagText(flags.all)}] [${flagText(flags.family)} NAME] [${flagText(flags.home)} DIR]`,
+    summary: `${guardSetWords.commandSummary} ${guardListWords.scopeHelp} ${guardSetWords.listFlagsHelp}`,
+    usage: [
+      `${commandText(commandLines.guardList)} [${flagText(flags.all)}] [${flagText(flags.family)} NAME] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.guardSet)} ID on|off [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.guardSet)} ${flagText(flags.all)} on|off [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.guardConfirm)} [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
       [flags.home]: foundHomeOption,
-      [flags.all]: { type: 'boolean', description: guardListWords.allHelp },
+      [flags.all]: { type: 'boolean', description: guardSetWords.allHelp },
       [flags.family]: { type: 'string', placeholder: 'NAME', description: guardListWords.familyHelp },
     },
     run: (given, deps) => {
       const words = given.positionals();
+      const options = { home: given.string(flags.home), words: words.slice(1), all: given.bool(flags.all), json: given.bool(flags.json), family: given.string(flags.family) };
+      if (words[0] === guardCommands.set) return runGuardSet(deps, options, registry);
+      if (words[0] === guardCommands.confirm) return runGuardConfirm(deps, options, registry);
       if (words.length !== 1 || words[0] !== guardCommands.list) {
         return Promise.resolve(usageError(guardListWords.argumentsError));
       }

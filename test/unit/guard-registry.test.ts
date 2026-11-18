@@ -51,7 +51,8 @@ const recordDeps: Readonly<Record<string, RowSite>> = {
 
 const recordExceptions = [
   { path: 'src/core/home.ts', symbol: 'locateHome', reason: 'Reads config files only, not the guard store.' },
-  { path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Loads config values only, not the guard store.' },
+  { path: 'src/config/load.ts', symbol: 'readNodeIdentity', reason: 'The home lookup callback reads config identity only, not the guard store.' },
+  { path: 'src/config/load.ts', symbol: 'parseConfigTexts', reason: 'Parses and merges both config texts only, not the guard store.' },
 ];
 
 const software = {
@@ -167,7 +168,7 @@ describe('the guards of a recipe', () => {
     expect(recordPathSites.map((site) => site.symbol)).toEqual(expect.arrayContaining([
       'allOn', 'guardRulesOf', 'requireGuardChannel', 'guardStorePathOf', 'userStatePlaceOf',
       'readGuardStore', 'changeGuardStore', 'recordGuards', 'recordPrefix', 'readGuardState',
-      'checkedTargetCore', 'checkedPidCore', 'openCheckedCore',
+      'checkedTargetCore', 'checkedPidCore', 'openCheckedCore', 'runGuardSet', 'runGuardConfirm',
     ]));
     const sources = Object.fromEntries(allSourceFiles(join(REPO, 'src')).map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
     const result = sourceScan.traceSitesOf(sources, recordPathSites, { deps: recordDeps, exceptions: recordExceptions, maxDepth: 40 });
@@ -600,7 +601,7 @@ describe('the rows of the registry', () => {
         'tracked-clones-warning',
         'tracked-text-paths-warning',
       ],
-      'safety-block': ['safety-block-intact', 'upgrade-block-checks', 'safety-block-insert'],
+      'safety-block': ['owner-prefix-record', 'role-block-render', 'safety-block-intact', 'upgrade-block-checks', 'safety-block-insert'],
       secrets: [
         'token-tracked-text',
         'token-config-values',
@@ -672,7 +673,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(204);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(206);
     expect(softwareRecipe.guardRows).toHaveLength(102);
   });
 
