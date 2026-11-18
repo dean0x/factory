@@ -3,13 +3,15 @@ import { strictRequestOf, type DecideRequest } from '../../src/board/decide.js';
 import { checkDecision } from '../../src/board/edit.js';
 import { parseWaiting } from '../../src/board/files.js';
 import { freeCommandLines, freeRequestOf, freeTitleOf, freeWorkerOf, homeIssue, isReservedFreeForm } from '../../src/board/free-request.js';
-import { exitCodeOf, type CliResult } from '../../src/cli/errors.js';
+import type { CliResult } from '../../src/cli/errors.js';
 import { printable } from '../../src/cli/output.js';
 import { boardTextLimits, dismissWords, flags, templateValues } from '../../src/names.js';
 
 const HOME = "/example/owner's home";
 const FREE_FIELD = { label: 'Worker to free', text: 'alpha' };
-const NO_BREAK_SPACE = String.fromCodePoint(0x00a0);
+const FREE_FACTS = { id: 'alpha', project: 'demo', closed: ['B-1'], head: 'a'.repeat(40), checkedAt: '2030-01-02T03:04:05.678Z' };
+const FREE_INPUT = freeRequestOf(FREE_FACTS);
+const FREE_FIELDS = FREE_INPUT.fields ?? [];
 
 const valueOf = <T>(result: CliResult<T>): T => {
   if (!result.ok) throw new Error(result.error.message);
@@ -66,11 +68,7 @@ describe('free request', () => {
   });
 
   it('rebuilds both command lines from the worker field and the board home', () => {
-    const request = read({
-      title: 'Free the worker alpha', question: 'Stored question', kind: 'command',
-      fields: [{ ...FREE_FIELD, label: `  WORKER  TO${NO_BREAK_SPACE}FREE ` }, { label: 'Command', text: 'Stored command' }],
-      options: [{ key: 'done', text: 'Stored option' }, { key: 'kept', text: 'Other option' }],
-    });
+    const request = read({ ...FREE_INPUT });
     const id = valueOf(freeWorkerOf(request));
     expect(id).toBe('alpha');
     expect(freeCommandLines(id ?? '', HOME)).toEqual([
@@ -85,17 +83,27 @@ describe('free request', () => {
     expect(freeWorkerOf(request)).toEqual({ ok: true, value: null });
   });
 
-  it.each<[string, Record<string, unknown>]>([
-    ['only the reserved title', { title: `  FREE  THE WORKER${NO_BREAK_SPACE}alpha ` }],
-    ['a doc', { fields: [FREE_FIELD], docs: ['notes/context.md'] }],
-    ['a worker id that is not a slug', { fields: [{ ...FREE_FIELD, text: 'Alpha' }] }],
-    ['a slug with added space', { fields: [{ ...FREE_FIELD, text: 'alpha ' }] }],
-    ['two forms of the same label', { fields: [FREE_FIELD, { label: 'worker  to free', text: 'beta' }] }],
-  ])('refuses a free request with %s', (_name, overrides) => {
-    const request = read(overrides);
+  it.each(['Alpha', 'alpha '])('refuses worker id %j even when the title matches', (id) => {
+    const result = freeWorkerOf(read({ ...freeRequestOf({ ...FREE_FACTS, id }) }));
+    expect(!result.ok && result.error.message).toContain('with a worker id');
+  });
+
+  it.each<[string, Record<string, unknown>, string]>([
+    ['no worker field', { fields: FREE_FIELDS.slice(1) }, 'needs one "Worker to free" field'],
+    ['a doc', { docs: ['notes/context.md'] }, 'cannot have a doc'],
+    ['two forms of the worker label', { fields: [...FREE_FIELDS.slice(0, -1), { label: 'worker  to free', text: 'alpha' }] }, 'needs one "Worker to free" field'],
+    ['a changed question', { question: 'Stored question' }, 'has the wrong question'],
+    ['changed done text', { options: FREE_INPUT.options.map((option) => option.key === 'done' ? { ...option, text: 'Stored option' } : option) }, 'needs the fixed options'],
+    ['changed kept text', { options: FREE_INPUT.options.map((option) => option.key === 'kept' ? { ...option, text: 'Stored option' } : option) }, 'needs the fixed options'],
+    ['a reason for an option', { options: FREE_INPUT.options.map((option) => ({ ...option, why: 'Stored reason' })) }, 'needs the fixed options'],
+    ['a recommended option', { options: FREE_INPUT.options.map((option) => option.key === 'done' ? { ...option, rec: true } : option) }, 'needs the fixed options'],
+    ['another field in place of a fixed field', { fields: [...FREE_FIELDS.slice(0, -1), { label: 'Command', text: 'Stored command' }] }, 'needs the six fields'],
+    ['a missing field', { fields: FREE_FIELDS.slice(0, -1) }, 'needs the six fields'],
+  ])('refuses a free request with %s', (_name, overrides, phrase) => {
+    const request = read({ ...FREE_INPUT, ...overrides });
     expect(isReservedFreeForm(request.title, request.fields ?? [])).toBe(true);
     const result = freeWorkerOf(request);
-    expect(result.ok ? 0 : exitCodeOf[result.error.kind]).toBe(1);
+    expect(!result.ok && result.error.message).toContain(phrase);
   });
 
   it.each([

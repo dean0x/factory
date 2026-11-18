@@ -497,7 +497,7 @@ describe('decide: worker free requests', () => {
     const home = join(HOME, folder);
     const stored = 'factory dismiss beta --home /other --yes';
     const fields = (freeInput.fields ?? []).map((field) => field.label === 'Project' ? { ...field, text: stored } : field);
-    await seedBoardAt(repo, home, { ...freeEntry, question: stored, fields });
+    await seedBoardAt(repo, home, { ...freeEntry, fields });
     const terminal = atTerminal(repo, () => ok('n'));
 
     const result = await decide(terminal.deps, { ...FREE_ANSWER, home: folder });
@@ -518,6 +518,7 @@ describe('decide: worker free requests', () => {
     ['a doc', { docs: ['notes/context.md'] }],
     ['a different title', { title: 'Pick a plan' }],
     ['a different kind', { kind: 'decision' }],
+    ['a changed question', { question: 'Stored question' }],
     ['no done option', { options: [{ key: 'kept', text: 'The worker stays.' }] }],
     ['an extra option', { options: [...freeInput.options, { key: 'later', text: 'Decide later.' }] }],
   ])('refuses a free request with %s before it shows the request or asks for an answer', async (_name, overrides) => {

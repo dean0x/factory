@@ -1754,7 +1754,11 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
       await expectKept(given);
     });
 
-    it.each([{ extra: true }, { options: [{ key: 'done', text: 'The worker is free.' }] }])('refuses a malformed free request before the fetch: %j', async (change) => {
+    it.each([
+      { extra: true },
+      { options: [{ key: 'done', text: 'The worker is free.' }] },
+      { question: 'Stored question' },
+    ])('refuses a malformed free request before the fetch: %j', async (change) => {
       const given = await world();
       const { port, writes } = askWorld(waitingOf({ ...storedRequest(), ...change }));
       expectRefusal(await runAsk(given, port), 1, 'D-5');

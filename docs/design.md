@@ -1216,6 +1216,8 @@ Software recipe: the stages are `ticket`, `planning`, `plan-approved`, `building
 
 The form checks the caller, the closed item, the unassign mark, the worker state, the paths and the pushed head. It checks that the request fits and that the home has no hidden characters before the fetch. It writes only to `waiting.json` in the state repo. It does not end a pane, remove a work copy, change a worker record or write a decision row. The fetch can update Git metadata. The request has kind `command`, group `now` and the options `done` and `kept`. Its six fields record the worker id, project id, closed item ids, head, guard ids and check time. It holds no file names, item titles or check reasons.
 
+Before preview or reuse, the command checks that the question, options and six field labels match the form. A match does not prove the facts in the fields.
+
 If an open request for the worker exists, the form reuses it only after the checks pass again. The project and the full list of closed item IDs must match. If the list exceeds the field limit, the command stops before the fetch. If they do not match, the command names the open request and exits with code 1. Two runs at the same time can open two requests because the repeat check runs outside the state lock.
 
 The owner verifies the board and runs the dry run before the free. The owner free does not check the closed item or the unassign mark again. A head that the board records after a squash merge can pass the request checks but fail the owner run. If the free fails, the owner answers `kept`.

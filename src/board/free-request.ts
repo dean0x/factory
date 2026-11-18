@@ -36,20 +36,24 @@ export const namedItems = (ids: readonly string[]): string => {
 /** Keep every id in the proof. A display count does not identify the closed items. */
 export const closedItemsText = (ids: readonly string[]): string => ids.join(', ');
 
-export const freeRequestOf = ({ id, project, closed, head, checkedAt }: FreeRequestFacts): DecisionAskInput => ({
-  title: freeTitleOf(id),
+const FREE_OPTIONS = [requestWords.freeDone, requestWords.freeKept] as const;
+
+const FREE_FIELDS = [
+  [requestWords.freeWorkerLabel, ({ id }: FreeRequestFacts) => id],
+  [requestWords.freeProjectLabel, ({ project }: FreeRequestFacts) => project],
+  [requestWords.freeClosedItemsLabel, ({ closed }: FreeRequestFacts) => closedItemsText(closed)],
+  [requestWords.freePushedHeadLabel, ({ head }: FreeRequestFacts) => head],
+  [requestWords.freeChecksLabel, () => CHECKS_PASSED],
+  [requestWords.freeCheckedAtLabel, ({ checkedAt }: FreeRequestFacts) => checkedAt],
+] as const;
+
+export const freeRequestOf = (facts: FreeRequestFacts): DecisionAskInput => ({
+  title: freeTitleOf(facts.id),
   question: requestWords.freeQuestion,
   kind: requestKinds.command,
   group: requestGroups.now,
-  options: [requestWords.freeDone, requestWords.freeKept],
-  fields: [
-    { label: requestWords.freeWorkerLabel, text: id },
-    { label: requestWords.freeProjectLabel, text: project },
-    { label: requestWords.freeClosedItemsLabel, text: closedItemsText(closed) },
-    { label: requestWords.freePushedHeadLabel, text: head },
-    { label: requestWords.freeChecksLabel, text: CHECKS_PASSED },
-    { label: requestWords.freeCheckedAtLabel, text: checkedAt },
-  ],
+  options: FREE_OPTIONS,
+  fields: FREE_FIELDS.map(([label, textOf]) => ({ label, text: textOf(facts) })),
 });
 
 const freeLabelKey = (text: string): string => text.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -67,21 +71,29 @@ const isFreeField = (field: RequestField): boolean => freeLabelKey(field.label) 
 export const isReservedFreeForm = (title: string, fields: readonly RequestField[]): boolean =>
   isFreeTitle(title) || fields.some(isFreeField);
 
-/** Read the command target from a strict request. No other stored text forms part of the command. */
+/** Check the form and read the command target. This check does not prove the stored facts. */
 export const freeWorkerOf = (request: DecideRequest): CliResult<string | null> => {
-  const fields = request.fields?.filter(isFreeField) ?? [];
-  if (fields.length === 0 && !isFreeTitle(request.title)) return ok(null);
+  const fields = request.fields ?? [];
+  const workerFields = fields.filter(isFreeField);
+  if (workerFields.length === 0 && !isFreeTitle(request.title)) return ok(null);
   if (request.docs.length > 0) return failure(`the ${roles.worker} free ${requestWords.request} cannot have a doc`);
-  const [field] = fields;
-  if (fields.length !== 1 || field === undefined || !isSlug(field.text)) {
+  const [field] = workerFields;
+  if (workerFields.length !== 1 || field === undefined || !isSlug(field.text)) {
     return failure(`the ${roles.worker} free ${requestWords.request} needs one "${requestWords.freeWorkerLabel}" field with a ${roles.worker} id`);
   }
   if (request.kind !== requestKinds.command || freeLabelKey(request.title) !== freeLabelKey(freeTitleOf(field.text))) {
     return failure(`the ${roles.worker} free ${requestWords.request} has the wrong title or kind`);
   }
-  const { freeDone, freeKept } = requestWords;
-  if (request.options.length !== 2 || ![freeDone, freeKept].every(({ key }) => request.options.some((option) => option.key === key))) {
-    return failure(`the ${roles.worker} free ${requestWords.request} needs the options ${freeDone.key} and ${freeKept.key}`);
+  if (request.question !== requestWords.freeQuestion) {
+    return failure(`the ${roles.worker} free ${requestWords.request} has the wrong question`);
+  }
+  if (request.options.length !== FREE_OPTIONS.length || !FREE_OPTIONS.every(({ key, text }) => request.options.some(
+    (option) => option.key === key && option.text === text && option.why === undefined && option.rec !== true,
+  ))) {
+    return failure(`the ${roles.worker} free ${requestWords.request} needs the fixed options ${requestWords.freeDone.key} and ${requestWords.freeKept.key}`);
+  }
+  if (fields.length !== FREE_FIELDS.length || !FREE_FIELDS.every(([label]) => fields.some((field) => field.label === label))) {
+    return failure(`the ${roles.worker} free ${requestWords.request} needs the six fields of the form`);
   }
   return ok(field.text);
 };
