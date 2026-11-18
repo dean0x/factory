@@ -3,6 +3,7 @@ import { ok } from '../core/result.js';
 import { isRecord } from '../migrate/inspect.js';
 import {
   approvalLinkLabels,
+  boardIds,
   boardTextLimits,
   decisionKeys,
   decisionLogKeys,
@@ -11,9 +12,10 @@ import {
   requestGroups,
   requestHash,
   requestKinds,
+  requestWords,
 } from '../names.js';
+import { parseJsonText } from '../state/load.js';
 import type { BoardRequest, RequestGroup, RequestKind, RequestLink } from './contract.js';
-import { checkItemId } from './edit.js';
 import type { WaitingDoc, WaitingItem } from './files.js';
 import { storedTimeOf } from './stored-time.js';
 
@@ -74,49 +76,52 @@ export interface RequestLinkRules {
   readonly parseHead: (text: string) => CliResult<string>;
 }
 
-const LINK_PARTS = ['point', 'item', 'ref', 'head'] as const;
+const LINK_LABELS: ReadonlySet<string> = new Set(Object.values(approvalLinkLabels));
 const LOG_LINK_KEYS = [decisionLogKeys.point, decisionLogKeys.boardItem, decisionLogKeys.ref, decisionLogKeys.head];
 
 type LinkParts = Readonly<Record<keyof RequestLink, unknown>>;
+const linkFault = (reason: string) => failure(`the ${requestWords.request} link ${reason}`);
 
 /** Stored faults are failures, never usage errors. No stored value supplies the error text. */
-const linkOfParts = (parts: LinkParts, rules: RequestLinkRules): CliResult<RequestLink> => {
-  if (typeof parts.point !== 'string' || !rules.points.includes(parts.point)) return failure('the request link has an invalid approval point');
-  if (typeof parts.item !== 'string' || !checkItemId(parts.item).ok) return failure('the request link has an invalid board item');
-  if (typeof parts.ref !== 'string') return failure('the request link has no reference text');
+const linkOfParts = (parts: LinkParts, rules: RequestLinkRules | undefined): CliResult<RequestLink> => {
+  if (rules === undefined) return linkFault('has no approval link rules');
+  if (typeof parts.point !== 'string' || !rules.points.includes(parts.point)) return linkFault('hasan invalid approval point');
+  if (typeof parts.item !== 'string' || !boardIds.item.test(parts.item)) return linkFault('hasan invalid board item');
+  if (typeof parts.ref !== 'string') return linkFault('hasno reference text');
   const ref = rules.parseRef(parts.ref);
-  if (!ref.ok) return failure('the request link has an invalid reference');
-  if (typeof parts.head !== 'string') return failure('the request link has no head text');
+  if (!ref.ok) return linkFault('hasan invalid reference');
+  if (typeof parts.head !== 'string') return linkFault('hasno head text');
   const head = rules.parseHead(parts.head);
-  if (!head.ok) return failure('the request link has an invalid head');
+  if (!head.ok) return linkFault('hasan invalid head');
   return ok({ point: parts.point, item: parts.item, ref: ref.value, head: head.value });
 };
 
 /** No board item label means no link. Once present, every link label must occur once with a valid value. */
-export const linkOfFields = (fields: unknown, rules: RequestLinkRules): CliResult<RequestLink | null> => {
+export const linkOfFields = (fields: unknown, rules: RequestLinkRules | undefined): CliResult<RequestLink | null> => {
   if (fields === undefined || fields === null) return ok(null);
   if (!Array.isArray(fields) || fields.length > boardTextLimits.maxRequestFields) {
-    return failure('the request link fields are not a bounded list');
+    return linkFault(`needs a list of at most ${boardTextLimits.maxRequestFields} fields`);
   }
   const list: readonly unknown[] = fields;
   if (!list.some((field) => isRecord(field) && field[requestFieldKeys.label] === approvalLinkLabels.item)) return ok(null);
-  const parts: Record<keyof RequestLink, unknown> = { point: undefined, item: undefined, ref: undefined, head: undefined };
-  const seen = new Set<keyof RequestLink>();
+  const values = new Map<string, unknown>();
   for (const field of list) {
     if (!isRecord(field)) continue;
-    const part = LINK_PARTS.find((candidate) => field[requestFieldKeys.label] === approvalLinkLabels[candidate]);
-    if (part === undefined) continue;
-    if (seen.has(part)) return failure('the request link has a duplicate label');
-    seen.add(part);
-    parts[part] = field[requestFieldKeys.text];
+    const label = field[requestFieldKeys.label];
+    if (typeof label !== 'string' || !LINK_LABELS.has(label)) continue;
+    if (values.has(label)) return linkFault('has a duplicate label');
+    values.set(label, field[requestFieldKeys.text]);
   }
-  return linkOfParts(parts, rules);
+  return linkOfParts({
+    point: values.get(approvalLinkLabels.point), item: values.get(approvalLinkLabels.item),
+    ref: values.get(approvalLinkLabels.ref), head: values.get(approvalLinkLabels.head),
+  }, rules);
 };
 
 /** Old rows have no link keys. Any partial link is a fault, not an old row. The row remains a display copy. */
-export const linkOfRow = (row: Readonly<Record<string, unknown>>, rules: RequestLinkRules): CliResult<RequestLink | null> => {
+export const linkOfRow = (row: Readonly<Record<string, unknown>>, rules: RequestLinkRules | undefined): CliResult<RequestLink | null> => {
   if (!LOG_LINK_KEYS.some((key) => Object.hasOwn(row, key))) return ok(null);
-  if (!LOG_LINK_KEYS.every((key) => Object.hasOwn(row, key))) return failure('the decision log row has a partial request link');
+  if (!LOG_LINK_KEYS.every((key) => Object.hasOwn(row, key))) return linkFault('lacks one or more keys in the decision log');
   return linkOfParts({
     point: row[decisionLogKeys.point],
     item: row[decisionLogKeys.boardItem],
@@ -127,25 +132,22 @@ export const linkOfRow = (row: Readonly<Record<string, unknown>>, rules: Request
 
 /** Read only the request inside the hash wrapper. */
 export const answeredRequestOf = (requestText: string): CliResult<Readonly<Record<string, unknown>>> => {
-  let wrapper: unknown;
-  try {
-    wrapper = JSON.parse(requestText);
-  } catch {
-    return failure('the answered request text is not JSON');
-  }
+  const parsed = parseJsonText(requestText);
+  if (!parsed.ok) return failure(parsed.error);
+  const wrapper = parsed.value;
   if (
     !isRecord(wrapper) || Object.keys(wrapper).length !== Object.keys(requestHash.keys).length ||
     wrapper[requestHash.keys.tag] !== requestHash.tag || wrapper[requestHash.keys.version] !== requestHash.version
   ) {
-    return failure('the answered request text has an invalid hash wrapper');
+    return failure(`the answered ${requestWords.request} text has an invalid hash wrapper`);
   }
   const request = wrapper[requestHash.keys.request];
-  if (!isRecord(request)) return failure('the answered request text has no request object');
+  if (!isRecord(request)) return failure(`the hash wrapper has no ${requestWords.request} object`);
   return ok(request);
 };
 
 /** Log fields outside the hash wrapper cannot supply a link for an owner record. */
-export const linkOfAnswered = (requestText: string, rules: RequestLinkRules): CliResult<RequestLink | null> => {
+export const linkOfAnswered = (requestText: string, rules: RequestLinkRules | undefined): CliResult<RequestLink | null> => {
   const request = answeredRequestOf(requestText);
   return request.ok ? linkOfFields(request.value[decisionKeys.fields], rules) : request;
 };

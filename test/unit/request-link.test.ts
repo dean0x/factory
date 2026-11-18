@@ -76,6 +76,13 @@ describe('the strict request link reader', () => {
     expect(links.linkOfFields(fieldsOf(), RULES)).toEqual(ok(LINK));
   });
 
+  it('needs recipe rules only for a linked entry or row', () => {
+    expect(links.linkOfFields([], undefined)).toEqual(ok(null));
+    expect(links.linkOfRow({}, undefined)).toEqual(ok(null));
+    expect(links.linkOfFields(fieldsOf(), undefined)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(links.linkOfRow(rowOf(), undefined)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+  });
+
   it('allows other context fields beside a link', () => {
     expect(links.linkOfFields([{ label: 'context', text: 'A note' }, ...fieldsOf()], RULES)).toEqual(ok(LINK));
   });

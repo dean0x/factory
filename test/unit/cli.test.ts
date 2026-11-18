@@ -1023,6 +1023,7 @@ describe('the item and track commands in the command line', () => {
     expect(asked.code).toBe(0);
     expect(asked.out).toContain('factory decide ID OPTION [--note TEXT] [--home DIR]');
     expect(asked.out).toContain('factory decide read ID [--json] [--home DIR]');
+    expect(asked.out).toContain('Read exit codes: 0 for a matching record, 1 for no owner proof, 2 for usage, 4 for a stop.');
     expect(asked.out).toMatch(/--note TEXT\s+The reason for the answer/);
   });
 

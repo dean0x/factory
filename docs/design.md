@@ -1048,7 +1048,7 @@ The intro of §8.2 lists the 18 operations. Each command of that table calls one
 
 **Read a decision.**
 
-`factory decide read <D-n> [--json] [--home DIR]` checks one request on a local board. It reads the owner store for that id, node and real factory root. It runs in any session, takes no lock and writes nothing. Only the owner store record proves an answer. The read output is not proof and grants no approval.
+`factory decide read <D-n> [--json] [--home DIR]` checks one request on a local board. It reads the owner store for that id, node and real path of the factory folder. It runs in any session, takes no lock and writes nothing. Only the owner store record proves an answer. The read output is not proof and grants no approval.
 
 Only `record` gives exit code 0. Every other verdict gives exit code 1 and says `no owner proof`.
 
@@ -1064,7 +1064,7 @@ Only `record` gives exit code 0. Every other verdict gives exit code 1 and says 
 
 The request id must have the form `D-1`: one to nine digits, with a first digit from 1 to 9. No id gives exit code 2 and says `not in this version`. A bad id, extra argument, `--note` or an unknown flag such as `--from` also gives exit code 2. A tracker kind other than `local` or a state guard that is off gives exit code 4.
 
-The verdict comes first in text output. Each verdict includes the node id and real factory root. The `--json` object has fixed keys:
+The verdict comes first in text output. Each verdict includes the node id and real path of the factory folder. The `--json` object has fixed keys:
 
 - `schema` (`factory.decide-read/v1`), `proof`, `reason`, `id`, `node` and `root`.
 - `option`, `at`, `point`, `board_item`, `ref`, `head` and `decider`.

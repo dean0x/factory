@@ -3,7 +3,7 @@ import type { CliResult } from '../cli/errors.js';
 import { displayLine, visibleText, type CommandOutput, type OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { boardIds, commands, commandText, decideProofReasons, decideWords, flags, flagText, requestWords, schemaIds } from '../names.js';
+import { boardIds, commands, commandText, decideProof, decideProofReasons, decideReadLabels as labels, decideWords, flags, flagText, requestWords, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { openBoard } from './board-open.js';
 import { shown, usageFor } from './board-words.js';
@@ -21,12 +21,12 @@ const escaped = (text: string | null): string | null => text === null ? null : v
 const outputOf = (id: string, read: DecisionRead): CommandOutput => {
   const { proof, node, root } = read;
   const reason = decideProofReasons[proof.kind];
-  const failed = proof.kind !== 'record';
+  const failed = proof.kind !== decideProof.record;
   const lines: OutLine[] = [{ level: failed ? 'fail' : 'ok', text: `${displayLine(proof.kind)}: ${displayLine(reason)}` }];
   const fields = [
-    ['Id', id], ['Node', node], ['Root', root], ['Option', proof.option], ['At', proof.at],
-    ['Point', proof.link?.point], ['Board item', proof.link?.item], ['Reference', proof.link?.ref], ['Head', proof.link?.head],
-    ['Decider', proof.decider], ['Title', proof.title], ['Question', proof.question], ['Decision', proof.decision],
+    [labels.id, id], [labels.node, node], [labels.folder, root], [labels.option, proof.option], [labels.at, proof.at],
+    [labels.point, proof.link?.point], [labels.item, proof.link?.item], [labels.ref, proof.link?.ref], [labels.head, proof.link?.head],
+    [labels.decider, proof.decider], [labels.title, proof.title], [labels.question, proof.question], [labels.decision, proof.decision],
   ] as const;
   for (const [label, value] of fields) {
     if (value !== null && value !== undefined) lines.push({ level: 'text', text: `${label}: ${displayLine(value)}` });

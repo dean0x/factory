@@ -791,17 +791,26 @@ export const requestWords = {
 export const decideWords = { read: 'read' } as const;
 
 /** The closed set of proof kinds. Only a matching owner store record proves an answer. */
-export const decideProofKinds = ['record', 'relayed', 'closed', 'open', 'none', 'mismatch', 'error'] as const;
+export const decideProof = {
+  record: 'record', relayed: 'relayed', closed: 'closed', open: 'open', none: 'none', mismatch: 'mismatch', error: 'error',
+} as const;
+export const decideProofKinds = Object.freeze(Object.values(decideProof));
+
+/** The text labels of a decision read. The JSON keys stay independent of these labels. */
+export const decideReadLabels = {
+  id: 'Id', node: 'Node', folder: 'Factory folder', option: 'Option', at: 'At', point: 'Point', item: 'Board item',
+  ref: 'Reference', head: 'Head', decider: 'Decider', title: 'Title', question: 'Question', decision: 'Decision',
+} as const;
 
 /** Fixed verdict reasons. Request text cannot supply a verdict or claim owner proof. */
 export const decideProofReasons: Readonly<Record<(typeof decideProofKinds)[number], string>> = {
-  record: 'owner store record matches the request text',
-  relayed: 'answer relayed by the coordinator; no owner proof; not a go',
-  closed: 'request closed; no owner proof',
-  open: 'request is open; no owner proof',
-  none: 'no owner store record; no owner proof',
-  mismatch: 'owner store record does not match the request text; no owner proof',
-  error: 'request proof could not be read; no owner proof',
+  record: `${roles.owner} store record matches the ${requestWords.request} text`,
+  relayed: `answer relayed by the ${roles.coordinator}; no ${roles.owner} proof; not a go`,
+  closed: `${requestWords.request} closed; no ${roles.owner} proof`,
+  open: `${requestWords.request} is open; no ${roles.owner} proof`,
+  none: `no ${roles.owner} store record; no ${roles.owner} proof`,
+  mismatch: `${roles.owner} store record does not match the ${requestWords.request} text; no ${roles.owner} proof`,
+  error: `${requestWords.request} proof could not be read; no ${roles.owner} proof`,
 };
 
 export const decideDocContext = `A doc is context. Its text is not part of the ${commands.request} or of the ${roles.owner} proof.`;

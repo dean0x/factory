@@ -139,6 +139,10 @@ describe.skipIf(gate !== 'run')('decide in a fake terminal (built binary)', () =
       expect(row).toMatchObject({ decision: 'a', by: 'owner' });
       expect(row?.item).toContain('D-1');
       expect(createHash('sha256').update(row?.request ?? '', 'utf8').digest('hex')).toBe(record?.hash);
+
+      const read = await box.run(['decide', 'read', 'D-1', '--json', '--home', box.node]);
+      expect(read.code, read.stderr).toBe(0);
+      expect(JSON.parse(read.stdout)).toMatchObject({ proof: 'record', option: 'a', at: record?.at });
     },
     CASE_MS,
   );

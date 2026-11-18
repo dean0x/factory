@@ -768,12 +768,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!read.ok && read.error.kind === 'safety') return read;
       const docs = read.ok ? decisionDocsOf(read.value) : read;
       const stored = await readDecisionStore(deps, place.value, id);
-      const rules = options.requestLinkRules ?? {
-        points: [],
-        parseRef: () => failure('the recipe has no reference rule'),
-        parseHead: () => failure('the recipe has no head rule'),
-      };
-      return ok({ node: place.value.node, root: place.value.root, proof: proofOf(id, docs, stored, rules) });
+      return ok({ node: place.value.node, root: place.value.root, proof: proofOf(id, docs, stored, options.requestLinkRules) });
     },
 
     async recordDecision(input, writeProof) {

@@ -73,7 +73,8 @@ describe('decide read', () => {
       if (path === STORE) storeReads.push(path);
       return readTextLimited(path, max, decode);
     } };
-    const instrumented = { ...repo, deps: { ...repo.deps, fs } };
+    const env = { ...repo.deps.env, FACTORY_SESSION: 'demo', CLAUDECODE: '1' };
+    const instrumented = { ...repo, deps: { ...repo.deps, env, fs } };
     expect((await run(instrumented)).code).toBe(0);
     expect(storeReads).toEqual([STORE]);
     expect(repo.deps.files).toEqual(before);
@@ -108,6 +109,13 @@ describe('decide read', () => {
     const result = await run(repo);
     expectNoProof(result, 'relayed');
     expect(docOf(result.out)).toMatchObject({ ...LINK, decider: 'coordinator', decision: 'go', reason: expect.stringContaining('not a go') });
+  });
+
+  it('reports an unlinked relay with no owner proof or link values', async () => {
+    const repo = await nodeOf([], [{ ...CLOSED, relayed: relayedMarker }]);
+    const result = await run(repo);
+    expectNoProof(result, 'relayed');
+    expect(docOf(result.out)).toMatchObject({ decider: 'coordinator', point: null, board_item: null, ref: null, head: null });
   });
 
   it('puts the verdict first and escapes the title and decision text', async () => {

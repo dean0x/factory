@@ -828,11 +828,11 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
   },
   {
     name: commands.decide,
-    summary: `Record the answer of the ${roles.owner} to an open ${requestWords.request}. It asks you to confirm, so run it in your own terminal window.`,
+    summary: `Record the answer of the ${roles.owner} in your own terminal window, or read one ${requestWords.request} in any session.`,
     usage: [
       `${commandText(commands.decide)} ID OPTION [${flagText(flags.note)} TEXT] [${flagText(flags.home)} DIR]`,
       `${commandText(`${commands.decide} ${decideWords.read}`)} ID [${flagText(flags.json)}] [${flagText(flags.home)} DIR]`,
-    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    ].join(`\n${' '.repeat('Usage: '.length)}`) + `\n\nRead exit codes: 0 for a matching record, 1 for no ${roles.owner} proof, 2 for usage, 4 for a stop.`,
     positionals: true,
     options: {
       [flags.home]: foundHomeOption,

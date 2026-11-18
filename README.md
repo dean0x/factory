@@ -533,7 +533,7 @@ The review desk page only reads. A page answer is a board event: it shows and wa
 
 Run `factory decide read <D-n> [--json] [--home DIR]` to check one request on the local board. The read works in any session. It takes no lock and changes no files.
 
-The first text line gives the verdict. Each verdict includes the node id and the real root of the factory. With `--json`, the command prints `factory.decide-read/v1`. The `title`, `question` and `decision` keys hold display text, not the verdict. The command escapes hidden characters in these values.
+The first text line gives the verdict. Each verdict includes the node id and the real path of the factory folder. With `--json`, the command prints `factory.decide-read/v1`. The `title`, `question` and `decision` keys hold display text, not the verdict. The command escapes hidden characters in these values.
 
 Only `record` gives exit code 0. The option comes from the owner store, not the board. Each other verdict gives exit code 1 and says `no owner proof`.
 

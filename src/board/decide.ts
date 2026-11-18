@@ -12,7 +12,8 @@ import {
   commands,
   commandText,
   decideDocContext,
-  decideProofKinds,
+  decideProof,
+  type decideProofKinds,
   decisionKeys,
   decisionLogKeys,
   files,
@@ -303,8 +304,8 @@ interface ProofContext {
 }
 
 export type RequestProof = ProofContext & (
-  | { readonly kind: 'record'; readonly option: string; readonly at: string }
-  | { readonly kind: Exclude<(typeof decideProofKinds)[number], 'record'>; readonly option: null }
+  | { readonly kind: typeof decideProof.record; readonly option: string; readonly at: string }
+  | { readonly kind: Exclude<(typeof decideProofKinds)[number], typeof decideProof.record>; readonly option: null }
 );
 
 const emptyProofContext: ProofContext = { at: null, link: null, title: null, question: null, decision: null, decider: null };
@@ -316,9 +317,9 @@ export const proofOf = (
   id: string,
   docs: CliResult<DecisionDocs>,
   stored: Result<{ readonly record: Readonly<DecisionRecord> | null }, string>,
-  rules: RequestLinkRules,
+  rules: RequestLinkRules | undefined,
 ): RequestProof => {
-  const fault: RequestProof = { ...emptyProofContext, kind: 'error', option: null };
+  const fault: RequestProof = { ...emptyProofContext, kind: decideProof.error, option: null };
   if (!docs.ok || !stored.ok) return fault;
   const { waiting, log } = docs.value;
   const parsed = requestStateOf(waiting, log, id);
@@ -331,10 +332,11 @@ export const proofOf = (
   const relayed = Object.hasOwn(row, decisionLogKeys.relayed);
   const storedDecider = row[decisionLogKeys.decider];
   const decider = isDecider(storedDecider) ? storedDecider : null;
+  if (Object.hasOwn(row, decisionLogKeys.decider) && decider === null) return fault;
   if (state.kind === 'closed' || relayed || decider !== null) {
     return {
       ...emptyProofContext,
-      kind: relayed ? 'relayed' : 'closed', option: null, link: rowLink.value,
+      kind: relayed ? decideProof.relayed : decideProof.closed, option: null, link: rowLink.value,
       at: textOrNull(row[decisionLogKeys.date]), title: rowTitle, decision: textOrNull(row[decisionLogKeys.decision]),
       decider: relayed ? roles.coordinator : decider,
     };
@@ -355,9 +357,9 @@ export const proofOf = (
     at: open.value?.openedAt ?? (state.kind === 'answered' ? state.date : null),
   };
   const record = stored.value.record;
-  if (record === null) return { ...context, kind: state.kind === 'open' ? 'open' : 'none', option: null };
-  if (requestText === null || record.hash !== requestHashOf(requestText)) return { ...context, kind: 'mismatch', option: null };
-  return { ...context, kind: 'record', option: record.option, at: record.at };
+  if (record === null) return { ...context, kind: state.kind === 'open' ? decideProof.open : decideProof.none, option: null };
+  if (requestText === null || record.hash !== requestHashOf(requestText)) return { ...context, kind: decideProof.mismatch, option: null };
+  return { ...context, kind: decideProof.record, option: record.option, at: record.at };
 };
 
 export const addNewRemedy = `Add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}".`;
