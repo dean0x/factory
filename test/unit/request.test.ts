@@ -1,15 +1,20 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { answeredRequestOf } from '../../src/board/requests.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { commandTable, parseFlags, renderCommandHelp } from '../../src/cli/table.js';
+import { runDecide } from '../../src/commands/decide.js';
 import { runRequest, type RequestOptions } from '../../src/commands/request.js';
+import { requestHashOf } from '../../src/core/request-hash.js';
+import { ok } from '../../src/core/result.js';
 import {
   boardTextLimits,
   commandLines,
   commands,
   commandText,
   decisionKeys,
+  dirs,
   files as fileNames,
   program,
   relayedMarker,
@@ -18,7 +23,8 @@ import {
   requestWords,
 } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
-import { boardNode, boardText } from '../helpers/board-node.js';
+import { layoutOf } from '../../src/state/layout.js';
+import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
 import { inPane } from '../helpers/coordinator-pane.js';
 import { withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
@@ -272,6 +278,84 @@ describe('request add: context flags', () => {
   });
 });
 
+const LINK_HEAD = '1'.repeat(40);
+const LINKED_ADD = { ...ADD, item: 'B-1', ref: '12', head: LINK_HEAD, options: ['approve=Yes', 'stop=No'], recommend: undefined };
+
+const nodeWithItem = (item = itemRecord('B-1')) => boardNode({ board: boardText([item]) });
+
+describe('request add: approval links', () => {
+  it('stores the link fields first and includes them in the decision block and hash', async () => {
+    const repo = await nodeWithItem();
+    const result = await run(repo, { ...LINKED_ADD, fields: ['Scope=Web', 'Cost=Small'] });
+    expect(result).toMatchObject({ ok: true });
+    const fields = [
+      { label: 'link point', text: recipes[0].recordCheck?.point }, { label: 'link item', text: 'B-1' },
+      { label: 'link reference', text: '12' }, { label: 'link head', text: LINK_HEAD },
+      { label: 'Scope', text: 'Web' }, { label: 'Cost', text: 'Small' },
+    ];
+    expect(waitingOf(repo).items[0]?.['fields']).toEqual(fields);
+
+    repo.deps.seedDir(join(layoutOf(HOME).stateDir, dirs.profile));
+    const terminal = { ...repo.deps, stdinIsTTY: true, stdoutIsTTY: true, prompt: async () => ok('y') };
+    valueOf(await runDecide(terminal, { home: HOME, words: ['D-1', 'approve'], note: undefined, json: false }, recipes));
+    const block = repo.deps.written.join('');
+    for (const { label, text } of fields) expect(block).toContain(`"${label}": ${text}`);
+    const request = logOf(repo).rows[0]?.['request'];
+    expect(typeof request).toBe('string');
+    if (typeof request !== 'string') return;
+    expect(answeredRequestOf(request)).toMatchObject({ ok: true, value: { fields } });
+    const store: unknown = JSON.parse(valueOf(await repo.deps.fs.readText(STORE_PATH)));
+    expect(store).toMatchObject({ records: [{ hash: requestHashOf(request) }] });
+  });
+
+  it.each([
+    ['missing item', { item: undefined }, 'go together'],
+    ['missing reference', { ref: undefined }, 'go together'],
+    ['missing head', { head: undefined }, 'go together'],
+    ['invalid item id', { item: 'not-an-id' }, 'not an item id'],
+    ['missing option', { options: ['approve=Yes'] }, 'approve and stop'],
+    ['extra option', { options: ['approve=Yes', 'stop=No', 'wait=Later'] }, 'approve and stop'],
+    ['other option', { options: ['approve=Yes', 'other=No'] }, 'approve and stop'],
+    ['duplicate option', { options: ['approve=Yes', 'approve=Yes again'] }, 'approve and stop'],
+  ] as const)('refuses %s before any file access', async (_name, change, message) => {
+    const repo = await nodeWithItem();
+    const touched: string[] = [];
+    const deps = withFsWatch(repo.deps, (method) => touched.push(method));
+    const result = await runRequest(deps, { ...BASE, ...LINKED_ADD, ...change }, recipes);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining(message) } });
+    expect(touched).toEqual([]);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each([
+    ['an invalid head', { head: '123' }, itemRecord('B-1'), recipes],
+    ['an invalid reference', { ref: 'abc' }, itemRecord('B-1'), recipes],
+    ['an unknown item', {}, itemRecord('B-2'), recipes],
+    ['a closed item', {}, itemRecord('B-1', { status: 'done' }), recipes],
+    ['a recipe with no record check', {}, itemRecord('B-1'), [{ ...recipes[0], recordCheck: undefined }]],
+    ['a seventh field', { fields: ['One=1', 'Two=2', 'Three=3'] }, itemRecord('B-1'), recipes],
+  ] as const)('refuses %s with no write', async (_name, change, item, registry) => {
+    const repo = await nodeWithItem(item);
+    const before = filesOf(repo);
+    const touched: string[] = [];
+    const deps = withFsWatch(repo.deps, (method) => touched.push(method));
+    const result = await runRequest(deps, { ...BASE, ...LINKED_ADD, ...change }, registry);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(touched).not.toContain('writeTextExclusive');
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each(['LINK POINT', 'link ITEM', 'Link Reference', ' link head '])('refuses the reserved free label %j', async (label) => {
+    const repo = await nodeWithItem();
+    const before = filesOf(repo);
+    const result = await run(repo, { ...ADD, fields: [`${label}=text`] });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining('reserved') } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+});
+
 describe('request add: the owner decision file', () => {
   it('takes the number after the highest D-n of the decision records of this node and this root', async () => {
     const store = storeText([
@@ -436,6 +520,7 @@ describe('request context flags in other actions', () => {
   const CONTEXT: readonly (readonly [string, Partial<RequestOptions>])[] = [
     ['--kind', { kind: 'decision' }], ['--field', { fields: ['Scope=Web'] }],
     ['--why', { whys: ['a=Small'] }], ['--doc', { docs: ['docs/plan.md'] }],
+    ['--item', { item: 'B-1' }], ['--ref', { ref: '12' }], ['--head', { head: LINK_HEAD }],
   ];
   const WORDS = [['list'], ['close', 'D-1'], ['log'], ['doc', 'D-1', 'docs/plan.md']];
   it.each(WORDS.flatMap((words) => CONTEXT.map(([flag, context]) => [words, flag, context] as const)))(
@@ -468,6 +553,21 @@ describe('request flag wiring and help', () => {
       kind: 'information', fields: [{ label: 'Scope', text: 'Web=API' }, { label: 'Cost', text: 'Small' }],
       options: [{ key: 'a', text: 'Yes', why: 'Fits=now' }, { key: 'b', text: 'No', why: 'More work' }], docs: ['docs/plan.md', 'docs/other.md'],
     });
+  });
+
+  it('passes all three link flags from the command line to the request', async () => {
+    if (command === undefined) throw new Error('no request command');
+    const repo = await nodeWithItem();
+    const parsed = parseFlags([
+      'add', '--home', HOME, '--title', 'Approve?', '--question', 'Do we go?', '--option', 'stop=No', '--option', 'approve=Yes',
+      '--item', 'B-1', '--ref', '12', '--head', LINK_HEAD,
+    ], command.options, command.positionals);
+    expect(parsed).toMatchObject({ ok: true });
+    if (!parsed.ok) return;
+    expect(await command.run(parsed.value, repo.deps)).toMatchObject({ ok: true });
+    expect(waitingOf(repo).items[0]?.['fields']).toEqual(expect.arrayContaining([
+      { label: 'link item', text: 'B-1' }, { label: 'link reference', text: '12' }, { label: 'link head', text: LINK_HEAD },
+    ]));
   });
 
   it('names the doc action, the kind words and the free label in help', () => {

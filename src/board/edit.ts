@@ -5,6 +5,7 @@ import { dotRuleReason, type NameCompare } from '../core/place-rule.js';
 import { projectFolderKey } from '../core/project-path.js';
 import { ok, type Err } from '../core/result.js';
 import {
+  approvalLinkLabels,
   boardIds,
   boardKeys,
   boardLimits,
@@ -52,6 +53,7 @@ import type {
   RequestGroup,
   RequestKind,
   RequestField,
+  RequestLink,
   RequestSettlement,
   TrackAddInput,
 } from './contract.js';
@@ -274,13 +276,26 @@ const requestKindOf = (value: string | undefined): CliResult<RequestKind> => {
   }
 };
 
-const requestFieldsOf = (input: readonly RequestField[]): CliResult<readonly RequestField[]> => {
-  if (input.length > boardTextLimits.maxRequestFields) return usageError(`a ${requestWords.request} holds at most ${boardTextLimits.maxRequestFields} fields`);
+const LINK_LABELS: ReadonlySet<string> = new Set(Object.values(approvalLinkLabels));
+
+const requestFieldsOf = (input: readonly RequestField[], link: RequestLink | undefined): CliResult<readonly RequestField[]> => {
+  const linkFields: readonly RequestField[] = link === undefined ? [] : [
+    { label: approvalLinkLabels.point, text: link.point },
+    { label: approvalLinkLabels.item, text: link.item },
+    { label: approvalLinkLabels.ref, text: link.ref },
+    { label: approvalLinkLabels.head, text: link.head },
+  ];
+  if (input.length + linkFields.length > boardTextLimits.maxRequestFields) {
+    return usageError(`a ${requestWords.request} holds at most ${boardTextLimits.maxRequestFields} fields`);
+  }
   const labels = new Set<string>();
   const fields: RequestField[] = [];
-  for (const field of input) {
+  for (const [index, field] of [...linkFields, ...input].entries()) {
     const label = shownLineOf(`field ${requestFieldKeys.label}`, field.label, boardTextLimits.maxFieldLabelChars);
     if (!label.ok) return label;
+    if (index >= linkFields.length && LINK_LABELS.has(label.value.toLowerCase())) {
+      return usageError(`the field label ${shown(label.value)} is reserved for a ${requestWords.request} link`);
+    }
     if (labels.has(label.value)) return usageError(`the field label ${shown(label.value)} is used twice`);
     const text = shownLineOf(`field ${requestFieldKeys.text}`, field.text, boardTextLimits.maxFieldTextChars);
     if (!text.ok) return text;
@@ -310,7 +325,7 @@ const requestDocsOf = (input: readonly string[]): CliResult<readonly string[]> =
 export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecision> => {
   const kind = requestKindOf(input.kind);
   if (!kind.ok) return kind;
-  const fields = requestFieldsOf(input.fields ?? []);
+  const fields = requestFieldsOf(input.fields ?? [], input.link);
   if (!fields.ok) return fields;
   const docs = requestDocsOf(input.docs ?? []);
   if (!docs.ok) return docs;

@@ -124,6 +124,8 @@ export interface DecisionAskInput {
   /** The write checks this word and defaults to the decision kind. */
   readonly kind?: string;
   readonly fields?: readonly RequestField[];
+  /** The checked approval link. Its four fields count against the request field limit. */
+  readonly link?: RequestLink;
   /** Relative paths only. The request holds no file content. */
   readonly docs?: readonly string[];
 }

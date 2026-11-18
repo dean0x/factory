@@ -30,6 +30,7 @@ import { runWorker } from '../commands/worker.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import {
+  approvalOptions,
   assignmentSource,
   boardTextLimits,
   boardWords,
@@ -711,7 +712,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
       `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, close a ${requestWords.request} with no answer or with a decision that the ${requestDeciders.coordinator} or a ${requestDeciders.delegate} made, ` +
       `close a ${requestWords.request} to pass on an answer of the ${roles.owner}, log a decision that no ${requestWords.request} asked for, or link a file to an open ${requestWords.request}.`,
     usage: [
-      `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.kind)} KIND] [${flagText(flags.field)} LABEL=TEXT]... [${flagText(flags.why)} KEY=TEXT]... [${flagText(flags.doc)} PATH]... [${flagText(flags.later)}] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.kind)} KIND] [${flagText(flags.field)} LABEL=TEXT]... [${flagText(flags.why)} KEY=TEXT]... [${flagText(flags.doc)} PATH]... [${flagText(flags.later)}] [${flagText(flags.item)} ID ${flagText(flags.ref)} REF ${flagText(flags.head)} HEAD] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestList)} [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestClose)} ID [${flagText(flags.madeBy)} WHO ${flagText(flags.decision)} TEXT] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestClose)} ID ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT [${flagText(flags.home)} DIR]`,
@@ -759,7 +760,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
         placeholder: 'LABEL=TEXT',
         description:
           `With ${requestCommands.add}: a free label and its text, not a field of the ${roles.owner}. ` +
-          `Repeat at most ${boardTextLimits.maxRequestFields} times, in order, with no repeated label. ` +
+          `Use no repeated label or reserved link label. A ${requestWords.request} has at most ${boardTextLimits.maxRequestFields} fields, and a link uses four. ` +
           `The label has 1 to ${boardTextLimits.maxFieldLabelChars} characters; the text has 1 to ${boardTextLimits.maxFieldTextChars}. ` +
           `Use one line with no hidden character. Split at the first equals sign.`,
       },
@@ -787,6 +788,24 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
         description:
           `With ${requestCommands.add}: put the ${requestWords.request} in the group ${requestGroups.later}, for a ${requestWords.request} that can wait. ` +
           `Without it the ${requestWords.request} is in the group ${requestGroups.now}. The group is set when you add the ${requestWords.request} and it does not change.`,
+      },
+      [flags.item]: {
+        type: 'string',
+        placeholder: 'ID',
+        description:
+          `With ${requestCommands.add}: link the ${requestWords.request} to this open board item. ` +
+          `Use ${flagText(flags.item)}, ${flagText(flags.ref)} and ${flagText(flags.head)} together. ` +
+          `Use exactly the option keys ${approvalOptions.go} and ${approvalOptions.stop}.`,
+      },
+      [flags.ref]: {
+        type: 'string',
+        placeholder: 'REF',
+        description: `With ${requestCommands.add}: the reference for the record check of the ${roles.recipe}.`,
+      },
+      [flags.head]: {
+        type: 'string',
+        placeholder: 'HEAD',
+        description: `With ${requestCommands.add}: the full head for the record check of the ${roles.recipe}.`,
       },
       [flags.madeBy]: {
         type: 'string',
@@ -832,6 +851,9 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           decision: given.string(flags.decision),
           relayed: given.bool(flags.relayed),
           later: given.bool(flags.later),
+          item: given.string(flags.item),
+          ref: given.string(flags.ref),
+          head: given.string(flags.head),
         },
         registry,
       ),
