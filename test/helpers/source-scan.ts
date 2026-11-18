@@ -211,6 +211,7 @@ export interface SourceDeclaration {
 interface SourceModule {
   readonly declarations: ReadonlyMap<string, SourceDeclaration>;
   readonly imports: ReadonlyMap<string, RowSite>;
+  readonly reexports: readonly string[];
 }
 
 /** Runtime references only: comments, literal text, type annotations and property names cannot create an edge. */
@@ -267,6 +268,7 @@ const objectOf = (node: ts.Node): ts.ObjectLiteralExpression | undefined => {
 const moduleOf = (path: string, file: ts.SourceFile): SourceModule => {
   const declarations = new Map<string, SourceDeclaration>();
   const imports = new Map<string, RowSite>();
+  const reexports: string[] = [];
   const add = (symbol: string, node: ts.Node): void => {
     declarations.set(symbol, { site: { path, symbol }, body: node.getText(file), ...referencesOf(node, file) });
     const object = objectOf(node);
@@ -295,6 +297,9 @@ const moduleOf = (path: string, file: ts.SourceFile): SourceModule => {
         }
       } else if (bindings !== undefined && ts.isNamespaceImport(bindings)) imports.set(bindings.name.text, { path: target, symbol: '*' });
       if (clause.name !== undefined) imports.set(clause.name.text, { path: target, symbol: 'default' });
+    } else if (ts.isExportDeclaration(statement) && !statement.isTypeOnly && statement.exportClause === undefined &&
+      statement.moduleSpecifier !== undefined && ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text.startsWith('.')) {
+      reexports.push(normalize(join(dirname(path), statement.moduleSpecifier.text)).replace(/\.js$/, '.ts'));
     } else if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         if (ts.isIdentifier(declaration.name) && declaration.initializer !== undefined) add(declaration.name.text, declaration.initializer);
@@ -303,11 +308,13 @@ const moduleOf = (path: string, file: ts.SourceFile): SourceModule => {
       add(statement.name.text, statement);
     }
   }
-  return { declarations, imports };
+  return { declarations, imports, reexports };
 };
 
 export interface TraceOptions {
   readonly deps: Readonly<Record<string, RowSite>>;
+  readonly rowSites?: readonly RowSite[];
+  /** An exception permits only its own row site; its body still has to pass the scan. */
   readonly exceptions?: readonly (RowSite & { readonly reason: string })[];
   readonly maxDepth: number;
 }
@@ -324,16 +331,33 @@ export const traceSitesOf = (sources: Readonly<Record<string, string>>, roots: r
     new Map(files.map((file, index) => [paths[index] ?? '', moduleOf(paths[index] ?? '', file)])));
   const seen = new Map<string, RowSite>();
   const faults = new Set<string>();
+  const resolveExports = (site: RowSite, depth: number, ancestors: ReadonlySet<string>): readonly { readonly site: RowSite; readonly depth: number }[] => {
+    const key = `${site.path}:${site.symbol}`;
+    if (depth >= options.maxDepth) { faults.add(`${key}: depth cap reached`); return []; }
+    if (ancestors.has(key)) return [];
+    const module = modules.get(site.path);
+    if (module?.declarations.has(site.symbol)) return [{ site, depth }];
+    const nextAncestors = new Set([...ancestors, key]);
+    return (module?.reexports ?? []).flatMap((path) => resolveExports({ path, symbol: site.symbol }, depth + 1, nextAncestors));
+  };
   const visit = (site: RowSite, depth: number, ancestors: ReadonlySet<string>): void => {
     const key = `${site.path}:${site.symbol}`;
     if (depth >= options.maxDepth) { faults.add(`${key}: depth cap reached`); return; }
     if (ancestors.has(key)) return;
     const module = modules.get(site.path);
     const declaration = module?.declarations.get(site.symbol);
-    if (declaration === undefined || module === undefined) { faults.add(`${key}: declaration not found`); return; }
+    if (declaration === undefined || module === undefined) {
+      const targets = resolveExports(site, depth, new Set());
+      if (targets.length === 0) faults.add(`${key}: declaration not found`);
+      for (const target of targets) visit(target.site, target.depth, ancestors);
+      return;
+    }
     seen.set(key, site);
     const exception = options.exceptions?.find((item) => item.path === site.path && item.symbol === site.symbol);
-    if (exception !== undefined && exception.reason.trim() !== '') return;
+    const isRowSite = options.rowSites?.some((item) => item.path === site.path && item.symbol === site.symbol);
+    if (isRowSite && (exception === undefined || exception.reason.trim() === '')) {
+      faults.add(`${key}: row site requires a named exception with a reason`);
+    }
     const nextAncestors = new Set([...ancestors, key]);
     for (const fault of declaration.faults) faults.add(`${key}: ${fault}`);
     const next = new Map<string, RowSite>();

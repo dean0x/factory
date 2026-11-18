@@ -41,6 +41,7 @@ const recordDeps: Readonly<Record<string, RowSite>> = {
   'fs.mkdirOne': nodeSite('nodeFs.mkdirOne'),
   'fs.rename': nodeSite('nodeFs.rename'),
   'fs.removeFile': nodeSite('nodeFs.removeFile'),
+  run: nodeSite('createNodeDeps.run'),
   isRunning: nodeSite('createNodeDeps.isRunning'),
   randomHex: nodeSite('createNodeDeps.randomHex'),
   now: nodeSite('createNodeDeps.now'),
@@ -51,9 +52,33 @@ const recordDeps: Readonly<Record<string, RowSite>> = {
 };
 
 const recordExceptions = [
-  { path: 'src/core/home.ts', symbol: 'locateHome', reason: 'Reads config files only, not the guard store.' },
-  { path: 'src/config/load.ts', symbol: 'readNodeIdentity', reason: 'The home lookup callback reads config identity only, not the guard store.' },
-  { path: 'src/config/load.ts', symbol: 'parseConfigTexts', reason: 'Parses and merges both config texts only, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'locateHome', reason: 'Finds the registered config home, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'chosenHome', reason: 'Chooses the config home, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'envHome', reason: 'Checks the home from the environment against the home index, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'rootProblemOf', reason: 'Checks config home registration, not the guard store.' },
+  { path: 'src/core/home.ts', symbol: 'rootRefusalOf', reason: 'Describes config home registration faults, not guard values.' },
+  { path: 'src/core/private-file.ts', symbol: 'userStatePathOf', reason: 'Finds the home index path, not the guard store.' },
+  { path: 'src/core/private-file.ts', symbol: 'ownInfo', reason: 'Checks home index file metadata, not guard values.' },
+  { path: 'src/core/paths.ts', symbol: 'requireOutsideUserClaudeFolder', reason: 'Checks the config home path, not the guard store.' },
+  { path: 'src/core/node-deps.ts', symbol: 'runInGroup', reason: 'Runs home lookup git queries, not guard store reads.' },
+  { path: 'src/core/node-deps.ts', symbol: 'runPlain', reason: 'Runs home lookup git queries, not guard store reads.' },
+  { path: 'src/core/zod.ts', symbol: 'describeIssues', reason: 'Formats config and home index parse faults, not guard values.' },
+  { path: 'src/core/zod.ts', symbol: 'joinPath', reason: 'Formats parse fault key paths, not guard values.' },
+  { path: 'src/safety/secrets.ts', symbol: 'hideTokenKey', reason: 'Hides token-like keys in parse faults, not guard values.' },
+  { path: 'src/safety/secrets.ts', symbol: 'looksLikeToken', reason: 'Checks parse fault key text, not guard values.' },
+  { path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Merges parsed config only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'sharedSessionSchema', reason: 'Checks shared session config only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'Checks config limit values only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'boardFieldName', reason: 'Checks config board field names only, not the guard store.' },
+  { path: 'src/names.ts', symbol: 'reservedFieldNames', reason: 'Lists reserved config field names, not guard values.' },
+  { path: 'src/config/schema.ts', symbol: 'localSessionSchema', reason: 'Checks local session config only, not the guard store.' },
+  { path: 'src/config/schema.ts', symbol: 'proxySchema', reason: 'Checks proxy config only, not the guard store.' },
+  { path: 'src/safety/proxy.ts', symbol: 'parseProxyUrl', reason: 'Checks a config proxy URL only, not the guard store.' },
+  { path: 'src/comms/address.ts', symbol: 'checkFileAddress', reason: 'Checks config file addresses only, not the guard store.' },
+  { path: 'src/core/clone-url.ts', symbol: 'checkLocalSource', reason: 'Checks local source config only, not the guard store.' },
+  { path: 'src/core/clone-url.ts', symbol: 'parseCloneUrl', reason: 'Parses local source config URLs only, not the guard store.' },
+  { path: 'src/core/clone-url.ts', symbol: 'checkedPath', reason: 'Checks local source config paths only, not the guard store.' },
+  { path: 'src/core/clone-url.ts', symbol: 'reasons', reason: 'Lists source config fault text, not guard values.' },
 ];
 
 const software = {
@@ -172,11 +197,10 @@ describe('the guards of a recipe', () => {
       'checkedTargetCore', 'checkedPidCore', 'openCheckedCore', 'runGuardSet', 'runGuardConfirm',
     ]));
     const sources = Object.fromEntries(allSourceFiles(join(REPO, 'src')).map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
-    const result = sourceScan.traceSitesOf(sources, recordPathSites, { deps: recordDeps, exceptions: recordExceptions, maxDepth: 40 });
+    const result = sourceScan.traceSitesOf(sources, recordPathSites, {
+      deps: recordDeps, rowSites: software.rows.flatMap((row) => row.sites), exceptions: recordExceptions, maxDepth: 40,
+    });
     expect(result.faults).toEqual([]);
-    const allowed = new Set(recordExceptions.map((site) => `${site.path}:${site.symbol}`));
-    const rowSites = new Set(software.rows.flatMap((row) => row.sites.map((site) => `${site.path}:${site.symbol}`)));
-    expect(result.sites.filter((site) => rowSites.has(`${site.path}:${site.symbol}`) && !allowed.has(`${site.path}:${site.symbol}`))).toEqual([]);
     expect(result.sites.filter((site) => site.symbol === 'guardOn')).toEqual([]);
   });
 
@@ -1014,6 +1038,17 @@ describe('the record path source scan', () => {
     ]));
   });
 
+  it('follows relative re-exports to their declaration bodies', () => {
+    const sources = {
+      'src/a.ts': `import { next } from './b.js'; export const start = () => next();`,
+      'src/b.ts': `export * from './c.js';`,
+      'src/c.ts': 'export const next = () => deps.guards;',
+    };
+    const result = sourceScan.traceSitesOf(sources, start, { deps: {}, maxDepth: 10 });
+    expect(result.sites).toContainEqual({ path: 'src/c.ts', symbol: 'next' });
+    expect(result.faults).toContain('src/c.ts:next: guard value read');
+  });
+
   it('finds the target, pid and open flags through the real adapter methods', () => {
     const paths = allSourceFiles(join(REPO, 'src'));
     const sources = Object.fromEntries(paths.map((path) => [path.slice(REPO.length + 1), readFileSync(path, 'utf8')]));
@@ -1048,7 +1083,9 @@ describe('the record path source scan', () => {
   });
 
   it('fails at the depth cap instead of accepting an incomplete scan', () => {
-    const result = sourceScan.traceSitesOf({ 'src/a.ts': 'const next = () => 1; export const start = () => next();' }, start, { deps: {}, maxDepth: 1 });
+    const result = sourceScan.traceSitesOf({ 'src/a.ts': 'const next = () => 1; export const start = () => next();' }, start, {
+      deps: {}, exceptions: [{ path: 'src/a.ts', symbol: 'start', reason: 'Reads config only.' }], maxDepth: 1,
+    });
     expect(result.faults).toEqual(expect.arrayContaining([expect.stringContaining('depth cap')]));
   });
 
@@ -1073,11 +1110,31 @@ describe('the record path source scan', () => {
     }
   });
 
-  it('stops only at a named exception with a reason', () => {
-    const sources = { 'src/a.ts': 'const mergeConfig = (deps) => deps.fs.unknown(); export const start = (deps) => mergeConfig(deps);' };
+  it('allows a row site only with its own named exception and reason', () => {
+    const sources = { 'src/a.ts': 'const mergeConfig = () => 1; export const start = () => mergeConfig();' };
     const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
-    expect(sourceScan.traceSitesOf(sources, start, { deps: {}, exceptions: [exception], maxDepth: 10 }).faults).toEqual([]);
-    expect(sourceScan.traceSitesOf(sources, start, { deps: {}, exceptions: [{ ...exception, reason: '' }], maxDepth: 10 }).faults.length).toBeGreaterThan(0);
+    const options = { deps: {}, rowSites: [exception], exceptions: [exception], maxDepth: 10 };
+    expect(sourceScan.traceSitesOf(sources, start, options).faults).toEqual([]);
+    expect(sourceScan.traceSitesOf(sources, start, { ...options, exceptions: [{ ...exception, reason: '' }] }).faults.length).toBeGreaterThan(0);
+  });
+
+  it('fails for a hidden row-site call under an excepted function', () => {
+    const sources = {
+      'src/a.ts': 'const hiddenRow = () => 1; const mergeConfig = () => hiddenRow(); export const start = () => mergeConfig();',
+    };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    const hidden = { path: 'src/a.ts', symbol: 'hiddenRow' };
+    const options = { deps: {}, rowSites: [exception, hidden], exceptions: [exception], maxDepth: 10 };
+    expect(sourceScan.traceSitesOf(sources, start, options).faults).toContain('src/a.ts:hiddenRow: row site requires a named exception with a reason');
+  });
+
+  it('fails for a hidden guard store read under an excepted function', () => {
+    const sources = {
+      'src/a.ts': `import { readGuardStore } from './store.js'; const mergeConfig = (deps) => readGuardStore(deps); export const start = (deps) => mergeConfig(deps);`,
+      'src/store.ts': 'export const readGuardStore = (deps) => deps.guards;',
+    };
+    const exception = { path: 'src/a.ts', symbol: 'mergeConfig', reason: 'Reads config only.' };
+    expect(sourceScan.traceSitesOf(sources, start, { deps: {}, exceptions: [exception], maxDepth: 10 }).faults).toContain('src/store.ts:readGuardStore: guard value read');
   });
 });
 
