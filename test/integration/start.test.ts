@@ -4,7 +4,7 @@ import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink, w
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
-import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, PREFIX_RECORD_NOTICE, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
 import { loadNote, scaled } from './load.js';
 
@@ -505,7 +505,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     await symlink(real, linked);
     const home = join(linked, 'factory');
     const init = await box.run(['init', '--yes', '--home', home, '--name', 'demo', '--owner-name', 'Test Owner'], { env: tmuxEnv });
-    expect({ code: init.code, stderr: withoutHookNotice(init.stderr) }).toEqual({ code: 0, stderr: '' });
+    expect({ code: init.code, stderr: withoutHookNotice(init.stderr) }).toEqual({ code: 0, stderr: PREFIX_RECORD_NOTICE });
 
     const byFlag = await box.run(['start', '--dry-run', '--home', home], { env: tmuxEnv });
     expect({ code: byFlag.code, stderr: byFlag.stderr }).toEqual({ code: 0, stderr: '' });

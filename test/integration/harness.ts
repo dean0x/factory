@@ -96,6 +96,9 @@ const HOOK_NOTICE = /warning: This changes the settings of Claude Code in [^\n]*
 /** The text of stderr without the notice of the hook change. */
 export const withoutHookNotice = (stderr: string): string => stderr.replace(HOOK_NOTICE, '');
 
+/** Init has no owner terminal channel in a piped sandbox. */
+export const PREFIX_RECORD_NOTICE = 'warning: No owner prefix record was written. Run "factory guard confirm" in your terminal window to confirm the owner prefix.\n';
+
 /** The roots of the sandboxes that are not removed yet. */
 const openRoots = new Set<string>();
 

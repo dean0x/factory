@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
 import { runInTerminal, scriptGate, type Exchange } from './fake-terminal.js';
-import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, PREFIX_RECORD_NOTICE, withoutHookNotice, type Sandbox } from './harness.js';
 import { scaled } from './load.js';
 
 const gate = scriptGate();
@@ -245,7 +245,7 @@ describe('factory init (built binary)', () => {
 
   it('makes the root a git repo of its own with a first commit of the three shared paths, and doctor exits 0', async () => {
     const result = await box.run(initArgs());
-    expect({ code: result.code, stderr: withoutHookNotice(result.stderr) }).toEqual({ code: 0, stderr: '' });
+    expect({ code: result.code, stderr: withoutHookNotice(result.stderr) }).toEqual({ code: 0, stderr: PREFIX_RECORD_NOTICE });
     expect((await box.git(box.node, ['rev-parse', '--is-inside-work-tree', '--show-prefix'])).stdout).toBe('true\n\n');
     expect((await box.git(box.node, ['log', '--format=%s'])).stdout.trim()).toBe('chore: initialize the config repo');
     const tracked = await box.git(box.node, ['ls-files']);
@@ -683,7 +683,7 @@ describe('factory init: a received factory (built binary)', () => {
     const received = await receivedFactory();
     const shared = await box.read(join(received, 'factory.yaml'));
     const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
-    expect([result.code, withoutHookNotice(result.stderr)]).toEqual([0, '']);
+    expect([result.code, withoutHookNotice(result.stderr)]).toEqual([0, PREFIX_RECORD_NOTICE]);
     expect(result.stdout).toContain('Registered the received node "demo"');
     expect(await box.read(join(received, 'factory.yaml'))).toBe(shared);
     expect((await box.git(received, ['status', '--porcelain', '-uall'])).stdout).toBe('');

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MANAGER_LAYER } from '../../src/config/schema.js';
 import { childReasons } from '../../src/names.js';
-import { makeSandbox, removeOpenSandboxes, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, PREFIX_RECORD_NOTICE, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 let manager: string;
@@ -24,10 +24,9 @@ afterAll(removeOpenSandboxes);
 const initNode = async (home: string, name: string, layer: number): Promise<void> => {
   const args = ['init', '--yes', '--home', home, '--name', name, '--owner-name', 'Test Owner', '--layer', String(layer)];
   const result = await box.run(args);
-  // A layer above 2 has no role template, and init warns about it. Any other layer prints nothing on stderr, but the
-  // notice of the hook change that the yes flag prints.
+  // A layer above 2 has no role template. Other layers print the hook change and the absent prefix record notice.
   if (layer > MANAGER_LAYER) expect(result.stderr).toContain(`Layer ${layer} has no role template`);
-  else expect(withoutHookNotice(result.stderr)).toBe('');
+  else expect(withoutHookNotice(result.stderr)).toBe(PREFIX_RECORD_NOTICE);
   expect(result.code).toBe(0);
 };
 

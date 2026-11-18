@@ -9,7 +9,7 @@ import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptanc
 import { boardKeys, hookNames, setupAcceptance, stateLock } from '../../src/names.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { oldWordsIn } from '../helpers/old-words.js';
-import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, withoutTmux, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, PREFIX_RECORD_NOTICE, withoutHookNotice, withoutTmux, type RunResult, type Sandbox } from './harness.js';
 import { scaled } from './load.js';
 
 let box: Sandbox;
@@ -383,7 +383,7 @@ describe('factory upgrade (built binary)', () => {
     await symlink(real, linked);
     const home = join(linked, 'factory');
     const init = await box.run(['init', '--yes', '--home', home, '--name', 'demo', '--owner-name', 'Test Owner']);
-    expect({ code: init.code, stderr: withoutHookNotice(init.stderr) }).toEqual({ code: 0, stderr: '' });
+    expect({ code: init.code, stderr: withoutHookNotice(init.stderr) }).toEqual({ code: 0, stderr: PREFIX_RECORD_NOTICE });
     const upgrade = await box.run(['upgrade', '--home', home]);
     expect(upgrade.code).toBe(0);
     expect(upgrade.stdout).toContain('Nothing to upgrade.');
