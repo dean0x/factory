@@ -310,7 +310,8 @@ interface ProofContext {
 
 export type RequestProof = ProofContext & (
   | { readonly kind: typeof decideProof.record; readonly option: string; readonly at: string }
-  | { readonly kind: Exclude<(typeof decideProofKinds)[number], typeof decideProof.record>; readonly option: null }
+  | { readonly kind: typeof decideProof.relayed; readonly option: null; readonly settled: boolean }
+  | { readonly kind: Exclude<(typeof decideProofKinds)[number], typeof decideProof.record | typeof decideProof.relayed>; readonly option: null }
 );
 
 const emptyProofContext: ProofContext = { at: null, link: null, title: null, question: null, decision: null, decider: null };
@@ -343,9 +344,13 @@ export const proofOf = (
   if (state.kind === 'closed' || relayed || decider !== null) {
     return {
       ...emptyProofContext,
-      kind: relayed ? decideProof.relayed : decideProof.closed, option: null, link: rowLink.value,
+      option: null, link: rowLink.value,
       at: textOrNull(row[decisionLogKeys.date]), title: rowTitle, decision: textOrNull(row[decisionLogKeys.decision]),
-      decider: relayed ? roles.coordinator : decider,
+      ...(relayed ? {
+        kind: decideProof.relayed, decider: roles.coordinator,
+        // A marked row can appear in a read. Only a complete close can settle an approval request.
+        settled: state.kind === 'closed' && decider === roles.coordinator && row[decisionLogKeys.relayed] === relayedMarker,
+      } : { kind: decideProof.closed, decider }),
     };
   }
 
@@ -459,8 +464,11 @@ export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }
   const { id, link } = linked.settled.value;
   const name = `${requestWords.request} ${shown(id)}`;
   const proof = proofOf(id, ok(docs), stored, rules);
+  if (proof.kind === decideProof.relayed && stored.ok && stored.value.record !== null) {
+    return failure(`${name} also has an owner store answer`, 'Ask the owner to resolve the answer before you continue.');
+  }
   const go = (proof.kind === decideProof.record && proof.option === approvalOptions.go) ||
-    (proof.kind === decideProof.relayed && proof.decision === approvalOptions.go);
+    (proof.kind === decideProof.relayed && proof.settled && proof.decision === approvalOptions.go);
   if (!go || proof.link?.item !== link.item || proof.link.point !== link.point ||
       proof.link.ref !== link.ref || proof.link.head !== link.head) {
     return failure(`${name} has no settled approval`, ADD_APPROVAL);

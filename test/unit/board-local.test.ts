@@ -2650,6 +2650,18 @@ const RECORD_LINK = { ...APPROVAL_LINK, ref: '12', head: PR_HEAD };
 const RECORD_RELAY = approvalRelay(APPROVAL_ID, undefined, RECORD_LINK);
 const RECORD_RULES = { points: [softwareRecordCheck.point], parseRef: softwareRecordCheck.parseRef, parseHead: softwareRecordCheck.parseHead };
 
+describe('the local connector: close a linked request', () => {
+  it('keeps the request open when the owner store has no path', async () => {
+    const waiting = waitingOf(approvalRequest());
+    const repo = await boardRepo({ board: boardWith([workItem()]), waiting, env: {} });
+    const connector = connectorOf(repo, { requestLinkRules: RECORD_RULES });
+    const result = await connector.closeRequest(APPROVAL_ID, { decider: 'coordinator', relayed: true, decision: 'approve' }, [RECORD_LINK.point]);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('owner store') } });
+    expect(repo.textOf(fileNames.waiting)).toBe(waiting);
+    expect(repo.commits).toEqual([]);
+  });
+});
+
 describe('the local connector: record a passed check', () => {
   it('reads each decision file and the owner store once under the state lock', async () => {
     const repo = await boardRepo({ board: boardWith([workItem()]), decisionLog: logOf(RECORD_RELAY), env: PERSON_ENV });

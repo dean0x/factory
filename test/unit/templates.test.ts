@@ -181,7 +181,7 @@ it('keeps the base text and block versions when every guard is on', () => {
     [
       [
         {
-          "hash": "1f3afb98112ed62fcc2bca2468c9a895760332918b61d4cda7c56aa1e11140ae",
+          "hash": "1770fcf512f45354c0eaf6c158be77b80bfa995f8599ceaf7842c8a92ff81e9b",
           "name": "coordinator",
           "target": "claudeFile",
           "version": 8,
@@ -1098,7 +1098,7 @@ describe('the coordinator text: the board records', () => {
 
   it('passes on an answer of the owner with the relayed flag, never with made-by, and with no owner prefix in the text', () => {
     const decisions = sectionOf('Decisions');
-    expect(decisions).toContain(`To pass on an answer that the owner gave to you, run \`${relay}\`.`);
+    expect(decisions).toContain(`For a question outside an approval point, relay the answer from the owner with \`${relay}\`.`);
     expect(decisions).toContain(`Never add \`${flagText(flags.madeBy)}\` to it.`);
     expect(decisions).toContain('Type the decision as the owner gave it, with no owner prefix.');
   });

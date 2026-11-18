@@ -272,7 +272,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     texts: BoardTexts, id: string, approval: RecordApproval, place: DecisionPlace | null, ref: string, head: string | null,
   ): Promise<CliResult<void>> => {
     const docs = approvalDocsOf(texts);
-    if (!docs.ok) return docs;
+    if (!docs.ok) return failure(`cannot check approval: check ${files.waiting} and ${files.decisionLog}`);
     const rules = options.requestLinkRules;
     const linked = linkedApprovalsOf(docs.value.waiting, docs.value.log, id, approval.point, rules);
     const settled = linked.settled.ok ? linked.settled.value : null;
@@ -709,6 +709,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         const { waiting: currentWaiting, log: currentLog } = read.value;
         const checked = checkRequestClose(currentWaiting, currentLog, id, settled.value, relayScope, options.requestLinkRules);
         if (!checked.ok) return checked;
+        if (checked.value.link !== null && checked.value.settlement?.relayed && place.value.path === null) return noPlace();
         if (stored.value.includes(id)) return answeredCannotClose(id);
         const edited = closeRequestIn(currentWaiting, currentLog, checked.value, deps.now().toISOString().slice(0, DATE_CHARS));
         const waiting = newText(files.waiting, edited.waiting, parseWaiting);

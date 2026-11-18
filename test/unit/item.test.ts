@@ -733,12 +733,13 @@ describe('item record: linked approval', () => {
   ])('exits 1 when the %s becomes invalid during the gh call', async (_name, path, message) => {
     const world = await mergeWorld();
     const gh = withGh(world.repo.deps, () => {
-      world.repo.deps.seed(path, '{');
+      world.repo.deps.seed(path, JSON.stringify({ 'Private request text': true }));
       return exited(0, JSON.stringify(goodPr()));
     });
     const error = errorOf(await runMerge({ ...world, gh }));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(message);
+    expect(JSON.stringify(error)).not.toContain('Private request text');
     expectUntouched(world.repo, MERGE_BOARD);
   });
 
