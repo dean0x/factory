@@ -1056,7 +1056,7 @@ Only `record` gives exit code 0. Every other verdict gives exit code 1 and says 
 | --- | --- |
 | `record` | The record hash matches the request text. The option and the record time come only from the store. |
 | `relayed` | The log has a coordinator relay. The verdict says `this read grants no approval`. The text form labels the answer `Relayed text (not proof)`. |
-| `closed` | The request closed with no answer or with a decision from the coordinator or a delegate. |
+| `closed` | The request closed with no answer or with a decision from the coordinator or a delegate. If an owner store record also exists, a plain closed row gives `closed`, not `mismatch`. |
 | `open` | The request is open and has no owner store record. |
 | `none` | There is no owner store record, and the request is not open or closed. An unknown id with no record gives this verdict. |
 | `mismatch` | There is an owner store record, but the request text is absent or its hash differs. |
@@ -1712,7 +1712,7 @@ The workspace of today has 42 manual operations on the board, the requests, the 
 | 15 | Remove a done waiting item, and write the line in `done.md` (CLAUDE.md §11) | `factory request close --reason` | `item close` | |
 | 16 | Add or remove a doc of a waiting item (`dean-set.sh`) | `factory item doc`, `factory item doc --remove` | `doc link`, `doc unlink` | |
 | 17 | Render `on-dean.md` and the data block of the page (`render-dean.py`) | Drop | None | The board tool or the `artifact` connector shows the waiting items. |
-| 18 | Write a row of `decision-log.json` by hand (CLAUDE.md §11) | `factory decide <D-n> <option>`, in a terminal window outside a factory session | Not a connector operation | The command records the decision. `decide read` shows answers and records nothing (§4.10). |
+| 18 | Write a row of `decision-log.json` by hand (CLAUDE.md §11) | `factory decide <D-n> <option>`, in a terminal window outside a factory session | Not a connector operation | The command records the decision. `decide read <D-n>` shows the verdict for one request and records nothing (§4.10). |
 | 19 | Write a decision record and link a principle (CLAUDE.md §11) | `factory decide <D-n> <option> --principle ID` | Not a connector operation | The wording of the principle stays model work. `--principle` is not in this version. |
 | 20 | Publish the review page (CLAUDE.md §8) | The `artifact` connector prints one `PUBLISH:` line, only when the page changed, at most once for each interval | Internal to the `artifact` connector | The line names a file path. The page text never goes into model tokens. |
 | 21 | Read the answers of the review page | Not available in the CLI | Planned read of page answers | A page answer is a board event, not proof. To record an answer, run `factory decide` in your own terminal window. |
@@ -1829,7 +1829,7 @@ These are the decisions of the current design. They are final until Dean changes
 - **A dead proxy stops every worker that uses it.** The health check runs before each launch, the default is `stop` with a clear fix, and the views show which workers use a proxy (§4.6).
 - **tmux typing is fragile.** factory types only constant lines through one module, checks the hook state and the pane start time first, and refuses a screen that shows an option list.
 - **Board limits and cost.** The APIs of the board tools have rate limits, and reads cost time. `factory watch` reads at a fixed interval with a bound per run, and caches in `.factory/state/`. A board that does not answer is "unknown", never "no answer". Each board call has a time cap, an output byte cap and a result cap (§4.3, "Caps").
-- **A false decision answer.** Anyone with access can comment on a decision item. A board comment or label only wakes the coordinator and shows the answer. The owner enters the decision with `factory decide`. A comment or a label records nothing, so a false answer on the board changes no decision. `decide read` shows the author and the link.
+- **A false decision answer.** Anyone with access can comment on a decision item. A board comment or label only wakes the coordinator and shows the answer. The owner enters the decision with `factory decide`. A comment or a label records nothing, so a false answer on the board changes no decision. `factory decide read <D-n>` gives exit code 0 only for a match in the owner store.
 - **A public decision store.** `doctor` fails on it (§4.10).
 - **A board plugin has full reach.** A plugin runs inside factory with the rights of the user. Factory loads it only from the global npm folder, with a valid package name and the contract id in its `package.json`. Factory reads that file before any plugin code runs. The install is the trust decision, and each stop that concerns a plugin says so. Nothing stops a plugin that blocks the process or reads the files of the user (§6, "What the guards do not prove").
 - **The board holds the truth, so offline work only reads.** A write goes to the board first. The cache changes after the board answers. A board that is down fails the write, and no queue holds it. A write with no answer is "unknown": run `factory watch`, then retry. Each item carries its factory id, so a retry makes no second item. `factory decide` works offline.
