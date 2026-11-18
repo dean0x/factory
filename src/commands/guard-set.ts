@@ -2,7 +2,7 @@ import { sha256Hex } from '../blocks/managed.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { displayLineCore, removedByDisplay, visibleTextCore, type CommandOutput } from '../cli/output.js';
 import { setGuardText } from '../config/edit.js';
-import { parseConfigTexts, readNodeIdentity } from '../config/load.js';
+import { parseConfigTexts, parseYamlText, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { readGuardState, recordGuards, recordPrefix, requireGuardChannel, type GuardRecordWrite } from '../core/guard-records.js';
@@ -10,7 +10,8 @@ import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
 import { guardsFor } from '../guards/registry.js';
 import type { Guard, GuardValue } from '../guards/types.js';
-import { commandLines, commands, files, flags, guardConfirmWords, guardRecordWords, guardSetWords, guardValues, harmMark, localFileModes, maxFileBytes, schemaIds } from '../names.js';
+import { isRecord } from '../migrate/inspect.js';
+import { commandLines, commands, files, flags, guardConfirmWords, guardRecordWords, guardSetWords, guardValues, harmMark, keys, localFileModes, maxFileBytes, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 
@@ -35,10 +36,13 @@ interface ParsedSet {
   readonly value: GuardValue;
 }
 
-interface GuardConfig {
+interface GuardConfigTexts {
   readonly home: string;
   readonly shared: string;
   readonly local: string;
+}
+
+interface GuardConfig extends GuardConfigTexts {
   readonly config: FactoryConfig;
 }
 
@@ -66,7 +70,7 @@ const readGuardConfigText = async (deps: Deps, path: string): Promise<CliResult<
   return read.value.state === 'opened' && read.value.text !== null ? ok(read.value.text) : failure(guardSetWords.unreadableFile(path));
 };
 
-const loadGuardConfig = async (deps: Deps, homeFlag: string | undefined, registry: RecipeRegistry): Promise<CliResult<GuardConfig>> => {
+const readGuardConfigTexts = async (deps: Deps, homeFlag: string | undefined, registry: RecipeRegistry): Promise<CliResult<GuardConfigTexts>> => {
   const located = await locateHomeFolder(deps, homeFlag, (readDeps, home) => readNodeIdentity(readDeps, home, registry), commands.guard);
   if (!located.ok) return located;
   const home = located.value.home;
@@ -74,9 +78,25 @@ const loadGuardConfig = async (deps: Deps, homeFlag: string | undefined, registr
   const shared = await readGuardConfigText(deps, layout.configFile);
   if (!shared.ok) return shared;
   const local = await readGuardConfigText(deps, layout.localConfigFile);
-  if (!local.ok) return local;
-  const config = parseConfigTexts(shared.value, local.value, registry);
-  return config.ok ? ok({ home, shared: shared.value, local: local.value, config: config.value }) : config;
+  return local.ok ? ok({ home, shared: shared.value, local: local.value }) : local;
+};
+
+const loadGuardConfig = async (deps: Deps, homeFlag: string | undefined, registry: RecipeRegistry): Promise<CliResult<GuardConfig>> => {
+  const texts = await readGuardConfigTexts(deps, homeFlag, registry);
+  if (!texts.ok) return texts;
+  const config = parseConfigTexts(texts.value.shared, texts.value.local, registry);
+  return config.ok ? ok({ ...texts.value, config: config.value }) : config;
+};
+
+/** A hidden prefix character keeps its own refusal, also when the one-line schema rejects it. */
+const refuseHiddenGuardPrefix = async (deps: Deps, local: string): Promise<CliResult<void>> => {
+  const parsed = parseYamlText(local);
+  if (!parsed.ok || !isRecord(parsed.value)) return ok(undefined);
+  const owner = parsed.value[keys.root.owner];
+  const prefix = isRecord(owner) ? owner[keys.owner.prefix] : undefined;
+  if (typeof prefix !== 'string' || !removedByDisplay(prefix)) return ok(undefined);
+  const shown = await deps.writeStdout(`${guardConfirmWords.prefixLabel}\n${visibleTextCore(prefix)}\n`);
+  return shown.ok ? usageError(guardRecordWords.badPrefix) : shown;
 };
 
 /** Compare both files again. No edit made at the question can be lost. */
@@ -175,13 +195,19 @@ export const runGuardConfirm = async (deps: Deps, options: GuardConfirmOptions, 
   if (options.all || options.words.length !== 0) return usageError(guardConfirmWords.argumentsError);
   const channel = requireGuardChannel(deps, commandLines.guardConfirm);
   if (!channel.ok) return channel;
-  const loaded = await loadGuardConfig(deps, options.home, registry);
-  if (!loaded.ok) return loaded;
-  const prefix = loaded.value.config.core.owner.prefix;
+  const texts = await readGuardConfigTexts(deps, options.home, registry);
+  if (!texts.ok) return texts;
+  const config = parseConfigTexts(texts.value.shared, texts.value.local, registry);
+  if (!config.ok) {
+    const refused = await refuseHiddenGuardPrefix(deps, texts.value.local);
+    return refused.ok ? config : refused;
+  }
+  const loaded = { ...texts.value, config: config.value };
+  const prefix = loaded.config.core.owner.prefix;
   const shown = await deps.writeStdout(`${guardConfirmWords.prefixLabel}\n${visibleTextCore(prefix)}\n`);
   if (!shown.ok) return shown;
   if (removedByDisplay(prefix)) return usageError(guardRecordWords.badPrefix);
-  const state = await readGuardState(deps, loaded.value.home, loaded.value.config, 'always');
+  const state = await readGuardState(deps, loaded.home, loaded.config, 'always');
   if (state.fault !== null) return failure(state.fault);
   if (state.prefix !== null && state.prefix.hash !== sha256Hex(prefix)) {
     const differs = await deps.writeStdout(`${guardConfirmWords.differs}\n`);
@@ -190,8 +216,8 @@ export const runGuardConfirm = async (deps: Deps, options: GuardConfirmOptions, 
   const answer = await deps.prompt(guardConfirmWords.question);
   if (!answer.ok) return answer;
   if (!ACCEPT_ANSWER.test(answer.value.trim())) return usageError(guardSetWords.declined);
-  const current = await requireCurrentGuardConfig(deps, loaded.value, registry);
+  const current = await requireCurrentGuardConfig(deps, loaded, registry);
   if (!current.ok) return current;
-  const recorded = await recordPrefix(deps, { root: loaded.value.home, node: loaded.value.config.core.node.id, prefix });
+  const recorded = await recordPrefix(deps, { root: loaded.home, node: loaded.config.core.node.id, prefix });
   return recorded.ok ? ok(guardWriteOutput(schemaIds.guardConfirm, guardConfirmWords.confirmed, recorded.value)) : recorded;
 };

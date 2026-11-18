@@ -255,6 +255,18 @@ describe('guard confirm', () => {
     expect(deps.atomicWrites).toEqual([]);
   });
 
+  it('shows a carriage return as an escape and refuses the prefix with exit two', async () => {
+    const config = sampleConfig();
+    const prefix = `[${String.fromCharCode(13)}{owner} {node} {date}]`;
+    const deps = fixture({}, { ...config, core: { ...config.core, owner: { ...config.core.owner, prefix } } });
+    const result = await run(deps, ['confirm']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('owner.prefix');
+    expect(deps.written.join('')).toContain('\\x0d');
+    expect(deps.prompts).toEqual([]);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
   it('writes no prefix record when the config changes at the question', async () => {
     const deps = fixture({ prompt: () => { deps.files.set(LOCAL, `${deps.files.get(LOCAL) ?? ''}\n# new prefix edit\n`); return ok('yes'); } });
     const result = await run(deps, ['confirm']);

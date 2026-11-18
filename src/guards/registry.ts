@@ -189,6 +189,7 @@ export const recordPathSites: readonly RowSite[] = [
   ...[
     'runGuardSet', 'runGuardConfirm', 'parseGuardSet', 'readGuardConfigText', 'loadGuardConfig',
     'requireCurrentGuardConfig', 'writeGuardLocal', 'guardWriteOutput', 'askGuardOff',
+    'readGuardConfigTexts', 'refuseHiddenGuardPrefix',
   ].map((symbol) => ({ path: 'src/commands/guard-set.ts', symbol })),
 ];
 
