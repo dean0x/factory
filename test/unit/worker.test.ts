@@ -11,7 +11,7 @@ import { launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schem
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
-import { claudeFileText } from '../helpers/blocks.js';
+import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
 import {
   createFakeDeps,
   exited,
@@ -257,6 +257,7 @@ const make = (setup: Setup = {}): Made => {
   for (const tool of setup.tools ?? ['tmux', 'claude']) base.seed(`/bin/${tool}`, '');
   const config = setup.config ?? sampleConfig();
   seedConfig(base, HOME, config);
+  base.seed(layoutOf(HOME).workerMd, workerFileText(config, noSetupTexts));
   base.seedDir('/w/node/coordinator');
   if (setup.claudeFile !== false) base.seed('/w/node/coordinator/CLAUDE.md', setup.claudeFile ?? claudeFileText(config));
   base.seed(COORDINATOR_SETTINGS, OWN_SETTINGS);

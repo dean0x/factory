@@ -19,7 +19,7 @@ import { allOn } from '../../src/guards/effective.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
-import { claudeFileText, softwareOwnerModes, workerFileText } from '../helpers/blocks.js';
+import { claudeFileText, noSetupTexts, softwareOwnerModes, workerFileText } from '../helpers/blocks.js';
 import {
   createFakeDeps,
   exited,
@@ -207,6 +207,7 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   deps.seedDir(RUNTIME_DIR);
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
+  deps.seed(layoutOf(HOME).workerMd, workerFileText(config, noSetupTexts));
   if (setup.coordinatorFolder !== false) deps.seedDir(COORDINATOR);
   if (setup.coordinatorFolder !== false && setup.claudeFile !== false) {
     deps.seed(CLAUDE_FILE, setup.claudeFile ?? claudeFileText(config));
@@ -1851,6 +1852,7 @@ describe('start:the registration check', () => {
     seedConfig(deps, '/w/other', other);
     registerRoot(deps, '/w/other', 'other');
     deps.seed('/w/other/coordinator/CLAUDE.md', claudeFileText(other));
+    deps.seed(layoutOf('/w/other').workerMd, workerFileText(other, noSetupTexts));
     deps.seedDir(`${HOME}/deep`);
     deps.seedDir('/w/other/deep');
     const first = await runStart(deps, { home: undefined, dryRun: true, yes: false });
@@ -2783,7 +2785,6 @@ describe('start:the safety block', () => {
     deps.files.delete(STORE);
     const output = await succeeded(deps);
     expect(output.json).toMatchObject({ started: true });
-    // Only the safety block is rendered again; the role block is the business of upgrade.
     expect(deps.files.get(CLAUDE_FILE)).toContain(safetyOf(softwareOwnerModes));
     expect(deps.files.get(CLAUDE_FILE)).not.toContain(safetyOf(delegatedModes));
     expect(deps.warned).toContain(RENDERED_NOTICE);

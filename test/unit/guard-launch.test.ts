@@ -84,8 +84,8 @@ const make = async (origin: (typeof origins)[number], config = sampleConfig(), r
   deps.warned.splice(0);
   return { deps, tmux: log, config };
 };
-const recordValues = (deps: FakeDeps, config: FactoryConfig) => recordGuards(deps, {
-  root: HOME, node: 'demo', change: guardsFor(config.entry).filter((guard) => config.core.guards[guard.id] !== undefined)
+const recordValues = (deps: FakeDeps, config: FactoryConfig, root = HOME) => recordGuards(deps, {
+  root, node: 'demo', change: guardsFor(config.entry).filter((guard) => config.core.guards[guard.id] !== undefined)
     .map((guard) => ({ guard, value: config.core.guards[guard.id] ?? 'on' })),
 });
 const confirm = async (deps: FakeDeps, config: FactoryConfig): Promise<void> => {
@@ -159,6 +159,29 @@ for (const origin of origins) {
           expect(paneStarts(tmux)).toEqual([]);
         });
       }
+      for (const target of [blockNames.coordinator, blockNames.workRules, blockNames.worker]) {
+        it(`${command} refuses a missing ${target} with an on guard in the ${origin} folder`, async () => {
+          const { deps, tmux, config } = await make(origin);
+          await confirm(deps, config);
+          const template = templates(config).find((entry) => entry.name === target);
+          if (template === undefined) throw new Error('role block is absent');
+          const path = template.target === 'claudeFile' ? layoutOf(HOME).claudeMd : layoutOf(HOME).workerMd;
+          deps.seed(path, (deps.files.get(path) ?? '').replace(must(renderBlock(template)), ''));
+          const before = fileSnapshot(deps);
+          expectRefusal(await launch(deps, command), `--overwrite ${target}`);
+          expect(fileSnapshot(deps)).toEqual(before);
+          expect(paneStarts(tmux)).toEqual([]);
+        });
+      }
+      it(`${command} refuses a missing worker role file with an on guard in the ${origin} folder`, async () => {
+        const { deps, tmux, config } = await make(origin);
+        await confirm(deps, config);
+        deps.files.delete(layoutOf(HOME).workerMd);
+        const before = fileSnapshot(deps);
+        expectRefusal(await launch(deps, command), `--overwrite ${blockNames.worker}`);
+        expect(fileSnapshot(deps)).toEqual(before);
+        expect(paneStarts(tmux)).toEqual([]);
+      });
     }
     for (const command of ['start', 'reboot'] as const) {
       it(`${command} renders intact role blocks after a guard change in the ${origin} folder`, async () => {
@@ -265,23 +288,59 @@ for (const origin of origins) {
       }
       expect(deps.warned.filter((line) => line.includes('guard change'))).toHaveLength(1);
     });
-    it(`start reads no worker block without a node guard record in the ${origin} folder`, async () => {
-      const { deps, config } = await make(origin);
-      editRole(deps, config, true);
-      const counted = countReadsOf(deps, layoutOf(HOME).workerMd);
-      must(await launch(counted.deps, 'start'));
-      expect(counted.count()).toBe(0);
-    });
-    for (const missing of ['block', 'file'] as const) {
-      it(`start warns once for a missing role ${missing} in the ${origin} folder`, async () => {
-        const { deps, config } = await make(origin);
-        await confirm(deps, config);
-        if (missing === 'file') deps.files.delete(layoutOf(HOME).workerMd);
-        else deps.seed(layoutOf(HOME).workerMd, 'No block here.\n');
-        must(await launch(deps, 'start'));
-        expect(deps.warned.filter((line) => line.includes(blockNames.worker) && line.includes('missing'))).toHaveLength(1);
-      });
+    for (const record of ['absent', 'lost', 'previous folder'] as const) {
+      for (const dryRun of [false, true]) {
+        it(`start ${dryRun ? 'dry run notes' : 'renders'} on role text when the record is ${record} in the ${origin} folder`, async () => {
+          const base = sampleConfig();
+          const config = { ...base, core: { ...base.core, guards: { 'install-rules': 'off' as const, 'resume-routines': 'off' as const, 'approval-merge': 'off' as const, 'approval-release': 'off' as const } } };
+          const { deps, tmux } = await make(origin, config, false);
+          const off = { ...allOn, ...config.core.guards };
+          seedBlocks(deps, config, off);
+          if (record === 'lost') {
+            must(await recordValues(deps, config));
+            deps.files.delete(STORE);
+          } else if (record === 'previous folder') {
+            must(await deps.fs.rename(HOME, '/w/previous-node'));
+            must(await recordValues(deps, config, '/w/previous-node'));
+            must(await deps.fs.rename('/w/previous-node', HOME));
+          }
+          const before = fileSnapshot(deps);
+          const result = must(await launch(deps, 'start', dryRun));
+          expect(result.failed).toBe(false);
+          if (dryRun) {
+            expect(fileSnapshot(deps)).toEqual(before);
+            expect(result.warnings.some((line) => line.includes('role blocks are out of date'))).toBe(true);
+            expect(paneStarts(tmux)).toEqual([]);
+          } else {
+            for (const template of templates(config)) {
+              const path = template.target === 'claudeFile' ? layoutOf(HOME).claudeMd : layoutOf(HOME).workerMd;
+              expect(deps.files.get(path)).toContain(template.body);
+            }
+          }
+        });
+      }
     }
+    it(`start refuses edited role text without a node guard record in the ${origin} folder`, async () => {
+      const { deps, tmux, config } = await make(origin);
+      editRole(deps, config, true);
+      const before = fileSnapshot(deps);
+      expectRefusal(await launch(deps, 'start'), `--overwrite ${blockNames.coordinator}`);
+      expect(fileSnapshot(deps)).toEqual(before);
+      expect(paneStarts(tmux)).toEqual([]);
+    });
+    it(`start warns once for a missing role block without on guard text in the ${origin} folder`, async () => {
+      const base = sampleConfig();
+      const config = { ...base, core: { ...base.core, guards: { 'install-rules': 'off' as const } } };
+      const { deps } = await make(origin, config);
+      must(await recordValues(deps, config));
+      const template = templates(config).find((block) => block.name === blockNames.workRules);
+      if (template === undefined) throw new Error('role block is absent');
+      const path = layoutOf(HOME).claudeMd;
+      deps.seed(path, (deps.files.get(path) ?? '').replace(must(renderBlock(template)), ''));
+      must(await launch(deps, 'start'));
+      expect(deps.warned.filter((line) => line.includes(blockNames.workRules) && line.includes('missing'))).toHaveLength(1);
+      expect(deps.files.get(path)).not.toContain('<!-- factory:begin work-rules');
+    });
     it(`start leaves an older role block for upgrade in the ${origin} folder`, async () => {
       const { deps, config } = await make(origin);
       await confirm(deps, config);

@@ -81,9 +81,9 @@ const roleTemplates = (config: FactoryConfig, modes: ApprovalModes, values: Guar
   blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: null }, modes, values))
     .filter((template) => template.name !== blockNames.safety);
 
-/** Compare the on and off renders to find the text that each on H guard requires in an edited block. */
+/** Compare the on and off renders to find the text that each on H guard requires in a role block. */
 const missingRoleGuard = (
-  config: FactoryConfig, modes: ApprovalModes, values: GuardValues, status: Extract<BlockStatus, { readonly kind: 'intact' | 'edited' }>,
+  config: FactoryConfig, modes: ApprovalModes, values: GuardValues, status: Extract<BlockStatus, { readonly kind: 'intact' | 'edited' | 'missing' }>,
 ): string | null => {
   for (const guard of guardsFor(config.entry)) {
     if (!guard.harm || values[guard.id] === 'off') continue;
@@ -92,13 +92,13 @@ const missingRoleGuard = (
     if (on === undefined || off === undefined) continue;
     const offLines = new Set(off.body.split('\n'));
     const required = on.body.split('\n').filter((line) => line.trim() !== '' && !offLines.has(line));
-    const found = new Set(status.block.body.split('\n'));
+    const found = new Set(status.kind === 'missing' ? [] : status.block.body.split('\n'));
     if (required.some((line) => !found.has(line))) return guard.id;
   }
   return null;
 };
 
-/** Check role blocks only for a node with a guard record. Pane launches never write them. */
+/** Check role blocks against the effective guard values for every launch. Pane launches never write them. */
 export const requireRoleBlocks = async (
   deps: Deps,
   home: string,
@@ -108,7 +108,6 @@ export const requireRoleBlocks = async (
   dryRun: boolean,
   renderedBy: string,
 ): Promise<CliResult<readonly string[]>> => {
-  if (!guards.record) return ok([]);
   const templates = roleTemplates(config, modes, guards.values);
   const layout = layoutOf(home);
   const plain = await requireNoLinks(deps, home, [layout.claudeMd, layout.workerMd]);
@@ -118,10 +117,11 @@ export const requireRoleBlocks = async (
     if (status.kind === 'malformed') {
       return safetyRefusal(`the role block ${status.template.name} can not be read`, `Run "${overwriteCommand(status.template.name)}" to replace it.`);
     }
-    if (status.kind === 'edited') {
+    if (status.kind === 'edited' || status.kind === 'missing') {
       const missing = missingRoleGuard(config, modes, guards.values, status);
       if (missing !== null) {
-        return safetyRefusal(`the edited block ${status.template.name} lacks the text of the on guard ${missing}`, `Run "${overwriteCommand(status.template.name)}" to replace it. It keeps the old text in a backup file.`);
+        const remedy = status.kind === 'missing' ? 'add it.' : 'replace it. It keeps the old text in a backup file.';
+        return safetyRefusal(`the ${status.kind} block ${status.template.name} lacks the text of the on guard ${missing}`, `Run "${overwriteCommand(status.template.name)}" to ${remedy}`);
       }
     }
   }

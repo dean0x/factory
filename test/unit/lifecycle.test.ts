@@ -8,7 +8,7 @@ import { activeMachine, env, marker, roleText, schemaIds, stateLock, tmuxNames, 
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
-import { claudeFileText } from '../helpers/blocks.js';
+import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
 import {
   createFakeDeps,
   exited,
@@ -262,6 +262,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   deps.seedDir(RUNTIME_DIR);
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
+  deps.seed(layoutOf(HOME).workerMd, workerFileText(config, noSetupTexts));
   deps.seedDir(COORDINATOR);
   deps.seed(`${COORDINATOR}/CLAUDE.md`, setup.claudeFile ?? claudeFileText(config));
   deps.seed(SETTINGS_FILE, setup.hookSettings ?? OWN_SETTINGS);
