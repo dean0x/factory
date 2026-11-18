@@ -1,6 +1,6 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { boardWorkItems } from '../board/work-items.js';
-import { boardDecisionLog } from '../commands/board-open.js';
+import { boardDecisionLog, boardRequests } from '../commands/board-open.js';
 import { runBoard } from '../commands/board.js';
 import { runDecideRead } from '../commands/decide-read.js';
 import { runDecide } from '../commands/decide.js';
@@ -324,6 +324,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
     usage: [
       `${commandText(commands.dismiss)} ID [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
       `${commandText(commands.dismiss)} ID ${flagText(flags.closed)} [${flagText(flags.home)} DIR]`,
+      `${commandText(commands.dismiss)} ID ${flagText(flags.closed)} ${flagText(flags.askOwner)} [${flagText(flags.home)} DIR]`,
       `${commandText(commands.dismiss)} ${flagText(flags.idle)} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
@@ -343,6 +344,10 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           `Free the ${roles.worker} in the pane of the ${roles.coordinator}, only when an item of the ${roles.worker} is closed, no other item names it, ` +
           `its branch is pushed and its work copy is clean. It logs one decision first. Every other case is a step of the ${roles.owner}.`,
       },
+      [flags.askOwner]: {
+        type: 'boolean',
+        description: `With ${flagText(flags.closed)}: check the ${roles.worker} and open a ${requestWords.request} for the ${roles.owner}. Free nothing.`,
+      },
     },
     run: (given, deps) =>
       runDismiss(
@@ -353,10 +358,12 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           idle: given.bool(flags.idle),
           yes: given.bool(flags.yes),
           closed: given.bool(flags.closed),
+          askOwner: given.bool(flags.askOwner),
         },
         registry,
         boardDecisionLog,
         boardWorkItems(registry),
+        boardRequests,
       ),
   },
   {

@@ -125,6 +125,21 @@ const nodeWithStore = async (store: string, setup: Parameters<typeof boardNode>[
 };
 
 describe('request add', () => {
+  it.each<Partial<RequestOptions>>([
+    { fields: ['Worker to free=alpha'] },
+    { fields: ['  WORKER\tTO  FREE =alpha'] },
+    { title: 'Free the worker alpha' },
+    { title: `  FREE  THE WORKER${String.fromCodePoint(0x00a0)}alpha ` },
+    { title: 'Free the worker' },
+  ])('refuses the reserved free form before it reads the board: %j', async (overrides) => {
+    const repo = await boardNode();
+    const touched: string[] = [];
+    const deps = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
+    const result = await runRequest(deps, { ...BASE, ...ADD, ...overrides }, recipes);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage', hint: 'The --ask-owner form of dismiss opens this request.' } });
+    expect(touched).toEqual([]);
+  });
+
   it('stores the decision with the first D-n, prints one line, and makes one commit that holds only the waiting file', async () => {
     const repo = await boardNode();
     const at = repo.deps.now().toISOString();

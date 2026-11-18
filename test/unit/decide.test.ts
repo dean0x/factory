@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
-import { runDecide, type DecideOptions } from '../../src/commands/decide.js';
 import { addNewRemedy } from '../../src/board/decide.js';
+import { freeRequestOf } from '../../src/board/free-request.js';
+import * as boardOpen from '../../src/commands/board-open.js';
+import { runDecide, type DecideOptions } from '../../src/commands/decide.js';
 import { runRequest } from '../../src/commands/request.js';
 import type { Deps } from '../../src/core/deps.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
@@ -23,12 +25,13 @@ import {
   stateLock,
 } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
+import { installGuard } from '../../src/state/guard.js';
 import { layoutOf, stateRel } from '../../src/state/layout.js';
 import { boardNode, boardText } from '../helpers/board-node.js';
 import { WAITING_PATH, type BoardRepo } from '../helpers/board-repo.js';
-import { exited } from '../helpers/fake-deps.js';
+import { exited, registerRoot } from '../helpers/fake-deps.js';
 import { HOME, HOOK } from '../helpers/guard-fixture.js';
-import { sampleConfigWithBoard } from '../helpers/sample-config.js';
+import { sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
 
 // The decide command: the parse, the owner check, the request block, the question and the record.
@@ -451,6 +454,147 @@ describe('decide: the record of the store for an open request', () => {
     expect(waitingIds(repo)).toEqual([]);
     expect(repo.textOf(join(stateRel.profileDecisions, '2029-12-30-d-1-pick-a-plan.md'))).toContain(`time: ${otherAt}`);
   });
+});
+
+const freeInput = freeRequestOf({ id: 'alpha', project: 'demo', closed: ['B-1'], head: 'a'.repeat(40), checkedAt: AT });
+const freeEntry = { id: 'D-1', ...freeInput };
+const FREE_ANSWER = { words: ['D-1', 'done'] };
+
+const seedBoardAt = async (repo: BoardRepo, home: string, entry: Record<string, unknown>): Promise<void> => {
+  const config = sampleConfigWithBoard();
+  const state = layoutOf(home).stateDir;
+  seedConfig(repo.deps, home, config);
+  registerRoot(repo.deps, home, config.core.node.id);
+  repo.deps.seedDir(join(state, '.git'));
+  repo.deps.seedDir(join(state, dirs.profile));
+  valueOf(await installGuard(repo.deps, state, state));
+  repo.deps.seed(join(state, fileNames.waiting), waitingOf(entry));
+  repo.deps.seed(join(state, fileNames.decisionLog), logOf());
+  repo.deps.seed(join(state, fileNames.board), boardText());
+};
+
+describe('decide: worker free requests', () => {
+  it('shows the dry run and the free command before the prompt and records the owner answer', async () => {
+    const repo = await nodeOf({ waiting: waitingOf(freeEntry) });
+    const terminal = atTerminal(repo, () => {
+      expect(shownOf(repo).slice(-2)).toEqual([
+        `factory dismiss alpha --home ${HOME}`,
+        `factory dismiss alpha --home ${HOME} --yes`,
+      ]);
+      return ok('y');
+    });
+
+    valueOf(await decide(terminal.deps, FREE_ANSWER));
+
+    expect(terminal.asked).toEqual(['Record the answer done for D-1? [y/N] ']);
+    expect(waitingIds(repo)).toEqual([]);
+    expect(JSON.parse(repo.textOf(fileNames.decisionLog) ?? '')).toMatchObject({ rows: [{ by: 'owner', decision: 'done' }] });
+  });
+
+  it('shows the kept option without free commands or instructions before the prompt', async () => {
+    const repo = await nodeOf({ waiting: waitingOf(freeEntry) });
+    const terminal = atTerminal(repo, () => {
+      const lines = shownOf(repo);
+      expect(lines).toContain('>   kept (chosen): The worker stays.');
+      expect(lines.filter((line) => /^factory dismiss|Run the dry run first\.|run the second command/.test(line))).toEqual([]);
+      return ok('y');
+    });
+
+    valueOf(await decide(terminal.deps, { words: ['D-1', 'kept'] }));
+
+    expect(terminal.asked).toEqual(['Record the answer kept for D-1? [y/N] ']);
+    expect(JSON.parse(repo.textOf(fileNames.decisionLog) ?? '')).toMatchObject({
+      rows: [{ by: 'owner', decision: 'kept', request: textOf(freeEntry) }],
+    });
+  });
+
+  it('quotes the resolved board home in the free commands and both answers after a no to done', async () => {
+    const repo = await nodeOf();
+    const folder = "owner's home";
+    const home = join(HOME, folder);
+    const stored = 'factory dismiss beta --home /other --yes';
+    const fields = (freeInput.fields ?? []).map((field) => field.label === 'Project' ? { ...field, text: stored } : field);
+    await seedBoardAt(repo, home, { ...freeEntry, fields });
+    const before = new Map(repo.deps.files);
+    const terminal = atTerminal(repo, () => ok('n'));
+
+    const error = errorOf(await decide(terminal.deps, { ...FREE_ANSWER, home: folder }));
+
+    expect(terminal.asked).toHaveLength(1);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(repo.deps.files).toEqual(before);
+    expect(repo.commits).toEqual([]);
+    expect(error.hint).toContain(`If the worker is free, record that result with "factory decide D-1 done --home '${HOME}/owner'\\''s home'".`);
+    expect(error.hint).toContain(`If the worker stays, record that result with "factory decide D-1 kept --home '${HOME}/owner'\\''s home'".`);
+    expect(shownOf(repo).filter((line) => line.startsWith('factory dismiss'))).toEqual([
+      `factory dismiss alpha --home '${HOME}/owner'\\''s home'`,
+      `factory dismiss alpha --home '${HOME}/owner'\\''s home' --yes`,
+    ]);
+  });
+
+  it('gives only the same answer after a no to kept', async () => {
+    const repo = await nodeOf({ waiting: waitingOf(freeEntry) });
+    const terminal = atTerminal(repo, () => ok('n'));
+
+    const error = errorOf(await decide(terminal.deps, { words: ['D-1', 'kept'] }));
+
+    expect(error.hint).toBe('Run "factory decide D-1 kept" again to record the answer.');
+  });
+});
+
+describe.each(['done', 'kept'])('decide: checks on worker free requests for %s', (option) => {
+  it.each([
+    ['a worker id that is not a slug', { fields: [{ label: 'Worker to free', text: 'alpha beta' }] }],
+    ['no worker field', { fields: [] }],
+    ['two forms of the worker field', { fields: [{ label: 'Worker to free', text: 'alpha' }, { label: 'WORKER  TO FREE', text: 'beta' }] }],
+    ['a doc', { docs: ['notes/context.md'] }],
+    ['a different title', { title: 'Pick a plan' }],
+    ['a different kind', { kind: 'decision' }],
+    ['a changed question', { question: 'Stored question' }],
+    ['no done option', { options: [{ key: 'kept', text: 'The worker stays.' }] }],
+    ['an extra option', { options: [...freeInput.options, { key: 'later', text: 'Decide later.' }] }],
+  ])('refuses a free request with %s before it shows the request or asks for an answer', async (_name, overrides) => {
+    const repo = await nodeOf({ waiting: waitingOf({ ...freeEntry, ...overrides }) });
+    const before = new Map(repo.deps.files);
+    const terminal = atTerminal(repo);
+
+    const result = await decide(terminal.deps, { words: ['D-1', option] });
+
+    expect(result.ok).toBe(false);
+    expect(exitOf(result)).toBe(1);
+    expect(errorOf(result).hint).toContain('factory request close D-1');
+    expect(errorOf(result).hint).not.toContain('factory request add');
+    expectNothingDone(repo, before, terminal);
+  });
+
+  it.each([
+    ['a control character', '\x1b'],
+    ['a hidden character', String.fromCodePoint(0x200b)],
+  ])('refuses a factory folder path with %s before it shows the request or asks for an answer', async (_name, character) => {
+    const repo = await nodeOf();
+    const home = `${HOME}-${character}`;
+    await seedBoardAt(repo, home, freeEntry);
+    const before = new Map(repo.deps.files);
+    const terminal = atTerminal(repo);
+
+    const result = await decide(terminal.deps, { words: ['D-1', option], home });
+
+    expect(result.ok).toBe(false);
+    expect(exitOf(result)).toBe(1);
+    expect(errorOf(result).message).toContain('the factory folder path');
+    expectNothingDone(repo, before, terminal);
+  });
+});
+
+it('opens a worker free request through the board port and reads it from the same board', async () => {
+  const repo = await nodeOf();
+  expect(boardOpen.boardRequests).toBeDefined();
+  const id = valueOf(await boardOpen.boardRequests.ask(repo.deps, HOME, sampleConfigWithBoard(), freeInput));
+  const waiting = valueOf(await boardOpen.boardRequests.waiting(repo.deps, HOME));
+
+  expect(waiting.items.find((item) => item.id === id)?.record).toMatchObject(freeInput);
+  expect(repo.commits).toHaveLength(1);
+  expect(storedRecords(repo)).toEqual([]);
 });
 
 describe('decide: a yes answer records the answer', () => {

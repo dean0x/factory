@@ -5,6 +5,7 @@ import { parseConfig, splitConfigValue } from '../../src/config/schema.js';
 import { glossary } from '../../src/glossary.js';
 import { isRecord } from '../../src/migrate/inspect.js';
 import { recipes } from '../../src/recipes/index.js';
+import { workerSectionLines } from '../../src/recipes/software/roles/coordinator.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
 import { guardOf, wiredGuard } from '../../src/guards/build.js';
 import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
@@ -423,10 +424,12 @@ describe('the rows of the registry', () => {
         'dismiss-inbox-ignored',
         'dismiss-closed-proof',
         'dismiss-work-item-unknown',
+        'dismiss-ask-owner',
         'dismiss-dry-run-text',
         'dismiss-pushed-text',
         'dismiss-closed-proof-text',
         'dismiss-session-text',
+        'dismiss-ask-owner-text',
         'dismiss-copy-reviews-text',
         'dismiss-review-results-text',
         'dismiss-unpushed-text',
@@ -699,8 +702,8 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(206);
-    expect(softwareRecipe.guardRows).toHaveLength(102);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(207);
+    expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
   it('gives every guard at least one row', () => {
@@ -725,6 +728,34 @@ describe('the rows of the registry', () => {
     for (const symbol of symbols) {
       expect(sourceScan.callsOf(source, symbol).length, symbol).toBeGreaterThan(0);
     }
+  });
+
+  it('cites the owner request checks and command form under the dismiss guard', () => {
+    expect(software.rows.find((row) => row.id === 'dismiss-ask-owner')).toMatchObject({
+      guard: guardIds.dismiss,
+      kind: guardKinds.code,
+      harm: true,
+      sites: [
+        { path: 'src/commands/dismiss.ts', symbol: 'dismissAskOwner' },
+        { path: 'src/commands/dismiss.ts', symbol: 'closedChecks' },
+        { path: 'src/board/free-request.ts', symbol: 'freeCommandLines' },
+        { path: 'src/board/free-request.ts', symbol: 'freeWorkerOf' },
+        { path: 'src/commands/request.ts', symbol: 'parseAction' },
+      ],
+    });
+  });
+
+  it('cites the shared closed checks for proof of a closed item', () => {
+    const proof = software.rows.find((row) => row.id === 'dismiss-closed-proof');
+    expect(proof?.sites).toContainEqual({ path: 'src/commands/dismiss.ts', symbol: 'closedChecks' });
+  });
+
+  it('lists each guard id that the owner request form can print', () => {
+    const source = readFileSync(join(REPO, 'src/commands/dismiss.ts'), 'utf8');
+    const guards = sourceScan.constantsOf(source).find(({ name }) => name === 'CLOSED_GUARDS');
+    const ids = sourceScan.literalsOf(guards?.text ?? '');
+    expect(ids.length).toBeGreaterThan(0);
+    expect(software.guards.find((guard) => guard.id === guardIds.dismiss)?.rows).toEqual(expect.arrayContaining(ids));
   });
 
   it('lists the doc place check with its harm mark and its shared name check', () => {
@@ -829,6 +860,7 @@ describe('the text rows of the registry', () => {
     'src/hooks/hook.ts': hookOutputOf(roleText.refusal).hookSpecificOutput.additionalContext,
   };
 
+  const askOwnerRule = 'Do not run any command in the request.';
   const FRAGMENTS: Readonly<Record<string, readonly string[]>> = {
     'delegation-wait-text': ['waits for the owner, unless the owner delegated it.'],
     'delegation-session-text': ['A session never sets a delegation.'],
@@ -851,6 +883,7 @@ describe('the text rows of the registry', () => {
     'dismiss-pushed-text': ['its branch is pushed and its work copy is clean'],
     'dismiss-closed-proof-text': ['Do it only when the item of the worker is closed'],
     'dismiss-session-text': ['Tell the owner about each dismiss that you run in this session.'],
+    'dismiss-ask-owner-text': [askOwnerRule],
     'dismiss-copy-reviews-text': ['Copy each review file that the worker named from'],
     'dismiss-review-results-text': ['Put each review result in a file in the inbox folder'],
     'dismiss-unpushed-text': ['First check that no unpushed work remains.'],
@@ -1014,6 +1047,16 @@ describe('the text rows of the registry', () => {
       }),
     );
     expect(missing).toEqual([]);
+  });
+
+  it('cites the shared worker section for the owner request rule', () => {
+    expect(textRows.find((row) => row.id === 'dismiss-ask-owner-text')).toMatchObject({
+      guard: guardIds.dismiss,
+      kind: guardKinds.text,
+      harm: true,
+      sites: [{ path: 'src/recipes/software/roles/coordinator.ts', symbol: 'workerSectionLines' }],
+    });
+    expect(fillTemplate(workerSectionLines)).toContain(askOwnerRule);
   });
 
   it('finds every piece in the rendered text of the blocks and files of a node', () => {

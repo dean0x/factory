@@ -2,7 +2,10 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { shellWord } from '../../src/core/shell-word.js';
 import { files } from '../../src/names.js';
+import { runInTerminal, scriptGate } from './fake-terminal.js';
+import { DIST } from './harness.js';
 import { hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded, type Marker } from './lifecycle-lab.js';
 import { loadNote } from './load.js';
 
@@ -316,5 +319,48 @@ describe.skipIf(!hasTmux)('factory dismiss --closed frees a finished worker for 
     expect(log).toContain('"decider": "coordinator"');
     expect(log.match(/Free the worker/g)).toHaveLength(2);
     await expectIntact('beta');
+  }, LIFECYCLE_CASE_MS);
+
+  it.skipIf(scriptGate() !== 'run')('keeps the request open until the owner frees the worker and records the answer', async () => {
+    await nodeWithClosedItem();
+    await push('alpha');
+    const coordinator = inPaneOf(await lab.coordinatorPane());
+    const home = lab.box.node;
+    const waitingText = (): Promise<string> => readFile(join(lab.stateOf(), files.waiting), 'utf8');
+    const logBefore = await logText();
+
+    const asked = await lab.factory('dismiss', ['alpha', '--closed', '--ask-owner'], coordinator);
+    expect(asked.code, asked.stderr).toBe(0);
+    expect(asked.stdout).toContain('Opened D-1 for worker alpha');
+    await expectIntact('alpha');
+    const waiting = await waitingText();
+    expect(waiting).toContain('D-1');
+    expect(await logText()).toBe(logBefore);
+
+    const freeWords = ['dismiss', 'alpha', '--home', home];
+    const preview = await lab.box.run(freeWords);
+    expect(preview.code, preview.stderr).toBe(0);
+    expect(preview.stdout).toContain('Would end the pane');
+    const freed = await lab.box.run([...freeWords, '--yes']);
+    expect(freed.code, freed.stderr).toBe(0);
+    expect(freed.stdout).toContain('Removed the work copy');
+    expect(await waitingText()).toBe(waiting);
+    expect(await logText()).toBe(logBefore);
+
+    const answer = await runInTerminal(lab.box, [process.execPath, DIST, 'decide', 'D-1', 'done', '--home', home], {
+      exchanges: [{ prompt: /Record the answer done for D-1\? \[y\/N\] $/, answer: 'y' }],
+    });
+    expect(answer.code, answer.screen).toBe(0);
+    const command = `factory dismiss alpha --home ${shellWord(home)}`;
+    expect(answer.screen.split('\n')).toEqual(expect.arrayContaining([command, `${command} --yes`]));
+    expect(answer.screen).toContain('Recorded the answer done for D-1: Free the worker alpha');
+
+    const status = await lab.factory('status');
+    expect(status.code, status.stderr).toBe(0);
+    expect(status.stdout).not.toMatch(/\balpha\b/);
+    expect(status.stdout).toMatch(/\bbeta\b/);
+    expect(await waitingText()).not.toContain('D-1');
+    const log: unknown = JSON.parse(await logText());
+    expect(log).toMatchObject({ rows: [{ item: 'D-1: Free the worker alpha', decision: 'done', by: 'owner' }] });
   }, LIFECYCLE_CASE_MS);
 });
