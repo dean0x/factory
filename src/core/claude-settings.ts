@@ -12,6 +12,7 @@ import {
   files,
   flags,
   flagText,
+  guardDenyWords,
   hookCommandOf,
   hookNames,
   hookSessions,
@@ -31,6 +32,7 @@ import { parseJsonText } from '../state/load.js';
 import { ACCEPT_ANSWER, type Deps } from './deps.js';
 import { inFactorySession } from './factory-session.js';
 import { comparable, isSameOrInside, isWrittenInside, realPathOf, userClaudeFolderOf } from './paths.js';
+import { userStatePlaceOf } from './private-file.js';
 import { ok } from './result.js';
 import { writeInFolder } from './safe-write.js';
 
@@ -72,8 +74,8 @@ const ownGroupOf = (event: string): HookGroup => {
 
 /**
  * The exact entries of the program: one group with one own command for each event of the fixed list, and the status line
- * wrapper. A new settings file holds these entries and nothing else. A check that asks whether a file holds only the own
- * entries compares the parsed file with this constant.
+ * wrapper. A new settings file also holds the own Edit rules for its computed paths. The exact hook and status line
+ * entries stay in this constant.
  */
 export const ownSettingsEntries: OwnSettings = {
   [claudeSettingKeys.hooks]: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroupOf(event)]])),
@@ -105,6 +107,8 @@ export interface HookSettingsRequest {
   readonly dryRun: boolean;
   /** The command that asks. The remedy of a stop names it. */
   readonly command: CommandText;
+  /** The own Edit rules. With add false, absent rules need a write only when another entry changes. */
+  readonly deny?: { readonly rules: readonly string[]; readonly add: boolean };
 }
 
 /** The part of a request that the consent depends on: a call that never writes has no dry run. */
@@ -139,6 +143,44 @@ const targetOf = (folder: string): Target => {
 export const hookSettingsPlaceOf = (folder: string): { readonly claudeFolder: string; readonly file: string } => {
   const { claudeFolder, file } = targetOf(folder);
   return { claudeFolder, file };
+};
+
+/** The rules for the own files, and paths whose characters prevent an exact rule. */
+export interface OwnDenyRules {
+  readonly rules: readonly string[];
+  readonly skipped: readonly string[];
+}
+
+/** Written paths and distinct real paths both get exact rules. The place core reads no owner store. */
+export const ownDenyRulesOf = async (deps: Deps, home: string, folder: string): Promise<CliResult<OwnDenyRules>> => {
+  const paths = [
+    resolve(home, files.config),
+    resolve(home, files.localConfig),
+    ...[files.ownerRecords, files.ownerDecisions, files.guardRecords].flatMap((name) => {
+      const { path } = userStatePlaceOf(deps, name);
+      return path === null ? [] : [path];
+    }),
+    hookSettingsPlaceOf(folder).file,
+  ];
+  const rules = new Set<string>();
+  const skipped = new Set<string>();
+  const addPath = (path: string): boolean => {
+    if (/[\x00-\x1f\x7f*?\[\]{}()\\]/u.test(path)) {
+      skipped.add(path);
+      return false;
+    }
+    rules.add(`${guardDenyWords.edit}(/${path})`);
+    return true;
+  };
+  const userFolder = userClaudeFolderOf(deps);
+  for (const path of paths) {
+    if (!addPath(path)) continue;
+    if (userFolder !== null && isWrittenInside(deps, userFolder, path)) continue;
+    const real = await realPathOf(deps, path);
+    if (!real.ok) return real;
+    if (real.value !== path) addPath(real.value);
+  }
+  return ok({ rules: [...rules], skipped: [...skipped] });
 };
 
 const clipped = (text: string): string => (text.length > MAX_SHOWN_CHARS ? `${text.slice(0, MAX_SHOWN_CHARS)}...` : text);
@@ -322,6 +364,31 @@ export const missingHookEvents = (settings: unknown): readonly HookEvent[] => {
   return 'notList' in found ? hookNames.events : found.missing;
 };
 
+/** The own Edit rules that the settings lack. An unknown permissions shape counts every rule as absent. */
+export const missingDenyRules = (settings: unknown, rules: readonly string[]): readonly string[] => {
+  const permissions = isRecord(settings) ? settings[claudeSettingKeys.permissions] : undefined;
+  const deny = isRecord(permissions) ? permissions['deny'] : undefined;
+  return Array.isArray(deny) && deny.every((rule) => typeof rule === 'string') ? rules.filter((rule) => !deny.includes(rule)) : rules;
+};
+
+/** Add only absent rules. Refuse unknown shapes so no permission value gets replaced. */
+const addDenyRules = (existing: Settings, rules: readonly string[], file: string, command: CommandText): CliResult<Change> => {
+  const missing = missingDenyRules(existing, rules);
+  if (missing.length === 0) return ok({ settings: existing, lines: [] });
+  const current = existing[claudeSettingKeys.permissions];
+  const permissions = current === undefined ? NO_SETTINGS : current;
+  const hint = `Fix the file, or move it away. ${again(command)}`;
+  if (!isRecord(permissions)) return failure(`${file} holds ${claudeSettingKeys.permissions} that is not an object`, hint);
+  const deny: unknown = Object.hasOwn(permissions, 'deny') ? permissions['deny'] : [];
+  if (!Array.isArray(deny) || !deny.every((rule) => typeof rule === 'string')) {
+    return failure(`${file} holds ${claudeSettingKeys.permissions}.deny that is not a list of rules`, hint);
+  }
+  return ok({
+    settings: { ...existing, [claudeSettingKeys.permissions]: { ...permissions, deny: [...deny, ...missing] } },
+    lines: missing.map((rule) => `${claudeSettingKeys.permissions}.deny: add ${rule}`),
+  });
+};
+
 const shownStatusLine = (value: unknown): string =>
   clipped(isRecord(value) && value['type'] === settingsCommandType && typeof value['command'] === 'string' ? value['command'] : JSON.stringify(value));
 
@@ -338,18 +405,19 @@ const statusLineLines = (current: unknown): readonly string[] => {
 };
 
 /** The settings with the own entries added, and the lines that show the change. Every other key stays as it is. */
-const addOwnEntries = (existing: Settings, file: string, command: CommandText): CliResult<Change> => {
-  const hooks = addHooks(existing[claudeSettingKeys.hooks], file, command);
+const addOwnEntries = (existing: Settings, file: string, request: HookConsentRequest): CliResult<Change> => {
+  const hooks = addHooks(existing[claudeSettingKeys.hooks], file, request.command);
   if (!hooks.ok) return hooks;
   const statusLine = statusLineLines(existing[claudeSettingKeys.statusLine]);
-  return ok({
-    settings: {
-      ...existing,
-      ...(hooks.value.lines.length === 0 ? {} : { [claudeSettingKeys.hooks]: hooks.value.hooks }),
-      ...(statusLine.length === 0 ? {} : { [claudeSettingKeys.statusLine]: ownSettingsEntries.statusLine }),
-    },
-    lines: [...hooks.value.lines, ...statusLine],
-  });
+  const lines = [...hooks.value.lines, ...statusLine];
+  const settings = {
+    ...existing,
+    ...(hooks.value.lines.length === 0 ? {} : { [claudeSettingKeys.hooks]: hooks.value.hooks }),
+    ...(statusLine.length === 0 ? {} : { [claudeSettingKeys.statusLine]: ownSettingsEntries.statusLine }),
+  };
+  const rules = request.deny?.add === true || lines.length > 0 ? request.deny?.rules ?? [] : [];
+  const deny = addDenyRules(settings, rules, file, request.command);
+  return deny.ok ? ok({ settings: deny.value.settings, lines: [...lines, ...deny.value.lines] }) : deny;
 };
 
 const shownChange = (file: string, lines: readonly string[]): string =>
@@ -448,7 +516,7 @@ const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliR
   const read = await readTarget(deps, request);
   if (!read.ok) return read;
   const { target, content } = read.value;
-  const change = addOwnEntries(content === null ? NO_SETTINGS : content.settings, target.file, request.command);
+  const change = addOwnEntries(content === null ? NO_SETTINGS : content.settings, target.file, request);
   return change.ok ? ok({ target, text: content === null ? null : content.text, change: change.value }) : change;
 };
 
@@ -487,7 +555,7 @@ const futureFilePlan = (request: HookConsentRequest, fileText: string | null): C
   const target = targetOf(request.folder);
   const content = fileText === null ? ok(null) : parseSettings(fileText, target.file, request.command);
   if (!content.ok) return content;
-  const change = addOwnEntries(content.value === null ? NO_SETTINGS : content.value.settings, target.file, request.command);
+  const change = addOwnEntries(content.value === null ? NO_SETTINGS : content.value.settings, target.file, request);
   return change.ok ? ok({ target, text: fileText, change: change.value }) : change;
 };
 

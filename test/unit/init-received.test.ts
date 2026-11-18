@@ -30,6 +30,14 @@ import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const ROOT = '/w/recv';
 const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+const OWN_SETTINGS_WITH_DENY = { ...ownSettingsEntries, permissions: { deny: [
+  'Edit(//w/recv/factory.yaml)',
+  'Edit(//w/recv/factory.local.yaml)',
+  'Edit(//state/factory/owner-records.json)',
+  'Edit(//state/factory/owner-decisions.json)',
+  'Edit(//state/factory/guard-records.json)',
+  'Edit(//w/recv/coordinator/.claude/settings.local.json)',
+] } };
 const INDEX = '/state/factory/homes.json';
 const ACCEPTANCES = '/state/factory/setup-acceptances.json';
 const RECORDS = '/state/factory/owner-records.json';
@@ -834,7 +842,7 @@ describe('init: the hook settings of a received factory', () => {
     const hook = asked.find((question) => question.startsWith(HOOK_QUESTION)) ?? '';
     expect(hook).toContain(HOOK_FILE);
     expect(hook).toContain('factory hook Stop');
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(OWN_SETTINGS_WITH_DENY);
 
     const { handler } = tmuxHandler();
     const withTmux = {
@@ -886,7 +894,7 @@ describe('init: the hook settings of a received factory', () => {
     const { deps } = received({ tracked: ['.gitignore', 'factory.yaml'] });
     const result = await runInit(deps, options({ yes: true }));
     expect(result.ok).toBe(true);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(OWN_SETTINGS_WITH_DENY);
     expect(deps.warned.filter((text) => text.startsWith(HOOK_QUESTION))).toEqual([expect.stringContaining(HOOK_FILE)]);
     expect(deps.prompts).toEqual([]);
     expect(result.ok && result.value.json['files']).toContain('coordinator/.claude/settings.local.json');

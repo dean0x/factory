@@ -9,6 +9,7 @@ import type { FactoryConfig } from '../config/schema.js';
 import {
   declinedHookText,
   ensureHookSettings,
+  ownDenyRulesOf,
   requireHookConsent,
   type HookConsentRequest,
 } from '../core/claude-settings.js';
@@ -97,12 +98,12 @@ const newLine = (id: string, project: string): string =>
   `${commandText(commandLines.workerNew)} ${id} ${flagText(flags.project)} ${project}`;
 
 /** The request for the consent to the hook settings of a work copy. */
-const hookRequestOf = (workCopy: string, yes: boolean): HookConsentRequest => ({
-  folder: workCopy,
-  session: hookSessions.workCopy,
-  yes,
-  command: commandLines.workerNew,
-});
+const hookRequestOf = async (deps: Deps, home: string, workCopy: string, yes: boolean): Promise<CliResult<HookConsentRequest>> => {
+  const deny = await ownDenyRulesOf(deps, home, workCopy);
+  return deny.ok
+    ? ok({ folder: workCopy, session: hookSessions.workCopy, yes, command: commandLines.workerNew, deny: { rules: deny.value.rules, add: true } })
+    : deny;
+};
 
 /** Where a new worker lives, and what it is called. */
 interface NewWorkerPlan {
@@ -330,7 +331,9 @@ const makeWorker = async (
   }
   const exclude = await ensureCloneExclude(deps, clone);
   if (!exclude.ok) return { ...exclude, error: keptCopy(exclude.error, plan, home, true) };
-  const hook = await ensureHookSettings(deps, { ...hookRequestOf(workCopy, yes), dryRun: false });
+  const request = await hookRequestOf(deps, home, workCopy, yes);
+  if (!request.ok) return { ...request, error: keptCopy(request.error, plan, home, true) };
+  const hook = await ensureHookSettings(deps, { ...request.value, dryRun: false });
   if (!hook.ok) return { ...hook, error: keptCopy(hook.error, plan, home, true) };
   if (hook.value.kind === 'declined') {
     deps.warn(declinedHookText(hook.value.file, commandLines.workerNew, hookSessions.workCopy));
@@ -381,7 +384,9 @@ const runNew = async (
   // A role text that no session could get stops the command here, so that no work copy, no branch and no record are made for it.
   const role = await requireRoleText(deps, { home, config, guards: prepared.value.guards.values, retry: newLine(id, options.project) });
   if (!role.ok) return role;
-  const consent = await requireHookConsent(deps, hookRequestOf(plan.value.workCopy, options.yes), tracked.value.localText);
+  const request = await hookRequestOf(deps, home, plan.value.workCopy, options.yes);
+  if (!request.ok) return request;
+  const consent = await requireHookConsent(deps, request.value, tracked.value.localText);
   if (!consent.ok) return consent;
 
   const made = await makeWorker(deps, home, config, plan.value, options.yes, assignment.value, prepared.value.guards.values);

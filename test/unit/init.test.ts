@@ -42,6 +42,14 @@ import { captureSink } from '../helpers/sink.js';
 const HOME = '/w/node';
 /** init writes the root into the factory list as its last step, so every run needs a place for the list. */
 const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+const OWN_SETTINGS_WITH_DENY = { ...ownSettingsEntries, permissions: { deny: [
+  'Edit(//w/node/factory.yaml)',
+  'Edit(//w/node/factory.local.yaml)',
+  'Edit(//state/factory/owner-records.json)',
+  'Edit(//state/factory/owner-decisions.json)',
+  'Edit(//state/factory/guard-records.json)',
+  'Edit(//w/node/coordinator/.claude/settings.local.json)',
+] } };
 const INDEX = '/state/factory/homes.json';
 /** The guard folder of the state repo after the staging folder is renamed onto the state path. */
 const GUARD_FOLDER = `${HOME}/.factory/.git/${stateGuard.folder}`;
@@ -125,7 +133,7 @@ describe('init: the owner prefix record', () => {
     { stdinIsTTY: true, stdoutIsTTY: false },
   ])('keeps the files and names guard confirm without an owner channel: %j', async (channel) => {
     const { deps } = setup({}, channel);
-    deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(ownSettingsEntries));
+    deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(OWN_SETTINGS_WITH_DENY));
     const seen: string[] = [];
     const result = await runInit(withFsWatch(deps, (_method, path) => {
       if (path === store) seen.push(path);
@@ -3831,7 +3839,7 @@ describe('init: the hook settings of the coordinator on a new root', () => {
     const { deps } = setup();
     const result = await runInit(deps, options({ yes: true }));
     expect(result.ok).toBe(true);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(OWN_SETTINGS_WITH_DENY);
     expect(deps.prompts).toEqual([]);
     const shown = deps.warned.filter((text) => text.startsWith(HOOK_QUESTION));
     expect(shown).toHaveLength(1);
@@ -3858,7 +3866,7 @@ describe('init: the hook settings of the coordinator on a new root', () => {
     expect(hook[0]?.question).toContain(FILE);
     expect(hook[0]?.question).toContain('[y/N]');
     expect(seen.at(-1)?.question).toBe(hook[0]?.question);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(OWN_SETTINGS_WITH_DENY);
     expect(result.ok && result.value.json['files']).toContain('coordinator/.claude/settings.local.json');
   });
 

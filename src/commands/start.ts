@@ -3,7 +3,7 @@ import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { declinedHookText, ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
+import { declinedHookText, ensureHookSettings, ownDenyRulesOf, type HookSettingsOutcome } from '../core/claude-settings.js';
 import type { AttachedEnd, Deps } from '../core/deps.js';
 import { readGuardState, type GuardReadState } from '../core/guard-records.js';
 import type { GuardValues } from '../guards/types.js';
@@ -370,10 +370,14 @@ const settleHook = async (
   home: string,
   request: { readonly yes: boolean; readonly dryRun: boolean; readonly command: CommandName },
 ): Promise<CliResult<HookSettingsOutcome>> => {
+  const folder = layoutOf(home).coordinatorDir;
+  const deny = await ownDenyRulesOf(deps, home, folder);
+  if (!deny.ok) return deny;
   const hook = await ensureHookSettings(deps, {
-    folder: layoutOf(home).coordinatorDir,
+    folder,
     session: hookSessions.coordinator,
     ...request,
+    deny: { rules: deny.value.rules, add: false },
   });
   if (hook.ok && hook.value.kind === 'declined') deps.warn(declinedHookText(hook.value.file, request.command));
   return hook;

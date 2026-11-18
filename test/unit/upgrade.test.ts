@@ -10,7 +10,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { isRecord } from '../../src/migrate/inspect.js';
-import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
 import { boardKeys, commands, env, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
@@ -324,6 +324,12 @@ describe('upgrade: effective guard values', () => {
       if (fault === 'other-root') deps.seed(STORE, text(deps, STORE).replace(HOME, '/w/other'));
       if (fault === 'invalid') deps.seed(STORE, '{invalid');
       if (fault === 'shared') deps.seed(CONFIG, `${text(deps, CONFIG)}\nshared_guards: {install-rules: on}\n`);
+      if (fault === 'link') {
+        const folder = layoutOf(HOME).coordinatorDir;
+        const deny = await ownDenyRulesOf(deps, HOME, folder);
+        if (!deny.ok) throw new Error(deny.error.message);
+        deps.seed(`${folder}/.claude/settings.local.json`, JSON.stringify({ ...ownSettingsEntries, permissions: { deny: deny.value.rules } }));
+      }
       const before = snapshot(deps);
       expect(success(await upgrade(deps)).json).toMatchObject({ changed: false });
       expect(snapshot(deps)).toEqual(before);
@@ -4966,6 +4972,15 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
   const COPIES = `${HOME}/work-copies/web`;
   const copySettings = (id: string): string => `${COPIES}/${id}/.claude/settings.local.json`;
   const ALL_FILES = [COORDINATOR_SETTINGS, copySettings('alpha'), copySettings('beta')];
+  const denyRules = (file: string) => [
+    'Edit(//w/node/factory.yaml)',
+    'Edit(//w/node/factory.local.yaml)',
+    'Edit(//state/factory/owner-records.json)',
+    'Edit(//state/factory/owner-decisions.json)',
+    'Edit(//state/factory/guard-records.json)',
+    `Edit(/${file})`,
+  ];
+  const ownSettingsAt = (file: string) => ({ ...ownSettingsEntries, permissions: { deny: denyRules(file) } });
 
   const settingsText = (settings: unknown): string => `${JSON.stringify(settings, null, 2)}\n`;
   const settingsAt = (deps: FakeDeps, path: string): unknown => JSON.parse(text(deps, path));
@@ -5010,6 +5025,26 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     };
   };
 
+  it('init gives the coordinator the own Edit rules after consent', async () => {
+    const { deps } = await makeNode();
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
+  });
+
+  it('asks for the absent Edit rules when the hook entries are current, then writes only after consent', async () => {
+    const { deps } = await makeNode();
+    deps.seed(COORDINATOR_SETTINGS, settingsText(ownSettingsEntries));
+    const terminal = onTerminal(deps, ['n']);
+    const before = snapshot(deps);
+    const declined = success(await upgrade(terminal.deps, currentSpec, { yes: false }));
+    expect(terminal.asked).toHaveLength(1);
+    for (const rule of denyRules(COORDINATOR_SETTINGS)) expect(terminal.asked[0]).toContain(rule);
+    expect(snapshot(deps)).toEqual(before);
+    expect(declined.json).toMatchObject({ hookSettings: [] });
+    const accepted = success(await upgrade(onTerminal(deps, ['y']).deps, currentSpec, { yes: false }));
+    expect(accepted.json).toMatchObject({ hookSettings: [COORDINATOR_SETTINGS] });
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
+  });
+
   it('adds the two new events to the list of a factory that wrote four', () => {
     expect(hookNames.events.slice(4)).toEqual(['Notification', 'PreToolUse']);
     expect(Object.keys(FOUR_EVENTS.hooks)).toEqual(hookNames.events.slice(0, 4));
@@ -5031,7 +5066,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
   it('with the yes flag it adds the events to the coordinator settings and each work copy, and a second run has nothing to do', async () => {
     const { deps } = await olderFactory();
     const output = success(await upgrade(deps, currentSpec, { yes: true }));
-    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsAt(file));
     expect(output.json).toMatchObject({ changed: true, hookSettings: ALL_FILES, backup: null, committed: false });
     expect(output.failed).toBe(false);
     const again = success(await upgrade(deps));
@@ -5044,14 +5079,14 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     const permissions = { allow: ['Bash(ls)'] };
     deps.seed(copySettings('alpha'), settingsText({ ...FOUR_EVENTS, permissions }));
     success(await upgrade(deps, currentSpec, { yes: true }));
-    expect(settingsAt(deps, copySettings('alpha'))).toEqual({ ...ownSettingsEntries, permissions });
+    expect(settingsAt(deps, copySettings('alpha'))).toEqual({ ...ownSettingsEntries, permissions: { ...permissions, deny: denyRules(copySettings('alpha')) } });
   });
 
   it('adds the hook settings in the same run as a change of the state, after the state is written', async () => {
     const { deps } = await olderFactory();
     const output = success(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
     expect(text(deps, CLAUDE)).toContain('New coordinator text.');
-    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsAt(file));
     expect(output.json).toMatchObject({ committed: true, hookSettings: ALL_FILES });
     expect(output.json['backup']).not.toBeNull();
   });
@@ -5084,9 +5119,9 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     const terminal = onTerminal(deps, ['y', 'n', 'y']);
     const output = success(await upgrade(terminal.deps, currentSpec, { yes: false }));
     expect(terminal.asked).toHaveLength(3);
-    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsEntries);
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
     expect(settingsAt(deps, copySettings('alpha'))).toEqual(FOUR_EVENTS);
-    expect(settingsAt(deps, copySettings('beta'))).toEqual(ownSettingsEntries);
+    expect(settingsAt(deps, copySettings('beta'))).toEqual(ownSettingsAt(copySettings('beta')));
     expect(output.json).toMatchObject({ hookSettings: [COORDINATOR_SETTINGS, copySettings('beta')] });
     const warning = output.warnings.join('\n');
     expect(warning).toContain(copySettings('alpha'));
@@ -5170,7 +5205,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     expect(error.message).toContain(COORDINATOR_SETTINGS);
     expect(error.message).not.toContain(copySettings('beta'));
     expect(error.hint).toContain('factory upgrade');
-    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsEntries);
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
     expect(settingsAt(deps, copySettings('alpha'))).toEqual(FOUR_EVENTS);
     expect(settingsAt(deps, copySettings('beta'))).toEqual(FOUR_EVENTS);
   });

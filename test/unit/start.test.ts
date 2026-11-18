@@ -976,6 +976,14 @@ describe('start:--dry-run', () => {
 describe('start:the hook settings of the coordinator', () => {
   const noFile = { hookSettings: false } as const;
   const WRITE_CALLS = ['writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'mkdir', 'chmod', 'copyTree', 'removeEmptyDir'];
+  const ownWithDeny = { ...ownSettingsEntries, permissions: { deny: [
+    'Edit(//w/node/factory.yaml)',
+    'Edit(//w/node/factory.local.yaml)',
+    'Edit(//state/factory/owner-records.json)',
+    'Edit(//state/factory/owner-decisions.json)',
+    'Edit(//state/factory/guard-records.json)',
+    'Edit(//w/node/coordinator/.claude/settings.local.json)',
+  ] } };
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(SETTINGS_FILE) ?? 'null');
   const launched = (tmux: TmuxLog): boolean => tmux.commands().some((command) => command.startsWith('new-session'));
   /**
@@ -1013,12 +1021,20 @@ describe('start:the hook settings of the coordinator', () => {
       for (const event of hookNames.events) expect(question).toContain(`"factory hook ${event}"`);
       expect(question).toContain('"factory hook statusline"');
       expect(question).toContain('[y/N]');
-      expect(settingsOf(made.deps)).toEqual(ownSettingsEntries);
+      expect(settingsOf(made.deps)).toEqual(ownWithDeny);
       expect(launched(made.tmux)).toBe(true);
     });
   });
 
   describe('with no terminal window and no yes flag', () => {
+    it.each(['own', 'received'] as const)('starts in a %s folder with absent Edit rules and asks no new question', async (origin) => {
+      const { deps } = make({ origin });
+      const before = deps.files.get(SETTINGS_FILE);
+      await succeeded(deps);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.files.get(SETTINGS_FILE)).toBe(before);
+    });
+
     it('writes nothing, starts nothing and exits 2 with the change, the target and the remedy', async () => {
       const { deps, tmux } = make(noFile);
       const before = JSON.stringify([...deps.files.entries()].sort()) + [...deps.dirs].sort().join(',');
@@ -1038,7 +1054,7 @@ describe('start:the hook settings of the coordinator', () => {
       const { deps, tmux } = make({ hookSettings: '{"model":"opus"}\n' });
       const before = otherFiles(deps);
       await succeeded(deps, { yes: true });
-      expect(settingsOf(deps)).toEqual({ model: 'opus', ...ownSettingsEntries });
+      expect(settingsOf(deps)).toEqual({ model: 'opus', ...ownWithDeny });
       expect(otherFiles(deps)).toBe(before);
       expect(deps.prompts).toEqual([]);
       expect(deps.warned.some((line) => line.includes(SETTINGS_FILE) && line.includes('"factory hook Stop"'))).toBe(true);
@@ -1049,12 +1065,12 @@ describe('start:the hook settings of the coordinator', () => {
       const { deps } = make(noFile);
       await succeeded(deps, { yes: true });
       expect(deps.dirs.has(`${COORDINATOR}/.claude`)).toBe(true);
-      expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+      expect(settingsOf(deps)).toEqual(ownWithDeny);
     });
   });
 
   describe('a second start', () => {
-    it('asks nothing, writes nothing and shows no presence warning for the file that the first start wrote', async () => {
+    it('asks nothing and writes nothing for the file that the first start wrote', async () => {
       const { deps } = make(noFile);
       await succeeded(deps, { yes: true });
       const writes: string[] = [];
@@ -1067,7 +1083,7 @@ describe('start:the hook settings of the coordinator', () => {
       expect(deps.prompts).toEqual([]);
       expect(writes).toEqual([]);
       const warned = [...deps.warned.slice(warnedBefore), ...output.warnings, ...output.lines.filter((line) => line.level === 'warn').map((line) => line.text)];
-      expect(warned.filter((line) => line.includes('settings.local.json'))).toEqual([]);
+      expect(warned.filter((line) => line.includes('This changes the settings of Claude Code'))).toEqual([]);
     });
 
     it('asks nothing and writes nothing when the entries are in place with another layout', async () => {
