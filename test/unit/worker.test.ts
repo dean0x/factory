@@ -11,7 +11,7 @@ import { launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schem
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
-import { claudeFileText } from '../helpers/blocks.js';
+import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
 import {
   createFakeDeps,
   exited,
@@ -24,7 +24,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { runWorker } from '../helpers/package-registry.js';
-import { SETUP_WORKER, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
+import { SETUP_WORKER, ownSettingsWithRules, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
@@ -46,6 +46,8 @@ const INBOX = '/w/node/.factory/workers/alpha/inbox';
 const BRANCH = 'worker/alpha';
 const COORDINATOR_SETTINGS = '/w/node/coordinator/.claude/settings.local.json';
 const OWN_SETTINGS = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
+const OWN_DENY_RULES = ownSettingsWithRules(HOME, COPY).permissions.deny;
+const WORK_SETTINGS = `${JSON.stringify(ownSettingsWithRules(HOME, COPY), null, 2)}\n`;
 const TEMPLATE = '# exclude patterns for git\n*.log\n';
 const FIRST_NEW_PANE = '%3';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
@@ -248,6 +250,7 @@ const make = (setup: Setup = {}): Made => {
   for (const tool of setup.tools ?? ['tmux', 'claude']) base.seed(`/bin/${tool}`, '');
   const config = setup.config ?? sampleConfig();
   seedConfig(base, HOME, config);
+  base.seed(layoutOf(HOME).workerMd, workerFileText(config, noSetupTexts));
   base.seedDir('/w/node/coordinator');
   if (setup.claudeFile !== false) base.seed('/w/node/coordinator/CLAUDE.md', setup.claudeFile ?? claudeFileText(config));
   base.seed(COORDINATOR_SETTINGS, OWN_SETTINGS);
@@ -371,6 +374,13 @@ describe('worker new: the work, in order', () => {
     expect(indexOf(made, 'tmux set-option')).toBeGreaterThan(order[4] ?? 0);
   });
 
+  it.each(['own', 'received'] as const)('writes the seven own Edit rules for a new work copy in a %s folder', async (origin) => {
+    const made = make({ origin });
+    await succeeded(made);
+    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? '')).toEqual({ ...ownSettingsEntries, permissions: { deny: OWN_DENY_RULES } });
+    for (const rule of OWN_DENY_RULES) expect(made.deps.warned.join('\n')).toContain(rule);
+  });
+
   it('makes the work copy of the listed clone on a new branch, in work-copies/<project>/<id>', async () => {
     const made = make();
     await succeeded(made);
@@ -409,7 +419,7 @@ describe('worker new: the work, in order', () => {
   it('writes the hook settings into the work copy and nowhere else in it', async () => {
     const made = make();
     await succeeded(made);
-    expect(made.deps.files.get(SETTINGS_FILE)).toBe(OWN_SETTINGS);
+    expect(made.deps.files.get(SETTINGS_FILE)).toBe(WORK_SETTINGS);
     expect([...made.deps.files.keys()].filter((path) => path.startsWith(`${COPY}/`))).toEqual([SETTINGS_FILE]);
     expect(made.deps.files.get(COORDINATOR_SETTINGS)).toBe(OWN_SETTINGS);
   });
@@ -830,7 +840,7 @@ describe('worker new: the consent for the hook settings', () => {
   });
 
   it.each([false, true])('uses the config value %s in the prompt and the write after checkout', async (idle) => {
-    const original = { model: 'opus', ...ownSettingsEntries, idleCompaction: !idle };
+    const original = { model: 'opus', ...ownSettingsWithRules(HOME, COPY), idleCompaction: !idle };
     const made = make({ config: configFor(idle), checkout: JSON.stringify(original), tty: true, prompt: () => ok('y') });
     await succeeded(made, { yes: false });
     expect(made.deps.prompts).toEqual([
@@ -853,13 +863,13 @@ describe('worker new: the consent for the hook settings', () => {
   it('writes true into a new file with the yes flag inside a factory session', async () => {
     const made = make({ config: configFor(true), env: { FACTORY_SESSION: 'demo' } });
     await succeeded(made, { yes: true });
-    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? 'null')).toEqual({ ...ownSettingsEntries, idleCompaction: true });
+    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? 'null')).toEqual({ ...ownSettingsWithRules(HOME, COPY), idleCompaction: true });
     expect(made.deps.prompts).toEqual([]);
     expect(made.events).toContain('tmux split-window');
   });
 
   it('keeps the hooks after a no to the idle value and names upgrade as the remedy', async () => {
-    const checkout = JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine });
+    const checkout = JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine, permissions: { deny: OWN_DENY_RULES } });
     const made = make({ checkout, tty: true, prompt: () => ok('n') });
     await succeeded(made, { yes: false });
     expect(made.deps.files.get(SETTINGS_FILE)).toBe(checkout);
@@ -899,7 +909,7 @@ describe('worker new: the consent for the hook settings', () => {
     const made = make(NO_TERMINAL);
     await succeeded(made, { yes: true });
     expect([...made.deps.files.keys()].filter((path) => path.startsWith(`${COPY}/`))).toEqual([SETTINGS_FILE]);
-    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? '')).toEqual(JSON.parse(JSON.stringify(ownSettingsEntries)));
+    expect(JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? '')).toEqual({ ...ownSettingsEntries, permissions: { deny: OWN_DENY_RULES } });
   });
 
   it('asks on a terminal window with no yes flag, after the work copy and the record exist, and writes on a yes', async () => {
@@ -915,7 +925,7 @@ describe('worker new: the consent for the hook settings', () => {
     expect(asked).toHaveLength(1);
     expect(asked[0]).toContain(`This changes the settings of Claude Code in ${SETTINGS_FILE}`);
     expect(asked[0]).toContain('Write this change? [y/N]');
-    expect(made.deps.files.get(SETTINGS_FILE)).toBe(OWN_SETTINGS);
+    expect(made.deps.files.get(SETTINGS_FILE)).toBe(WORK_SETTINGS);
     const order = [indexOf(made, 'git worktree-add'), indexOf(made, `writeTextExclusive ${RECORD}`), indexOf(made, 'prompt'), indexOf(made, 'tmux split-window')];
     expect(order.every((position) => position >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -943,7 +953,7 @@ describe('worker new: the consent for the hook settings', () => {
   it('counts the yes flag inside a factory session for a work copy that has no settings file', async () => {
     const made = make({ ...NO_TERMINAL, env: { FACTORY_SESSION: 'demo' } });
     await succeeded(made, { yes: true });
-    expect(made.deps.files.get(SETTINGS_FILE)).toBe(OWN_SETTINGS);
+    expect(made.deps.files.get(SETTINGS_FILE)).toBe(WORK_SETTINGS);
   });
 
   it('exits 2 inside a factory session with no yes flag and no terminal, before any write, and offers the yes flag that counts', async () => {
@@ -966,14 +976,14 @@ describe('worker new: the consent for the hook settings', () => {
     const made = make({ tty: true, prompt: () => ok('y'), checkout: '{"permissions":{"allow":["Read"]}}\n' });
     await succeeded(made, { yes: false });
     const written = JSON.parse(made.deps.files.get(SETTINGS_FILE) ?? '') as Record<string, unknown>;
-    expect(written['permissions']).toEqual({ allow: ['Read'] });
+    expect(written['permissions']).toEqual({ allow: ['Read'], deny: OWN_DENY_RULES });
     expect(written['hooks']).toEqual(JSON.parse(JSON.stringify(ownSettingsEntries)).hooks);
   });
 
-  it('asks nothing and writes nothing to the settings file when the checkout gave the own entries already', async () => {
-    const made = make({ tty: true, prompt: () => ok('y'), checkout: OWN_SETTINGS });
+  it('asks nothing and writes nothing to the settings file when the checkout gave the own entries and rules', async () => {
+    const made = make({ tty: true, prompt: () => ok('y'), checkout: WORK_SETTINGS });
     await succeeded(made, { yes: false });
-    expect(made.deps.files.get(SETTINGS_FILE)).toBe(OWN_SETTINGS);
+    expect(made.deps.files.get(SETTINGS_FILE)).toBe(WORK_SETTINGS);
     expect(made.events.filter((event) => event.includes(`${SETTINGS_FILE}.tmp-`))).toEqual([]);
     expect(made.events).not.toContain('prompt');
   });
@@ -1259,7 +1269,7 @@ describe('worker new: a failure after the work copy exists', () => {
     expect(error.hint).not.toContain('does not make the exclude entry');
     expect(made.deps.dirs.has(COPY)).toBe(true);
     expect(made.deps.files.has(RECORD)).toBe(true);
-    expect(made.deps.files.get(SETTINGS_FILE)).toBe(OWN_SETTINGS);
+    expect(made.deps.files.get(SETTINGS_FILE)).toBe(WORK_SETTINGS);
     expect(made.deps.files.get(EXCLUDE)).toBe(`${TEMPLATE}${ENTRY}\n`);
   });
 

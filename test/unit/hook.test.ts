@@ -5,8 +5,9 @@ import type { CliResult } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
+import { allOn } from '../../src/guards/effective.js';
 import type { HookOutcome } from '../../src/hooks/hook.js';
-import { blockNames, files, hookNames, roleText, schemaIds, setupFileOf, type HookEvent } from '../../src/names.js';
+import { blockNames, files, guardIds, hookNames, roleText, schemaIds, setupFileOf, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { workerFileTemplatesFor } from '../../src/templates/index.js';
 import {
@@ -21,6 +22,7 @@ import { composeRoleText } from '../../src/workers/role-text.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { runHook } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { countReadsOf } from '../helpers/read-count.js';
 import { captureSink } from '../helpers/sink.js';
 import { ACCEPTANCES, acceptSetupText } from '../helpers/setup-acceptance.js';
 
@@ -683,7 +685,7 @@ describe('factory hook: the role text of a worker session', () => {
   const DECOY_FILE = layoutOf(HOME).workerMd;
   const paths = workerPathsOf(HOME, WORKER_ID);
 
-  const textOf = (setup: string | null): string => composeRoleText(workerFileTemplatesFor(sampleConfig(), setup));
+  const textOf = (setup: string | null): string => composeRoleText(workerFileTemplatesFor(sampleConfig(), setup, allOn));
   const outputOf = (text: string): string =>
     JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } });
   const refusedOutput = outputOf(roleText.refusal);
@@ -734,6 +736,67 @@ describe('factory hook: the role text of a worker session', () => {
     const text = printed.hookSpecificOutput.additionalContext;
     expect(text.split('\n')[0]).toBe(roleText.sourceLine);
     expect(text.endsWith(SETUP)).toBe(true);
+  });
+
+  const STORE = `/state/factory/${files.guardRecords}`;
+  const guards = { [guardIds.installRules]: 'off' as const };
+  const seedOff = (deps: FakeDeps): void => {
+    const config = sampleConfig();
+    seedConfig(deps, HOME, { ...config, core: { ...config.core, guards } });
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: NODE_ID, root: HOME, prefix: null,
+      values: { [guardIds.installRules]: { value: 'off', at: NOW } },
+    }] }));
+  };
+
+  it('delivers effective worker text with one guard store read', async () => {
+    const deps = await makeStart();
+    seedOff(deps);
+    const counted = countReadsOf(deps, STORE);
+    const expected = composeRoleText(workerFileTemplatesFor(sampleConfig(), SETUP, guards));
+    expect(await ranFor(counted.deps)).toEqual({ code: 0, out: [outputOf(expected)], err: [] });
+    expect(counted.count()).toBe(1);
+  });
+
+  it.each(['missing record', 'invalid store'])('keeps worker rules on with %s', async (fault) => {
+    const deps = await makeStart();
+    seedOff(deps);
+    if (fault === 'missing record') deps.files.delete(STORE);
+    else deps.seed(STORE, 'invalid');
+    expect(await ranFor(deps)).toEqual({ code: 0, out: [outputOf(textOf(SETUP))], err: [] });
+  });
+
+  it('reads no guard store at a worker start with no local off value', async () => {
+    const deps = await makeStart();
+    seedOff(deps);
+    seedConfig(deps, HOME);
+    const counted = countReadsOf(deps, STORE);
+    expect(await ranFor(counted.deps)).toEqual({ code: 0, out: [outputOf(textOf(SETUP))], err: [] });
+    expect(counted.count()).toBe(0);
+  });
+
+  it.each(hookNames.events.filter((event) => event !== 'SessionStart'))('reads no guard store for %s with a local off value', async (event) => {
+    const deps = await makeStart({ stdin: payload(event) });
+    seedOff(deps);
+    const counted = countReadsOf(deps, STORE);
+    await ranFor(counted.deps, event);
+    expect(counted.count()).toBe(0);
+  });
+
+  it('reads no guard store for the status line with a local off value', async () => {
+    const deps = await makeStart({ stdin: JSON.stringify({ session_id: SESSION, context_window: { used_percentage: 20 } }) });
+    seedOff(deps);
+    const counted = countReadsOf(deps, STORE);
+    expect((await runLine(['hook', hookNames.statusline], counted.deps)).code).toBe(0);
+    expect(counted.count()).toBe(0);
+  });
+
+  it('reads no factory file for a plain notification with a local off value', async () => {
+    const deps = await makeStart({ stdin: payload('Notification', { notification_type: 'idle_prompt_other' }) });
+    seedOff(deps);
+    const calls: string[] = [];
+    const ran = await ranFor(withFsWatch(deps, (method, path) => calls.push(`${method} ${path}`)), 'Notification');
+    expect(ran).toEqual({ code: 0, out: [], err: [] });
+    expect(calls).toEqual([]);
   });
 
   it.each(['startup', 'resume', 'clear', 'compact'])('prints the same text at a session start with the source %s', async (source) => {

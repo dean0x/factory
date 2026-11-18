@@ -546,7 +546,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     name: 'A read of a private or child file opens it without a link and checks its kind, user, mode and size on the handle',
     applies: 'Reads of private and child files',
     harm: true,
-    sites: [...at('src/core/node-deps.ts', 'CHECKED_OPEN_FLAGS'), ...at('src/core/access.ts', 'checkedFaultOf')],
+    sites: [...at('src/core/node-deps.ts', 'openChecked'), ...at('src/core/access.ts', 'checkedFaultOf')],
   }),
   codeRow({
     id: 'folder-links',

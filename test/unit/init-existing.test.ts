@@ -33,6 +33,10 @@ import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-f
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
+import { allOn } from '../../src/guards/effective.js';
+import type { GuardValues } from '../../src/guards/types.js';
+import { countReadsOf } from '../helpers/read-count.js';
+import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 
 const ROOT = '/w/node';
 const STATE = `${ROOT}/.factory`;
@@ -178,7 +182,7 @@ const existing = (made: Existing = {}, extra: FakeOptions = {}) => {
   }
   if (made.unaccepted !== true) acceptSetupText(deps, ROOT, made.id ?? 'demo', tracked, texts);
   if (made.hookInPlace === false) deps.seedDir(COORDINATOR);
-  else deps.seed(HOOK_FILE, JSON.stringify(ownSettingsEntries));
+  else deps.seed(HOOK_FILE, JSON.stringify(ownSettingsWithRules(ROOT, COORDINATOR)));
   const entry = made.entry === undefined ? (made.id ?? 'demo') : made.entry;
   if (entry !== null) {
     registerRoot(deps, ROOT, entry, [`${ROOT}/web`]);
@@ -688,7 +692,7 @@ describe('init: the text of the coordinator follows a changed mode of a register
 
   /** The text of the coordinator file for these modes, as `init` and `upgrade` render it. */
   const textFor = (modes: ApprovalModes, setup: { coordinator: string | null; worker: string | null } = { coordinator: null, worker: null }): string => {
-    const templates = blockTemplatesFor(blockInputOf(configOf({}), setup, modes));
+    const templates = blockTemplatesFor(blockInputOf(configOf({}), setup, modes, allOn));
     const blocks = templates
       .filter((template) => template.target === 'claudeFile')
       .map((template) => {
@@ -711,6 +715,30 @@ describe('init: the text of the coordinator follows a changed mode of a register
 
   const writesOf = (deps: FakeDeps, from = 0): string[] =>
     deps.atomicWrites.slice(from).filter((path) => [LOCAL, INDEX, COORDINATOR_FILE, RECORDS].includes(path));
+
+  it('keeps confirmed off guard text in both renders of a changed approval mode with one store read', async () => {
+    const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) });
+    const guards: GuardValues = { 'approval-merge': 'off', 'resume-routines': 'off', 'install-rules': 'off' };
+    deps.seed(LOCAL, `${deps.files.get(LOCAL) ?? ''}\nguards: ${JSON.stringify(guards)}\n`);
+    const store = '/state/factory/guard-records.json';
+    const record = JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT, prefix: null,
+      values: Object.fromEntries(Object.entries(guards).map(([id, value]) => [id, { value, at: '2030-01-02T03:04:05.678Z' }])),
+    }] });
+    deps.seed(store, record);
+    const counted = countReadsOf(deps, store);
+    const result = await runInit(counted.deps, options());
+    expect(result.ok).toBe(true);
+    const expected = blockTemplatesFor(blockInputOf(configOf({}), { coordinator: null, worker: null }, DELEGATED, guards))
+      .filter((template) => template.target === 'claudeFile').map((template) => {
+        const rendered = renderBlock(template);
+        if (!rendered.ok) throw new Error(rendered.error.message);
+        return rendered.value;
+      });
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(appendBlocks('', expected));
+    expect(counted.count()).toBe(1);
+    expect(deps.files.get(store)).toBe(record);
+    expect((await loadConfig(deps, ROOT))).toMatchObject({ ok: true, value: { core: { guards } } });
+  });
 
   it('names the new mode in the text after the run, and prints no line that asks for an upgrade', async () => {
     const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) });
@@ -1070,6 +1098,30 @@ describe('init: an entry with another node id', () => {
 });
 
 describe('init: a root with no state folder', () => {
+  it('restores the worker file with confirmed off guard values and leaves the guard files unchanged', async () => {
+    const { deps } = existing({ state: 'absent' });
+    const guards: GuardValues = { 'install-rules': 'off' };
+    deps.seed(LOCAL, `${deps.files.get(LOCAL) ?? ''}\nguards: ${JSON.stringify(guards)}\n`);
+    const local = deps.files.get(LOCAL);
+    const store = '/state/factory/guard-records.json';
+    const record = JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT, prefix: null,
+      values: { 'install-rules': { value: 'off', at: '2030-01-02T03:04:05.678Z' } },
+    }] });
+    deps.seed(store, record);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    const expected = blockTemplatesFor(blockInputOf(configOf({}), {
+      coordinator: COORDINATOR_TEXT, worker: WORKER_TEXT,
+    }, configOf({}).core.approval, guards)).filter((template) => template.target === 'workerFile').map((template) => {
+      const rendered = renderBlock(template);
+      if (!rendered.ok) throw new Error(rendered.error.message);
+      return rendered.value;
+    });
+    expect(deps.files.get(`${STATE}/roles/worker.md`)).toBe(appendBlocks('', expected));
+    expect(deps.files.get(LOCAL)).toBe(local);
+    expect(deps.files.get(store)).toBe(record);
+  });
+
   it('makes the state folder as the received path does, registers the root, and the root rule passes', async () => {
     const { deps, log } = existing({ state: 'absent', origin: 'own' });
     const before = outsideState(deps);
@@ -1616,7 +1668,7 @@ describe('init: the hook settings of a registered root', () => {
     );
     expect(snapshot(deps)).toBe(before);
     expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
-    expect(settingsOf(deps)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+    expect(settingsOf(deps)).toEqual({ ...ownSettingsWithRules(ROOT, COORDINATOR), idleCompaction: idle });
     expect(deps.prompts).toEqual([]);
   });
 
@@ -1648,7 +1700,7 @@ describe('init: the hook settings of a registered root', () => {
     const { deps } = existing({ hookInPlace: false });
     const result = await runInit(deps, options({ yes: true }));
     expect(result.ok).toBe(true);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(ownSettingsWithRules(ROOT, COORDINATOR));
     expect(deps.warned.filter((text) => text.startsWith(HOOK_QUESTION))).toEqual([expect.stringContaining(HOOK_FILE)]);
     expect(result.ok && result.value.json['files']).toContain('coordinator/.claude/settings.local.json');
   });
@@ -1660,7 +1712,7 @@ describe('init: the hook settings of a registered root', () => {
     expect(result.ok).toBe(true);
     const order = asked.map((question) => (question.includes('Accept these files?') ? 'files' : question.startsWith(HOOK_QUESTION) ? 'hook' : 'other'));
     expect(order.filter((kind) => kind !== 'other')).toEqual(['files', 'hook']);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(ownSettingsWithRules(ROOT, COORDINATOR));
   });
 
   it('goes on after a no, writes no file, and names the command in the notice', async () => {

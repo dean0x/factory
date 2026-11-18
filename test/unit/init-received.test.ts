@@ -7,6 +7,7 @@ import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
+import { readGuardStore } from '../../src/core/guard-records.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { ok } from '../../src/core/result.js';
 import { env, stateGuard, trackedFiles } from '../../src/names.js';
@@ -22,6 +23,7 @@ import {
 } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { runDoctor, runInit, runStart } from '../helpers/package-registry.js';
+import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
 import { captureSink } from '../helpers/sink.js';
@@ -29,6 +31,7 @@ import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const ROOT = '/w/recv';
 const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+const OWN_SETTINGS_WITH_DENY = ownSettingsWithRules(ROOT, `${ROOT}/coordinator`);
 const INDEX = '/state/factory/homes.json';
 const ACCEPTANCES = '/state/factory/setup-acceptances.json';
 const RECORDS = '/state/factory/owner-records.json';
@@ -131,6 +134,52 @@ const entryOf = (path: string, text: string): ManifestEntry => ({
 const SETUP_HASH = manifestHash(Object.entries(SETUP_FILES).map(([path, text]) => entryOf(path, text)));
 
 const coordinatorText = (deps: FakeDeps): string => deps.files.get(`${ROOT}/coordinator/CLAUDE.md`) ?? '';
+
+describe('init: the owner prefix of a received factory', () => {
+  const store = '/state/factory/guard-records.json';
+
+  it.each([false, true])('records the prefix after the files, with yes set to %s', async (yes) => {
+    const { deps } = received({}, { ...terminal, prompt: () => ok('') });
+    expect((await runInit(deps, options({ yes }))).ok).toBe(true);
+    const records = await readGuardStore(deps, store);
+    expect(records).toMatchObject({ ok: true, value: [{
+      node: 'demo', root: ROOT, values: {}, prefix: {
+        hash: createHash('sha256').update(sampleConfig().core.owner.prefix, 'utf8').digest('hex'),
+        at: deps.now().toISOString(),
+      },
+    }] });
+    expect(deps.atomicWrites.indexOf(store)).toBeGreaterThan(deps.atomicWrites.indexOf(`${ROOT}/factory.local.yaml`));
+    for (const file of ['factory.yaml', 'factory.local.yaml']) {
+      expect(deps.files.get(`${ROOT}/${file}`)).not.toMatch(/^guards:/m);
+    }
+  });
+
+  it.each([
+    { ...terminal, env: { ...ENV, [env.claudeCode]: '1' } },
+    { stdinIsTTY: false, stdoutIsTTY: true },
+    { stdinIsTTY: true, stdoutIsTTY: false },
+  ])('keeps the files and names guard confirm without an owner channel: %j', async (channel) => {
+    const { deps } = received({}, channel);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.value.warnings.filter((text) => text.includes('factory guard confirm')) : []).toHaveLength(1);
+    expect(deps.files.has(store)).toBe(false);
+    expect(deps.files.has(`${ROOT}/factory.local.yaml`)).toBe(true);
+  });
+});
+
+it.each([false, true])('leaves the prefix record unchanged when init has run before: %s', async (hasRecord) => {
+  const { deps } = received();
+  const store = '/state/factory/guard-records.json';
+  expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+  if (hasRecord) deps.seed(store, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT,
+    values: {}, prefix: { hash: 'a'.repeat(64), at: deps.now().toISOString() },
+  }] }));
+  const before = deps.files.get(store);
+  const result = await runInit({ ...deps, ...terminal }, options({ yes: true, ownerName: undefined }));
+  expect(result.ok, messageOf(result)).toBe(true);
+  expect(deps.files.get(store)).toBe(before);
+});
 
 describe('init: a received factory', () => {
   it('registers the root without the check for a new home, and writes only the files of this machine', async () => {
@@ -783,9 +832,11 @@ describe('init: the hook settings of a received factory', () => {
     expect((await runInit(deps, options())).ok).toBe(true);
     expect(deps.prompts.filter((question) => question.startsWith(HOOK_QUESTION))).toEqual([
       `This changes the settings of Claude Code in ${HOOK_FILE}:\n` +
-      `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml), and replace the value ${!idle}\nWrite this change? [y/N] `,
+      `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml), and replace the value ${!idle}\n` +
+      OWN_SETTINGS_WITH_DENY.permissions.deny.map((rule) => `  permissions.deny: add ${rule}\n`).join('') +
+      'Write this change? [y/N] ',
     ]);
-    expect(settingsOf(deps)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+    expect(settingsOf(deps)).toEqual({ ...OWN_SETTINGS_WITH_DENY, idleCompaction: idle });
   });
 
   it('rejects an idle value that is not a boolean before any write', async () => {
@@ -812,7 +863,7 @@ describe('init: the hook settings of a received factory', () => {
     const hook = asked.find((question) => question.startsWith(HOOK_QUESTION)) ?? '';
     expect(hook).toContain(HOOK_FILE);
     expect(hook).toContain('factory hook Stop');
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(OWN_SETTINGS_WITH_DENY);
 
     const { handler } = tmuxHandler();
     const withTmux = {
@@ -864,7 +915,7 @@ describe('init: the hook settings of a received factory', () => {
     const { deps } = received({ tracked: ['.gitignore', 'factory.yaml'] });
     const result = await runInit(deps, options({ yes: true }));
     expect(result.ok).toBe(true);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(settingsOf(deps)).toEqual(OWN_SETTINGS_WITH_DENY);
     expect(deps.warned.filter((text) => text.startsWith(HOOK_QUESTION))).toEqual([expect.stringContaining(HOOK_FILE)]);
     expect(deps.prompts).toEqual([]);
     expect(result.ok && result.value.json['files']).toContain('coordinator/.claude/settings.local.json');

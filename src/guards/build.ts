@@ -24,7 +24,11 @@ export const guardOf = (
   id,
   name,
   keepsSafe,
+  wired: false,
   newNode: guardValues.on,
   whenMissing: guardValues.on,
   related,
 });
+
+/** Mark a definition whose sites can all follow its value. */
+export const wiredGuard = (definition: GuardDefinition): GuardDefinition => ({ ...definition, wired: true });

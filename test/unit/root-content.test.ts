@@ -18,7 +18,7 @@ import {
 } from '../../src/commands/root-content.js';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
-import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import {
   checkIds,
   claudeSettingKeys,
@@ -944,6 +944,30 @@ describe('settings files', () => {
       expect(requireRootClean(found).ok).toBe(true);
     });
 
+    it.each(['exact', 'extra', 'missing', 'repeated', 'escaped'] as const)('exempts only the exact own rules: %s', async (shape) => {
+      const deps = make();
+      const deny = await ownDenyRulesOf(deps, HOME, `${HOME}/coordinator`);
+      if (!deny.ok) throw new Error(deny.error.message);
+      let rules = deny.value.rules;
+      if (shape === 'extra') rules = [...rules, 'Edit(//other)'];
+      if (shape === 'missing') rules = rules.slice(1);
+      let text = JSON.stringify({ ...OWN, permissions: { deny: rules } });
+      if (shape === 'repeated') text = text.replace('{', '{"permissions":{},');
+      if (shape === 'escaped') text = text.replace('permissions', 'permi\\u0073sions');
+      put(deps, 'coordinator', text);
+      const findings = of(await scan(deps), checkIds.permissionMode);
+      expect(findings.map((entry) => entry.level)).toEqual(shape === 'exact' ? [] : ['warn']);
+    });
+
+    it('gives no warning for own rules from a linked parent when the root has its real path', async () => {
+      const deps = make({ links: { '/alias': '/w' } });
+      deps.seedDir('/alias/node/coordinator/.claude');
+      const deny = await ownDenyRulesOf(deps, '/alias/node', '/alias/node/coordinator');
+      if (!deny.ok) throw new Error(deny.error.message);
+      put(deps, 'coordinator', JSON.stringify({ ...OWN, permissions: { deny: deny.value.rules } }));
+      expect(of(await scan(deps), checkIds.permissionMode)).toEqual([]);
+    });
+
     it('gives no warning when the file writes the same entries in another key order and layout', async () => {
       const deps = make();
       put(deps, 'coordinator', JSON.stringify({ statusLine: OWN.statusLine, hooks: OWN.hooks }));
@@ -1219,6 +1243,14 @@ describe('settings files', () => {
       expect(stop?.text).toContain(env.stateHome);
       expect(stop?.text).toContain('gets no role text');
       expect(requireNoFailures(found.findings).ok).toBe(false);
+    });
+
+    it('gives no finding for tracked own entries with the exact own rules', async () => {
+      const deps = commit({});
+      const deny = await ownDenyRulesOf(deps, HOME, FOLDER.path);
+      if (!deny.ok) throw new Error(deny.error.message);
+      const found = await tracked({ 'settings.local.json': JSON.stringify({ ...ownSettingsEntries, permissions: { deny: deny.value.rules } }) });
+      expect(found.findings).toEqual([]);
     });
 
     it('gives no failure for tracked files that keep the hooks on', async () => {

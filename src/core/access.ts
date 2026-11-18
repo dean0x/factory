@@ -8,11 +8,14 @@ export type AccessFault = 'otherOwner' | 'writableByOthers';
  * The first fault in the owner and the mode of a path, or null. The owner must be `uid`: a platform with no user ids (`uid` is null)
  * has no owner check. The mode check holds on every platform.
  */
-export const accessFaultFor = (uid: number | null, info: PathInfo): AccessFault | null => {
+export const accessFaultCore = (uid: number | null, info: PathInfo): AccessFault | null => {
   if (uid !== null && info.uid !== uid) return 'otherOwner';
   if ((info.mode & localFileModes.groupOtherWrite) !== 0) return 'writableByOthers';
   return null;
 };
+
+/** The row caller for the owner and mode checks. */
+export const accessFaultFor = (uid: number | null, info: PathInfo): AccessFault | null => accessFaultCore(uid, info);
 
 /** The first fault in the owner and the mode of a path, or null. The owner must be the user of this process. */
 export const accessFaultOf = (deps: Deps, info: PathInfo): AccessFault | null => accessFaultFor(deps.uid, info);
@@ -21,9 +24,13 @@ export const accessFaultOf = (deps: Deps, info: PathInfo): AccessFault | null =>
  * The first reason to refuse a file that was opened, or null: the kind, then the owner, then the mode, then the size. A `maxBytes` of
  * null has no size check. The facts are those of the open handle, so the answer holds for the bytes that are read from it.
  */
-export const checkedFaultOf = (uid: number | null, info: PathInfo, maxBytes: number | null): CheckedFault | null => {
+export const checkedFaultCore = (uid: number | null, info: PathInfo, maxBytes: number | null): CheckedFault | null => {
   if (info.kind !== 'file') return 'wrong-kind';
-  const access = accessFaultFor(uid, info);
+  const access = accessFaultCore(uid, info);
   if (access !== null) return access;
   return maxBytes !== null && info.size > maxBytes ? 'size' : null;
 };
+
+/** The row caller uses the same checks as the always-on core. */
+export const checkedFaultOf = (uid: number | null, info: PathInfo, maxBytes: number | null): CheckedFault | null =>
+  checkedFaultCore(uid, info, maxBytes);

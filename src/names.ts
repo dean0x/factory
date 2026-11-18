@@ -301,6 +301,8 @@ export const files = {
   homeIndex: 'homes.json',
   /** The approval records of the user. The per-user state folder holds the file, beside the factory list. */
   ownerRecords: 'owner-records.json',
+  /** The guard values and owner prefix records of the user, beside the factory list. */
+  guardRecords: 'guard-records.json',
   /** The owner decisions of the user: one record for each decision that the owner answered. It has its own lock and its own bounds. */
   ownerDecisions: 'owner-decisions.json',
   /** The setup acceptances of the user. The per-user state folder holds the file, beside the factory list. */
@@ -606,6 +608,7 @@ export const privateFile = {
   lockWaitMs: 50,
   /** A lock that is older than this was left by a process that ended. The next writer takes it. */
   lockStaleMs: 5_000,
+  ageOnlyPolicy: 'an age-only lock cannot use a liveness policy',
 } as const;
 
 /**
@@ -2142,6 +2145,8 @@ export const checkIds = {
   projectPaths: 'project-paths',
   /** The mode of each approval point and the active delegations. */
   delegations: 'delegations',
+  /** The guard values, their records and their direct config proxies. */
+  guards: 'guards',
   instructionFiles: 'instruction-files',
   proxyEnv: 'proxy-env',
   proxy: 'proxy',
@@ -2343,6 +2348,8 @@ export const schemaIds = {
   queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
   guardList: `${program}.guard-list/v1`,
+  guardSet: `${program}.guard-set/v1`,
+  guardConfirm: `${program}.guard-confirm/v1`,
   lock: `${program}.${commands.lock}/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
@@ -2410,6 +2417,134 @@ export const guardValues = { on: 'on', off: 'off' } as const;
 /** The key of the guard values: the map in the local file, and the map in the shared file that can only tighten. */
 export const guardKeys = { local: 'guards', shared: 'shared_guards' } as const;
 
+/** The guard config messages and comments. */
+export const guardConfigWords = {
+  sharedOnOnly: `${files.config} can only turn a guard on. Run "${commandText(commandLines.guardList)}".`,
+  localOnly: `is a local key: put it in ${files.localConfig}, not in ${files.config}. Run "${commandText(commandLines.guardList)}".`,
+  localComment: 'The local value of this guard.',
+  sharedComment: 'This guard stays on on every machine.',
+  droppedRetired: (ids: readonly string[]): string => `Removed retired guard ids: ${ids.join(', ')}.`,
+} as const;
+
+/** The guard store has its own schema, keys and bounds, apart from approval records. */
+export const guardRecords = {
+  schema: 1,
+  keys: {
+    schema: 'schema',
+    records: 'records',
+    node: 'node',
+    root: 'root',
+    id: 'id',
+    value: 'value',
+    values: 'values',
+    prefix: 'prefix',
+    hash: 'hash',
+    at: 'at',
+  },
+  maxRecords: 1_000,
+  warnRecords: 900,
+  maxBytes: maxFileBytes,
+} as const;
+
+/** The words of the guard value command. */
+export const guardSetWords = {
+  summary: 'Set guards in the local file.',
+  argumentsError: `Use "${commandText(commandLines.guardSet)} ID on|off" or "${commandText(commandLines.guardSet)} ${flagText(flags.all)} on|off". Run "${commandText(commandLines.guardList)}" to see the guards.`,
+  badValue: 'The guard value must be on or off.',
+  idWithAll: `Do not name a guard with ${flagText(flags.all)}.`,
+  nextStart: 'The guard value takes effect at the next start.',
+  offQuestion: 'Turn these guards off? [y/N] ',
+  declined: 'Nothing changed: the answer was not yes.',
+  skipped: (count: number): string => `${count} guards are not settable in this version.`,
+  changedFile: (file: string): string => `${file} changed after its read. Run the guard command again.`,
+  unsafeFile: (file: string): string => `${file} must be a plain file of this user, with no group or other write access.`,
+  unsafeFileRemedy: `Check the file and its access mode, then run "${commandText(commands.doctor)}".`,
+  unreadableFile: (file: string): string => `${file} cannot be read as bounded UTF-8 text.`,
+  set: (count: number, value: string): string => `Set ${count} guard values to ${value}.`,
+  recordFailedOn: `The local value is on, but the guard record could not be saved. Run "${commandText(commands.doctor)}".`,
+  noJson: (command: string): string => `${commandText(command)} has no ${flagText(flags.json)} output.`,
+  listOnly: (flag: string): string => `${flagText(flag)} applies to ${commandText(commandLines.guardList)} only.`,
+  allHelp: `With list: show every row. With set: set every guard that this version can set.`,
+  commandSummary: 'List, set and confirm guards.',
+  listFlagsHelp: `${flagText(flags.family)} and ${flagText(flags.json)} apply to list only.`,
+  unknownId: (id: string): string => `Unknown guard "${id}". Run "${commandText(commandLines.guardList)}".`,
+  notSettable: (id: string): string =>
+    `Guard "${id}" is not settable in this version. Run "${commandText(commandLines.guardList)}".`,
+} as const;
+
+/** The words of the owner prefix command. */
+export const guardConfirmWords = {
+  summary: 'Confirm the owner prefix for this folder.',
+  argumentsError: `${commandText(commandLines.guardConfirm)} takes no arguments or ${flagText(flags.all)} flag.`,
+  prefixLabel: 'Owner prefix:',
+  differs: 'The owner prefix differs from its saved record.',
+  checkIncomplete: 'The owner prefix check did not complete. Nothing changed.',
+  question: 'Confirm this owner prefix? [y/N] ',
+  confirmed: 'Recorded the owner prefix for this folder.',
+} as const;
+
+/** Guard record checks and their remedies have words of their own. */
+export const guardRecordWords = {
+  sessionRefused: `A ${program} session cannot write a guard record.`,
+  claudeRefused: 'A Claude Code session cannot write a guard record.',
+  inputRequired: 'A guard record needs terminal input.',
+  outputRequired: 'A guard record needs terminal output.',
+  channelRemedy: 'Run the guard command in your terminal window, outside a session.',
+  unreadable: 'The guard store cannot be read.',
+  noPlace: 'The guard store has no place: no variable names a state folder.',
+  inside: 'The guard store must be outside the factory and Claude Code folders.',
+  placeRemedy: `Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,
+  duplicate: 'The guard store holds two records for one node and factory folder.',
+  recordCap: `The guard store cannot exceed ${guardRecords.maxRecords} records. Run "${commandText(commands.doctor)}".`,
+  byteCap: `The guard store cannot exceed ${guardRecords.maxBytes} bytes. Run "${commandText(commands.doctor)}".`,
+  badPrefix: `The ${keys.root.owner}.${keys.owner.prefix} text must not contain a hidden character.`,
+  adapterRequired: 'The file system has no always-on guard store methods.',
+  badFolder: 'The guard store folder must be a plain folder of this user, with no group or other write access.',
+  badFile: 'The guard store must be a plain file of this user, with no group or other write access.',
+  badOpen: 'The guard store open failed its file checks.',
+  lockBusy: 'Another command holds the guard store lock. Wait until that command ends, then try again.',
+  lockLink: 'The guard store lock is a link. Run factory doctor.',
+  lockLost: 'The guard store lock changed, so no record was written. Run factory doctor.',
+  lockLeft: 'The guard record is saved, but its lock could not be removed. Run factory doctor.',
+  invalidStore: 'The guard store does not match its schema.',
+  readFault: (path: string, reason: string): string => `The guard store ${path} cannot be read: ${reason}. Run "${commandText(commands.doctor)}".`,
+  writeFault: (reason: string): string => `The guard store cannot be changed: ${reason}. Run "${commandText(commands.doctor)}".`,
+  invalidChange: 'The guard change has no valid node, factory folder or value.',
+  unreadableRemedy: `move the file away to turn every guard on and remove the prefix records of every ${roles.node}`,
+} as const;
+
+/** Parts of the one-line guard summary at start. */
+export const guardStartWords = {
+  prefix: 'Guards:',
+  off: (count: number): string => `${count} ${guardValues.off}`,
+  harm: (count: number): string => `${count} with ${harmMark}`,
+  directProxy: (key: string): string => `direct proxy ${key}`,
+  unmatched: (id: string): string => `unmatched ${id}`,
+  noPrefixRecord: 'owner prefix has no record',
+  prefixMismatch: 'owner prefix differs from its record',
+} as const;
+
+/** Role block refusals for a folder with no guard record. */
+export const guardRoleWords = {
+  offText: (block: string, guard: string): string => `the block ${block} holds the text of the off guard ${guard} without a guard record`,
+  replace: (block: string): string => `Run "${overwriteCommand(block)}" to replace it. It keeps the old text in a backup file.`,
+} as const;
+
+/** The doctor notice for a node whose local file has no guard values. */
+export const guardDoctorWords = {
+  noKey: 'No guards key: every guard is on.',
+  recordCount: (count: number): string => `The guard store holds ${count} of ${guardRecords.maxRecords} records.`,
+  nearCap: 'The guard store is near its record cap.',
+  atCap: 'The guard store is at its record cap.',
+} as const;
+
+/** The names and notice of the Edit rules for files that the program owns. */
+export const guardDenyWords = {
+  edit: 'Edit',
+  missing: 'Own file Edit rules are incomplete.',
+  remedy: `Run "${commandText(commands.upgrade)}" to add the own file Edit rules.`,
+} as const;
+
 /** The mark of a guard, or a row of it, that can harm the machine, the data or the accounts when it is off. */
 export const harmMark = 'H';
 
@@ -2430,6 +2565,7 @@ export const guardListWords = {
   columns: { guard: 'GUARD', value: 'VALUE', default: 'DEFAULT', harm: harmMark, setIn: 'SET IN' },
   familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
   unknown: 'unknown',
+  notSettable: 'not settable in this version',
   sources: {
     missing: 'no key',
     shared: files.config,

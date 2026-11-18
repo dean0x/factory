@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import {
   acceptEditsMode,
   claudeSettingKeys,
@@ -10,6 +11,7 @@ import {
   type PermissionSkip,
 } from '../../src/names.js';
 import { analyzeSettings, isWholeToolRule, MAX_LISTED_RULES, MAX_RULE_CHARS } from '../../src/safety/settings.js';
+import { createFakeDeps } from '../helpers/fake-deps.js';
 
 /** A settings text that holds one item of the permission-skip list and nothing else. */
 const textFor = (item: PermissionSkip): string => {
@@ -234,6 +236,30 @@ describe('the settings that run a command', () => {
 
   it('finds nothing in a file with no such setting', () => {
     expect(analyzeSettings(JSON.stringify({ permissions: { allow: ['Bash(npm test)'] }, other: { hooks: 1 } })).runsCommands).toEqual([]);
+  });
+
+  it('finds no facts in the own entries with the own deny rules', async () => {
+    const deps = createFakeDeps({ env: { HOME: '/u', XDG_STATE_HOME: '/state' } });
+    const rules = await ownDenyRulesOf(deps, '/srv/node', '/srv/node/coordinator');
+    expect(rules.ok).toBe(true);
+    if (!rules.ok) return;
+    expect(rules.value.rules.length).toBeGreaterThan(0);
+    const settings = { ...ownSettingsEntries, permissions: { deny: rules.value.rules } };
+    expect(analyzeSettings(JSON.stringify(settings))).toEqual({
+      valid: true,
+      skips: [],
+      changesFactoryEnv: false,
+      movesTraffic: [],
+      movesState: [],
+      runsCommands: [],
+      wholeToolRules: [],
+      narrowRules: [],
+      acceptEdits: false,
+      planMode: false,
+      crossSessionInbound: null,
+      approvesMcp: [],
+      disablesHooks: false,
+    });
   });
 });
 

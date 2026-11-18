@@ -3,8 +3,12 @@ import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { declinedHookText, ensureHookSettings, noConsentRemedy, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
+import { declinedHookText, ensureHookSettings, noConsentRemedy, ownDenyRulesOf, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
 import type { AttachedEnd, Deps } from '../core/deps.js';
+import { readGuardState, type GuardReadState } from '../core/guard-records.js';
+import type { GuardValues } from '../guards/types.js';
+import { guardsFor } from '../guards/registry.js';
+import { readHookSettings } from '../workers/session-checks.js';
 import { gitVersionProblem, requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
@@ -19,7 +23,10 @@ import {
   blockNames,
   capitalize,
   commands,
+  commandLines,
   commandText,
+  guardStartWords,
+  guardDenyWords,
   env,
   flags,
   flagText,
@@ -181,10 +188,10 @@ type Recovery = RecoveryReport | null;
  * stays 0, with one exception: a git that can not list its config scopes stops the run (exit 1) before any worker runs. `runStart`
  * makes that check before it makes the session, so the claim meets the fault only for a caller that did not.
  */
-const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers): Promise<CliResult<Recovery>> => {
+const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers, guards: GuardValues | undefined): Promise<CliResult<Recovery>> => {
   const claimed = await claimActiveMachine(deps, home);
   if (!claimed.ok) return claimed;
-  const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers });
+  const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers, guards });
   if (recovered.ok) return ok(recovered.value);
   deps.warn(`The ${roles.worker}s are not resumed: ${recovered.error.message}. ${recovered.error.hint ?? ''}`.trimEnd());
   return ok(null);
@@ -246,12 +253,13 @@ export const startAgain = async (
   home: string,
   config: FactoryConfig,
   answers: ProxyAnswers,
+  guards: GuardValues,
 ): Promise<CliResult<RestartedSession>> => {
   const plan = await planStart(deps, home, config, answers);
   if (!plan.ok) return plan;
   const started = await startSession(deps, config.core.node.id, plan.value.steps);
   if (!started.ok) return started;
-  const workers = await recoverSession(deps, home, config, answers);
+  const workers = await recoverSession(deps, home, config, answers, guards);
   if (!workers.ok) return workers;
   const { proxy, resumeId, warnings } = plan.value;
   return ok({
@@ -374,10 +382,14 @@ const settleHook = async (
     readonly idleCompaction: boolean;
   },
 ): Promise<CliResult<HookSettingsOutcome>> => {
+  const folder = layoutOf(home).coordinatorDir;
+  const deny = await ownDenyRulesOf(deps, home, folder);
+  if (!deny.ok) return deny;
   const settings: HookSettingsRequest = {
-    folder: layoutOf(home).coordinatorDir,
+    folder,
     session: hookSessions.coordinator,
     ...request,
+    deny: { rules: deny.value.rules, add: false },
   };
   const hook = await ensureHookSettings(deps, settings, 'return-outcome');
   if (!hook.ok) return hook;
@@ -392,7 +404,7 @@ const settleHook = async (
 };
 
 /**
- * The steps of `start` that change a file before it launches the coordinator: the safety block rendered again when it is out of
+ * The steps of `start` that change a file before it launches the coordinator: the safety and role blocks rendered again when out of
  * date (design 4.8), and the hook settings of the coordinator. A command that starts the coordinator itself without `start`
  * (`reboot` outside the session) runs them before its first stop, so a stop in these steps leaves the session as it is. The
  * command has no yes flag, so the hook settings need an answer on a terminal window when they are not in place.
@@ -402,8 +414,9 @@ export const renderStartFiles = async (
   home: string,
   config: FactoryConfig,
   command: CommandName,
+  guards: GuardReadState,
 ): Promise<CliResult<void>> => {
-  const safety = await requireSafetyBlock(deps, home, config, false);
+  const safety = await requireSafetyBlock(deps, home, config, guards, false);
   if (!safety.ok) return safety;
   const hook = await settleHook(deps, home, { yes: false, dryRun: false, command, idleCompaction: config.core.session.idle_compaction });
   return hook.ok ? ok(undefined) : hook;
@@ -474,6 +487,21 @@ const dryRunOutput = (input: {
   };
 };
 
+const guardSummary = async (deps: Deps, home: string, config: FactoryConfig, state: GuardReadState): Promise<readonly OutLine[]> => {
+  const off = guardsFor(config.entry).filter((guard) => state.values[guard.id] === 'off');
+  const parts = [
+    ...(off.length === 0 ? [] : [guardStartWords.off(off.length), guardStartWords.harm(off.filter((guard) => guard.harm).length)]),
+    ...config.core.proxies.filter((proxy) => proxy.on_fail === 'direct').map((proxy) => guardStartWords.directProxy(proxy.id)),
+    ...state.unmatched.map(guardStartWords.unmatched),
+    ...(state.prefix === null ? [`${guardStartWords.noPrefixRecord}; run "${commandText(commandLines.guardConfirm)}"`] : []),
+  ];
+  const settings = await readHookSettings(deps, home, layoutOf(home).coordinatorDir);
+  if (settings.ok && settings.value.state === 'plain' && settings.value.missingDeny.length > 0) {
+    parts.push(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
+  }
+  return parts.length === 0 ? [] : [{ level: 'text', text: `${guardStartWords.prefix} ${parts.join('; ')}` }];
+};
+
 export const runStart = async (
   deps: Deps,
   options: StartOptions,
@@ -517,7 +545,8 @@ export const runStart = async (
   const clean = requireRootClean(settled === null ? scan : withSetupAccepted(scan));
   if (!clean.ok) return clean;
   // The safety block comes after the root checks and before any tool check, proxy request or launch, also in a dry run.
-  const safety = await requireSafetyBlock(deps, home, loaded.value, dryRun);
+  const guards = await readGuardState(deps, home, loaded.value, 'always');
+  const safety = await requireSafetyBlock(deps, home, loaded.value, guards, dryRun);
   if (!safety.ok) return safety;
   // The setup blocks come after the link rule of the coordinator file, from the bytes that the acceptance hashed.
   if (settled !== null) {
@@ -569,10 +598,10 @@ export const runStart = async (
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
 
+  const summary = await guardSummary(deps, home, loaded.value, guards);
   if (dryRun) {
-    return ok(
-      dryRunOutput({ home, id, exists, how, problems, plan: planned, hook: hook.value, yes: options.yes, notes: [...notes.value, ...safety.value] }),
-    );
+    const output = dryRunOutput({ home, id, exists, how, problems, plan: planned, hook: hook.value, yes: options.yes, notes: [...notes.value, ...safety.value] });
+    return ok({ ...output, lines: [...output.lines.slice(0, 1), ...summary, ...output.lines.slice(1)] });
   }
 
   if (planned !== null) {
@@ -580,7 +609,7 @@ export const runStart = async (
     if (!started.ok) return started;
   }
   // The recovery runs only for a session that this run made, and before the person is in the session.
-  const recoveryResult = planned === null ? ok(null) : await recoverSession(deps, home, loaded.value, answers);
+  const recoveryResult = planned === null ? ok(null) : await recoverSession(deps, home, loaded.value, answers, guards.values);
   if (!recoveryResult.ok) return recoveryResult;
   const recovery = recoveryResult.value;
   // A session that runs already resumes no worker. It claims the mark and names the workers that have no pane.
@@ -602,6 +631,7 @@ export const runStart = async (
           ]),
       ...(ended ? coordinatorEndedLines(id, home) : []),
       text(arrivalText(how, attached.value, id)),
+      ...summary,
     ],
     json: {
       schema: schemaIds.start,

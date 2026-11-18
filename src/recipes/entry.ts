@@ -2,8 +2,9 @@ import type { z } from 'zod';
 import type { CliResult } from '../cli/errors.js';
 import type { Command } from '../cli/table.js';
 import type { Deps } from '../core/deps.js';
-import type { GuardDefinition, GuardRow } from '../guards/types.js';
-import { boardKeys, keys, values, type CommandName } from '../names.js';
+import { allOn } from '../guards/effective.js';
+import type { GuardDefinition, GuardRow, GuardValues } from '../guards/types.js';
+import { boardKeys, guardValues, keys, values, type CommandName } from '../names.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
 /** The mode of an approval point: `owner` or `delegated`. */
@@ -14,13 +15,16 @@ export type ApprovalModes = Readonly<Record<string, ApprovalMode>>;
 
 /**
  * A step of the work that needs an approval, as a recipe names it. The texts hold placeholders such as {{owner}}.
+ * `guard` names a guard of the recipe. An off guard uses `offText`, regardless of the mode.
  * `ownerText` says what the text says when the point waits for the owner. `delegatedText` names the proof.
  */
 export interface ApprovalPoint {
   readonly id: string;
   readonly label: string;
+  readonly guard: string;
   readonly ownerText: string;
   readonly delegatedText: string;
+  readonly offText: string;
   readonly proof: string;
 }
 
@@ -215,11 +219,16 @@ export const ownerModes = (points: readonly ApprovalPoint[]): ApprovalModes =>
   Object.fromEntries(points.map((point) => [point.id, OWNER_MODE]));
 
 /**
- * One line of text for each point, in the order of the recipe. The text follows the mode of the point,
- * and a point that the map does not name gets the `owner` text. The map can name a point that the list does not hold: it is left out.
+ * One line of text for each point, in the order of the recipe. An off guard uses the off text before the mode applies.
+ * An absent guard value means on. A point that the mode map does not name gets the owner text.
+ * A point that the list does not hold is left out.
  */
-export const approvalLines = (points: readonly ApprovalPoint[], modes: ApprovalModes): readonly string[] =>
+export const approvalLines = (
+  points: readonly ApprovalPoint[],
+  modes: ApprovalModes,
+  guards: GuardValues = allOn,
+): readonly string[] =>
   points.map((point) => {
     const text = modes[point.id] === DELEGATED_MODE ? point.delegatedText : point.ownerText;
-    return `- \`${point.id}\` (${point.label}): ${text}`;
+    return `- \`${point.id}\` (${point.label}): ${guards[point.guard] === guardValues.off ? point.offText : text}`;
   });

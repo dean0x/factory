@@ -4,12 +4,14 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { inspectBlocks, recordedBlockNames, type BlockStatus } from '../../src/blocks/status.js';
-import { parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
+import { sha256Hex, parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION, mixConfigValue } from '../../src/config/schema.js';
-import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { isRecord } from '../../src/migrate/inspect.js';
+import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
 import { boardKeys, commands, env, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
@@ -24,7 +26,11 @@ import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { isChange, planBlock, planBoardQueueKey } from '../../src/upgrade/plan.js';
 import { writeBlockPlans } from '../../src/upgrade/render.js';
-import { finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
+import { finisher, localFinisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
+import { localOf } from '../../src/config/schema.js';
+import { allOn } from '../../src/guards/effective.js';
+import { guardsFor } from '../../src/guards/registry.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 import { currentSpec, parseConfigTexts, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { fileTemplates } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
@@ -42,6 +48,11 @@ import {
 } from '../helpers/fake-deps.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
+import { readGuardState } from '../../src/core/guard-records.js';
+import type { GuardValues } from '../../src/guards/types.js';
+import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
+import { loadConfig } from '../helpers/package-registry.js';
+import { countReadsOf } from '../helpers/read-count.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
@@ -175,9 +186,12 @@ const managerVersion = layer2Blocks.find((template) => template.name === 'manage
 const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
   layer1Blocks.map((template) => (template.name === name ? { ...template, version: template.version + 1, body } : template));
 
-/** The blocks that the spec gives for every config, whatever its layer. */
+/** Fixed templates use the sample node for the prefix check, also with test-only schema versions. */
 const fixedBlocks = (templates: readonly BlockTemplate[]): Pick<UpgradeSpec, 'blocksOf'> => ({
-  blocksOf: async () => ok({ templates, renames: [], queueKey: softwareQueueKey, idleCompaction: false }),
+  blocksOf: async (_config, _setup, _modesOf, guardsOf) => {
+    await guardsOf(sampleConfig());
+    return ok({ templates, renames: [], queueKey: softwareQueueKey, idleCompaction: false });
+  },
 });
 
 const blocksSpec = (templates: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, ...fixedBlocks(templates) });
@@ -210,6 +224,316 @@ const stateAt = (target: number, migrations: readonly Migration[]): UpgradeFile 
     finish: finisher(schema, jsonText),
   };
 };
+
+describe('upgrade: guard config finishers', () => {
+  const localRaw = () => ({ schema: 1, ...localOf(sampleConfig()) });
+
+  it('keeps all guard values through both config finishers', () => {
+    const sample = sampleConfig();
+    const ids = guardsFor(sample.entry).map((guard) => guard.id);
+    const raw = {
+      schema: 2,
+      ...sample.core,
+      recipe: sample.recipe,
+      guards: Object.fromEntries(ids.map((id, index) => [id, index % 2 === 0 ? 'on' : 'off'])),
+      shared_guards: Object.fromEntries(ids.map((id) => [id, 'on'])),
+    };
+    const shared = currentSpec.config.finish(raw);
+    const local = currentSpec.local.finish(currentSpec.localPartOf(raw));
+    expect(shared.ok, shared.ok ? undefined : shared.error.message).toBe(true);
+    expect(local.ok, local.ok ? undefined : local.error.message).toBe(true);
+    expect(shared.ok && local.ok && parseConfigTexts(shared.value, local.value)).toMatchObject({
+      ok: true,
+      value: { core: { guards: raw.guards, shared_guards: raw.shared_guards } },
+    });
+  });
+
+  it('drops only retired ids and gives one notice for all of them', () => {
+    const raw = {
+      ...localRaw(),
+      guards: { 'retired-fixture-guard': 'off', 'another-retired-guard': 'on', 'install-rules': 'off' },
+    };
+    const file = localFinisher(['retired-fixture-guard', 'another-retired-guard']);
+    const finished = file.finish(raw);
+    expect(finished).toMatchObject({ ok: true });
+    if (!finished.ok) return;
+    expect(parseYamlText(finished.value)).toEqual({ ok: true, value: { ...raw, guards: { 'install-rules': 'off' } } });
+    expect(finished.value).not.toContain('retired');
+    expect(file.notices(raw)).toEqual(['Removed retired guard ids: retired-fixture-guard, another-retired-guard.']);
+    expect(raw.guards).toHaveProperty('retired-fixture-guard', 'off');
+  });
+
+  it('gives no retired-id notice when the raw file has no retired entry', () => {
+    const file = localFinisher(['retired-fixture-guard']);
+    expect(file.notices({ ...localRaw(), guards: { 'install-rules': 'on' } })).toEqual([]);
+    expect(file.notices(localRaw())).toEqual([]);
+  });
+
+  it.each([null, [], { ...localRaw(), guards: [] }, { ...localRaw(), guards: null }, { ...localRaw(), guards: { 'install-rules': 'invalid' } }])(
+    'refuses malformed local config instead of a partial rewrite',
+    (raw) => expect(localFinisher(['retired-fixture-guard']).finish(raw)).toMatchObject({ ok: false }),
+  );
+});
+
+describe('upgrade: effective guard values', () => {
+  const STORE = '/state/factory/guard-records.json';
+  const OFF: GuardValues = { 'install-rules': 'off', 'resume-routines': 'off', 'approval-merge': 'off', 'approval-release': 'off' };
+
+  const seedGuards = (deps: FakeDeps, values: GuardValues = OFF): void => {
+    deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(values)}\n`);
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: Object.fromEntries(Object.entries(values).map(([id, value]) => [id, { value, at: '2030-01-02T03:04:05.678Z' }])),
+    }] }));
+  };
+
+  it.each(Object.keys(OFF))('renders the confirmed off value of %s and keeps every effective value with one store read', async (id) => {
+    const { deps } = await makeNode();
+    seedGuards(deps, { [id]: 'off' });
+    const config = await loadConfig(deps, HOME);
+    if (!config.ok) throw new Error(config.error.message);
+    const before = await readGuardState(deps, HOME, config.value, 'always');
+    const local = text(deps, LOCAL);
+    const store = text(deps, STORE);
+    const counted = countReadsOf(deps, STORE);
+    success(await upgrade(counted.deps));
+    const templates = blockTemplatesFor(blockInputOf(config.value, {
+      coordinator: fileTemplates.setupCoordinator, worker: fileTemplates.setupWorker,
+    }, config.value.core.approval, before.values));
+    expect((await inspectBlocks(deps, HOME, templates)).every((block) => planBlock(block, false).action === 'current')).toBe(true);
+    expect(counted.count()).toBe(1);
+    expect(text(deps, LOCAL)).toBe(local);
+    expect(text(deps, STORE)).toBe(store);
+    expect((await readGuardState(deps, HOME, config.value, 'always')).values).toEqual(before.values);
+  });
+
+  it('plans confirmed off text in a dry run without a write', async () => {
+    const { deps } = await makeNode();
+    seedGuards(deps);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(output.json).toMatchObject({ changed: true, blocks: expect.arrayContaining([
+      expect.objectContaining({ name: 'worker', action: 'render' }),
+      expect.objectContaining({ name: 'coordinator', action: 'render' }),
+    ]) });
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it.each(['missing', 'on', 'other-node', 'other-root', 'invalid', 'link', 'shared'] as const)(
+    'writes nothing when the off value has no matching record: %s', async (fault) => {
+      const { deps } = await makeNode(fault === 'link' ? { links: { [STORE]: '/outside/store' } } : {});
+      seedGuards(deps, { 'install-rules': 'off' });
+      if (fault === 'missing') deps.files.delete(STORE);
+      if (fault === 'on') deps.seed(STORE, text(deps, STORE).replace('"value":"off"', '"value":"on"'));
+      if (fault === 'other-node') deps.seed(STORE, text(deps, STORE).replace('"node":"demo"', '"node":"other"'));
+      if (fault === 'other-root') deps.seed(STORE, text(deps, STORE).replace(HOME, '/w/other'));
+      if (fault === 'invalid') deps.seed(STORE, '{invalid');
+      if (fault === 'shared') deps.seed(CONFIG, `${text(deps, CONFIG)}\nshared_guards: {install-rules: on}\n`);
+      if (fault === 'link') {
+        const folder = layoutOf(HOME).coordinatorDir;
+        const deny = await ownDenyRulesOf(deps, HOME, folder);
+        if (!deny.ok) throw new Error(deny.error.message);
+        deps.seed(`${folder}/.claude/settings.local.json`, JSON.stringify({ ...ownSettingsEntries, permissions: { deny: deny.value.rules } }));
+      }
+      const before = snapshot(deps);
+      const result = await upgrade(deps, currentSpec, { dryRun: fault === 'invalid' || fault === 'link' });
+      if (fault === 'invalid' || fault === 'link') expect(exitCodeOf[refusal(result).kind]).toBe(4);
+      else expect(success(result).json).toMatchObject({ changed: false });
+      expect(snapshot(deps)).toEqual(before);
+    },
+  );
+
+  it.each(['mismatch', 'invalid'] as const)('refuses a real upgrade before any write on a prefix or store fault: %s', async (fault) => {
+    const { deps } = await makeNode();
+    if (fault === 'invalid') deps.seed(STORE, 'invalid');
+    else deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex('another prefix'), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    deps.modes.set(LOCAL, 0o644);
+    const before = snapshot(deps);
+    const counted = countReadsOf(deps, STORE);
+    const result = await upgrade(counted.deps);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(exitCodeOf[result.error.kind]).toBe(4);
+    expect(snapshot(deps)).toEqual(before);
+    expect(deps.modes.get(LOCAL)).toBe(0o644);
+    expect(counted.count()).toBe(1);
+  });
+
+  it.each([false, true])('names a prefix mismatch in a dry run and writes nothing (json: %s)', async (json) => {
+    const { deps, gitSince } = await makeNode();
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex('another prefix'), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const before = snapshot(deps);
+    const counted = countReadsOf(deps, STORE);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(['upgrade', '--dry-run', '--home', HOME, ...(json ? ['--json'] : [])], counted.deps, {
+      isTTY: false, stdout: async (text) => { stdout.push(text); }, stderr: async (text) => { stderr.push(text); },
+    });
+    expect(code).toBe(4);
+    expect(stderr.join('')).toContain('the owner prefix differs from its record');
+    expect(stderr.join('')).toContain('factory guard confirm');
+    if (json) expect(JSON.parse(stdout.join(''))).toMatchObject({ schema: 'factory.error/v1', error: {
+      kind: 'safety', message: 'the owner prefix differs from its record', hint: expect.stringContaining('factory guard confirm'),
+    } });
+    else expect(stdout).toEqual([]);
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+    expect(settingWrites(gitSince())).toEqual([]);
+    expect(counted.count()).toBe(1);
+  });
+
+  it.each([false, true])('names an invalid guard store in a dry run and writes nothing (json: %s)', async (json) => {
+    const { deps, gitSince } = await makeNode();
+    deps.seed(STORE, 'invalid');
+    const before = snapshot(deps);
+    const counted = countReadsOf(deps, STORE);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(['upgrade', '--dry-run', '--home', HOME, ...(json ? ['--json'] : [])], counted.deps, {
+      isTTY: false, stdout: async (text) => { stdout.push(text); }, stderr: async (text) => { stderr.push(text); },
+    });
+    expect(code).toBe(4);
+    expect(stderr.join('')).toContain(STORE);
+    expect(stderr.join('')).toContain('factory doctor');
+    if (json) expect(JSON.parse(stdout.join(''))).toMatchObject({ schema: 'factory.error/v1', error: {
+      kind: 'safety', message: expect.stringContaining(STORE), hint: expect.stringContaining('factory doctor'),
+    } });
+    else expect(stdout).toEqual([]);
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+    expect(settingWrites(gitSince())).toEqual([]);
+    expect(counted.count()).toBe(1);
+  });
+
+  it('refuses a prefix mismatch before consent can save a changed setup acceptance', async () => {
+    const { deps } = await makeNode();
+    const setupFile = `${HOME}/setup/coordinator.md`;
+    deps.seed(setupFile, `${text(deps, setupFile)}\nA changed instruction.\n`);
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex('another prefix'), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const before = snapshot(deps);
+    const asked: string[] = [];
+    const result = await upgrade({ ...deps, stdinIsTTY: true, stdoutIsTTY: true, prompt: async (question) => {
+      asked.push(question);
+      return ok('y');
+    } });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toBe('the owner prefix differs from its record');
+    expect(asked).toEqual([]);
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it.each([false, true])('requires the prefix check before consent or writes (dry run: %s)', async (dryRun) => {
+    const { deps, gitSince } = await makeNode();
+    const setupFile = `${HOME}/setup/coordinator.md`;
+    deps.seed(setupFile, `${text(deps, setupFile)}\nA changed instruction.\n`);
+    deps.modes.set(LOCAL, 0o644);
+    const spec: UpgradeSpec = { ...currentSpec, blocksOf: async () => ok({
+      templates: withBlock('worker', 'Updated worker text.'), renames: [], queueKey: softwareQueueKey, idleCompaction: false,
+    }) };
+    const before = snapshot(deps);
+    const asked: string[] = [];
+    const result = await upgrade({ ...deps, stdinIsTTY: true, stdoutIsTTY: true, prompt: async (question) => {
+      asked.push(question);
+      return ok('y');
+    } }, spec, { dryRun });
+    expect(result).toMatchObject({ ok: false, error: {
+      kind: 'failure', message: 'The owner prefix check did not complete. Nothing changed.',
+    } });
+    expect(asked).toEqual([]);
+    expect(snapshot(deps)).toEqual(before);
+    expect(deps.modes.get(LOCAL)).toBe(0o644);
+    expect(gitWrites(gitSince())).toEqual([]);
+    expect(settingWrites(gitSince())).toEqual([]);
+  });
+
+  it('shows the no-key notice only in a dry run with no new json key', async () => {
+    const { deps } = await makeNode();
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [] }));
+    const before = snapshot(deps);
+    const counted = countReadsOf(deps, STORE);
+    const dry = success(await upgrade(counted.deps, currentSpec, { dryRun: true }));
+    expect(dry.lines.filter((line) => line.text.includes('No guards key'))).toEqual([
+      { level: 'ok', text: 'No guards key: every guard is on.' },
+    ]);
+    expect(counted.count()).toBe(1);
+    expect(snapshot(deps)).toEqual(before);
+    const real = success(await upgrade(deps));
+    expect(real.lines.some((line) => line.text.includes('No guards key'))).toBe(false);
+    expect(Object.keys(dry.json)).toEqual(Object.keys(real.json));
+  });
+
+  it('omits the no-key notice for an explicit guards key', async () => {
+    const { deps } = await makeNode();
+    seedGuards(deps, {});
+    expect(success(await upgrade(deps, currentSpec, { dryRun: true })).lines.some((line) => line.text.includes('No guards key'))).toBe(false);
+  });
+
+  it('keeps the all-on setup allowance in the size warning when install text is off', async () => {
+    const { deps } = await makeNode();
+    seedGuards(deps, { 'install-rules': 'off' });
+    const setup = 'x'.repeat(roleText.maxChars);
+    deps.seed(`${HOME}/setup/roles/worker.md`, setup);
+    await acceptFiles(deps, HOME, 'demo', ['setup/coordinator.md', 'setup/roles/worker.md']);
+    const config = await loadConfig(deps, HOME);
+    if (!config.ok) throw new Error(config.error.message);
+    const free = roleText.maxChars - composeRoleText(workerFileTemplatesFor(config.value, null, allOn)).length - roleText.joiner.length;
+    const size = composeRoleText(workerFileTemplatesFor(config.value, setup, { 'install-rules': 'off' })).length;
+    const output = success(await upgrade(deps));
+    expect(output.warnings).toEqual([
+      `${roleText.tooLargeText(size, 'characters')}. ${roleText.remedies.shorten(free, 'factory upgrade')}`,
+    ]);
+  });
+
+  it('keeps guard values and their effective state through a split config rewrite', async () => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin', ...INDEX_ENV }, run: handler });
+    seedSchema1Node(deps, HOME);
+    const guards: GuardValues = { 'install-rules': 'off', 'resume-routines': 'on', 'approval-merge': 'off' };
+    const shared = { 'approval-merge': 'on' };
+    deps.seed(CONFIG, `${text(deps, CONFIG)}\nguards: ${JSON.stringify(guards)}\nshared_guards: ${JSON.stringify(shared)}\n`);
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: Object.fromEntries(Object.entries(guards).map(([id, value]) => [id, { value, at: '2030-01-02T03:04:05.678Z' }])),
+    }] }));
+    const counted = countReadsOf(deps, STORE);
+    success(await upgrade(counted.deps));
+    expect(counted.count()).toBe(1);
+    const config = await loadConfig(deps, HOME);
+    if (!config.ok) throw new Error(config.error.message);
+    expect(config.value.core).toMatchObject({ guards, shared_guards: shared });
+    const state = await readGuardState(deps, HOME, config.value, 'always');
+    expect(state.values).toMatchObject({ 'install-rules': 'off', 'resume-routines': 'on', 'approval-merge': 'on' });
+    const templates = blockTemplatesFor(blockInputOf(config.value, { coordinator: null, worker: null }, config.value.core.approval, state.values));
+    expect((await inspectBlocks(deps, HOME, templates)).every((block) => planBlock(block, false).action === 'current')).toBe(true);
+  });
+
+  it('prints one notice when the local rewrite drops retired guard ids and keeps other values', async () => {
+    const { deps } = await makeNode();
+    deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: {retired-fixture-guard: off, install-rules: off}\n`);
+    const file = localFinisher(['retired-fixture-guard']);
+    const spec: UpgradeSpec = { ...currentSpec, ...fixedBlocks(layer1Blocks), local: {
+      ...currentSpec.local,
+      spec: { ...currentSpec.local.spec, supported: 2, schema: z.looseObject({ schema: z.literal(2) }) },
+      migrations: [step('schema', 1)],
+      notices: file.notices,
+      finish: (raw) => {
+        const finished = file.finish(isRecord(raw) ? { ...raw, schema: 1 } : raw);
+        return finished.ok ? ok(finished.value.replace('schema: 1', 'schema: 2')) : finished;
+      },
+    } };
+    const output = success(await upgrade(deps, spec));
+    expect(lineTexts(output).filter((line) => line.includes('Removed retired guard ids:'))).toEqual([
+      'Removed retired guard ids: retired-fixture-guard.',
+    ]);
+    expect(parseYamlText(text(deps, LOCAL))).toMatchObject({ ok: true, value: { guards: { 'install-rules': 'off' } } });
+    expect(text(deps, LOCAL)).not.toContain('retired-fixture-guard');
+  });
+});
 
 describe('upgrade: when nothing changes', () => {
   it('changes no file and runs no git command when all is current', async () => {
@@ -4786,6 +5110,16 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
   const COPIES = `${HOME}/work-copies/web`;
   const copySettings = (id: string): string => `${COPIES}/${id}/.claude/settings.local.json`;
   const ALL_FILES = [COORDINATOR_SETTINGS, copySettings('alpha'), copySettings('beta')];
+  const denyRules = (file: string) => [
+    'Edit(//w/node/factory.yaml)',
+    'Edit(//w/node/factory.local.yaml)',
+    'Edit(//state/factory/owner-records.json)',
+    'Edit(//state/factory/owner-decisions.json)',
+    'Edit(//state/factory/guard-records.json)',
+    'Edit(//state/factory/setup-acceptances.json)',
+    `Edit(/${file})`,
+  ];
+  const ownSettingsAt = (file: string) => ({ ...ownSettingsEntries, permissions: { deny: denyRules(file) } });
 
   const settingsText = (settings: unknown): string => `${JSON.stringify(settings, null, 2)}\n`;
   const settingsAt = (deps: FakeDeps, path: string): unknown => JSON.parse(text(deps, path));
@@ -4830,7 +5164,43 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     };
   };
 
-  const beforeIdleCompaction = settingsText({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine });
+  it('init gives the coordinator the own Edit rules after consent', async () => {
+    const { deps } = await makeNode();
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
+  });
+
+  it('asks for the absent Edit rules when the hook entries are current, then writes only after consent', async () => {
+    const { deps } = await makeNode();
+    deps.seed(COORDINATOR_SETTINGS, settingsText(ownSettingsEntries));
+    const terminal = onTerminal(deps, ['n']);
+    const before = snapshot(deps);
+    const declined = success(await upgrade(terminal.deps, currentSpec, { yes: false }));
+    expect(terminal.asked).toHaveLength(1);
+    for (const rule of denyRules(COORDINATOR_SETTINGS)) expect(terminal.asked[0]).toContain(rule);
+    expect(snapshot(deps)).toEqual(before);
+    expect(declined.json).toMatchObject({ hookSettings: [] });
+    const accepted = success(await upgrade(onTerminal(deps, ['y']).deps, currentSpec, { yes: false }));
+    expect(accepted.json).toMatchObject({ hookSettings: [COORDINATOR_SETTINGS] });
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
+  });
+
+  it('asks for the setup acceptance rule alone and keeps the file until consent', async () => {
+    const { deps } = await makeNode();
+    const rule = 'Edit(//state/factory/setup-acceptances.json)';
+    const settings = { ...ownSettingsEntries, permissions: { deny: denyRules(COORDINATOR_SETTINGS).filter((entry) => entry !== rule) } };
+    deps.seed(COORDINATOR_SETTINGS, settingsText(settings));
+    const before = snapshot(deps);
+    const terminal = onTerminal(deps, ['n']);
+    success(await upgrade(terminal.deps, currentSpec, { yes: false }));
+    expect(terminal.asked).toEqual([`This changes the settings of Claude Code in ${COORDINATOR_SETTINGS}:\n  permissions.deny: add ${rule}\nWrite this change? [y/N] `]);
+    expect(snapshot(deps)).toEqual(before);
+    success(await upgrade(onTerminal(deps, ['y']).deps, currentSpec, { yes: false }));
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual({
+      ...settings, permissions: { deny: [...settings.permissions.deny, rule] },
+    });
+  });
+
+  const beforeIdleCompaction = (file: string) => settingsText({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine, permissions: { deny: denyRules(file) } });
 
   const beforeConfigSplit = (deps: FakeDeps): void => {
     const shared = parseYamlText(text(deps, CONFIG));
@@ -4864,9 +5234,9 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     const { deps } = await makeNode();
     edit(deps, CONFIG, 'idle_compaction: false', `idle_compaction: ${!idle}`);
     beforeConfigSplit(deps);
-    deps.seed(COORDINATOR_SETTINGS, beforeIdleCompaction);
-    await seedWorker(deps, 'alpha', beforeIdleCompaction);
-    await seedWorker(deps, 'beta', beforeIdleCompaction);
+    deps.seed(COORDINATOR_SETTINGS, beforeIdleCompaction(COORDINATOR_SETTINGS));
+    await seedWorker(deps, 'alpha', beforeIdleCompaction(copySettings('alpha')));
+    await seedWorker(deps, 'beta', beforeIdleCompaction(copySettings('beta')));
     const spec = migrateIdleCompactionTo(idle);
     const before = snapshot(deps);
 
@@ -4884,7 +5254,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     const terminal = onTerminal(deps, ['y', 'y', 'y']);
     const output = success(await upgrade(terminal.deps, spec, { yes: false }));
     expect(terminal.asked).toEqual(changes.map((lines) => `${lines.join('\n')}\nWrite this change? [y/N] `));
-    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual({ ...ownSettingsAt(file), idleCompaction: idle });
     const config = parseConfigTexts(text(deps, CONFIG), text(deps, LOCAL));
     expect(config).toMatchObject({ ok: true, value: { core: { session: { idle_compaction: idle } } } });
     expect(output.json).toMatchObject({ config: { from: C - 1, to: C }, hookSettings: ALL_FILES });
@@ -4892,7 +5262,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
 
   it.each([false, true])('keeps the planned value when consent changes the config, with a migration: %s', async (migrate) => {
     const { deps } = await olderFactory();
-    for (const file of ALL_FILES) deps.seed(file, beforeIdleCompaction);
+    for (const file of ALL_FILES) deps.seed(file, beforeIdleCompaction(file));
     if (migrate) beforeConfigSplit(deps);
     const terminal = onTerminal(deps, ['y', 'y', 'y']);
     const changingConfig: FakeDeps = {
@@ -4909,7 +5279,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     for (const question of terminal.asked) {
       expect(question).toContain('  idleCompaction: set to false (session.idle_compaction in factory.yaml)');
     }
-    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsAt(file));
     expect(text(deps, CONFIG)).toContain('idle_compaction: true');
     expect(output.json).toMatchObject({ hookSettings: ALL_FILES });
   });
@@ -4943,7 +5313,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     expect(text(deps, file)).toBe(otherSettings);
     expect(settingsAt(deps, file)).not.toHaveProperty('idleCompaction');
     expect(output.json).toMatchObject({ hookSettings: ALL_FILES.filter((path) => path !== file) });
-    for (const changed of ALL_FILES.filter((path) => path !== file)) expect(settingsAt(deps, changed)).toEqual(ownSettingsEntries);
+    for (const changed of ALL_FILES.filter((path) => path !== file)) expect(settingsAt(deps, changed)).toEqual(ownSettingsAt(changed));
   });
 
   it('adds the two new events to the list of a factory that wrote four', () => {
@@ -4967,7 +5337,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
   it('with the yes flag it adds the events to the coordinator settings and each work copy, and a second run has nothing to do', async () => {
     const { deps } = await olderFactory();
     const output = success(await upgrade(deps, currentSpec, { yes: true }));
-    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsAt(file));
     expect(output.json).toMatchObject({ changed: true, hookSettings: ALL_FILES, backup: null, committed: false });
     expect(output.failed).toBe(false);
     const again = success(await upgrade(deps));
@@ -4980,14 +5350,14 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     const permissions = { allow: ['Bash(ls)'] };
     deps.seed(copySettings('alpha'), settingsText({ ...FOUR_EVENTS, permissions }));
     success(await upgrade(deps, currentSpec, { yes: true }));
-    expect(settingsAt(deps, copySettings('alpha'))).toEqual({ ...ownSettingsEntries, permissions });
+    expect(settingsAt(deps, copySettings('alpha'))).toEqual({ ...ownSettingsEntries, permissions: { ...permissions, deny: denyRules(copySettings('alpha')) } });
   });
 
   it('adds the hook settings in the same run as a change of the state, after the state is written', async () => {
     const { deps } = await olderFactory();
     const output = success(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
     expect(text(deps, CLAUDE)).toContain('New coordinator text.');
-    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsAt(file));
     expect(output.json).toMatchObject({ committed: true, hookSettings: ALL_FILES });
     expect(output.json['backup']).not.toBeNull();
   });
@@ -5020,9 +5390,9 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     const terminal = onTerminal(deps, ['y', 'n', 'y']);
     const output = success(await upgrade(terminal.deps, currentSpec, { yes: false }));
     expect(terminal.asked).toHaveLength(3);
-    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsEntries);
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
     expect(settingsAt(deps, copySettings('alpha'))).toEqual(FOUR_EVENTS);
-    expect(settingsAt(deps, copySettings('beta'))).toEqual(ownSettingsEntries);
+    expect(settingsAt(deps, copySettings('beta'))).toEqual(ownSettingsAt(copySettings('beta')));
     expect(output.json).toMatchObject({ hookSettings: [COORDINATOR_SETTINGS, copySettings('beta')] });
     const warning = output.warnings.join('\n');
     expect(warning).toContain(copySettings('alpha'));
@@ -5106,7 +5476,7 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     expect(error.message).toContain(COORDINATOR_SETTINGS);
     expect(error.message).not.toContain(copySettings('beta'));
     expect(error.hint).toContain('factory upgrade');
-    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsEntries);
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsAt(COORDINATOR_SETTINGS));
     expect(settingsAt(deps, copySettings('alpha'))).toEqual(FOUR_EVENTS);
     expect(settingsAt(deps, copySettings('beta'))).toEqual(FOUR_EVENTS);
   });

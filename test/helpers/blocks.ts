@@ -1,5 +1,6 @@
 import { renderBlock } from '../../src/blocks/managed.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { allOn } from '../../src/guards/effective.js';
 import { defaultOwnerPrefix } from '../../src/names.js';
 import { ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
@@ -32,6 +33,7 @@ export const blockInput = (layer: number, overrides: Partial<Omit<BlockInput, 'l
   layer,
   nodeId: 'demo',
   modes: softwareOwnerModes,
+  guards: allOn,
   ownerPrefix: plainOwnerPrefix,
   limits: { contextPreparePct: 30, contextMaxPct: 40 },
   setup: noSetupTexts,
@@ -57,7 +59,7 @@ export const workerFileText = (
 ): string => fileTextOf('workerFile', config, texts, modes);
 
 const fileTextOf = (target: BlockTarget, config: FactoryConfig, texts: SetupTexts, modes: ApprovalModes): string => {
-  const blocks = blockTemplatesFor(blockInputOf(config, texts, modes))
+  const blocks = blockTemplatesFor(blockInputOf(config, texts, modes, allOn))
     .filter((template) => template.target === target)
     .map((template) => {
       const rendered = renderBlock(template);

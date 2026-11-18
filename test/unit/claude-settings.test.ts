@@ -8,7 +8,10 @@ import {
   ensureHookSettings,
   holdsOwnHook,
   isOwnSettingsText,
+  isOwnSettingsTextAt,
+  missingDenyRules,
   missingHookEvents,
+  ownDenyRulesOf,
   ownSettingsEntries,
   ownSettingsEntriesFor,
   requireHookConsent,
@@ -347,6 +350,149 @@ describe('hook settings: the change and the consent', () => {
     expect(question).not.toContain('factory hook statusline');
     expect(groupsOf(stored(deps), 'Stop')).toEqual([stop]);
     expect(groupsOf(stored(deps), 'PreCompact')).toEqual(EXPECTED_ENTRIES.hooks.PreCompact);
+  });
+});
+
+describe('the paths of the own Edit rules', () => {
+  const state = '/u/.local/state/factory';
+  const storeNames = ['owner-records.json', 'owner-decisions.json', 'guard-records.json', 'setup-acceptances.json'];
+  const expected = (home: string, folder: string, stateHome = state) => [
+    `Edit(/${home}/factory.yaml)`,
+    `Edit(/${home}/factory.local.yaml)`,
+    ...storeNames.map((name) => `Edit(/${stateHome}/${name})`),
+    `Edit(/${folder}/.claude/settings.local.json)`,
+  ];
+
+  it.each([
+    ['/u/node', 'Edit(//u/node/factory.yaml)'],
+    ['/srv/node', 'Edit(//srv/node/factory.yaml)'],
+  ])('uses the exact absolute path form for a folder at %s', async (home, firstRule) => {
+    const deps = makeDeps();
+    const result = await ownDenyRulesOf(deps, home, `${home}/coordinator`);
+    expect(result).toEqual(ok({ rules: expected(home, `${home}/coordinator`), skipped: [] }));
+    if (!result.ok) return;
+    expect(result.value.rules[0]).toBe(firstRule);
+    expect(result.value.rules.every((rule) => rule.startsWith('Edit(//') && !rule.startsWith('Edit(///'))).toBe(true);
+  });
+
+  it('adds each distinct real path, also for files that do not exist yet', async () => {
+    const deps = createFakeDeps({ env: { HOME: '/u', XDG_STATE_HOME: '/state-link' }, links: { '/alias': '/real', '/state-link': '/state' } });
+    deps.seedDir('/alias');
+    deps.seedDir('/state-link');
+    const result = await ownDenyRulesOf(deps, '/alias/node', '/alias/node/coordinator');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.skipped).toEqual([]);
+    expect(new Set(result.value.rules)).toEqual(new Set([
+      ...expected('/alias/node', '/alias/node/coordinator', '/state-link/factory'),
+      ...expected('/real/node', '/real/node/coordinator', '/state/factory'),
+    ]));
+    expect(result.value.rules).toHaveLength(14);
+  });
+
+  it.each(['*', '?', '[', ']', '{', '}', '(', ')', '\\', '\n'])('omits a path with the pattern character %j and names the path', async (char) => {
+    const deps = makeDeps();
+    const home = `/srv/node${char}`;
+    expect(await ownDenyRulesOf(deps, home, FOLDER)).toEqual(ok({
+      rules: [...storeNames.map((name) => `Edit(/${state}/${name})`), `Edit(/${FILE})`],
+      skipped: [`${home}/factory.yaml`, `${home}/factory.local.yaml`],
+    }));
+  });
+
+  it('omits a real path with a pattern character but keeps its written path rule', async () => {
+    const deps = createFakeDeps({ env: { HOME: '/u' }, links: { '/alias': '/real*' } });
+    deps.seedDir('/alias');
+    const result = await ownDenyRulesOf(deps, '/alias/node', FOLDER);
+    expect(result).toEqual(ok({ rules: expected('/alias/node', FOLDER), skipped: ['/real*/node/factory.yaml', '/real*/node/factory.local.yaml'] }));
+  });
+
+  it('returns a path resolution failure rather than an incomplete set of rules', async () => {
+    const deps = makeDeps();
+    const broken: Deps = { ...deps, fs: { ...deps.fs, realpath: async () => failure('cannot resolve the path') } };
+    expect(await ownDenyRulesOf(broken, '/srv/node', FOLDER)).toEqual(failure('cannot resolve the path'));
+  });
+
+  it('does not access the user Claude folder when a store is placed there', async () => {
+    const deps = createFakeDeps({ env: { HOME: '/u', XDG_STATE_HOME: '/u/.claude' } });
+    const calls: string[] = [];
+    const watched = withFsWatch(deps, (_method, path) => { if (path.startsWith('/u/.claude')) calls.push(path); });
+    expect((await ownDenyRulesOf(watched, '/srv/node', FOLDER))?.ok).toBe(true);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('the own Edit rules that a settings object lacks', () => {
+  const rules = ['Edit(//node/factory.yaml)', 'Edit(//node/factory.local.yaml)'];
+
+  it.each([null, {}, { permissions: [] }, { permissions: { deny: 'Edit' } }, { permissions: { deny: [true] } }])(
+    'counts every rule as absent for an unknown shape: %j', (settings) => {
+      expect(missingDenyRules(settings, rules)).toEqual(rules);
+    },
+  );
+
+  it('names only the absent own rules, regardless of other permission rules', () => {
+    expect(missingDenyRules({ permissions: { deny: [rules[0], 'Read(//other/file)'], allow: ['Bash'] } }, rules)).toEqual([rules[1]]);
+  });
+});
+
+describe('hook settings: own Edit rules', () => {
+  const rules = ['Edit(//h/factory/factory.yaml)', 'Edit(//h/factory/factory.local.yaml)'];
+  const withDeny = (add: boolean) => ({ ...request(), deny: { rules, add } });
+
+  it('shows each absent rule before consent and keeps other permission rules and keys', async () => {
+    const deps = makeDeps({ tty: true });
+    const permissions = { allow: ['Read'], ask: ['Bash'], deny: ['Edit(//other/file)'], defaultMode: 'default' };
+    deps.seed(FILE, JSON.stringify({ ...EXPECTED_ENTRIES, permissions, model: 'opus' }));
+    expect(outcomeOf(await ensureHookSettings(deps, withDeny(true))).kind).toBe('written');
+    for (const rule of rules) expect(deps.prompts[0]).toContain(rule);
+    expect(stored(deps)).toEqual({ ...EXPECTED_ENTRIES, permissions: { ...permissions, deny: [...permissions.deny, ...rules] }, model: 'opus' });
+    expect(outcomeOf(await ensureHookSettings(deps, withDeny(true))).kind).toBe('in-place');
+    expect(deps.prompts).toHaveLength(1);
+  });
+
+  it('leaves absent rules alone with add false, without a terminal or a write', async () => {
+    const deps = makeDeps();
+    const text = JSON.stringify(EXPECTED_ENTRIES);
+    deps.seed(FILE, text);
+    expect(outcomeOf(await ensureHookSettings(deps, withDeny(false))).kind).toBe('in-place');
+    expect(deps.files.get(FILE)).toBe(text);
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it('includes absent rules with add false when a hook write is needed', async () => {
+    const deps = makeDeps({ tty: true });
+    deps.seed(FILE, JSON.stringify(FOUR_EVENT_ENTRIES));
+    expect(outcomeOf(await ensureHookSettings(deps, withDeny(false))).kind).toBe('written');
+    expect(stored(deps)['permissions']).toEqual({ deny: rules });
+    for (const rule of rules) expect(deps.prompts[0]).toContain(rule);
+  });
+
+  it('keeps the file when the person declines the rule change', async () => {
+    const deps = makeDeps({ tty: true, answer: 'n' });
+    const text = JSON.stringify(EXPECTED_ENTRIES);
+    deps.seed(FILE, text);
+    expect(outcomeOf(await ensureHookSettings(deps, withDeny(true))).kind).toBe('declined');
+    expect(deps.files.get(FILE)).toBe(text);
+  });
+
+  it.each([null, [], 'allow', { deny: 'Edit' }, { deny: [true] }])('keeps an unknown permissions shape unchanged: %j', async (permissions) => {
+    const deps = makeDeps({ tty: true });
+    const text = JSON.stringify({ ...EXPECTED_ENTRIES, permissions });
+    deps.seed(FILE, text);
+    expect(errorOf(await ensureHookSettings(deps, withDeny(true))).kind).toBe('failure');
+    expect(deps.files.get(FILE)).toBe(text);
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it('keeps new permission rules that appear during the consent question', async () => {
+    const base = makeDeps({ tty: true });
+    base.seed(FILE, JSON.stringify(EXPECTED_ENTRIES));
+    const deps: Deps = { ...base, prompt: async () => {
+      base.seed(FILE, JSON.stringify({ ...EXPECTED_ENTRIES, permissions: { deny: ['Read(//other/file)'] } }));
+      return ok('y');
+    } };
+    expect(outcomeOf(await ensureHookSettings(deps, withDeny(true))).kind).toBe('written');
+    expect(stored(base)['permissions']).toEqual({ deny: ['Read(//other/file)', ...rules] });
   });
 });
 
@@ -749,6 +895,27 @@ describe('hook settings: the file that the writer makes is the own file', () => 
     deps.seed(FILE, '{"model":"opus"}');
     await ensureHookSettings(deps, request({ yes: true }));
     expect(isOwnSettingsText(deps.files.get(FILE) ?? '')).toBe(false);
+  });
+});
+
+describe('hook settings: own rule paths', () => {
+  const real = ['Edit(//real/factory.yaml)', 'Edit(//real/factory.local.yaml)'];
+  const written = ['Edit(//alias/factory.yaml)', 'Edit(//alias/factory.local.yaml)'];
+  it.each([
+    ['written and real rules at a real root', real, [...written, ...real], true],
+    ['real rules at a written root', [...written, ...real], real, true],
+    ['written rules at a real root', real, written, true],
+    ['an absent own target', real, written.slice(1), false],
+    ['another target', real, [...written, 'Edit(//alias/other)'], false],
+    ['a repeated rule', real, [...written, written[0]], false],
+    ['a pattern', real, [...written, 'Edit(//alias/*)'], false],
+    ['an unresolved path', real, [...written, 'Edit(//missing/file)'], false],
+  ] as const)('checks %s', async (_name, expected, deny, own) => {
+    const deps = createFakeDeps({ links: { '/alias': '/real' } });
+    deps.seedDir('/alias');
+    deps.seedDir('/real');
+    const text = JSON.stringify({ ...EXPECTED_ENTRIES, permissions: { deny } });
+    expect(await isOwnSettingsTextAt(deps, text, expected)).toBe(own);
   });
 });
 

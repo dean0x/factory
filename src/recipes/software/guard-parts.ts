@@ -1,15 +1,12 @@
-import { softwareApprovalPoints } from './approval.js';
-
 /**
  * The ids of the guards of the software recipe, and the files whose texts or checks its rows cite. They live here, apart from the
  * rows, so that every file of the rows can use them.
  */
 
-const [mergePoint, releasePoint] = softwareApprovalPoints;
-
 export const softwareGuardIds = {
-  approvalMerge: `approval-${mergePoint.id}`,
-  approvalRelease: `approval-${releasePoint.id}`,
+  approvalMerge: 'approval-merge',
+  approvalRelease: 'approval-release',
+  mergeQuality: 'merge-quality',
   prRules: 'pr-rules',
 } as const;
 

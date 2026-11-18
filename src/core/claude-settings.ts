@@ -12,6 +12,7 @@ import {
   files,
   flags,
   flagText,
+  guardDenyWords,
   hookCommandOf,
   hookNames,
   hookSessions,
@@ -33,6 +34,7 @@ import { parseJsonText } from '../state/load.js';
 import { ACCEPT_ANSWER, type Deps } from './deps.js';
 import { inFactorySession } from './factory-session.js';
 import { comparable, isSameOrInside, isWrittenInside, realPathOf, userClaudeFolderOf } from './paths.js';
+import { userStatePlaceOf } from './private-file.js';
 import { ok } from './result.js';
 import { writeInFolder } from './safe-write.js';
 
@@ -77,6 +79,7 @@ const ownGroupOf = (event: string): HookGroup => {
 /**
  * The entries that every settings file of the program holds, whatever the idle compaction value is: one group with one own
  * command for each event of the fixed list, and the status line wrapper.
+ * A new settings file also holds the own Edit rules for its computed paths.
  */
 const ownBase: Omit<OwnSettings, 'idleCompaction'> = {
   [claudeSettingKeys.hooks]: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroupOf(event)]])),
@@ -96,21 +99,56 @@ export const ownSettingsEntries: OwnSettings = ownSettingsEntriesFor(values.defa
  * The only shapes of a settings file that holds nothing but the own entries: the entries with the value true, with the value
  * false, and the entries of an earlier version, which have no idle compaction key. Any other shape is a foreign file.
  */
-const ownShapes: readonly unknown[] = [ownSettingsEntriesFor(false), ownSettingsEntriesFor(true), ownBase];
+const ownShapes: readonly Omit<OwnSettings, 'idleCompaction'>[] = [ownSettingsEntriesFor(false), ownSettingsEntriesFor(true), ownBase];
 
 /** The text with the white space outside the strings removed. A valid JSON text stays valid. */
 const compactJson = (text: string): string => text.replace(/("(?:[^"\\]|\\.)*")|\s+/g, '$1');
 
 /**
- * True when the text of a settings file holds exactly the entries of the program and nothing else: the parsed file equals one
+ * True when the text of a settings file holds exactly the entries of the program alone or with exactly the supplied own rules: the parsed file equals one
  * of the three own shapes (the idle compaction value true, false, or no such key), and the text writes nothing that the parsed
  * file hides. A repeated key and an escape in a name give a text longer or different from the parsed file, so another parser
  * could read another file than this one. The order of the keys and the layout of the text do not count. A text that is not
  * valid JSON is never exact. The check takes no config value, so a missing config can not make a foreign file pass.
  */
-export const isOwnSettingsText = (text: string): boolean => {
+export const isOwnSettingsText = (text: string, rules: readonly string[] = []): boolean => {
   const json = parseJsonText(text);
-  return json.ok && ownShapes.some((shape) => isDeepStrictEqual(json.value, shape)) && compactJson(text) === JSON.stringify(json.value);
+  if (!json.ok || compactJson(text) !== JSON.stringify(json.value)) return false;
+  return ownShapes.some((shape) => isDeepStrictEqual(json.value, shape) ||
+    (rules.length > 0 && isDeepStrictEqual(json.value, { ...shape, permissions: { deny: rules } })));
+};
+
+/** Compare exact own rule targets across written and real paths. Other keys and rule targets stay outside the own file. */
+export const isOwnSettingsTextAt = async (deps: Deps, text: string, rules: readonly string[]): Promise<boolean> => {
+  if (isOwnSettingsText(text, rules)) return true;
+  const json = parseJsonText(text);
+  if (!json.ok || !isRecord(json.value)) return false;
+  const permissions = json.value[claudeSettingKeys.permissions];
+  const deny: unknown = isRecord(permissions) ? permissions['deny'] : undefined;
+  if (!Array.isArray(deny) || !deny.every((rule): rule is string => typeof rule === 'string')) return false;
+  if (deny.length > rules.length * 2 || new Set(deny).size !== deny.length || !isOwnSettingsText(text, deny)) return false;
+  const userFolder = userClaudeFolderOf(deps);
+  const targetOfRule = async (rule: string): Promise<string | null> => {
+    if (!rule.startsWith(`${guardDenyWords.edit}(//`) || !rule.endsWith(')')) return null;
+    const path = rule.slice(`${guardDenyWords.edit}(/`.length, -1);
+    if (path !== resolve(path) || /[\x00-\x1f\x7f*?\[\]{}()\\]/u.test(path)) return null;
+    if (userFolder !== null && isWrittenInside(deps, userFolder, path)) return rules.includes(rule) ? path : null;
+    const real = await realPathOf(deps, path);
+    return real.ok ? real.value : null;
+  };
+  const expected = new Set<string>();
+  for (const rule of rules) {
+    const target = await targetOfRule(rule);
+    if (target === null) return false;
+    expected.add(target);
+  }
+  const found = new Set<string>();
+  for (const rule of deny) {
+    const target = await targetOfRule(rule);
+    if (target === null || !expected.has(target)) return false;
+    found.add(target);
+  }
+  return found.size === expected.size;
 };
 
 export interface HookSettingsRequest {
@@ -124,6 +162,8 @@ export interface HookSettingsRequest {
   readonly dryRun: boolean;
   /** The command that asks. The remedy of a stop names it. */
   readonly command: CommandText;
+  /** The own Edit rules. With add false, absent rules need a write only when another entry changes. */
+  readonly deny?: { readonly rules: readonly string[]; readonly add: boolean };
   /** The value of `session.idle_compaction`. The file gets this value in the key `idleCompaction`. */
   readonly idleCompaction: boolean;
 }
@@ -165,6 +205,44 @@ const targetOf = (folder: string): Target => {
 export const hookSettingsPlaceOf = (folder: string): { readonly claudeFolder: string; readonly file: string } => {
   const { claudeFolder, file } = targetOf(folder);
   return { claudeFolder, file };
+};
+
+/** The rules for the own files, and paths whose characters prevent an exact rule. */
+export interface OwnDenyRules {
+  readonly rules: readonly string[];
+  readonly skipped: readonly string[];
+}
+
+/** Written paths and distinct real paths both get exact rules. The place core reads no owner store. */
+export const ownDenyRulesOf = async (deps: Deps, home: string, folder: string): Promise<CliResult<OwnDenyRules>> => {
+  const paths = [
+    resolve(home, files.config),
+    resolve(home, files.localConfig),
+    ...[files.ownerRecords, files.ownerDecisions, files.guardRecords, files.setupAcceptances].flatMap((name) => {
+      const { path } = userStatePlaceOf(deps, name);
+      return path === null ? [] : [path];
+    }),
+    hookSettingsPlaceOf(folder).file,
+  ];
+  const rules = new Set<string>();
+  const skipped = new Set<string>();
+  const addPath = (path: string): boolean => {
+    if (/[\x00-\x1f\x7f*?\[\]{}()\\]/u.test(path)) {
+      skipped.add(path);
+      return false;
+    }
+    rules.add(`${guardDenyWords.edit}(/${path})`);
+    return true;
+  };
+  const userFolder = userClaudeFolderOf(deps);
+  for (const path of paths) {
+    if (!addPath(path)) continue;
+    if (userFolder !== null && isWrittenInside(deps, userFolder, path)) continue;
+    const real = await realPathOf(deps, path);
+    if (!real.ok) return real;
+    if (real.value !== path) addPath(real.value);
+  }
+  return ok({ rules: [...rules], skipped: [...skipped] });
 };
 
 const clipped = (text: string): string => (text.length > MAX_SHOWN_CHARS ? `${text.slice(0, MAX_SHOWN_CHARS)}...` : text);
@@ -350,6 +428,31 @@ export const missingHookEvents = (settings: unknown): readonly HookEvent[] => {
   return 'notList' in found ? hookNames.events : found.missing;
 };
 
+/** The own Edit rules that the settings lack. An unknown permissions shape counts every rule as absent. */
+export const missingDenyRules = (settings: unknown, rules: readonly string[]): readonly string[] => {
+  const permissions = isRecord(settings) ? settings[claudeSettingKeys.permissions] : undefined;
+  const deny = isRecord(permissions) ? permissions['deny'] : undefined;
+  return Array.isArray(deny) && deny.every((rule) => typeof rule === 'string') ? rules.filter((rule) => !deny.includes(rule)) : rules;
+};
+
+/** Add only absent rules. Refuse unknown shapes so no permission value gets replaced. */
+const addDenyRules = (existing: Settings, rules: readonly string[], file: string, command: CommandText): CliResult<Omit<Change, 'onlyIdleCompaction'>> => {
+  const missing = missingDenyRules(existing, rules);
+  if (missing.length === 0) return ok({ settings: existing, lines: [] });
+  const current = existing[claudeSettingKeys.permissions];
+  const permissions = current === undefined ? NO_SETTINGS : current;
+  const hint = `Fix the file, or move it away. ${again(command)}`;
+  if (!isRecord(permissions)) return failure(`${file} holds ${claudeSettingKeys.permissions} that is not an object`, hint);
+  const deny: unknown = Object.hasOwn(permissions, 'deny') ? permissions['deny'] : [];
+  if (!Array.isArray(deny) || !deny.every((rule) => typeof rule === 'string')) {
+    return failure(`${file} holds ${claudeSettingKeys.permissions}.deny that is not a list of rules`, hint);
+  }
+  return ok({
+    settings: { ...existing, [claudeSettingKeys.permissions]: { ...permissions, deny: [...deny, ...missing] } },
+    lines: missing.map((rule) => `${claudeSettingKeys.permissions}.deny: add ${rule}`),
+  });
+};
+
 const shownStatusLine = (value: unknown): string =>
   clipped(isRecord(value) && value['type'] === settingsCommandType && typeof value['command'] === 'string' ? value['command'] : JSON.stringify(value));
 
@@ -376,25 +479,26 @@ const idleCompactionLines = (current: unknown, wanted: boolean): readonly string
   return [typeof current === 'boolean' ? `${set}, and replace the value ${current}` : `${set}, and replace a value that is not true or false`];
 };
 
-/**
- * The settings with the own entries added, and the lines that show the change. Every other key stays as it is. The idle
- * compaction key keeps its place in a file that holds it, and a file that lacks it gets it after the other keys.
- */
-const addOwnEntries = (existing: Settings, file: string, command: CommandText, idleCompaction: boolean): CliResult<Change> => {
-  const hooks = addHooks(existing[claudeSettingKeys.hooks], file, command);
+/** The settings with the own entries added, and the lines that show the change. Every other key stays as it is. */
+const addOwnEntries = (existing: Settings, file: string, request: HookConsentRequest): CliResult<Change> => {
+  const hooks = addHooks(existing[claudeSettingKeys.hooks], file, request.command);
   if (!hooks.ok) return hooks;
   const statusLine = statusLineLines(existing[claudeSettingKeys.statusLine]);
-  const idle = idleCompactionLines(existing[claudeSettingKeys.idleCompaction], idleCompaction);
-  return ok({
-    settings: {
-      ...existing,
-      ...(hooks.value.lines.length === 0 ? {} : { [claudeSettingKeys.hooks]: hooks.value.hooks }),
-      ...(statusLine.length === 0 ? {} : { [claudeSettingKeys.statusLine]: ownSettingsEntries.statusLine }),
-      ...(idle.length === 0 ? {} : { [claudeSettingKeys.idleCompaction]: idleCompaction }),
-    },
-    lines: [...hooks.value.lines, ...statusLine, ...idle],
-    onlyIdleCompaction: hooks.value.lines.length === 0 && statusLine.length === 0 && idle.length > 0,
-  });
+  const idle = idleCompactionLines(existing[claudeSettingKeys.idleCompaction], request.idleCompaction);
+  const lines = [...hooks.value.lines, ...statusLine, ...idle];
+  const settings = {
+    ...existing,
+    ...(hooks.value.lines.length === 0 ? {} : { [claudeSettingKeys.hooks]: hooks.value.hooks }),
+    ...(statusLine.length === 0 ? {} : { [claudeSettingKeys.statusLine]: ownSettingsEntries.statusLine }),
+    ...(idle.length === 0 ? {} : { [claudeSettingKeys.idleCompaction]: request.idleCompaction }),
+  };
+  const rules = request.deny?.add === true || hooks.value.lines.length > 0 || statusLine.length > 0 ? request.deny?.rules ?? [] : [];
+  const deny = addDenyRules(settings, rules, file, request.command);
+  return deny.ok ? ok({
+    settings: deny.value.settings,
+    lines: [...lines, ...deny.value.lines],
+    onlyIdleCompaction: hooks.value.lines.length === 0 && statusLine.length === 0 && deny.value.lines.length === 0 && idle.length > 0,
+  }) : deny;
 };
 
 const shownChange = (file: string, lines: readonly string[]): string =>
@@ -531,7 +635,7 @@ const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliR
   const read = await readTarget(deps, request);
   if (!read.ok) return read;
   const { target, content } = read.value;
-  const change = addOwnEntries(content === null ? NO_SETTINGS : content.settings, target.file, request.command, request.idleCompaction);
+  const change = addOwnEntries(content === null ? NO_SETTINGS : content.settings, target.file, request);
   return change.ok ? ok({ target, text: content === null ? null : content.text, change: change.value }) : change;
 };
 
@@ -570,7 +674,7 @@ const futureFilePlan = (request: HookConsentRequest, fileText: string | null): C
   const target = targetOf(request.folder);
   const content = fileText === null ? ok(null) : parseSettings(fileText, target.file, request.command);
   if (!content.ok) return content;
-  const change = addOwnEntries(content.value === null ? NO_SETTINGS : content.value.settings, target.file, request.command, request.idleCompaction);
+  const change = addOwnEntries(content.value === null ? NO_SETTINGS : content.value.settings, target.file, request);
   return change.ok ? ok({ target, text: fileText, change: change.value }) : change;
 };
 

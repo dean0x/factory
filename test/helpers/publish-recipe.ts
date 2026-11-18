@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { guardOf } from '../../src/guards/build.js';
 import { slug } from '../../src/config/primitives.js';
 import {
   approvalLines,
@@ -24,6 +25,8 @@ export const publishApprovalPoints: readonly ApprovalPoint[] = [
   {
     id: 'publish',
     label: 'publish a book',
+    guard: 'book-approval',
+    offText: 'No approval is needed for a publication. Log each publication with `{{requestLogCommand}}`.',
     ownerText: 'A publication waits for the go of the {{owner}}.',
     proof: PROOF_COPY,
     delegatedText: `The {{owner}} delegated this point. A publication needs ${PROOF_COPY}.`,
@@ -31,6 +34,8 @@ export const publishApprovalPoints: readonly ApprovalPoint[] = [
   {
     id: 'send',
     label: 'send a letter to readers',
+    guard: 'letter-approval',
+    offText: 'No approval is needed for a letter. Log each letter with `{{requestLogCommand}}`.',
     ownerText: 'A letter to readers waits for the go of the {{owner}}.',
     proof: SEND_PROOF,
     delegatedText: `The {{owner}} delegated this point. A letter to readers needs ${SEND_PROOF}.`,
@@ -62,7 +67,7 @@ const coordinatorFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.coordinator,
   version: 1,
   target: 'claudeFile',
-  body: fillTemplate(coordinatorLines(approvalLines(publishApprovalPoints, input.modes)), coordinatorValuesFor(input)),
+  body: fillTemplate(coordinatorLines(approvalLines(publishApprovalPoints, input.modes, input.guards)), coordinatorValuesFor(input)),
 });
 
 const publishRoles: RecipeRoles = {
@@ -93,7 +98,7 @@ export const publishRecipe: RecipeEntry = {
   initProjectKeys: [],
   roles: publishRoles,
   board: publishBoard,
-  guards: [],
+  guards: publishApprovalPoints.map((point) => guardOf(point.guard, point.label, point.ownerText)),
   guardRows: [],
 };
 

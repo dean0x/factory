@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scaled } from './load.js';
@@ -95,6 +95,25 @@ const HOOK_NOTICE = /warning: This changes the settings of Claude Code in [^\n]*
 
 /** The text of stderr without the notice of the hook change. */
 export const withoutHookNotice = (stderr: string): string => stderr.replace(HOOK_NOTICE, '');
+
+/** Init has no owner terminal channel in a piped sandbox. */
+export const PREFIX_RECORD_NOTICE = 'warning: No owner prefix record was written. Run "factory guard confirm" in your terminal window to confirm the owner prefix.\n';
+
+/** The exact own rules for the written sandbox paths and their real paths. */
+export const ownDenyRules = async (box: Sandbox, folder: string): Promise<readonly string[]> => {
+  const root = await realpath(box.root);
+  const state = join(box.env['HOME'] ?? '', '.local', 'state', 'factory');
+  const paths = [
+    join(box.node, 'factory.yaml'),
+    join(box.node, 'factory.local.yaml'),
+    join(state, 'owner-records.json'),
+    join(state, 'owner-decisions.json'),
+    join(state, 'guard-records.json'),
+    join(state, 'setup-acceptances.json'),
+    join(folder, '.claude', 'settings.local.json'),
+  ];
+  return [...new Set(paths.flatMap((path) => [path, root + path.slice(box.root.length)]))].map((path) => `Edit(/${path})`);
+};
 
 /** The roots of the sandboxes that are not removed yet. */
 const openRoots = new Set<string>();

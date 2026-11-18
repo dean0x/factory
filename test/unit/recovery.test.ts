@@ -10,7 +10,7 @@ import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-s
 import { coordinatorResumeOf, noPaneWarning, recoverWorkers, workersWithoutPane, type RecoveryReport } from '../../src/workers/recovery.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
-import { seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup, STATE_ENV } from '../helpers/role-delivery.js';
+import { ownSettingsWithRules, seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup, STATE_ENV } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
@@ -118,7 +118,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   for (const id of setup.workers ?? IDS) {
     must(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${COPIES}/${id}`, branch: `worker/${id}` }));
     deps.seedDir(`${COPIES}/${id}`);
-    seedOwnHooks(deps, `${COPIES}/${id}`);
+    seedOwnHooks(deps, `${COPIES}/${id}`, HOME);
     const pointer = setup.pointers !== undefined && id in setup.pointers ? setup.pointers[id] : SESSION[id];
     if (pointer === null || pointer === undefined) continue;
     deps.seed(workerPathsOf(HOME, id).lastSessionFile, `${pointer}\n`);
@@ -367,8 +367,8 @@ describe('the recovery of the workers: the settings of the work copy', () => {
   });
 
   it('accepts the settings file that the program writes itself', async () => {
-    const own = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
-    const made = await make({ settings: { alpha: own, beta: own, gamma: own } });
+    const settings = Object.fromEntries(IDS.map((id) => [id, `${JSON.stringify(ownSettingsWithRules(HOME, `${COPIES}/${id}`), null, 2)}\n`]));
+    const made = await make({ settings });
     expect((await recovered(made)).resumed).toEqual(['alpha', 'beta', 'gamma']);
     expect(made.deps.warned).toEqual([]);
   });

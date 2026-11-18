@@ -1,6 +1,6 @@
 import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
-import { ensureHookSettings, holdsOwnHook } from '../core/claude-settings.js';
+import { ensureHookSettings, holdsOwnHook, ownDenyRulesOf } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { commands, commandText, flags, flagText, hookSessions, type HookSession } from '../names.js';
@@ -28,6 +28,7 @@ interface HookTarget {
 export interface HookChange extends HookTarget {
   readonly file: string;
   readonly change: string;
+  readonly rules: readonly string[];
   readonly idleCompaction: boolean;
 }
 
@@ -72,10 +73,12 @@ export const planHookSettings = async (
     const holds = await holdsOwnHook(deps, request);
     if (!holds.ok) return holds;
     if (!holds.value) continue;
-    const outcome = await ensureHookSettings(deps, { ...request, dryRun: true });
+    const deny = await ownDenyRulesOf(deps, home, target.folder);
+    if (!deny.ok) return deny;
+    const outcome = await ensureHookSettings(deps, { ...request, dryRun: true, deny: { rules: deny.value.rules, add: true } });
     if (!outcome.ok) return outcome;
     if (outcome.value.kind === 'would-write') {
-      changes.push({ ...target, file: outcome.value.file, change: outcome.value.change, idleCompaction });
+      changes.push({ ...target, file: outcome.value.file, change: outcome.value.change, rules: deny.value.rules, idleCompaction });
     }
   }
   return ok(changes);
@@ -114,6 +117,7 @@ export const applyHookSettings = async (deps: Deps, changes: readonly HookChange
       dryRun: false,
       command: commands.upgrade,
       idleCompaction: change.idleCompaction,
+      deny: { rules: change.rules, add: true },
     });
     if (!outcome.ok) {
       if (outcome.error.kind !== 'usage') return stoppedBy(outcome.error, changed);

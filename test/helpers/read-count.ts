@@ -1,23 +1,17 @@
-import type { FakeDeps } from './fake-deps.js';
+import { withFsWatch, type FakeDeps } from './fake-deps.js';
 
-/** A deps that counts the reads of the text of one file, and is the given deps in every other way. */
+/** A deps that counts content reads of one file, through checked open or text read. */
 export interface CountedReads {
   readonly deps: FakeDeps;
-  /** The reads of the text of the file so far. */
   readonly count: () => number;
 }
 
-export const countReadsOf = (deps: FakeDeps, file: string): CountedReads => {
+export const countReadsOf = (deps: FakeDeps, path: string): CountedReads => {
   let count = 0;
-  const counted: FakeDeps = {
-    ...deps,
-    fs: {
-      ...deps.fs,
-      readTextLimited: (path, maxBytes, decode) => {
-        if (path === file) count += 1;
-        return deps.fs.readTextLimited(path, maxBytes, decode);
-      },
-    },
+  return {
+    deps: withFsWatch(deps, (method, file) => {
+      if (file === path && (method === 'openCheckedCore' || method === 'openChecked' || method.startsWith('readText'))) count += 1;
+    }),
+    count: () => count,
   };
-  return { deps: counted, count: () => count };
 };

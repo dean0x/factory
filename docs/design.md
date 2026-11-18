@@ -1335,7 +1335,9 @@ Community documents and examples for plugin authors wait for FAC-M10.
 
 A guard is one family of code checks and rule texts that keep one thing safe. Each row belongs to one guard. A row names one check or rule text and the source sites where it applies.
 
-**The registry.** The core and the recipe supply one registry for the list. The core supplies the guards that apply to every recipe. The software recipe adds guards for approval of a merge, approval of a release, and push and pull request rules.
+**The registry.** The core and the recipe supply one registry for the list. The core supplies the guards that apply to every recipe. The software recipe adds `approval-merge`, `approval-release`, `merge-quality` and `pr-rules`.
+
+`merge-quality` holds three rules: the checked head SHA, green CI at that SHA, and the posted review of a releasable change. It is separate from `approval-merge`. This version knows `merge-quality` but cannot set it, so it stays `on`.
 
 Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and its rows. It also has a new-node default, a value for a missing key, and related config keys. Each row has its own id, name, kind, harm mark, place of use and source sites. Integrity checks are not guards. They do not appear in the list and always run.
 
@@ -1351,11 +1353,40 @@ Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and i
 | The local file, `factory.local.yaml` | The facts of the owner and this machine. |
 | The recipe | The guard definitions and rows for its kind of work. |
 
-In this version, every guard is `on`, on new nodes and existing nodes. No guard key exists in either config file. Related config keys already exist and keep their meaning. A related key is not a guard key.
+**Config keys.** The local key `guards` in `factory.local.yaml` accepts `on` or `off` for each known guard id. The shared key `shared_guards` in `factory.yaml` accepts `on` only. A shared `on` keeps the guard on even when the local value is `off`. An unknown or retired id is refused. The message names the id and `factory guard list`.
 
-**The list.** `factory guard list` reads the node config and the registry facts. It changes no file and checks no work copy or child node. It keeps the normal folder registration and config access checks. The list only reads; it cannot change a guard.
+A missing key means `on`. New nodes and existing nodes with no guard keys keep every guard on. `init` writes no guard value. Config splits and upgrade rewrites keep guard values. Related config keys keep their own meaning; a related key is not a guard key.
 
-The default table has the columns `GUARD`, `VALUE`, `DEFAULT`, `H` and `SET IN`. `DEFAULT` is the value for a new node. `SET IN` names the place of the current value. In this version, `VALUE` and `DEFAULT` are `on`, and `SET IN` is `no key`.
+A local `off` takes effect only with a matching record of the owner for that node id and real factory folder. A missing or different record keeps the guard on. A move of the folder ends its guard records. A guard that this version cannot set always stays on, even with a local `off` and a record.
+
+**Text guards.** This version can set four guards:
+
+| Guard | Effect of `off` |
+|---|---|
+| `approval-merge` | Replace the merge approval text with the off text and the request log command. |
+| `approval-release` | Replace the release approval text with the off text and the request log command. |
+| `resume-routines` | Remove the resume and routine instructions. |
+| `install-rules` | Remove the rule about installs outside the session folder. |
+
+The off text of an approval point applies in both `owner` and `delegated` mode. The three rules of `merge-quality` stay on when `approval-merge` is off. General approval and record instructions still name the owner go. All code checks and integrity checks still run.
+
+**Set a guard.** Run `factory guard set ID on|off` to change one guard. Run `factory guard set --all on|off` to change every guard that this version can set. The command counts the guards that it skips. It writes the local values and their records of the owner. It keeps all other guard values and records.
+
+Run the command in a terminal window outside factory and Claude Code sessions. Both input and output must be terminals. For `off`, the command lists the selected guards and their `H` marks, then asks for consent. The default answer is no. The value takes effect at the next start. Neither `guard set` nor `guard confirm` accepts `--json`; `--family` applies to `guard list` only.
+
+**Confirm the prefix.** `factory guard confirm` shows the full owner prefix and asks for consent, with no as the default. It uses the same terminal rules as `guard set`. A yes records the exact prefix for this node and folder. A new `init` records the prefix only in that terminal channel. An existing node with no prefix record can still start, but start prints a notice that names `factory guard confirm`.
+
+Start, reboot, restart, worker new and worker resume stop with exit code 4 when the prefix differs from its record. Run `factory guard confirm` to confirm the current prefix. An unreadable guard store also stops these launches with exit code 4. Run `factory doctor` to see the fault and remedy.
+
+To recover an unreadable file, move it away. This turns every guard on and removes the prefix records of every node. Confirm each prefix again after that step. If the store lies inside a factory or Claude Code folder, set `XDG_STATE_HOME` to another absolute folder. Launch and doctor name this step instead of the file reset.
+
+Each launch reads the role blocks. With a guard record for the folder, it checks them against the current effective guard values. An edited or missing role block that lacks the text of an on `H` guard stops a launch with exit code 4. Without a guard record, a block stops a launch only if it holds text that an off render alone produces. This applies to both intact and edited blocks. Other edited blocks stay, and missing role blocks keep their warning. The message names the upgrade command that adds or replaces the block. A replacement keeps a backup. Start renders other intact current role blocks again when their text differs. A failed block write exits with code 1.
+
+**Own file rules.** The session settings hold an Edit deny rule for each config file, each owner store and the settings file itself. `upgrade` adds absent rules after consent. Start asks no new question for these rules. Doctor warns, and start prints a notice, when a rule is absent. The root scan accepts the own settings file with these rules. A path with pattern characters gets no rule; doctor warns. The rules cover file tools only, not shell commands or the config files of child nodes.
+
+**The list.** `factory guard list` reads the node config, the effective guard state and the registry facts. It changes no file and checks no work copy or child node. It keeps the normal folder registration and config access checks. The list only reads; it cannot change a guard.
+
+The default table has the columns `GUARD`, `VALUE`, `DEFAULT`, `H` and `SET IN`. `DEFAULT` is `on` for a new node. `SET IN` names the source of the effective value, or says `not settable in this version`. Off guards appear first, with off `H` guards first among them.
 
 The default view has at most 20 lines, with at most 17 guard lines. A more line gives the count of guards that do not fit. The last line counts all guards, the guards that are off, and those off guards that have `H`. If the config does not load, the last line states that both off counts are unknown.
 
@@ -1366,7 +1397,11 @@ The default view has at most 20 lines, with at most 17 guard lines. A more line 
 | `--json` | Print every guard and every row under schema id `factory.guard-list/v1`, with no table cap. |
 | `--home DIR` | Read the node in this factory folder. |
 
-The JSON `error` field is `null` when the config loads; otherwise, it holds the load error.
+Each JSON guard gives its effective `value`, its `source`, its record time in `since`, and whether it is `settable`. The JSON `error` field is `null` when the config loads; otherwise, it holds the load error. The list reads the guard store only when a local value of a settable guard is off. An unreadable store gives one warning, keeps all guards on and leaves the exit code at 0.
+
+Doctor gives one `guards` check with the counts of off guards and off `H` guards. It also names each direct proxy and each unmatched local value. Its JSON output gives the record time of each off guard.
+
+The check counts store records across all nodes. It warns at 900 records and fails at the cap of 1,000 records. The store keeps records of moved or removed folders; it has no automatic pruning. Doctor names the store file to move away to clear the cap. This step turns every guard on and removes the prefix records of every node. Start prints one summary line when it has a value or notice to show.
 
 The common flags `--quiet` and `--no-color` also apply. An unknown family exits with code 2. When the config loads, the list exits with code 0. When the config does not load, the first line shows the load error, and the guard values show `unknown`. The list then exits with the code of the load error.
 

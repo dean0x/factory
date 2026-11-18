@@ -152,7 +152,7 @@ The heavy-test lock
 
 `doctor`
 
-- `factory doctor` runs 32 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `node-id`, `setup-text`, `roles`, `tracker`, `idle-compaction`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls`, `agent-version`, `state-guard`, `board-size`, `lessons` and `role-delivery`.
+- `factory doctor` runs 33 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `node-id`, `setup-text`, `roles`, `tracker`, `idle-compaction`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls`, `agent-version`, `state-guard`, `board-size`, `lessons`, `role-delivery` and `guards`.
 - `role-delivery` checks the path from the setup text to the worker sessions. Its line counts the work copies whose hook settings hold the hook of factory for every hook event, gives the size of the role text against the cap of 9000 characters, and names the place of the acceptance of the setup text. No worker is ok. A fault of the role text fails the check. A work copy that lacks the hook for one or more events, or whose hook settings file is a link, is a warning. The finding names the missing events, and the check uses the same rule as the launch of a worker, so the check and the launch agree. Each finding gives one remedy. The check writes nothing.
 - `board-size` warns when `board.json`, `waiting.json` or `decision-log.json` reaches 80 percent of the read cap of 1 MiB, and names the file. A file that is not there is no fault.
 - `delegations` shows the mode of each approval point. A `delegated` mode with no matching approval record warns, and the point counts as `owner`.
@@ -264,7 +264,15 @@ Pull requests and the role lines
 
 Guards
 
-- `factory guard list` shows the guards, their values, their defaults and the harm mark `H`. `--all` shows every guard, and `--family NAME` shows the rows of one guard. `--json` prints every guard and row. The list only reads. Every guard is on, and neither config file has a guard key in this version.
+- `factory guard list` shows the guards, their effective values, their defaults, their sources and the harm mark `H`. `--all` shows every guard, and `--family NAME` shows the rows of one guard. `--json` prints every guard and row, with record times and a mark for guards that this version cannot set. The list only reads.
+- New local key `guards` in `factory.local.yaml` accepts `on` or `off`. New shared key `shared_guards` in `factory.yaml` accepts `on` only. A shared on keeps the guard on. A missing key means on, and `init` writes no guard values. Upgrades keep existing values.
+- New command `factory guard set ID on|off` changes the local value and its record of the owner. `--all on|off` changes every guard that this version can set. A local off counts only with a matching record for that node and real factory folder. Run the command in a terminal window outside factory and Claude Code sessions. Both input and output must be terminals. Off asks for consent, and the default answer is no. The change takes effect at the next start.
+- This version can set four text guards: `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. An off approval guard replaces its approval text with the off text and the request log command in both approval modes. The other two guards remove their rule text. All code checks and integrity checks still run.
+- `merge-quality` holds the checked head SHA, green CI at that SHA and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
+- New command `factory guard confirm` shows the full owner prefix and asks for consent to record it for this folder. It uses the same terminal rules as `guard set`. A new `init` records the prefix only in that terminal channel. An existing node with no prefix record can still start, but start prints a notice.
+- Start, reboot, restart, worker new and worker resume stop with exit code 4 for a prefix mismatch or an unreadable guard store. Doctor names the remedy. Start renders intact current role blocks again after a guard change. An edited role block that lacks the text of an on `H` guard stops a launch with exit code 4.
+- Doctor gives one `guards` check with off counts, each direct proxy, each unmatched local value, the prefix record and the own file rules. Its JSON output gives the record time of each off guard. Start prints one summary line when it has a value or notice to show.
+- `upgrade` adds Edit deny rules for the own config files, owner stores and session settings after consent. Doctor warns when a rule is absent, and start prints a notice without a new question. The root scan accepts the own settings file with these rules.
 
 Platforms and help
 

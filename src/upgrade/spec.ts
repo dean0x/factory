@@ -13,7 +13,10 @@ import { ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
 import { fileSteps, rootMoves, type BlockRename, type FileStep, type RootMove } from '../migrate/files.js';
-import type { SchemaParser, TextParser, VersionSpec } from '../migrate/inspect.js';
+import { isRecord, type SchemaParser, type TextParser, type VersionSpec } from '../migrate/inspect.js';
+import { retiredGuardIds } from '../guards/registry.js';
+import type { GuardValues } from '../guards/types.js';
+import { guardConfigWords, guardKeys } from '../names.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
 import { jsonText } from '../state/files.js';
@@ -30,6 +33,8 @@ export interface UpgradeFile {
   readonly migrations: readonly Migration[];
   /** Check a value against the schema, and give the new text of the file. */
   finish(raw: unknown): CliResult<string>;
+  /** Notices about values that the finisher removes from the raw file. */
+  notices?(raw: unknown): readonly string[];
 }
 
 /** The managed blocks of one node, and the key of the queue in its board file: the recipe of the config gives both. */
@@ -60,14 +65,18 @@ export interface UpgradeSpec {
   localPartOf(config: unknown): unknown;
   /**
    * The managed blocks of the node that a config value describes, with the setup texts of the root and the effective
-   * mode of each approval point. The value holds the keys of both files, in the current schema versions. `modesOf` gets
-   * the parsed config, because the effective modes follow its node id and its local values.
+   * mode of each approval point and guard values. The value holds both files in the current schema versions.
+   * Both callbacks get the parsed config, because their values follow its node id and local values.
+   * Await guardsOf before a successful result. It supplies the prefix check and the guard values.
    */
-  blocksOf(config: unknown, setup: SetupTexts, modesOf: ModesOf): Promise<CliResult<BlockSet>>;
+  blocksOf(config: unknown, setup: SetupTexts, modesOf: ModesOf, guardsOf: GuardsOf): Promise<CliResult<BlockSet>>;
 }
 
 /** The effective mode of each approval point of a parsed config. */
 export type ModesOf = (config: FactoryConfig) => Promise<ApprovalModes>;
+
+/** The effective guard values of a parsed config. */
+export type GuardsOf = (config: FactoryConfig) => Promise<GuardValues>;
 
 export const finisher =
   <T>(schema: SchemaParser<T>, render: (value: T) => string) =>
@@ -76,6 +85,28 @@ export const finisher =
     return parsed.success ? ok(render(parsed.data)) : failure(describeIssues(parsed.error));
   };
 
+/** The local finisher removes only retired ids. Each other value still goes through the local schema. */
+export const localFinisher = (retired: readonly string[] = retiredGuardIds): Required<Pick<UpgradeFile, 'finish' | 'notices'>> => {
+  const finish = finisher(localConfigSchema, renderLocalConfig);
+  const retiredIn = (raw: unknown): readonly string[] => {
+    const values = isRecord(raw) ? raw[guardKeys.local] : undefined;
+    return isRecord(values) ? Object.keys(values).filter((id) => retired.includes(id)) : [];
+  };
+  return {
+    finish: (raw) => {
+      if (!isRecord(raw)) return finish(raw);
+      const values = raw[guardKeys.local];
+      if (!isRecord(values)) return finish(raw);
+      const kept = Object.fromEntries(Object.entries(values).filter(([id]) => !retired.includes(id)));
+      return finish({ ...raw, [guardKeys.local]: kept });
+    },
+    notices: (raw) => {
+      const removed = retiredIn(raw);
+      return removed.length === 0 ? [] : [guardConfigWords.droppedRetired(removed)];
+    },
+  };
+};
+
 /**
  * The blocks come from the combined config of the two files: the layer sets the role, the recipe sets the approval
  * points, the local file sets the owner prefix, and the shared file sets the context limits. The setup texts follow the
@@ -83,11 +114,11 @@ export const finisher =
  */
 const blocksOfNode =
   (registry: RecipeRegistry) =>
-  async (config: unknown, setup: SetupTexts, modesOf: ModesOf): Promise<CliResult<BlockSet>> => {
+  async (config: unknown, setup: SetupTexts, modesOf: ModesOf, guardsOf: GuardsOf): Promise<CliResult<BlockSet>> => {
     const { shared, local } = splitConfigValue(config);
     const parsed = parseConfig(shared, local, registry);
     if (!parsed.success) return failure(describeIssues(parsed.error));
-    const input = blockInputOf(parsed.data, setup, await modesOf(parsed.data));
+    const input = blockInputOf(parsed.data, setup, await modesOf(parsed.data), await guardsOf(parsed.data));
     return ok({
       templates: blockTemplatesFor(input),
       renames: roleBlockRenames(parsed.data.entry, input.layer),
@@ -114,7 +145,7 @@ export const specFor = (registry: RecipeRegistry): UpgradeSpec => ({
     spec: LOCAL_SPEC,
     parse: parseYamlText,
     migrations: [],
-    finish: finisher(localConfigSchema, renderLocalConfig),
+    ...localFinisher(),
   },
   state: {
     spec: STATE_SPEC,
