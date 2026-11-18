@@ -1344,7 +1344,9 @@ describe('the work item port is a required parameter', () => {
     const lastArguments = (file: string, name: string): (string | undefined)[] =>
       callsOf(readFileSync(join(SRC, file), 'utf8'), name).map((args) => args.at(-1)?.trim());
     expect(lastArguments('cli/table.ts', 'runStatus')).toEqual(['boardWorkItems(registry)']);
-    expect(lastArguments('cli/table.ts', 'runDismiss')).toEqual(['boardWorkItems(registry)']);
+    const dismissPorts = callsOf(readFileSync(join(SRC, 'cli/table.ts'), 'utf8'), 'runDismiss')
+      .map((args) => args.slice(-2).map((arg) => arg.trim()));
+    expect(dismissPorts).toEqual([['boardWorkItems(registry)', 'boardRequests']]);
     expect(lastArguments('commands/worker.ts', 'runWorkerList')).toEqual(['boardWorkItems(registry)']);
   });
 

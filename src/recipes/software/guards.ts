@@ -1,6 +1,6 @@
 import { at, codeRow, guardOf, textRow, wiredGuard } from '../../guards/build.js';
 import type { GuardDefinition, GuardRow } from '../../guards/types.js';
-import { commandLines, guardIds, keys, roles } from '../../names.js';
+import { commandLines, guardIds, keys, requestWords, roles } from '../../names.js';
 import { softwareApprovalPoints } from './approval.js';
 import { CONFIG_FILE, COORDINATOR_FILE, SAFETY_FILE, WORKER_FILE, WORK_RULES_FILE, softwareGuardIds } from './guard-parts.js';
 import { softwareRuleRows } from './rule-rows.js';
@@ -13,7 +13,7 @@ export { softwareGuardIds } from './guard-parts.js';
  * parser of the recipe, because the core registry imports nothing from it.
  */
 
-const { coordinator, owner, worker } = roles;
+const { coordinator, manager, owner, worker } = roles;
 const [mergePoint, releasePoint] = softwareApprovalPoints;
 
 export const softwareGuards: readonly GuardDefinition[] = [
@@ -227,6 +227,14 @@ export const softwareGuardRows: readonly GuardRow[] = [
     guard: guardIds.dismiss,
     name: `The ${owner} hears about each dismiss that a session runs, and every other dismiss is a step of the ${owner}`,
     applies: `Role text of the ${coordinator}`,
+    harm: true,
+    sites: at(COORDINATOR_FILE, 'workerSectionLines'),
+  }),
+  textRow({
+    id: 'dismiss-ask-owner-text',
+    guard: guardIds.dismiss,
+    name: `After a denied free, the ${coordinator} or ${manager} asks the ${owner} to free the ${worker} and never runs the command of the ${requestWords.request}`,
+    applies: `Role text of the ${coordinator} and the ${manager}`,
     harm: true,
     sites: at(COORDINATOR_FILE, 'workerSectionLines'),
   }),

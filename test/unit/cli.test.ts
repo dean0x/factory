@@ -104,6 +104,31 @@ describe('runCli', () => {
   });
 });
 
+describe('the owner request form of dismiss', () => {
+  it('shows the form and says it frees nothing', async () => {
+    const result = await run(['dismiss', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory dismiss ID --closed --ask-owner [--home DIR]');
+    expect(result.out).toMatch(/^\s+--ask-owner\s+.*Free nothing\./m);
+  });
+
+  it.each([
+    [['alpha', '--ask-owner'], 'requires the form --closed --ask-owner'],
+    [['alpha', '--closed', '--ask-owner', '--yes'], 'takes no other mode flag'],
+    [['alpha', '--closed', '--ask-owner', '--idle'], 'takes no other mode flag'],
+    [['--closed', '--ask-owner'], 'takes one argument'],
+    [['alpha', 'beta', '--closed', '--ask-owner'], 'takes one argument'],
+  ])('refuses %j before any read', async (argv, message) => {
+    const calls: string[] = [];
+    const deps = withFsWatch(createFakeDeps(), (method) => calls.push(method));
+    const sink = captureSink();
+    expect(await runCli(['dismiss', ...argv], deps, sink)).toBe(2);
+    expect(sink.errors.join('')).toContain(message);
+    expect(sink.errors.join('')).not.toMatch(/--yes|--closed(?! --ask-owner)|run .+ again/i);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe('the guard command in the command line', () => {
   it('lists guard in the main help', async () => {
     const result = await run(['--help']);

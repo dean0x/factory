@@ -10,6 +10,7 @@ import type {
   RequestSettlement,
 } from '../board/contract.js';
 import { checkItemId, checkRequestId } from '../board/edit.js';
+import { isReservedFreeForm } from '../board/free-request.js';
 import { requestView } from '../board/list-view.js';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
@@ -234,6 +235,10 @@ const parseAction = (options: RequestOptions): CliResult<Action> => {
       if (!link.ok) return link;
       const fields = parseLabelled(options.fields);
       if (!fields.ok) return fields;
+      if (isReservedFreeForm(options.title, fields.value)) {
+        return usageError(`the title or field label is reserved for a ${roles.worker} free ${requestWords.request}`,
+          `The ${flagText(flags.askOwner)} form of ${commands.dismiss} opens this ${requestWords.request}.`);
+      }
       const group = options.later ? requestGroups.later : requestGroups.now;
       return ok({ kind: subcommand, link: link.value, input: {
         title: options.title, question: options.question, options: parsed.value, group,

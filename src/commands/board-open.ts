@@ -1,4 +1,5 @@
-import type { DecisionLogInput, LocalBoard } from '../board/contract.js';
+import type { DecisionAskInput, DecisionLogInput, LocalBoard } from '../board/contract.js';
+import { readWaiting, type WaitingDoc } from '../board/files.js';
 import { createLocalBoard } from '../board/local.js';
 import type { CliResult } from '../cli/errors.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
@@ -88,4 +89,16 @@ export interface DecisionLogPort {
 /** The decision log of the local board. */
 export const boardDecisionLog: DecisionLogPort = {
   log: (deps, home, config, input) => localBoardOf(deps, home, config, commands.dismiss).logDecision(input),
+};
+
+/** The port that dismiss uses to read and open owner requests. */
+export interface RequestPort {
+  waiting(deps: Deps, home: string): Promise<CliResult<WaitingDoc>>;
+  ask(deps: Deps, home: string, config: FactoryConfig, input: DecisionAskInput): Promise<CliResult<string>>;
+}
+
+/** The owner requests of the local board. */
+export const boardRequests: RequestPort = {
+  waiting: (deps, home) => readWaiting(deps, layoutOf(home)),
+  ask: (deps, home, config, input) => localBoardOf(deps, home, config, commands.dismiss).askDecision(input),
 };

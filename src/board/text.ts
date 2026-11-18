@@ -1,3 +1,5 @@
+import { removedByDisplay } from '../cli/output.js';
+
 /**
  * The rules for the text of a board write. A title, a text, a question and the text of an option are one line each.
  */
@@ -12,6 +14,14 @@ const BREAK = /[\p{Cc}\p{Zl}\p{Zp}\u{202A}-\u{202E}\u{2066}-\u{2069}]/u;
 /** True when the text holds a line break, a control character or a mark of text direction. */
 export const holdsBreak = (text: string): boolean => BREAK.test(text);
 
+const BREAK_ISSUE = 'is not one line: it holds a line break, a control character or a mark of text direction';
+
+/** Why the display does not show the text as one line without a change. */
+export const visibleLineIssue = (text: string): string | null => {
+  if (holdsBreak(text)) return BREAK_ISSUE;
+  return removedByDisplay(text) ? 'holds a character that the screen does not show' : null;
+};
+
 /**
  * Why a text can not be one line of at most `max` characters, as a phrase for a message ("the title ..."), or null when it can. The
  * count is the count of the text without the space at its ends, which a write removes. The phrase never repeats the text.
@@ -19,6 +29,6 @@ export const holdsBreak = (text: string): boolean => BREAK.test(text);
 export const lineIssue = (text: string, max: number): string | null => {
   const line = text.trim();
   if (line === '') return 'is empty';
-  if (holdsBreak(line)) return 'is not one line: it holds a line break, a control character or a mark of text direction';
+  if (holdsBreak(line)) return BREAK_ISSUE;
   return line.length > max ? `is longer than ${max} characters` : null;
 };
