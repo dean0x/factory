@@ -355,7 +355,7 @@ export const runUpgrade = async (
   );
   if (!blockSet.ok) return blockSet;
   // The same guard read supplies the render and the gate, before acceptance writes or mode changes.
-  if (!options.dryRun && !prefix.ok) return prefix;
+  if (!prefix.ok) return prefix;
   const setup = await setupPlan.value.accept();
   if (!setup.ok) return setup;
   const modeNotes = await settleLocalMode(deps, home, !options.dryRun);

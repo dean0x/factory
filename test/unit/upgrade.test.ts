@@ -7,6 +7,7 @@ import { inspectBlocks, recordedBlockNames, type BlockStatus } from '../../src/b
 import { sha256Hex, parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { isRecord } from '../../src/migrate/inspect.js';
@@ -315,7 +316,7 @@ describe('upgrade: effective guard values', () => {
   });
 
   it.each(['missing', 'on', 'other-node', 'other-root', 'invalid', 'link', 'shared'] as const)(
-    'keeps guard text on when the off value has no matching record: %s', async (fault) => {
+    'writes nothing when the off value has no matching record: %s', async (fault) => {
       const { deps } = await makeNode(fault === 'link' ? { links: { [STORE]: '/outside/store' } } : {});
       seedGuards(deps, { 'install-rules': 'off' });
       if (fault === 'missing') deps.files.delete(STORE);
@@ -331,7 +332,9 @@ describe('upgrade: effective guard values', () => {
         deps.seed(`${folder}/.claude/settings.local.json`, JSON.stringify({ ...ownSettingsEntries, permissions: { deny: deny.value.rules } }));
       }
       const before = snapshot(deps);
-      expect(success(await upgrade(deps, currentSpec, { dryRun: fault === 'invalid' || fault === 'link' })).json).toMatchObject({ changed: false });
+      const result = await upgrade(deps, currentSpec, { dryRun: fault === 'invalid' || fault === 'link' });
+      if (fault === 'invalid' || fault === 'link') expect(exitCodeOf[refusal(result).kind]).toBe(4);
+      else expect(success(result).json).toMatchObject({ changed: false });
       expect(snapshot(deps)).toEqual(before);
     },
   );
@@ -351,6 +354,54 @@ describe('upgrade: effective guard values', () => {
     expect(exitCodeOf[result.error.kind]).toBe(4);
     expect(snapshot(deps)).toEqual(before);
     expect(deps.modes.get(LOCAL)).toBe(0o644);
+    expect(counted.count()).toBe(1);
+  });
+
+  it.each([false, true])('names a prefix mismatch in a dry run and writes nothing (json: %s)', async (json) => {
+    const { deps, gitSince } = await makeNode();
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex('another prefix'), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const before = snapshot(deps);
+    const counted = countReadsOf(deps, STORE);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(['upgrade', '--dry-run', '--home', HOME, ...(json ? ['--json'] : [])], counted.deps, {
+      isTTY: false, stdout: async (text) => { stdout.push(text); }, stderr: async (text) => { stderr.push(text); },
+    });
+    expect(code).toBe(4);
+    expect(stderr.join('')).toContain('the owner prefix differs from its record');
+    expect(stderr.join('')).toContain('factory guard confirm');
+    if (json) expect(JSON.parse(stdout.join(''))).toMatchObject({ schema: 'factory.error/v1', error: {
+      kind: 'safety', message: 'the owner prefix differs from its record', hint: expect.stringContaining('factory guard confirm'),
+    } });
+    else expect(stdout).toEqual([]);
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+    expect(settingWrites(gitSince())).toEqual([]);
+    expect(counted.count()).toBe(1);
+  });
+
+  it.each([false, true])('names an invalid guard store in a dry run and writes nothing (json: %s)', async (json) => {
+    const { deps, gitSince } = await makeNode();
+    deps.seed(STORE, 'invalid');
+    const before = snapshot(deps);
+    const counted = countReadsOf(deps, STORE);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(['upgrade', '--dry-run', '--home', HOME, ...(json ? ['--json'] : [])], counted.deps, {
+      isTTY: false, stdout: async (text) => { stdout.push(text); }, stderr: async (text) => { stderr.push(text); },
+    });
+    expect(code).toBe(4);
+    expect(stderr.join('')).toContain(STORE);
+    expect(stderr.join('')).toContain('factory doctor');
+    if (json) expect(JSON.parse(stdout.join(''))).toMatchObject({ schema: 'factory.error/v1', error: {
+      kind: 'safety', message: expect.stringContaining(STORE), hint: expect.stringContaining('factory doctor'),
+    } });
+    else expect(stdout).toEqual([]);
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+    expect(settingWrites(gitSince())).toEqual([]);
     expect(counted.count()).toBe(1);
   });
 
