@@ -1022,6 +1022,7 @@ describe('the item and track commands in the command line', () => {
     const asked = await run(['decide', '--help']);
     expect(asked.code).toBe(0);
     expect(asked.out).toContain('factory decide ID OPTION [--note TEXT] [--home DIR]');
+    expect(asked.out).toContain('factory decide read ID [--json] [--home DIR]');
     expect(asked.out).toMatch(/--note TEXT\s+The reason for the answer/);
   });
 
@@ -1030,7 +1031,7 @@ describe('the item and track commands in the command line', () => {
     expect(Object.keys(decide?.options ?? {}).sort()).toEqual([flags.home, flags.note].sort());
   });
 
-  it('routes decide read and the json flag to exit 2, and a run with no terminal window to exit 4', async () => {
+  it('routes read before the answer checks and keeps the answer form unchanged', async () => {
     const repo = await boardNode({ board: boardText([], []) });
     const runBoard = async (argv: readonly string[]) => {
       const sink = captureSink();
@@ -1038,8 +1039,8 @@ describe('the item and track commands in the command line', () => {
       return { code, out: sink.out.join(''), err: sink.errors.join('') };
     };
     const read = await runBoard(['decide', 'read', 'D-1']);
-    expect(read.code).toBe(2);
-    expect(read.err).toContain('not in this version');
+    expect(read.code).toBe(1);
+    expect(read.out).toContain('no owner proof');
     expect((await runBoard(['decide', 'D-1', 'a', '--json'])).code).toBe(2);
     const noTerminal = await runBoard(['decide', 'D-1', 'a']);
     expect(noTerminal.code).toBe(4);

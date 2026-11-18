@@ -3,7 +3,7 @@ import { failure, safetyRefusal, usageError, type CliError, type CliResult } fro
 import { displayLine } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { decisionIdsOf, decisionPlaceOf, readDecisionProof, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
+import { decisionIdsOf, decisionPlaceOf, readDecisionProof, readDecisionStore, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import {
@@ -40,7 +40,7 @@ import type {
   LocalBoard,
   QueueRowSet,
 } from './contract.js';
-import { addNewRemedy, decideLogRow, recheckRequest, requestStateOf, requireLogRoom, requireOpen, strictRequestOf, type RequestState } from './decide.js';
+import { addNewRemedy, decideLogRow, proofOf, recheckRequest, requestStateOf, requireLogRoom, requireOpen, strictRequestOf, type RequestState } from './decide.js';
 import { buildDecisionRecord, decisionRecordPath } from './decision-record.js';
 import {
   addItemIn,
@@ -80,7 +80,7 @@ import {
 import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readWaiting, type BoardDoc, type DecisionLogDoc, type WaitingDoc } from './files.js';
 import { boardJsonText } from './json.js';
 import { queueRowsOf } from './queue.js';
-import { requestsOf } from './requests.js';
+import { requestsOf, type RequestLinkRules } from './requests.js';
 
 /**
  * The local board connector (design 4.10): the board is the files of the state folder. Every write is one `commitBoardChange` call:
@@ -109,6 +109,7 @@ export interface LocalBoardOptions {
   readonly tracker: string;
   /** The id of the node: `core.node.id` of the config. The owner decision file keeps the node id of each answer. */
   readonly node: string;
+  readonly requestLinkRules?: RequestLinkRules | undefined;
 }
 
 const commitMessages = {
@@ -752,6 +753,27 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
           return unreachable;
         }
       }
+    },
+
+    async decisionRead(id) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkRequestId(id);
+      if (!valid.ok) return valid;
+      const guarded = await requireGuardOn(deps, layout.stateDir);
+      if (!guarded.ok) return guarded;
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      const read = await readBoardFiles(deps, layout, decisionFiles);
+      if (!read.ok && read.error.kind === 'safety') return read;
+      const docs = read.ok ? decisionDocsOf(read.value) : read;
+      const stored = await readDecisionStore(deps, place.value, id);
+      const rules = options.requestLinkRules ?? {
+        points: [],
+        parseRef: () => failure('the recipe has no reference rule'),
+        parseHead: () => failure('the recipe has no head rule'),
+      };
+      return ok({ node: place.value.node, root: place.value.root, proof: proofOf(id, docs, stored, rules) });
     },
 
     async recordDecision(input, writeProof) {

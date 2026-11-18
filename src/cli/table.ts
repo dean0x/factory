@@ -2,6 +2,7 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { boardWorkItems } from '../board/work-items.js';
 import { boardDecisionLog } from '../commands/board-open.js';
 import { runBoard } from '../commands/board.js';
+import { runDecideRead } from '../commands/decide-read.js';
 import { runDecide } from '../commands/decide.js';
 import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
@@ -34,6 +35,7 @@ import {
   commandLines,
   commands,
   commandText,
+  decideWords,
   files,
   flags,
   flagShorts,
@@ -827,7 +829,10 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
   {
     name: commands.decide,
     summary: `Record the answer of the ${roles.owner} to an open ${requestWords.request}. It asks you to confirm, so run it in your own terminal window.`,
-    usage: `${commandText(commands.decide)} ID OPTION [${flagText(flags.note)} TEXT] [${flagText(flags.home)} DIR]`,
+    usage: [
+      `${commandText(commands.decide)} ID OPTION [${flagText(flags.note)} TEXT] [${flagText(flags.home)} DIR]`,
+      `${commandText(`${commands.decide} ${decideWords.read}`)} ID [${flagText(flags.json)}] [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
       [flags.home]: foundHomeOption,
@@ -837,12 +842,13 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
         description: `The reason for the answer. One line of 1 to ${boardTextLimits.maxNoteChars} characters. It goes into the profile record only.`,
       },
     },
-    run: (given, deps) =>
-      runDecide(
-        deps,
-        { home: given.string(flags.home), words: given.positionals(), note: given.string(flags.note), json: given.bool(flags.json) },
-        registry,
-      ),
+    run: (given, deps) => {
+      const words = given.positionals();
+      const home = given.string(flags.home);
+      const note = given.string(flags.note);
+      if (words[0] === decideWords.read) return runDecideRead(deps, { home, words: words.slice(1), note }, registry);
+      return runDecide(deps, { home, words, note, json: given.bool(flags.json) }, registry);
+    },
   },
   {
     name: commands.queue,

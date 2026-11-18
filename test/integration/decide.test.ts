@@ -179,6 +179,16 @@ describe.skipIf(gate !== 'run')('decide in a fake terminal (built binary)', () =
 });
 
 describe('decide with no terminal window (built binary)', () => {
+  it('reads an open request with no owner proof and changes nothing', async () => {
+    const before = await stateNow();
+    const result = await box.run(['decide', 'read', 'D-1', '--json', '--home', box.node]);
+    expect(result.code, result.stderr).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      proof: 'open', id: 'D-1', node: 'demo', root: await realpath(box.node), reason: 'request is open; no owner proof',
+    });
+    expect(await stateNow()).toEqual(before);
+  }, CASE_MS);
+
   it(
     'exits 4 when input and output are pipes, even with a yes on the input, and writes nothing',
     async () => {

@@ -796,7 +796,7 @@ export const decideProofKinds = ['record', 'relayed', 'closed', 'open', 'none', 
 /** Fixed verdict reasons. Request text cannot supply a verdict or claim owner proof. */
 export const decideProofReasons: Readonly<Record<(typeof decideProofKinds)[number], string>> = {
   record: 'owner store record matches the request text',
-  relayed: 'answer relayed by the coordinator; no owner proof',
+  relayed: 'answer relayed by the coordinator; no owner proof; not a go',
   closed: 'request closed; no owner proof',
   open: 'request is open; no owner proof',
   none: 'no owner store record; no owner proof',

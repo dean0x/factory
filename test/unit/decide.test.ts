@@ -167,7 +167,7 @@ const expectNothingDone = (repo: BoardRepo, before: ReadonlyMap<string, string>,
 };
 
 describe('decide: the words and the flags are checked first, with exit 2', () => {
-  it('says that decide read is not in this version, with exit 2, before the owner check', async () => {
+  it('refuses read in the answer function before the owner check', async () => {
     const repo = await nodeOf();
     const error = errorOf(await decide(repo.deps, { words: ['read', 'D-1'] }));
     expect(exitCodeOf[error.kind]).toBe(2);
