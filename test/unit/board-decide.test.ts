@@ -462,7 +462,7 @@ describe('request proof', () => {
     [{ relayed: relayedMarker }, 'relayed', 'coordinator'],
     [{ decider: requestDeciders.delegate }, 'closed', 'delegate'],
     [{ decider: 'unknown' }, 'error', null],
-  ] as const)('keeps a relay or a row with a decider separate from owner proof', (mark, kind, decider) => {
+  ] as const)('keeps the row with mark %j separate from owner proof', (mark, kind, decider) => {
     const request = canonicalOf(entry());
     const stored = ok({ record: { ...record, hash: requestHashOf(request) } });
     const docs = ok({ waiting: waitingOf(), log: logOf({ item: 'D-3: Pick', by: 'owner', request, ...mark }) });

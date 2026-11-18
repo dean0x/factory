@@ -162,7 +162,7 @@ describe('decide read', () => {
     [[{ ...REQUEST, fields: [LINK_FIELDS[1]] }], []],
     [[], [{ ...RELAYED, head: 'bad' }]],
     [[], [{ ...ANSWERED, request: canonicalOf({ ...REQUEST, fields: [LINK_FIELDS[1]] }) }]],
-  ] as const)('fails closed for a bad link in a request or a row', async (items, rows) => {
+  ] as const)('fails closed for a bad link (requests %j, rows %j)', async (items, rows) => {
     const repo = await nodeOf(items, rows);
     expectNoProof(await run(repo), 'error');
   });
@@ -192,7 +192,7 @@ describe('decide read', () => {
     expect(result.err).toContain('not in this version');
   });
 
-  it.each([[ID, '--note', 'text'], [ID, '--from', 'file'], ['D-01'], [ID, 'extra']])('refuses invalid read arguments', async (...words) => {
+  it.each([[ID, '--note', 'text'], [ID, '--from', 'file'], ['D-01'], [ID, 'extra']])('refuses invalid read arguments (case %#, first argument %j)', async (...words) => {
     expect((await run(await nodeOf(), words)).code).toBe(2);
   });
 
