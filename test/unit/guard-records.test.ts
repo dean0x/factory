@@ -14,7 +14,7 @@ import { commandLines, env, files, guardRecordWords } from '../../src/names.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 
 const root = '/work/node';
-const userHome = '/users/test';
+const userHome = '/users/example';
 const stateHome = '/state';
 const path = `${stateHome}/factory/${files.guardRecords}`;
 const folder = `${stateHome}/factory`;
@@ -62,7 +62,7 @@ describe('the guard record channel', () => {
 describe('the pure guard store place', () => {
   it.each([
     [{ [env.userHome]: userHome, [env.stateHome]: stateHome }, '/state/factory/' + files.guardRecords],
-    [{ [env.userHome]: userHome, [env.stateHome]: 'relative' }, '/users/test/.local/state/factory/' + files.guardRecords],
+    [{ [env.userHome]: userHome, [env.stateHome]: 'relative' }, '/users/example/.local/state/factory/' + files.guardRecords],
     [{ [env.stateHome]: stateHome }, '/state/factory/' + files.guardRecords],
     [{ [env.userHome]: 'relative' }, null],
     [{}, null],
@@ -76,7 +76,7 @@ describe('the pure guard store place', () => {
     [root, 'linux'],
     [`${userHome}/.claude/state`, 'linux'],
     ['/WORK/NODE', 'darwin'],
-    ['/USERS/TEST/.CLAUDE/state', 'darwin'],
+    ['/USERS/EXAMPLE/.CLAUDE/state', 'darwin'],
   ])('marks a store inside a protected folder at %s', (state, os) => {
     const deps = createFakeDeps({ env: { [env.userHome]: userHome, [env.stateHome]: state }, os });
     expect(guardStorePathOf(deps, root)).toMatchObject({ inside: true });
