@@ -180,10 +180,10 @@ it('keeps the base text and block versions when every guard is on', () => {
     [
       [
         {
-          "hash": "ed75783be16afc3f6902619867e1c38a3e10c56685b62b319943f0358b45ced0",
+          "hash": "1f3afb98112ed62fcc2bca2468c9a895760332918b61d4cda7c56aa1e11140ae",
           "name": "coordinator",
           "target": "claudeFile",
-          "version": 7,
+          "version": 8,
         },
         {
           "hash": "03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41",
@@ -320,7 +320,7 @@ const summary = (blocks: readonly { name: string; version: number; target: strin
 describe('block templates', () => {
   it('gives layer 1 the coordinator, safety, work rules and worker blocks with their versions and targets', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
-      ['coordinator', 7, 'claudeFile'],
+      ['coordinator', 8, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['work-rules', 1, 'claudeFile'],
       ['worker', 5, 'workerFile'],
@@ -349,7 +349,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 113],
+    ['coordinator', 40, 143],
     ['manager', 20, 50],
     ['safety', 12, 25],
     ['work-rules', 15, 30],
@@ -1114,11 +1114,65 @@ describe('the coordinator text: the board records', () => {
     expect(decisions).toContain('No question waits for the owner.');
   });
 
-  it('keeps an approval point on the decide command only', () => {
-    expect(sectionOf('Decisions')).toContain(
-      `An approval point has one path only: \`${commandText(commands.decide)} <id> <option>\`, run by the owner. ` +
-        `Never use \`${flagText(flags.relayed)}\`, \`${flagText(flags.madeBy)}\` or the log for an approval point.`,
-    );
+  const ownerMergeSentences = [
+    'In owner mode, a go typed in the coordinator pane with the exact owner prefix permits the merge.',
+    'Read the exact prefix in the safety block.',
+    'Factory can not verify who typed the go or whether it had the exact prefix.',
+    'When the PR is ready, add a linked approval request for the item, PR number and full head SHA.',
+    'Use `factory request add --item ID --ref N --head HEAD --title TITLE --question QUESTION --option approve=Go --option stop=Stop`.',
+    'If the add fails, fix the cause before you continue.',
+    'On a typed go, close the linked request with `factory request close <id> --relayed --decision approve`.',
+    'If the go comes before the request, add the linked request and close it at once.',
+    'If the close refuses, do not merge.',
+    'Show the refusal to the owner.',
+    'If an owner store answer exists, ask the owner to run `factory decide` again with the same option.',
+    'For any other refusal, wait for the owner to resolve it.',
+    'An owner store answer takes priority over a typed go.',
+    'Never use a typed go to override a store answer with another option.',
+    'If the answer is `stop`, do not merge.',
+    'Ask the owner what must change.',
+    'If the owner uses `factory decide`, use only a settled `approve` whose request hash matches.',
+    'After a relay, get owner proof only with a new request and `factory decide`.',
+    'Before the merge, check that the settled approval matches the PR number and full head SHA.',
+    'Merge with `gh pr merge --match-head-commit HEAD N`, with the head from the approval row.',
+    'If the head changes, check the new head and ask for a new approval on a linked request.',
+    'If the merge fails for another reason, stop and show the owner the failure.',
+    'After the merge succeeds, run `factory item record <id> --ref N`.',
+    'In owner mode, an open linked request blocks the record.',
+    'The last settled linked row in log order needs a relayed `approve` or a store `approve` whose request hash matches.',
+    'The reference and head must match the values from GitHub.',
+    'If an approval check fails, the command writes no record and names only the request id, if known.',
+    'If the record refuses, show the refusal to the owner and follow the remedy before you try again.',
+  ] as const;
+  const relaySteps = ownerMergeSentences.map((sentence) => `- ${sentence}`).join('\n');
+  const afterUpgrade = 'For an item merged before the upgrade, add a linked request with the merged head and get an answer.';
+
+  it('states the typed go rule, step order, conditions and remedies in owner mode', () => {
+    expect(sectionOf('Decisions')).toContain(relaySteps);
+    expect(sectionOf('After an upgrade')).toContain(afterUpgrade);
+    expect([...ownerMergeSentences, afterUpgrade].filter((sentence) => sentence.split(/\s+/).length > 25)).toEqual([]);
+  });
+
+  const decideOnly = (point: string): string =>
+    `For ${point}, use only \`${commandText(commands.decide)} <id> <option>\`, run by the owner.`;
+  const delegatedCoordinator = delegatedBlocks.find((template) => template.name === 'coordinator')?.body ?? '';
+
+  it('keeps a delegated merge on decide only and omits the owner-mode steps', () => {
+    expect(delegatedCoordinator).toContain(decideOnly('a delegated merge'));
+    for (const sentence of [...ownerMergeSentences, afterUpgrade]) expect(delegatedCoordinator).not.toContain(sentence);
+  });
+
+  it('keeps release on decide only in both modes', () => {
+    expect(sectionOf('Decisions')).toContain(decideOnly('a release'));
+    expect(delegatedCoordinator).toContain(decideOnly('a release'));
+  });
+
+  it('never uses the exit code of the decision read as approval', () => {
+    for (const body of [coordinator(), delegatedCoordinator]) {
+      expect(body.split('\n').filter((line) => line.includes('decide read'))).toEqual([
+        '- The exit code of `factory decide read` grants no approval.',
+      ]);
+    }
   });
 
   it('says that the decision log holds the decisions with their decider, and that only the owner store proves an answer', () => {
@@ -1890,9 +1944,9 @@ describe('the work rules block of the coordinator', () => {
     expect(rules()).not.toContain(commandText(commandLines.requestLog));
   });
 
-  it('leaves the coordinator block, its version and its approval point lines as they were', () => {
+  it('keeps work rules separate from the coordinator block and its approval point lines', () => {
     const template = layer1Blocks.find((candidate) => candidate.name === 'coordinator');
-    expect(template?.version).toBe(7);
+    expect(template?.version).toBe(8);
     expect(template?.body).not.toContain('Work rules');
     for (const line of approvalLines(points, softwareOwnerModes)) expect(rules()).not.toContain(line);
   });

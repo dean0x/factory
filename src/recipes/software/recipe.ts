@@ -1,8 +1,9 @@
-import { blockNames, layers } from '../../names.js';
+import { blockNames, layers, values } from '../../names.js';
 import { coordinatorValuesFor, fillTemplate, linesFor, workerValuesFor } from '../../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../../templates/types.js';
 import { approvalLines, type RecipeRoles } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
+import { softwareRecordCheck } from './record.js';
 import { coordinatorLines } from './roles/coordinator.js';
 import { MANAGER_PARTS } from './roles/manager.js';
 import { WORKER_PARTS } from './roles/worker.js';
@@ -35,10 +36,14 @@ const managerFor = (input: BlockInput): BlockTemplate => ({
  */
 const coordinatorFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.coordinator,
-  version: 7,
+  version: 8,
   target: 'claudeFile',
   body: fillTemplate(
-    coordinatorLines(approvalLines(softwareApprovalPoints, input.modes, input.guards), input.guards),
+    coordinatorLines(
+      approvalLines(softwareApprovalPoints, input.modes, input.guards),
+      input.guards,
+      input.modes[softwareRecordCheck.point] !== values.approvalModes[1],
+    ),
     coordinatorValuesFor(input),
   ),
 });

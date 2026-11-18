@@ -2725,6 +2725,12 @@ export const templateValues: Readonly<Record<string, string>> = {
   approvalGoOption: approvalOptions.go,
   approvalStopOption: approvalOptions.stop,
   decideCommand: commandText(commands.decide),
+  requestApprovalCommand:
+    `${commandText(commandLines.requestAdd)} ${flagText(flags.item)} ID ${flagText(flags.ref)} N ${flagText(flags.head)} HEAD ` +
+    `${flagText(flags.title)} TITLE ${flagText(flags.question)} QUESTION ` +
+    `${flagText(flags.option)} ${approvalOptions.go}${requestWords.optionSeparator}Go ` +
+    `${flagText(flags.option)} ${approvalOptions.stop}${requestWords.optionSeparator}Stop`,
+  requestApprovalRelayCommand: `${commandText(commandLines.requestClose)} <id> ${flagText(flags.relayed)} ${flagText(flags.decision)} ${approvalOptions.go}`,
   requestCloseCommand: `${commandText(commandLines.requestClose)} <id> ${flagText(flags.madeBy)} ${Object.values(requestDeciders).join('|')} ${flagText(flags.decision)} TEXT`,
   queueCommand: commandText(commands.queue),
   lockRunCommand: commandText(commandLines.lockRun),
