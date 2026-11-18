@@ -85,14 +85,14 @@ const linkFault = (reason: string) => failure(`the ${requestWords.request} link 
 /** Stored faults are failures, never usage errors. No stored value supplies the error text. */
 const linkOfParts = (parts: LinkParts, rules: RequestLinkRules | undefined): CliResult<RequestLink> => {
   if (rules === undefined) return linkFault('has no approval link rules');
-  if (typeof parts.point !== 'string' || !rules.points.includes(parts.point)) return linkFault('hasan invalid approval point');
-  if (typeof parts.item !== 'string' || !boardIds.item.test(parts.item)) return linkFault('hasan invalid board item');
-  if (typeof parts.ref !== 'string') return linkFault('hasno reference text');
+  if (typeof parts.point !== 'string' || !rules.points.includes(parts.point)) return linkFault('has an invalid approval point');
+  if (typeof parts.item !== 'string' || !boardIds.item.test(parts.item)) return linkFault('has an invalid board item');
+  if (typeof parts.ref !== 'string') return linkFault('has no reference text');
   const ref = rules.parseRef(parts.ref);
-  if (!ref.ok) return linkFault('hasan invalid reference');
-  if (typeof parts.head !== 'string') return linkFault('hasno head text');
+  if (!ref.ok) return linkFault('has an invalid reference');
+  if (typeof parts.head !== 'string') return linkFault('has no head text');
   const head = rules.parseHead(parts.head);
-  if (!head.ok) return linkFault('hasan invalid head');
+  if (!head.ok) return linkFault('has an invalid head');
   return ok({ point: parts.point, item: parts.item, ref: ref.value, head: head.value });
 };
 
@@ -144,10 +144,4 @@ export const answeredRequestOf = (requestText: string): CliResult<Readonly<Recor
   const request = wrapper[requestHash.keys.request];
   if (!isRecord(request)) return failure(`the hash wrapper has no ${requestWords.request} object`);
   return ok(request);
-};
-
-/** Log fields outside the hash wrapper cannot supply a link for an owner record. */
-export const linkOfAnswered = (requestText: string, rules: RequestLinkRules | undefined): CliResult<RequestLink | null> => {
-  const request = answeredRequestOf(requestText);
-  return request.ok ? linkOfFields(request.value[decisionKeys.fields], rules) : request;
 };

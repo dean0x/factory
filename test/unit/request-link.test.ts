@@ -97,11 +97,23 @@ describe('the strict request link reader', () => {
     expect(links.linkOfFields(fields, RULES)).toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 
+  it.each([
+    ['point', 'unknown', 'the request link has an invalid approval point'],
+    ['item', 'D-12', 'the request link has an invalid board item'],
+    ['ref', null, 'the request link has no reference text'],
+    ['ref', '0', 'the request link has an invalid reference'],
+    ['head', false, 'the request link has no head text'],
+    ['head', 'b'.repeat(39), 'the request link has an invalid head'],
+  ] as const)('reports the exact fault for a bad %s value: %j', (part, value, message) => {
+    const change = { [part]: value };
+    expect(links.linkOfFields(fieldsOf(change), RULES)).toEqual(failure(message));
+    expect(links.linkOfRow(rowOf(change), RULES)).toEqual(failure(message));
+  });
+
   it.each<[string, unknown]>([
-    ['point', 'unknown'], ['point', ' publish'], ['point', null],
-    ['item', 'D-12'], ['item', 'B-1234567890'], ['item', 12],
-    ['ref', '0'], ['ref', '012'], ['ref', null],
-    ['head', 'b'.repeat(39)], ['head', 'B'.repeat(40)], ['head', false],
+    ['point', ' publish'], ['point', null],
+    ['item', 'B-1234567890'], ['item', 12],
+    ['ref', '012'], ['head', 'B'.repeat(40)],
     ...PARTS.map((part): [string, unknown] => [part, '']),
   ])('refuses a bad %s value in both fields and rows: %j', (part, value) => {
     const change = { [String(part)]: value };
@@ -157,21 +169,23 @@ describe('the strict log link reader', () => {
 });
 
 describe('the link of an answered request', () => {
-  it('reads the request text that the store hash covers, not other log fields', () => {
-    expect(links.linkOfAnswered(answeredText(fieldsOf()), RULES)).toEqual(ok(LINK));
+  it.each([
+    [fieldsOf(), LINK],
+    [undefined, null],
+    [[{ label: 'head', text: LINK.head }, { label: 'reference', text: LINK.ref }], null],
+  ] as const)('reads the link, if any, from the fields inside the hash wrapper: %j', (fields, link) => {
+    const request = links.answeredRequestOf(answeredText(fields));
+    if (!request.ok) throw new Error(request.error.message);
+    expect(links.linkOfFields(request.value[names.decisionKeys.fields], RULES)).toEqual(ok(link));
   });
 
-  it('reads an old request with no fields as unlinked', () => {
-    expect(links.linkOfAnswered(answeredText(undefined), RULES)).toEqual(ok(null));
-  });
-
-  it('reads ordinary head and reference fields as unlinked', () => {
-    const text = answeredText([{ label: 'head', text: LINK.head }, { label: 'reference', text: LINK.ref }]);
-    expect(links.linkOfAnswered(text, RULES)).toEqual(ok(null));
-  });
-
-  it('refuses a partial link in the hashed request text', () => {
-    expect(links.linkOfAnswered(answeredText([{ label: LABELS.item, text: LINK.item }]), RULES))
+  it.each([
+    [[{ label: LABELS.item, text: LINK.item }]],
+    [{}],
+  ] as const)('refuses invalid link fields inside the hash wrapper: %j', (fields) => {
+    const request = links.answeredRequestOf(answeredText(fields));
+    if (!request.ok) throw new Error(request.error.message);
+    expect(links.linkOfFields(request.value[names.decisionKeys.fields], RULES))
       .toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 
@@ -181,8 +195,7 @@ describe('the link of an answered request', () => {
     JSON.stringify({ tag: 'another tag', version: names.requestHash.version, request: {} }),
     JSON.stringify({ tag: names.requestHash.tag, version: 2, request: {} }),
     JSON.stringify({ tag: names.requestHash.tag, version: names.requestHash.version, request: {}, extra: true }),
-    answeredText({}),
   ])('refuses malformed request text or its wrapper: %j', (text) => {
-    expect(links.linkOfAnswered(text, RULES)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(links.answeredRequestOf(text)).toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 });

@@ -444,6 +444,13 @@ describe('request proof', () => {
   const rules = { points: [], parseRef: (text: string) => ok(text), parseHead: (text: string) => ok(text) };
   const record = { node: 'node', root: '/root', id: 'D-3', option: 'b', at: '2030-01-02T03:04:05.678Z' };
 
+  it('rejects a malformed hash wrapper even when its hash matches the store', () => {
+    const request = '{}';
+    const stored = ok({ record: { ...record, hash: requestHashOf(request) } });
+    const docs = ok({ waiting: waitingOf(), log: logOf({ item: 'D-3: Pick', by: 'owner', request }) });
+    expect(proofOf('D-3', docs, stored, rules)).toMatchObject({ kind: 'error', option: null });
+  });
+
   it('does not accept request text for a different id', () => {
     const request = canonicalOf(entry({ id: 'D-4' }));
     const stored = ok({ record: { ...record, hash: requestHashOf(request) } });
