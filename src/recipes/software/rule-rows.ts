@@ -210,7 +210,7 @@ const ownerGoRows: readonly GuardRow[] = [
   textRow({
     id: 'approval-point-decide-only-text',
     guard: guardIds.ownerGo,
-    name: `An approval point has one path only, the answer command that the ${owner} runs, and no other command settles it`,
+    name: `Release and delegated merge use only the answer command that the ${owner} runs`,
     applies: `Role text of the ${coordinator}`,
     harm: true,
     sites: at(COORDINATOR_FILE, 'coordinatorLines'),

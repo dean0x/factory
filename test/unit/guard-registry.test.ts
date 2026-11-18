@@ -13,7 +13,7 @@ import { allOn, guardRulesOf } from '../../src/guards/effective.js';
 import { fillTemplate } from '../../src/templates/fill.js';
 import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, keys, roleText } from '../../src/names.js';
 import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
-import { blockInput, softwareRecipe } from '../helpers/blocks.js';
+import { blockInput, softwareOwnerModes, softwareRecipe } from '../helpers/blocks.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { jargonIn } from '../helpers/plain-words.js';
 import { publishRecipe } from '../helpers/publish-recipe.js';
@@ -547,6 +547,8 @@ describe('the rows of the registry', () => {
         'answered-row-not-proof',
         'answered-no-reclose',
         'settle-relay-rules',
+        'linked-relay-scope',
+        'item-record-approval',
         'owner-row-under-lock',
         'decision-record-escape',
         'approval-store-place',
@@ -699,7 +701,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(206);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(208);
     expect(softwareRecipe.guardRows).toHaveLength(102);
   });
 
@@ -725,6 +727,26 @@ describe('the rows of the registry', () => {
     for (const symbol of symbols) {
       expect(sourceScan.callsOf(source, symbol).length, symbol).toBeGreaterThan(0);
     }
+  });
+
+  it.each([
+    {
+      id: 'linked-relay-scope', applies: commandLines.requestClose,
+      site: { path: 'src/board/edit.ts', symbol: 'checkRequestClose' },
+    },
+    {
+      id: 'item-record-approval', applies: commandLines.itemRecord,
+      site: { path: 'src/board/decide.ts', symbol: 'approvalVerdict' },
+    },
+  ])('lists $id as an owner go code check with a harm mark', ({ id, applies, site }) => {
+    const row = software.rows.find((candidate) => candidate.id === id);
+    expect(row).toMatchObject({ guard: guardIds.ownerGo, kind: guardKinds.code, harm: true, applies });
+    expect(row?.sites).toContainEqual(site);
+  });
+
+  it('limits the decide-only row to release and delegated merge', () => {
+    const row = software.rows.find((candidate) => candidate.id === 'approval-point-decide-only-text');
+    expect(row?.name).toBe('Release and delegated merge use only the answer command that the owner runs');
   });
 
   it('lists the doc place check with its harm mark and its shared name check', () => {
@@ -811,11 +833,13 @@ describe('the text rows of the registry', () => {
   const bodyOf = (blocks: readonly { readonly name: string; readonly body: string }[], name: string): string =>
     blocks.find((block) => block.name === name)?.body ?? '';
   const coordinatorText = bodyOf(layer1, blockNames.coordinator);
+  const delegatedBlocks = blockTemplatesFor(blockInput(1, { modes: { ...softwareOwnerModes, merge: 'delegated' } }));
+  const delegatedCoordinatorText = bodyOf(delegatedBlocks, blockNames.coordinator);
   const safetyText = bodyOf(layer1, blockNames.safety);
   const profileText = `${fileTemplates.profileReadme}\n${fileTemplates.profileIndex}`;
   const glossaryText = glossary.map((word) => word.text).join('\n');
   const TEXT_OF_PATH: Readonly<Record<string, string>> = {
-    'src/recipes/software/roles/coordinator.ts': coordinatorText,
+    'src/recipes/software/roles/coordinator.ts': `${coordinatorText}\n${delegatedCoordinatorText}`,
     'src/recipes/software/roles/worker.ts': bodyOf(layer1, blockNames.worker),
     'src/recipes/software/roles/manager.ts': bodyOf(layer2, blockNames.manager),
     'src/templates/safety.ts': safetyText,
@@ -899,7 +923,10 @@ describe('the text rows of the registry', () => {
       'To ask for an owner go, ask the coordinator.',
       'If a worker asks for an owner go, ask the owner.',
     ],
-    'approval-point-decide-only-text': ['An approval point has one path only:'],
+    'approval-point-decide-only-text': [
+      'For a release, use only `factory decide <id> <option>`, run by the owner.',
+      'For a delegated merge, use only `factory decide <id> <option>`, run by the owner.',
+    ],
     'answered-row-not-proof-text': ['Only a record in the owner store proves an answer of the owner.'],
     'settle-relay-text': ['The row of a relayed answer names the coordinator as the decider.'],
     'name-decider-text': ['Each relay of a decision names who made it', 'name who made it: the owner, the coordinator, or a delegate.'],
