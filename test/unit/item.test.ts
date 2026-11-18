@@ -1000,6 +1000,7 @@ describe('item record: the record check belongs to the recipe of the node', () =
   /** The record check of the publishing recipe: it reads no GitHub, and it keeps the head `proof-1`. */
   const proofCheck = (verdict: 'pass' | 'fail' = 'pass'): RecordCheck => ({
     stage: 'approved',
+    point: 'publish',
     summary: 'record a signed proof',
     refHelp: 'the number of the proof',
     parseRef: (text) => {

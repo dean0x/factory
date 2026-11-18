@@ -70,6 +70,12 @@ describe('the record check in the registry', () => {
     expect(softwareBoard.stages).toContain(softwareRecordCheck.stage);
   });
 
+  it('names the merge approval point of the software recipe', () => {
+    const entry = recipes.find((candidate) => candidate.id === 'software');
+    expect(entry?.recordCheck?.point).toBe('merge');
+    expect(entry?.approvalPoints.map(({ id }) => id)).toContain(entry?.recordCheck?.point);
+  });
+
   it('is not held by a recipe that gives none', () => {
     expect(publishRecipe.recordCheck).toBeUndefined();
   });

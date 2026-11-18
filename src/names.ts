@@ -222,6 +222,7 @@ export const flags = {
   madeBy: 'made-by',
   decision: 'decision',
   ref: 'ref',
+  head: 'head',
   relayed: 'relayed',
   file: 'file',
   field: 'field',
@@ -673,6 +674,9 @@ export const boardKeys = {
 
 /** The keys of the waiting file: the top keys, and the id of a waiting item. */
 export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', id: 'id' } as const;
+
+/** The fixed option keys of a linked approval request. */
+export const approvalOptions = { go: 'approve', stop: 'stop' } as const;
 
 /** These link labels and their decision log keys are a stored format. Never change their values. */
 export const approvalLinkLabels = { point: 'link point', item: 'link item', ref: 'link reference', head: 'link head' } as const;
@@ -2718,6 +2722,8 @@ export const templateValues: Readonly<Record<string, string>> = {
   itemCommand: commandText(commands.item),
   trackCommand: commandText(commands.track),
   requestCommand: commandText(commands.request),
+  approvalGoOption: approvalOptions.go,
+  approvalStopOption: approvalOptions.stop,
   decideCommand: commandText(commands.decide),
   requestCloseCommand: `${commandText(commandLines.requestClose)} <id> ${flagText(flags.madeBy)} ${Object.values(requestDeciders).join('|')} ${flagText(flags.decision)} TEXT`,
   queueCommand: commandText(commands.queue),
