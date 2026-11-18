@@ -3,7 +3,7 @@ import { failure, safetyRefusal, usageError, type CliError, type CliResult } fro
 import { displayLine } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { decisionIdsOf, decisionPlaceOf, readDecisionProof, readDecisionStore, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
+import { decisionIdsOf, decisionPlaceOf, readDecisionProof, readDecisionStore, readScopedDecisions, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import {
@@ -280,12 +280,11 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     }
     const rules = options.requestLinkRules;
     const linked = linkedApprovalsOf(docs.value.waiting, docs.value.log, id, approval.point, rules);
-    const settled = linked.settled.ok ? linked.settled.value : null;
-    const verdict = (stored: Awaited<ReturnType<typeof readDecisionStore>>): CliResult<void> =>
+    const verdict = (stored: Awaited<ReturnType<typeof readScopedDecisions>>): CliResult<void> =>
       approvalVerdict({ docs: docs.value, linked, stored, rules, mode: approval.mode, ref, head });
-    if (settled === null || approval.mode !== roles.owner) return verdict(ok({ record: null }));
+    if (approval.mode !== roles.owner || !linked.settled.ok || linked.settled.value.length === 0) return verdict(ok([]));
     if (place === null || place.path === null) return verdict(err(`the ${roles.owner} store has no path`));
-    return verdict(await readDecisionStore(deps, place, settled.id));
+    return verdict(await readScopedDecisions(deps, place));
   };
 
   const noPlace = (): Err<CliError> =>

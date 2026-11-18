@@ -41,7 +41,8 @@ const verdictOf = (items: readonly Row[], rows: readonly Row[], stored: Store = 
   if (!waiting.ok || !log.ok) throw new Error('invalid test documents');
   const docs = { waiting: waiting.value, log: log.value };
   const linked = decide.linkedApprovalsOf(docs.waiting, docs.log, item, point, rules);
-  return decide.approvalVerdict({ docs, linked, rules, stored, mode: 'owner', ref, head, ...target });
+  const records = stored.ok ? ok(stored.value.record === null ? [] : [stored.value.record]) : stored;
+  return decide.approvalVerdict({ docs, linked, rules, stored: records, mode: 'owner', ref, head, ...target });
 };
 
 const refusal = (id: string) => ({ ok: false, error: { kind: 'failure', message: expect.stringContaining(id) } });

@@ -744,6 +744,77 @@ describe('item record: linked approval', () => {
     expect(world.repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
   });
 
+  const ownerStop = approvalAnswer(approvalRequest('D-2', MERGE_LINK), approvalOptions.stop);
+  const relayAfterStop = approvalRelay('D-3', approvalOptions.go, MERGE_LINK);
+  const stopRefusal = {
+    ok: false, error: {
+      kind: 'failure',
+      message: 'the owner answered stop on request "D-2"',
+      hint: `Add a new linked approval request for the same reference and head. The owner must use "${commandText(commands.decide)}" to save an approve answer in the owner store.`,
+    },
+  };
+
+  it('refuses a relayed approve after an owner stop for the same link', async () => {
+    const world = await mergeWorld({ decisionLog: logOf(ownerStop.row, relayAfterStop) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [ownerStop.record] }));
+
+    expect(await runMerge(world)).toEqual(stopRefusal);
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('checks for an owner stop again after gh returns', async () => {
+    const world = await mergeWorld();
+    const gh = withGh(world.repo.deps, () => {
+      world.repo.deps.seed(LOG_PATH, logOf(MERGE_RELAY, ownerStop.row, relayAfterStop));
+      world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [ownerStop.record] }));
+      return exited(0, JSON.stringify(goodPr()));
+    });
+
+    expect(await runMerge({ ...world, gh })).toEqual(stopRefusal);
+    expect(gh.calls).toHaveLength(1);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('lets a later owner approve clear a stop in log order', async () => {
+    const go = approvalAnswer(approvalRequest('D-4', MERGE_LINK));
+    const lastRelay = approvalRelay('D-5', approvalOptions.go, MERGE_LINK);
+    const world = await mergeWorld({ decisionLog: logOf(ownerStop.row, relayAfterStop, { ...go.row, date: '2029-01-02' }, lastRelay) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [{ ...go.record, at: '2029-01-02T03:04:05.678Z' }, ownerStop.record] }));
+
+    expect(await runMerge(world)).toMatchObject({ ok: true });
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', [boardKeys.mergedPrHead]: HEAD_SHA });
+  });
+
+  it('keeps a stop when the owner approve comes first in the log', async () => {
+    const earlierGo = approvalAnswer(approvalRequest(APPROVAL_ID, MERGE_LINK));
+    const world = await mergeWorld({ decisionLog: logOf({ ...earlierGo.row, date: '2031-01-02' }, ownerStop.row, relayAfterStop) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [ownerStop.record, { ...earlierGo.record, at: '2031-01-02T03:04:05.678Z' }] }));
+
+    expect(await runMerge(world)).toEqual(stopRefusal);
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it('does not let an owner approve with a request hash mismatch clear a stop', async () => {
+    const go = approvalAnswer(approvalRequest('D-4', MERGE_LINK));
+    const world = await mergeWorld({ decisionLog: logOf(ownerStop.row, go.row, relayAfterStop) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [ownerStop.record, { ...go.record, hash: '0'.repeat(64) }] }));
+
+    expect(await runMerge(world)).toEqual(stopRefusal);
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  it.each([{ ref: '13' }, { head: 'c'.repeat(40) }])('does not block a relayed approve with an owner stop for another reference or head: %j', async (other) => {
+    const stop = approvalAnswer(approvalRequest('D-2', { ...MERGE_LINK, ...other }), approvalOptions.stop);
+    const world = await mergeWorld({ decisionLog: logOf(stop.row, relayAfterStop) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [stop.record] }));
+
+    expect(await runMerge(world)).toMatchObject({ ok: true });
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', [boardKeys.mergedPrHead]: HEAD_SHA });
+  });
+
   it.each([{ ref: '13' }, { head: 'c'.repeat(40) }])('refuses a settled approval for another reference or head: %j', async (mismatch) => {
     const world = await mergeWorld({ decisionLog: logOf({ ...MERGE_RELAY, ...mismatch }) });
     expect(await runMerge(world)).toMatchObject({ ok: false, error: { kind: 'failure', message: `request "${APPROVAL_ID}" does not match the reference and head` } });
