@@ -60,7 +60,7 @@ import type { BoardDoc, DecisionLogDoc, WaitingDoc } from './files.js';
 import { rowItemsOf, rowNameOf, rowReleaseGroupOf } from './queue.js';
 import { requestTitleOf } from './requests.js';
 import { firstStageOf, requireSettableStage, requireStage, stagesOf } from './stages.js';
-import { holdsBreak, lineIssue } from './text.js';
+import { holdsBreak, lineIssue, visibleLineIssue } from './text.js';
 import { trackIdIssue, trackNameIssue } from './tracks.js';
 
 /**
@@ -354,7 +354,7 @@ const sameDocName: NameCompare = (a, b) => projectFolderKey(a) === projectFolder
 
 const plainPathFault = (path: string): string | null => {
   if (path === '') return 'is empty';
-  if (holdsBreak(path) || removedByDisplay(path)) return 'holds a line break, a control character, a hidden character or a mark of text direction';
+  if (visibleLineIssue(path) !== null) return 'holds a line break, a control character, a hidden character or a mark of text direction';
   if (path.length > boardTextLimits.maxDocPathChars) return `is longer than ${boardTextLimits.maxDocPathChars} characters`;
   if (path.includes('\\')) return 'holds a backslash';
   return isPlainPath(path) ? null : `is not a plain relative path inside the ${places.folder}`;

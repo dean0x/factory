@@ -1,5 +1,5 @@
 import { failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
-import { removedByDisplay, wrapText } from '../cli/output.js';
+import { wrapText } from '../cli/output.js';
 import { canonicalRequestText, requestHashOf } from '../core/request-hash.js';
 import { ok, type Err } from '../core/result.js';
 import { isRecord } from '../migrate/inspect.js';
@@ -30,7 +30,7 @@ import { docPathIssue, isDecider, shown } from './edit.js';
 import { jsonText, type DecisionRecordOption, type DecisionRecordRequest } from './decision-record.js';
 import type { DecisionLogDoc, WaitingDoc } from './files.js';
 import { storedTimeOf } from './stored-time.js';
-import { holdsBreak } from './text.js';
+import { visibleLineIssue } from './text.js';
 
 /**
  * The pure steps of `decide` (design 4.10). Each step reads texts that the caller
@@ -102,9 +102,7 @@ const strictFault = (id: string, phrase: string): Err<CliError> => failure(`${fi
 /** Why a text can not be one line of at most `max` characters that the display shows as it is, as a phrase, or null. The text is not trimmed. */
 const textIssue = (text: string, max: number): string | null => {
   if (text.trim() === '') return 'is empty';
-  if (holdsBreak(text)) return 'is not one line: it holds a line break, a control character or a mark of text direction';
-  if (removedByDisplay(text)) return 'holds a character that the screen does not show';
-  return text.length > max ? `is longer than ${max} characters` : null;
+  return visibleLineIssue(text) ?? (text.length > max ? `is longer than ${max} characters` : null);
 };
 
 const textFieldOf = (id: string, value: unknown, label: string, max: number): CliResult<string> => {

@@ -1,4 +1,5 @@
 import type { DecisionLogInput } from '../board/contract.js';
+import { freeTitleOf, namedItems } from '../board/free-request.js';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import { err, ok, type Result } from '../core/result.js';
 import { displayLine, printable, tableLines, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
@@ -294,12 +295,6 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
 /** The command of the closed path for a worker: `dismiss ID --closed`. */
 const closedLine = (id: string): string => `${dismissLine(id)} ${flagText(flags.closed)}`;
 
-/** The ids of items, at most `maxItemsNamed` of them, with the count of the rest. */
-const namedItems = (ids: readonly string[]): string => {
-  const { maxItemsNamed } = dismissWords;
-  return ids.length > maxItemsNamed ? `${ids.slice(0, maxItemsNamed).join(', ')} and ${ids.length - maxItemsNamed} more` : ids.join(', ');
-};
-
 type ClosedWorkError = { readonly kind: 'read' | 'not-met'; readonly reason: string };
 
 /**
@@ -337,7 +332,7 @@ const refuseClosed = (reason: string, id: string): CliResult<never> =>
   safetyRefusal(`${commands.dismiss} ${flagText(flags.closed)} frees nothing: ${reason}`, ownerFreeStep(id));
 
 type ClosedChecks =
-  | { readonly kind: 'ready'; readonly record: WorkerRecord; readonly facts: Facts; readonly entry: WorkerStatus; readonly work: KnownWorkItem }
+  | { readonly kind: 'checked'; readonly record: WorkerRecord; readonly facts: Facts; readonly entry: WorkerStatus; readonly work: KnownWorkItem }
   | { readonly kind: 'guard-not-met'; readonly guard: 'dismiss-endable'; readonly reason: string; readonly stop: CliError }
   | { readonly kind: 'guard-not-met'; readonly guard: 'dismiss-closed-proof' | 'dismiss-work-item-unknown'; readonly reason: string };
 
@@ -367,11 +362,11 @@ const closedChecks = async (
     const guard = kind === 'read' ? 'dismiss-work-item-unknown' : 'dismiss-closed-proof';
     return ok({ kind: 'guard-not-met', guard, reason });
   }
-  return ok({ kind: 'ready', record: record.value, facts: facts.value, entry, work: work.value });
+  return ok({ kind: 'checked', record: record.value, facts: facts.value, entry, work: work.value });
 };
 
 type ClosedPushed =
-  | { readonly kind: 'ready'; readonly plan: DismissPlan; readonly head: string }
+  | { readonly kind: 'checked'; readonly plan: DismissPlan; readonly head: string }
   | { readonly kind: 'stuck'; readonly plan: DismissPlan; readonly reasons: readonly string[] }
   | { readonly kind: 'no-commit' };
 
@@ -389,15 +384,15 @@ const closedPushed = async (
   if (!inspected.ok) return inspected;
   const { plan, head, reasons } = inspected.value;
   if (reasons.length > 0) return ok({ kind: 'stuck', plan, reasons });
-  return head === null ? ok({ kind: 'no-commit' }) : ok({ kind: 'ready', plan, head });
+  return head === null ? ok({ kind: 'no-commit' }) : ok({ kind: 'checked', plan, head });
 };
 
 /** The decision row of a free: the worker, the closed items, the pushed head and the counts of the files that the removal deletes. */
 const freeDecisionOf = (plan: DismissPlan, closed: readonly string[], head: string, ignored: IgnoredList, inbox: InboxList): DecisionLogInput => ({
-  title: `Free the ${roles.worker} ${plan.id}`,
+  title: freeTitleOf(plan.id),
   decider: requestDeciders.coordinator,
   decision:
-    `Free the ${roles.worker} ${plan.id}. Closed items: ${namedItems(closed)}. Pushed head: ${head}. ` +
+    `${freeTitleOf(plan.id)}. Closed items: ${namedItems(closed)}. Pushed head: ${head}. ` +
     `Ignored files: ${countOf(ignored)}. Inbox files: ${countOf(inbox)}.`,
 });
 
