@@ -1294,7 +1294,7 @@ Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and i
 
 A missing key means `on`. New nodes and existing nodes with no guard keys keep every guard on. `init` writes no guard value. Config splits and upgrade rewrites keep guard values. Related config keys keep their own meaning; a related key is not a guard key.
 
-A local `off` takes effect only with a matching owner record for that node id and real factory folder. A missing or different record keeps the guard on. A move of the folder ends its guard records. A guard that this version cannot set always stays on, even with a local `off` and a record.
+A local `off` takes effect only with a matching record of the owner for that node id and real factory folder. A missing or different record keeps the guard on. A move of the folder ends its guard records. A guard that this version cannot set always stays on, even with a local `off` and a record.
 
 **Text guards.** This version can set four guards:
 
@@ -1307,7 +1307,7 @@ A local `off` takes effect only with a matching owner record for that node id an
 
 The off text of an approval point applies in both `owner` and `delegated` mode. The three rules of `merge-quality` stay on when `approval-merge` is off. General approval and record instructions still name the owner go. All code checks and integrity checks still run.
 
-**Set a guard.** Run `factory guard set ID on|off` to change one guard. Run `factory guard set --all on|off` to change every guard that this version can set. The command counts the guards that it skips. It writes the local values and their owner records. It keeps all other guard values and records.
+**Set a guard.** Run `factory guard set ID on|off` to change one guard. Run `factory guard set --all on|off` to change every guard that this version can set. The command counts the guards that it skips. It writes the local values and their records of the owner. It keeps all other guard values and records.
 
 Run the command in a terminal window outside factory and Claude Code sessions. Both input and output must be terminals. For `off`, the command lists the selected guards and their `H` marks, then asks for consent. The default answer is no. The value takes effect at the next start. Neither `guard set` nor `guard confirm` accepts `--json`; `--family` applies to `guard list` only.
 

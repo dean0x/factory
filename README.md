@@ -209,7 +209,7 @@ Each file has its own `schema` key. A key stays private only if it is personal, 
 
 A guard groups checks and role rules that keep one thing safe. `factory guard list` shows the effective value and its source. The mark `H` means that harm to the machine, data or accounts is possible with the guard off.
 
-The local key `guards` accepts `on` or `off`. The shared key `shared_guards` accepts `on` only; a shared `on` keeps that guard on. A missing key means on. `init` writes no guard values. A local off takes effect only with the matching owner record that `factory guard set` writes.
+The local key `guards` accepts `on` or `off`. The shared key `shared_guards` accepts `on` only; a shared `on` keeps that guard on. A missing key means on. `init` writes no guard values. A local off takes effect only with the matching record of the owner that `factory guard set` writes.
 
 This version can set `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. Every other guard stays on. The guard `merge-quality` holds the checked head SHA, green CI there and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
 
