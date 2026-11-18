@@ -406,17 +406,16 @@ export const decisionPlaceOf = async (deps: Deps, root: string, node: string): P
 };
 
 interface DecisionStoreRead {
-  readonly ids: readonly string[];
   readonly record: Readonly<DecisionRecord> | null;
 }
 
-/** Read the ids and one record for this node and real root from the same file text. */
+/** Read one record for this id, node and real root. */
 export const readDecisionStore = async (deps: Deps, place: DecisionPlace, id: string): Promise<Result<DecisionStoreRead, string>> => {
-  if (place.path === null) return ok({ ids: [], record: null });
+  if (place.path === null) return ok({ record: null });
   const records = await readDecisionRecords(deps, place.path);
   if (!records.ok) return records;
   const scoped = recordsOfPlace(deps, place, records.value);
-  return ok({ ids: scoped.map((record) => record.id), record: scoped.find((record) => record.id === id) ?? null });
+  return ok({ record: scoped.find((record) => record.id === id) ?? null });
 };
 
 /**
