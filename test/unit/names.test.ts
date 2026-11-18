@@ -1147,13 +1147,13 @@ describe('the writers of the approval record and of the setup acceptance', () =>
   const importPathsOf = (source: string): string[] =>
     [...source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]/g)].map((match) => match[1] ?? '');
 
-  it('has the store file of the approval record in one module only: the owner record writer', () => {
-    expect(rel(withText(/\bownerRecords\b/))).toEqual(['core/owner-record.ts']);
+  it('limits the approval store name to its writer and own file rules', () => {
+    expect(rel(withText(/\bownerRecords\b/))).toEqual(['core/claude-settings.ts', 'core/owner-record.ts']);
   });
 
-  it('has the owner decision file and its names in one module only: the owner record writer', () => {
-    expect(rel(withText(/\bownerDecisions\b/))).toEqual(['core/owner-record.ts']);
-    expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/owner-record.ts']);
+  it('limits the decision store name to its writer and own file rules', () => {
+    expect(rel(withText(/\bownerDecisions\b/))).toEqual(['core/claude-settings.ts', 'core/owner-record.ts']);
+    expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/claude-settings.ts', 'core/owner-record.ts']);
   });
 
   const writerHits = (source: string, path: string, pattern: RegExp, owners: readonly string[]): readonly string[] =>
@@ -1923,7 +1923,7 @@ describe('the names of the guards', () => {
       `Guard "${guardIds.workConduct}" is not settable in this version. Run "factory guard list".`,
     );
     expect(guardListWords.notSettable).toBe('not settable in this version');
-    expect(guardSetWords.summary).toBe('Set one guard in the local file.');
+    expect(guardSetWords.summary).toBe('Set guards in the local file.');
     expect(guardConfirmWords.summary).toBe('Confirm the owner prefix for this folder.');
   });
 

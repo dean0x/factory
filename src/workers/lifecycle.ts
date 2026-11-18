@@ -65,7 +65,7 @@ const withoutWarnings = (deps: Deps): Deps => ({ ...deps, warn: () => undefined 
  */
 const requireLaunchable = async (
   deps: Deps,
-  request: Pick<TargetCheck, 'home' | 'config' | 'guards' | 'again'>,
+  request: TargetCheck,
   record: WorkerRecord,
 ): Promise<CliResult<void>> => {
   const { home, config, again } = request;

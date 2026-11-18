@@ -1016,13 +1016,13 @@ export const recordAcceptance = async (
 
 /** Record only after all init files are saved. A failure keeps the files and clones for a later confirmation. */
 export const recordInitPrefix = async (deps: Deps, plan: InitPlan): Promise<CliResult<readonly string[]>> => {
-  const remedy = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the owner prefix.`;
+  const remedy = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the ${roles.owner} prefix.`;
   const channel = requireGuardChannel(deps, commands.init);
-  if (!channel.ok) return ok([`No owner prefix record was written. ${remedy}`]);
+  if (!channel.ok) return ok([`No ${roles.owner} prefix record was written. ${remedy}`]);
   const written = await recordPrefix(deps, {
     root: plan.home, node: plan.config.core.node.id, prefix: plan.config.core.owner.prefix,
   });
-  if (!written.ok) return failure(`The files stay, but the owner prefix record could not be written: ${written.error.message}`, remedy);
+  if (!written.ok) return failure(`The files stay, but the ${roles.owner} prefix record could not be written: ${written.error.message}`, remedy);
   return ok(written.value.warning === null ? [] : [written.value.warning]);
 };
 

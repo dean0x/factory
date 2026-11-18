@@ -871,7 +871,7 @@ const checkGuards = async (
   }
   if (state.fault !== null) {
     const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
-    failures.push(`${path}: ${state.fault}; move the file away to turn every guard on and remove the prefix records of every node`);
+    failures.push(`${path}: ${state.fault}; move the file away to turn every guard on and remove the prefix records of every ${roles.node}`);
   } else if (state.prefix === null) {
     warnings.push(`${guardStartWords.noPrefixRecord}; run "${commandText(commandLines.guardConfirm)}"`);
   } else if (state.prefix.hash !== sha256Hex(config.value.core.owner.prefix)) {

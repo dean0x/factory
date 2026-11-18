@@ -72,7 +72,7 @@ export const requireConfirmedPrefix = (config: FactoryConfig, guards: GuardReadS
     return safetyRefusal(guards.fault, `Run "${commandText(commands.doctor)}" to check the guard store.`);
   }
   if (guards.prefix !== null && guards.prefix.hash !== sha256Hex(config.core.owner.prefix)) {
-    return safetyRefusal('the owner prefix differs from its record', `Run "${commandText(commandLines.guardConfirm)}" to confirm the owner prefix.`);
+    return safetyRefusal(`the ${roles.owner} prefix differs from its record`, `Run "${commandText(commandLines.guardConfirm)}" to confirm the ${roles.owner} prefix.`);
   }
   return ok(undefined);
 };

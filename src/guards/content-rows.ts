@@ -95,7 +95,7 @@ const safetyBlockRows: readonly GuardRow[] = [
   codeRow({
     id: 'owner-prefix-record',
     guard: guardIds.safetyBlock,
-    name: 'A launch requires a readable guard store and an owner prefix that matches its record',
+    name: `A launch requires a readable guard store and an ${owner} prefix that matches its record`,
     applies: `${commands.start}, ${commands.reboot}, ${commands.restart}, ${commandLines.workerNew} and ${commandLines.workerResume}`,
     harm: true,
     sites: at('src/commands/launch-checks.ts', 'requireConfirmedPrefix'),
