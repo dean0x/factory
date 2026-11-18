@@ -185,7 +185,7 @@ it('keeps the base text and block versions when every guard is on', () => {
           "hash": "5e2a69c0fe504dad38bbf0da2d9636386d2f84f41fe3c908ef80e3bcd2f103d7",
           "name": "coordinator",
           "target": "claudeFile",
-          "version": 6,
+          "version": 7,
         },
         {
           "hash": "03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41",
@@ -211,7 +211,7 @@ it('keeps the base text and block versions when every guard is on', () => {
           "hash": "8b8e4f0364e0e723eb07c41855d3ef8cbf8b332393900c84801481091658be80",
           "name": "manager",
           "target": "claudeFile",
-          "version": 3,
+          "version": 4,
         },
         {
           "hash": "03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41",
@@ -322,7 +322,7 @@ const summary = (blocks: readonly { name: string; version: number; target: strin
 describe('block templates', () => {
   it('gives layer 1 the coordinator, safety, work rules and worker blocks with their versions and targets', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
-      ['coordinator', 6, 'claudeFile'],
+      ['coordinator', 7, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['work-rules', 1, 'claudeFile'],
       ['worker', 5, 'workerFile'],
@@ -331,7 +331,7 @@ describe('block templates', () => {
 
   it('gives layer 2 the manager, safety and worker blocks, so that a node can hold workers and child nodes', () => {
     expect(summary(blockTemplatesFor(blockInput(2)))).toEqual([
-      ['manager', 3, 'claudeFile'],
+      ['manager', 4, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['worker', 5, 'workerFile'],
     ]);
@@ -1918,7 +1918,7 @@ describe('the work rules block of the coordinator', () => {
 
   it('leaves the coordinator block, its version and its approval point lines as they were', () => {
     const template = layer1Blocks.find((candidate) => candidate.name === 'coordinator');
-    expect(template?.version).toBe(6);
+    expect(template?.version).toBe(7);
     expect(template?.body).not.toContain('Work rules');
     for (const line of approvalLines(points, softwareOwnerModes)) expect(rules()).not.toContain(line);
   });
