@@ -8,7 +8,9 @@ import { recipes } from '../../src/recipes/index.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
 import { guardOf, wiredGuard } from '../../src/guards/build.js';
 import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
-import type { Guard, GuardRow, RowSite } from '../../src/guards/types.js';
+import type { Guard, GuardRow, GuardValues, RowSite } from '../../src/guards/types.js';
+import { allOn, guardRulesOf } from '../../src/guards/effective.js';
+import { fillTemplate } from '../../src/templates/fill.js';
 import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, keys, roleText } from '../../src/names.js';
 import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
 import { blockInput, softwareRecipe } from '../helpers/blocks.js';
@@ -18,7 +20,6 @@ import { publishRecipe } from '../helpers/publish-recipe.js';
 import { sampleObject } from '../helpers/sample-config.js';
 import * as sourceScan from '../helpers/source-scan.js';
 import { allSourceFiles, importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
-import { guardRulesOf } from '../../src/guards/effective.js';
 
 const REPO = join(__dirname, '..', '..');
 
@@ -687,6 +688,20 @@ describe('the rows of the registry', () => {
     expect(guard?.harm).toBe(false);
   });
 
+  it.each([
+    { id: 'owner-prefix-record', symbols: ['requireConfirmedPrefix'] },
+    { id: 'role-block-render', symbols: ['requireRoleBlocks', 'missingRoleGuard'] },
+  ])('lists the launch check $id under the safety block guard with its called sites', ({ id, symbols }) => {
+    const path = 'src/commands/launch-checks.ts';
+    const source = readFileSync(join(REPO, path), 'utf8');
+    const row = software.rows.find((candidate) => candidate.id === id);
+    expect(row).toMatchObject({ guard: guardIds.safetyBlock, kind: guardKinds.code, harm: true });
+    expect(row?.sites).toEqual(symbols.map((symbol) => ({ path, symbol })));
+    for (const symbol of symbols) {
+      expect(sourceScan.callsOf(source, symbol).length, symbol).toBeGreaterThan(0);
+    }
+  });
+
   it('lists the doc place check with its harm mark and its shared name check', () => {
     const row = software.rows.find((candidate) => candidate.id === 'board-doc-place');
     expect(row).toMatchObject({ guard: guardIds.boardEdits, kind: guardKinds.code, harm: true });
@@ -924,6 +939,42 @@ describe('the text rows of the registry', () => {
   };
 
   const textRows = software.rows.filter((row) => row.kind === guardKinds.text);
+  const wiredRows = textRows.filter((row) => software.guards.some((guard) => guard.id === row.guard && guard.wired));
+  const wiredTextsOf = (guards: GuardValues): Readonly<Record<string, readonly string[]>> => {
+    const blocks = blockTemplatesFor(blockInput(1, { guards }));
+    const coordinator = bodyOf(blocks, blockNames.coordinator);
+    const safety = bodyOf(blocks, blockNames.safety);
+    return {
+      'src/recipes/software/roles/coordinator.ts': [coordinator],
+      'src/recipes/software/roles/worker.ts': [bodyOf(blocks, blockNames.worker)],
+      'src/templates/work-rules.ts': [bodyOf(blocks, blockNames.workRules)],
+      'src/templates/safety.ts': [safety],
+      'src/recipes/software/words.ts': [coordinator],
+      'src/recipes/software/approval.ts': [coordinator, safety],
+      'src/recipes/entry.ts': [coordinator, safety],
+    };
+  };
+
+  it.each(wiredRows)('removes the on text of $id from every cited block when its guard is off', (row) => {
+    const on = wiredTextsOf(allOn);
+    const off = wiredTextsOf({ [row.guard]: guardValues.off });
+    const pieces = FRAGMENTS[row.id] ?? [];
+    const point = softwareRecipe.approvalPoints.find((candidate) => candidate.guard === row.guard);
+    expect(pieces.length, row.id).toBeGreaterThan(0);
+    for (const site of row.sites) {
+      const onTexts = on[site.path] ?? [];
+      const offTexts = off[site.path] ?? [];
+      expect(onTexts.length, site.path).toBeGreaterThan(0);
+      expect(offTexts, site.path).toHaveLength(onTexts.length);
+      for (const text of onTexts) {
+        for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).toContain(piece);
+      }
+      for (const text of offTexts) {
+        for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).not.toContain(piece);
+        if (point !== undefined) expect(text, site.path).toContain(fillTemplate([point.offText]));
+      }
+    }
+  });
 
   it('has a piece of text for each text row, and for no other row', () => {
     expect(idsOf(textRows).sort()).toEqual(Object.keys(FRAGMENTS).sort());
