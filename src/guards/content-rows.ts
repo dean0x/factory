@@ -106,7 +106,7 @@ const safetyBlockRows: readonly GuardRow[] = [
     name: 'A launch checks edited role blocks for each on H guard and renders intact current blocks for the guard values',
     applies: `${commands.start}, ${commands.reboot}, ${commands.restart}, ${commandLines.workerNew} and ${commandLines.workerResume}`,
     harm: true,
-    sites: at('src/commands/launch-checks.ts', 'requireRoleBlocks', 'missingRoleGuard'),
+    sites: at('src/commands/launch-checks.ts', 'requireRoleBlocks', 'conflictingRoleGuard'),
   }),
   codeRow({
     id: 'safety-block-intact',

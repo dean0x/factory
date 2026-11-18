@@ -715,7 +715,7 @@ describe('the rows of the registry', () => {
 
   it.each([
     { id: 'owner-prefix-record', symbols: ['requireConfirmedPrefix'] },
-    { id: 'role-block-render', symbols: ['requireRoleBlocks', 'missingRoleGuard'] },
+    { id: 'role-block-render', symbols: ['requireRoleBlocks', 'conflictingRoleGuard'] },
   ])('lists the launch check $id under the safety block guard with its called sites', ({ id, symbols }) => {
     const path = 'src/commands/launch-checks.ts';
     const source = readFileSync(join(REPO, path), 'utf8');
