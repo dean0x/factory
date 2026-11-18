@@ -1,7 +1,7 @@
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { isOwnSettingsText, ownDenyRulesOf } from '../core/claude-settings.js';
+import { isOwnSettingsTextAt, ownDenyRulesOf } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import {
   blobTextOf,
@@ -574,9 +574,9 @@ const settingsOfFolder = async (
  * itself. A setting that turns off every hook, and a variable of the state folder or the home folder in the env values, are
  * failures where the session must keep its hooks (`requiresHooks` is set). The
  * warning that a settings file is there is not given for a file that holds exactly the entries that the program writes
- * (`isOwnSettingsText`); every other finding stays for such a file.
+ * (`isOwnSettingsTextAt`); every other finding stays for such a file.
  */
-const judgeSettings = (source: SettingsSource, text: string, rules: readonly string[] = []): readonly RootFinding[] => {
+const judgeSettings = async (deps: Deps, source: SettingsSource, text: string, rules: readonly string[] = []): Promise<readonly RootFinding[]> => {
   const id = checkIds.permissionMode;
   const facts = analyzeSettings(text);
   const shown = shownPath(source.display);
@@ -604,7 +604,7 @@ const judgeSettings = (source: SettingsSource, text: string, rules: readonly str
       ? []
       : [finding(id, 'fail', `${shown} ${reasons.join(' and ')}`, `${keepStatusLine}Remove the setting from ${shown}, then ${doctorAgain}.`)]),
     ...(facts.valid ? [] : [finding(id, 'warn', `${shown} is not valid JSON, so Claude Code does not read it`, `Fix or remove ${shown}.`)]),
-    ...(source.presence === null || isOwnSettingsText(text, rules)
+    ...(source.presence === null || await isOwnSettingsTextAt(deps, text, rules)
       ? []
       : [finding(id, 'warn', `${shown} is a settings file in ${source.presence}, and the sessions of Claude Code read it`, 'Remove the file, or keep it on purpose.')]),
     ...(source.presence !== null || facts.runsCommands.length === 0
@@ -672,7 +672,7 @@ const judgeSources = async (deps: Deps, home: string, sources: Iterable<Settings
     if (text.ok) {
       const deny = source.presence !== null && text.value.includes('"deny"')
         ? await ownDenyRulesOf(deps, home, dirname(dirname(source.absolute))) : null;
-      findings.push(...judgeSettings(source, text.value, deny?.ok === true ? deny.value.rules : []));
+      findings.push(...await judgeSettings(deps, source, text.value, deny?.ok === true ? deny.value.rules : []));
     } else unread.push(`${shownPath(source.display)} (cannot be read)`);
   }
   return { findings, unread };
@@ -770,7 +770,7 @@ export const checkTrackedSettings = async (
       continue;
     }
     const deny = text.includes('"deny"') ? await ownDenyRulesOf(deps, home, folder.path) : null;
-    findings.push(...judgeSettings({ absolute, display, presence: folder.presence, requiresHooks: true }, text, deny?.ok === true ? deny.value.rules : []));
+    findings.push(...await judgeSettings(deps, { absolute, display, presence: folder.presence, requiresHooks: true }, text, deny?.ok === true ? deny.value.rules : []));
     if (name === localSettingsFile) localText = text;
   }
   return ok({ findings: withoutRepeats([...findings, ...unreadFindings(unread)]), localText });

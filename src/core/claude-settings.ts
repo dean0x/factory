@@ -98,6 +98,39 @@ export const isOwnSettingsText = (text: string, rules: readonly string[] = []): 
   return isDeepStrictEqual(json.value, ownSettingsEntries) || (rules.length > 0 && isDeepStrictEqual(json.value, withRules));
 };
 
+/** Compare exact own rule targets across written and real paths. Other keys and rule targets stay outside the own file. */
+export const isOwnSettingsTextAt = async (deps: Deps, text: string, rules: readonly string[]): Promise<boolean> => {
+  if (isOwnSettingsText(text, rules)) return true;
+  const json = parseJsonText(text);
+  if (!json.ok || !isRecord(json.value)) return false;
+  const permissions = json.value[claudeSettingKeys.permissions];
+  const deny: unknown = isRecord(permissions) ? permissions['deny'] : undefined;
+  if (!Array.isArray(deny) || !deny.every((rule): rule is string => typeof rule === 'string')) return false;
+  if (deny.length > rules.length * 2 || new Set(deny).size !== deny.length || !isOwnSettingsText(text, deny)) return false;
+  const userFolder = userClaudeFolderOf(deps);
+  const targetOfRule = async (rule: string): Promise<string | null> => {
+    if (!rule.startsWith(`${guardDenyWords.edit}(//`) || !rule.endsWith(')')) return null;
+    const path = rule.slice(`${guardDenyWords.edit}(/`.length, -1);
+    if (path !== resolve(path) || /[\x00-\x1f\x7f*?\[\]{}()\\]/u.test(path)) return null;
+    if (userFolder !== null && isWrittenInside(deps, userFolder, path)) return rules.includes(rule) ? path : null;
+    const real = await realPathOf(deps, path);
+    return real.ok ? real.value : null;
+  };
+  const expected = new Set<string>();
+  for (const rule of rules) {
+    const target = await targetOfRule(rule);
+    if (target === null) return false;
+    expected.add(target);
+  }
+  const found = new Set<string>();
+  for (const rule of deny) {
+    const target = await targetOfRule(rule);
+    if (target === null || !expected.has(target)) return false;
+    found.add(target);
+  }
+  return found.size === expected.size;
+};
+
 export interface HookSettingsRequest {
   /** The session folder. The settings file is below it. */
   readonly folder: string;

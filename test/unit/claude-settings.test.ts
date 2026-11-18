@@ -8,6 +8,7 @@ import {
   ensureHookSettings,
   holdsOwnHook,
   isOwnSettingsText,
+  isOwnSettingsTextAt,
   missingDenyRules,
   missingHookEvents,
   ownDenyRulesOf,
@@ -877,6 +878,27 @@ describe('hook settings: the file that the writer makes is the own file', () => 
     deps.seed(FILE, '{"model":"opus"}');
     await ensureHookSettings(deps, request({ yes: true }));
     expect(isOwnSettingsText(deps.files.get(FILE) ?? '')).toBe(false);
+  });
+});
+
+describe('hook settings: own rule paths', () => {
+  const real = ['Edit(//real/factory.yaml)', 'Edit(//real/factory.local.yaml)'];
+  const written = ['Edit(//alias/factory.yaml)', 'Edit(//alias/factory.local.yaml)'];
+  it.each([
+    ['written and real rules at a real root', real, [...written, ...real], true],
+    ['real rules at a written root', [...written, ...real], real, true],
+    ['written rules at a real root', real, written, true],
+    ['an absent own target', real, written.slice(1), false],
+    ['another target', real, [...written, 'Edit(//alias/other)'], false],
+    ['a repeated rule', real, [...written, written[0]], false],
+    ['a pattern', real, [...written, 'Edit(//alias/*)'], false],
+    ['an unresolved path', real, [...written, 'Edit(//missing/file)'], false],
+  ] as const)('checks %s', async (_name, expected, deny, own) => {
+    const deps = createFakeDeps({ links: { '/alias': '/real' } });
+    deps.seedDir('/alias');
+    deps.seedDir('/real');
+    const text = JSON.stringify({ ...EXPECTED_ENTRIES, permissions: { deny } });
+    expect(await isOwnSettingsTextAt(deps, text, expected)).toBe(own);
   });
 });
 

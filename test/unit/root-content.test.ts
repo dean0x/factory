@@ -959,6 +959,15 @@ describe('settings files', () => {
       expect(findings.map((entry) => entry.level)).toEqual(shape === 'exact' ? [] : ['warn']);
     });
 
+    it('gives no warning for own rules from a linked parent when the root has its real path', async () => {
+      const deps = make({ links: { '/alias': '/w' } });
+      deps.seedDir('/alias/node/coordinator/.claude');
+      const deny = await ownDenyRulesOf(deps, '/alias/node', '/alias/node/coordinator');
+      if (!deny.ok) throw new Error(deny.error.message);
+      put(deps, 'coordinator', JSON.stringify({ ...OWN, permissions: { deny: deny.value.rules } }));
+      expect(of(await scan(deps), checkIds.permissionMode)).toEqual([]);
+    });
+
     it('gives no warning when the file writes the same entries in another key order and layout', async () => {
       const deps = make();
       put(deps, 'coordinator', JSON.stringify({ statusLine: OWN.statusLine, hooks: OWN.hooks }));
