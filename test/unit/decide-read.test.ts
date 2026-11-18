@@ -2,11 +2,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
+import { localBoardOf } from '../../src/commands/board-open.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
-import { decideProofReasons, files, program, relayedMarker, schemaIds } from '../../src/names.js';
+import { commands, decideProofReasons, files, program, relayedMarker, schemaIds } from '../../src/names.js';
+import { installGuard } from '../../src/state/guard.js';
 import { boardNode, type BoardNodeOptions } from '../helpers/board-node.js';
+import { LOG_PATH } from '../helpers/board-repo.js';
 import { captureSink } from '../helpers/sink.js';
-import { HOME, HOOK } from '../helpers/guard-fixture.js';
+import { HOME, HOOK, STATE, make } from '../helpers/guard-fixture.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 
 type Row = Readonly<Record<string, unknown>>;
@@ -63,10 +66,10 @@ describe('decide read', () => {
     });
   });
 
-  it('reads the store once in a non-owner session and changes no file', async () => {
+  it('reads the store once in a non-owner session without a lock, write or prompt', async () => {
     const repo = await nodeOf([REQUEST]);
     storeOf(repo, RECORD);
-    const before = new Map(repo.deps.files);
+    const before = { files: new Map(repo.deps.files), dirs: new Set(repo.deps.dirs), modes: new Map(repo.deps.modes) };
     const readTextLimited = repo.deps.fs.readTextLimited;
     const storeReads: string[] = [];
     const fs: typeof repo.deps.fs = { ...repo.deps.fs, readTextLimited: (path, max, decode) => {
@@ -77,7 +80,10 @@ describe('decide read', () => {
     const instrumented = { ...repo, deps: { ...repo.deps, env, fs } };
     expect((await run(instrumented)).code).toBe(0);
     expect(storeReads).toEqual([STORE]);
-    expect(repo.deps.files).toEqual(before);
+    expect(repo.deps.files).toEqual(before.files);
+    expect(repo.deps.dirs).toEqual(before.dirs);
+    expect(repo.deps.modes).toEqual(before.modes);
+    expect(repo.deps.prompts).toEqual([]);
     expect(repo.commits).toEqual([]);
   });
 
@@ -104,11 +110,19 @@ describe('decide read', () => {
   });
 
   it('reports the coordinator relay and its link, even when a store record exists', async () => {
-    const repo = await nodeOf([], [RELAYED]);
+    const repo = await nodeOf([], [{ ...RELAYED, decider: 'coordinator' }]);
     storeOf(repo, RECORD);
     const result = await run(repo);
     expectNoProof(result, 'relayed');
-    expect(docOf(result.out)).toMatchObject({ ...LINK, decider: 'coordinator', decision: 'go', reason: expect.stringContaining('not a go') });
+    expect(docOf(result.out)).toMatchObject({
+      ...LINK, decider: 'coordinator', decision: 'go',
+      reason: 'answer relayed by the coordinator; no owner proof; this read grants no approval',
+    });
+  });
+
+  it('reports an error for a relay that names another decider', async () => {
+    const repo = await nodeOf([], [{ ...RELAYED, decider: 'delegate' }]);
+    expectNoProof(await run(repo), 'error');
   });
 
   it('reports an unlinked relay with no owner proof or link values', async () => {
@@ -122,9 +136,11 @@ describe('decide read', () => {
     const repo = await nodeOf([], [{ ...RELAYED, item: `${ID}: Title\nsecond`, decision: '\u001b[31mtext\nrecord: go\u202e' }]);
     const text = await run(repo, [ID]);
     const json = await run(repo);
-    expect(text.out.split('\n')[0]).toContain('relayed by the coordinator; no owner proof; not a go');
+    expect(text.out).not.toMatch(/[\u001b\u{202e}]/u);
+    expect(text.out.split('\n')[0]).toContain('relayed by the coordinator; no owner proof; this read grants no approval');
     expect(text.out).toContain('Title: Title second');
-    expect(text.out).toContain('Decision: [31mtext record: go');
+    expect(text.out).toContain('Relayed text (not proof): [31mtext record: go');
+    expect(text.out).not.toContain('Decision:');
     expect(json.out).not.toMatch(/[\u001b\u202e]/u);
     expect(docOf(json.out)).toMatchObject({ title: 'Title\nsecond', decision: '\\x1b[31mtext\nrecord: go\\u{202e}' });
   });
@@ -162,6 +178,14 @@ describe('decide read', () => {
     expectNoProof(await run(repo), 'error');
   });
 
+  it('stops when the decision log is a link', async () => {
+    const { deps } = make({ links: { [LOG_PATH]: '/elsewhere/log.json' } });
+    expect((await installGuard(deps, STATE, STATE)).ok).toBe(true);
+    deps.seed(LOG_PATH, JSON.stringify({ rows: [] }));
+    const board = localBoardOf(deps, HOME, sampleConfigWithBoard(), commands.decide);
+    expect(await board.decisionRead(ID)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+
   it('refuses the list form of read', async () => {
     const result = await run(await nodeOf(), []);
     expect(result.code).toBe(2);
@@ -186,8 +210,14 @@ describe('decide read', () => {
     expect(result.err).toContain('guard');
   });
 
-  it('names no writer, lock, prompt or owner channel check in the read command', () => {
-    const source = readFileSync(join(__dirname, '..', '..', 'src', 'commands', 'decide-read.ts'), 'utf8');
-    expect(source).not.toMatch(/\b(?:putDecision|recordDecision|commitBoardChange|requireDecideChannel|prompt|withLock)\b/);
+  it('names no writer, lock, prompt or owner channel check in the read path', () => {
+    const src = join(__dirname, '..', '..', 'src');
+    const command = readFileSync(join(src, 'commands', 'decide-read.ts'), 'utf8');
+    const board = readFileSync(join(src, 'board', 'local.ts'), 'utf8');
+    const method = board.match(/^    async decisionRead\(id\) \{[\s\S]*?^    \},/m)?.[0];
+    const forbidden = /\b(?:putDecision|recordDecision|commitBoardChange|requireDecideChannel|prompt|withStateLock|withFolderLock)\b/;
+    expect(method).toBeDefined();
+    expect(method).not.toMatch(forbidden);
+    expect(command).not.toMatch(forbidden);
   });
 });

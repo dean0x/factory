@@ -26,7 +26,8 @@ const outputOf = (id: string, read: DecisionRead): CommandOutput => {
   const fields = [
     [labels.id, id], [labels.node, node], [labels.folder, root], [labels.option, proof.option], [labels.at, proof.at],
     [labels.point, proof.link?.point], [labels.item, proof.link?.item], [labels.ref, proof.link?.ref], [labels.head, proof.link?.head],
-    [labels.decider, proof.decider], [labels.title, proof.title], [labels.question, proof.question], [labels.decision, proof.decision],
+    [labels.decider, proof.decider], [labels.title, proof.title], [labels.question, proof.question],
+    [proof.kind === decideProof.relayed ? labels.relayedText : labels.decision, proof.decision],
   ] as const;
   for (const [label, value] of fields) {
     if (value !== null && value !== undefined) lines.push({ level: 'text', text: `${label}: ${displayLine(value)}` });

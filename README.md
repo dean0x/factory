@@ -545,7 +545,7 @@ The command uses these exit codes:
 | Verdict | Meaning |
 | --- | --- |
 | `record` | An owner store record matches the request text. |
-| `relayed` | The coordinator passed on an answer. The verdict says `not a go`. |
+| `relayed` | The coordinator passed on an answer. The verdict says `this read grants no approval`. The text form labels the answer `Relayed text (not proof)`. |
 | `closed` | The request closed with no owner answer. This includes a decision by the coordinator or a delegate. |
 | `open` | The request is open and has no owner store record. |
 | `none` | The request has no owner store record and is not open or closed. This includes an unknown id. |

@@ -54,7 +54,7 @@ describe('the stored approval link format', () => {
     expect(names.decideProofKinds).toEqual(['record', 'relayed', 'closed', 'open', 'none', 'mismatch', 'error']);
     expect(names.decideProofReasons).toEqual({
       record: 'owner store record matches the request text',
-      relayed: 'answer relayed by the coordinator; no owner proof; not a go',
+      relayed: 'answer relayed by the coordinator; no owner proof; this read grants no approval',
       closed: 'request closed; no owner proof',
       open: 'request is open; no owner proof',
       none: 'no owner store record; no owner proof',

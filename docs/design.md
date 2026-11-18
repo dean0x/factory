@@ -1055,7 +1055,7 @@ Only `record` gives exit code 0. Every other verdict gives exit code 1 and says 
 | Verdict | Condition |
 | --- | --- |
 | `record` | The record hash matches the request text. The option and the record time come only from the store. |
-| `relayed` | The log has a coordinator relay. The command names the coordinator and says `not a go`. |
+| `relayed` | The log has a coordinator relay. The verdict says `this read grants no approval`. The text form labels the answer `Relayed text (not proof)`. |
 | `closed` | The request closed with no answer or with a decision from the coordinator or a delegate. |
 | `open` | The request is open and has no owner store record. |
 | `none` | There is no owner store record, and the request is not open or closed. An unknown id with no record gives this verdict. |

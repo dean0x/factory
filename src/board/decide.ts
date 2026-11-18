@@ -333,6 +333,7 @@ export const proofOf = (
   const storedDecider = row[decisionLogKeys.decider];
   const decider = isDecider(storedDecider) ? storedDecider : null;
   if (Object.hasOwn(row, decisionLogKeys.decider) && decider === null) return fault;
+  if (relayed && decider !== null && decider !== roles.coordinator) return fault;
   if (state.kind === 'closed' || relayed || decider !== null) {
     return {
       ...emptyProofContext,

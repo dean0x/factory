@@ -800,12 +800,13 @@ export const decideProofKinds = Object.freeze(Object.values(decideProof));
 export const decideReadLabels = {
   id: 'Id', node: 'Node', folder: 'Factory folder', option: 'Option', at: 'At', point: 'Point', item: 'Board item',
   ref: 'Reference', head: 'Head', decider: 'Decider', title: 'Title', question: 'Question', decision: 'Decision',
+  relayedText: 'Relayed text (not proof)',
 } as const;
 
 /** Fixed verdict reasons. Request text cannot supply a verdict or claim owner proof. */
 export const decideProofReasons: Readonly<Record<(typeof decideProofKinds)[number], string>> = {
   record: `${roles.owner} store record matches the ${requestWords.request} text`,
-  relayed: `answer relayed by the ${roles.coordinator}; no ${roles.owner} proof; not a go`,
+  relayed: `answer relayed by the ${roles.coordinator}; no ${roles.owner} proof; this read grants no approval`,
   closed: `${requestWords.request} closed; no ${roles.owner} proof`,
   open: `${requestWords.request} is open; no ${roles.owner} proof`,
   none: `no ${roles.owner} store record; no ${roles.owner} proof`,
