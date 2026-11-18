@@ -56,6 +56,8 @@ import {
 } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { oldWordsIn } from '../helpers/old-words.js';
+import { jargonIn } from '../helpers/plain-words.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
 const points = softwareRecipe.approvalPoints;
@@ -180,7 +182,7 @@ it('keeps the base text and block versions when every guard is on', () => {
     [
       [
         {
-          "hash": "298a69630a73a6d7120827ca6dda887658b5f96afddd131530ff47a4e8705114",
+          "hash": "5e2a69c0fe504dad38bbf0da2d9636386d2f84f41fe3c908ef80e3bcd2f103d7",
           "name": "coordinator",
           "target": "claudeFile",
           "version": 6,
@@ -206,7 +208,7 @@ it('keeps the base text and block versions when every guard is on', () => {
       ],
       [
         {
-          "hash": "c7c524b8baf3459ac3610e338354e1d45bcdc055f65a9e6e325060bc17772bf7",
+          "hash": "8b8e4f0364e0e723eb07c41855d3ef8cbf8b332393900c84801481091658be80",
           "name": "manager",
           "target": "claudeFile",
           "version": 3,
@@ -349,8 +351,8 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 113],
-    ['manager', 20, 50],
+    ['coordinator', 40, 114],
+    ['manager', 20, 51],
     ['safety', 12, 25],
     ['work-rules', 15, 30],
     ['worker', 40, 85],
@@ -1223,6 +1225,30 @@ describe('the coordinator text: the free of a worker in the session', () => {
       `If the item has no worker but names former workers in \`${boardKeys.unassignedFrom}\`, the PR must come from the branch of one of them.`,
     );
   });
+});
+
+it.each([
+  ['coordinator', layer1Blocks],
+  ['manager', layer2Blocks],
+] as const)('the %s asks the owner after a denied free and does not retry the free', (name, blocks) => {
+  const body = blocks.find((block) => block.name === name)?.body ?? '';
+  const workers = body.split('\n## ').find((part) => part.startsWith('Workers\n')) ?? '';
+  const rule = workers.split('\n').find((line) => line.startsWith('- If the permission system denies')) ?? '';
+  const closedFree = `${commandText(commands.dismiss)} <id> ${flagText(flags.closed)}`;
+  expect(rule).toBe([
+    `- If the permission system denies \`${closedFree}\`, do not run it again.`,
+    `Run \`${closedFree} ${flagText(flags.askOwner)}\` one time.`,
+    'If this ask-owner run fails or is denied, stop and tell the owner.',
+    'The ask-owner run does not free the worker. It asks the owner to do it.',
+    'Tell the owner the request ID.',
+    `The owner opens the request with \`${commandText(commands.decide)} <request-id>\`.`,
+    'The owner runs the command of the request in another terminal window and then answers the prompt.',
+    'If the owner answers `kept`, stop.',
+    'Never run the command of the request.',
+    `Never open a request for a free with \`${commandText(commandLines.requestAdd)}\`.`,
+    'A go of the owner in this session does not lift the denial.',
+  ].join(' '));
+  expect([...jargonIn(rule), ...oldWordsIn(rule)]).toEqual([]);
 });
 
 describe('the coordinator text and the profile README: decisions and the owner path', () => {
