@@ -1025,7 +1025,7 @@ describe('request close: approval links', () => {
     expect(await close(repo)).toEqual({
       ok: false, error: {
         kind: 'failure', message: 'request "D-1": the request link has an invalid head',
-        hint: 'Check the recipe link rules. If necessary, restore a valid state from trusted history. A new request does not clear the invalid row.',
+        hint: 'Run "factory doctor" to check the board files. Check the recipe link rules. If necessary, restore a valid state from trusted history. A new request does not clear the invalid row.',
       },
     });
     expect(filesOf(repo)).toEqual(before);

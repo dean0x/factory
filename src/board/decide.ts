@@ -487,7 +487,10 @@ export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }
   const { id, link } = newest;
   const name = `${requestWords.request} ${shown(id)}`;
   if (!stored.ok) {
-    return failure(`cannot read the ${roles.owner} store for ${name}`, `Check the state path. Restore access to the ${roles.owner} store.`);
+    return failure(
+      `cannot read the ${roles.owner} store for ${name}`,
+      `Run "${commandText(commands.doctor)}" for diagnostics. Check the state path. Restore access to the ${roles.owner} store.`,
+    );
   }
   const records = new Map(stored.value.map((record) => [record.id, record]));
   const stop = ownerStopOf(linked.settled.value, link, records, docs, rules);

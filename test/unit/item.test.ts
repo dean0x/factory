@@ -835,7 +835,7 @@ describe('item record: linked approval', () => {
 
   const storeFault = {
     kind: 'failure', message: `cannot read the owner store for request "${APPROVAL_ID}"`,
-    hint: 'Check the state path. Restore access to the owner store.',
+    hint: `Run "${commandText(commands.doctor)}" for diagnostics. Check the state path. Restore access to the owner store.`,
   };
   const doctorHint = `Run "${commandText(commands.doctor)}" to check the board files.`;
 

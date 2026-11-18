@@ -140,7 +140,7 @@ describe('approval verdict', () => {
     expect(verdictOf([], [broken, relay])).toEqual({
       ok: false, error: {
         kind: 'failure', message: 'the link of request "D-2" is invalid',
-        hint: 'Check the recipe link rules. If necessary, restore a valid state from trusted history. A new request does not clear the invalid row.',
+        hint: 'Run "factory doctor" to check the board files. Check the recipe link rules. If necessary, restore a valid state from trusted history. A new request does not clear the invalid row.',
       },
     });
   });

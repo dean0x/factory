@@ -5,6 +5,8 @@ import {
   approvalLinkLabels,
   boardIds,
   boardTextLimits,
+  commands,
+  commandText,
   decisionKeys,
   decisionLogKeys,
   keys,
@@ -83,7 +85,7 @@ const LOG_LINK_KEYS = [decisionLogKeys.point, decisionLogKeys.boardItem, decisio
 type LinkParts = Readonly<Record<keyof RequestLink, unknown>>;
 const linkFault = (reason: string) => failure(`the ${requestWords.request} link ${reason}`);
 
-export const approvalLinkRemedy = `Check the ${keys.root.recipe} link rules. If necessary, restore a valid state from trusted history. A new ${requestWords.request} does not clear the invalid row.`;
+export const approvalLinkRemedy = `Run "${commandText(commands.doctor)}" to check the board files. Check the ${keys.root.recipe} link rules. If necessary, restore a valid state from trusted history. A new ${requestWords.request} does not clear the invalid row.`;
 
 /** Stored faults are failures, never usage errors. No stored value supplies the error text. */
 const linkOfParts = (parts: LinkParts, rules: RequestLinkRules | undefined): CliResult<RequestLink> => {
