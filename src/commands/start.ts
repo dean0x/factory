@@ -7,6 +7,8 @@ import { declinedHookText, ensureHookSettings, ownDenyRulesOf, type HookSettings
 import type { AttachedEnd, Deps } from '../core/deps.js';
 import { readGuardState, type GuardReadState } from '../core/guard-records.js';
 import type { GuardValues } from '../guards/types.js';
+import { guardsFor } from '../guards/registry.js';
+import { readHookSettings } from '../workers/session-checks.js';
 import { gitVersionProblem, requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
@@ -21,7 +23,10 @@ import {
   blockNames,
   capitalize,
   commands,
+  commandLines,
   commandText,
+  guardStartWords,
+  guardDenyWords,
   env,
   flags,
   flagText,
@@ -467,6 +472,21 @@ const dryRunOutput = (input: {
   };
 };
 
+const guardSummary = async (deps: Deps, home: string, config: FactoryConfig, state: GuardReadState): Promise<readonly OutLine[]> => {
+  const off = guardsFor(config.entry).filter((guard) => state.values[guard.id] === 'off');
+  const parts = [
+    ...(off.length === 0 ? [] : [guardStartWords.off(off.length), guardStartWords.harm(off.filter((guard) => guard.harm).length)]),
+    ...config.core.proxies.filter((proxy) => proxy.on_fail === 'direct').map((proxy) => guardStartWords.directProxy(proxy.id)),
+    ...state.unmatched.map(guardStartWords.unmatched),
+    ...(state.prefix === null ? [`${guardStartWords.noPrefixRecord}; run "${commandText(commandLines.guardConfirm)}"`] : []),
+  ];
+  const settings = await readHookSettings(deps, home, layoutOf(home).coordinatorDir);
+  if (settings.ok && settings.value.state === 'plain' && settings.value.missingDeny.length > 0) {
+    parts.push(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
+  }
+  return parts.length === 0 ? [] : [{ level: 'text', text: `${guardStartWords.prefix} ${parts.join('; ')}` }];
+};
+
 export const runStart = async (
   deps: Deps,
   options: StartOptions,
@@ -558,10 +578,10 @@ export const runStart = async (
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
 
+  const summary = await guardSummary(deps, home, loaded.value, guards);
   if (dryRun) {
-    return ok(
-      dryRunOutput({ home, id, exists, how, problems, plan: planned, hook: hook.value, yes: options.yes, notes: [...notes.value, ...safety.value] }),
-    );
+    const output = dryRunOutput({ home, id, exists, how, problems, plan: planned, hook: hook.value, yes: options.yes, notes: [...notes.value, ...safety.value] });
+    return ok({ ...output, lines: [...output.lines.slice(0, 1), ...summary, ...output.lines.slice(1)] });
   }
 
   if (planned !== null) {
@@ -591,6 +611,7 @@ export const runStart = async (
           ]),
       ...(ended ? coordinatorEndedLines(id, home) : []),
       text(arrivalText(how, attached.value, id)),
+      ...summary,
     ],
     json: {
       schema: schemaIds.start,

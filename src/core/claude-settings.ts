@@ -86,14 +86,16 @@ export const ownSettingsEntries: OwnSettings = {
 const compactJson = (text: string): string => text.replace(/("(?:[^"\\]|\\.)*")|\s+/g, '$1');
 
 /**
- * True when the text of a settings file holds exactly the entries of the program (`ownSettingsEntries`) and nothing else: the
- * parsed file equals the constant, and the text writes nothing that the parsed file hides. A repeated key and an escape in a
+ * True when the text holds exactly the own entries, alone or with exactly the supplied own rules. The
+ * text writes nothing that the parsed file hides. A repeated key and an escape in a
  * name give a text longer or different from the parsed file, so another parser could read another file than this one. The
  * order of the keys and the layout of the text do not count. A text that is not valid JSON is never exact.
  */
-export const isOwnSettingsText = (text: string): boolean => {
+export const isOwnSettingsText = (text: string, rules: readonly string[] = []): boolean => {
   const json = parseJsonText(text);
-  return json.ok && isDeepStrictEqual(json.value, ownSettingsEntries) && compactJson(text) === JSON.stringify(json.value);
+  if (!json.ok || compactJson(text) !== JSON.stringify(json.value)) return false;
+  const withRules = { ...ownSettingsEntries, permissions: { deny: rules } };
+  return isDeepStrictEqual(json.value, ownSettingsEntries) || (rules.length > 0 && isDeepStrictEqual(json.value, withRules));
 };
 
 export interface HookSettingsRequest {

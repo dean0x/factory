@@ -1,12 +1,12 @@
 import { basename, dirname } from 'node:path';
 import { notReady, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { hookSettingsPlaceOf, missingHookEvents } from '../core/claude-settings.js';
+import { hookSettingsPlaceOf, missingDenyRules, missingHookEvents, ownDenyRulesOf } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import type { GuardValues } from '../guards/types.js';
 import { toolNames } from '../core/tools.js';
-import { commandLines, commands, commandText, flags, flagText, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
+import { commandLines, commands, commandText, flags, flagText, guardDenyWords, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import { readCheckedFile, type NamedPath } from './registry.js';
 import { requireRoleText } from './role-text.js';
@@ -133,29 +133,33 @@ const settingsPartsOf = (folder: string): { readonly folders: readonly NamedPath
  * stops the read. A file that is missing, not JSON, not an object, above the limit or of the wrong kind counts every event as missing.
  */
 export type HookSettingsRead =
-  | { readonly state: 'plain'; readonly file: string; readonly missing: readonly HookEvent[] }
+  | { readonly state: 'plain'; readonly file: string; readonly missing: readonly HookEvent[]; readonly missingDeny: readonly string[]; readonly skipped: readonly string[] }
   | { readonly state: 'link'; readonly file: string; readonly reason: string };
 
 /**
  * Read the hook settings file of the session folder and name the events that lack the own command, with the own matcher where an
  * event needs one (`missingHookEvents`). A link in the path is never followed. The read changes nothing.
  */
-export const readHookSettings = async (deps: Deps, folder: string): Promise<CliResult<HookSettingsRead>> => {
+export const readHookSettings = async (deps: Deps, home: string, folder: string): Promise<CliResult<HookSettingsRead>> => {
   const { folders, file } = settingsPartsOf(folder);
   const read = await readCheckedFile(deps, folders, file, maxFileBytes);
   if (!read.ok) return read;
   const found = read.value;
   if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason });
   const json = found.state === 'text' ? parseJsonText(found.text) : null;
-  return ok({ state: 'plain', file: file.path, missing: missingHookEvents(json !== null && json.ok ? json.value : undefined) });
+  const settings = json !== null && json.ok ? json.value : undefined;
+  const deny = await ownDenyRulesOf(deps, home, folder);
+  if (!deny.ok) return deny;
+  return ok({ state: 'plain', file: file.path, missing: missingHookEvents(settings),
+    missingDeny: missingDenyRules(settings, deny.value.rules), skipped: deny.value.skipped });
 };
 
 /**
  * The hook settings file of the session folder must hold the own command of every hook event of the fixed list (`readHookSettings`).
  * A file that lacks an event is exit 3, and the remedy is `upgrade`, then the command in `then`. A link is exit 4.
  */
-export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Promise<CliResult<void>> => {
-  const settings = await readHookSettings(deps, request.folder);
+export const requireOwnHooks = async (deps: Deps, request: SettingsRequest & { readonly home: string }): Promise<CliResult<void>> => {
+  const settings = await readHookSettings(deps, request.home, request.folder);
   if (!settings.ok) return settings;
   const found = settings.value;
   if (found.state === 'link') {
@@ -164,7 +168,10 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest): Pro
       `Replace the link with a plain file. Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
     );
   }
-  if (found.missing.length === 0) return ok(undefined);
+  if (found.missing.length === 0) {
+    if (found.missingDeny.length > 0) deps.warn(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
+    return ok(undefined);
+  }
   return notReady(
     `the hook settings ${found.file} lack the events: ${found.missing.join(', ')}`,
     request.remedy ?? `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
@@ -203,7 +210,7 @@ export const startOverCommands = (workerId: string, project: string): { readonly
 export const requireRoleDelivery = async (deps: Deps, request: RoleDeliveryRequest): Promise<CliResult<void>> => {
   const { home, config, workerId, workCopy, again } = request;
   const remedy = roleText.hookRemedy({ again: commandText(again), ...startOverCommands(workerId, basename(dirname(workCopy))) });
-  const hooks = await requireOwnHooks(deps, { folder: workCopy, then: again, remedy });
+  const hooks = await requireOwnHooks(deps, { home, folder: workCopy, then: again, remedy });
   if (!hooks.ok) return hooks;
   return requireRoleText(deps, { home, config, guards: request.guards, retry: commandText(again) });
 };

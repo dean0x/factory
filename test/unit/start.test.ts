@@ -1,12 +1,12 @@
 import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { renderBlock } from '../../src/blocks/managed.js';
+import { sha256Hex, renderBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import { collectSetup } from '../../src/commands/init-received.js';
 import type { StartOptions } from '../../src/commands/start.js';
 import { runStart } from '../helpers/package-registry.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
-import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { shellWord } from '../../src/core/shell-word.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
@@ -35,7 +35,6 @@ import {
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
-import { seedOwnHooks } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -367,7 +366,7 @@ describe('start:a new session', () => {
   it('prints how to attach, and says in JSON that it started and did not attach', async () => {
     const { deps } = make();
     const output = await succeeded(deps);
-    expect(output.lines.at(-1)?.text).toBe('Session demo runs. Attach with: tmux attach -t demo');
+    expect(output.lines.filter((line) => !line.text.startsWith('Guards:')).at(-1)?.text).toBe('Session demo runs. Attach with: tmux attach -t demo');
     expect(output.json).toEqual({
       schema: 'factory.start/v1',
       session: 'demo',
@@ -584,7 +583,7 @@ describe('start:attach', () => {
     expect(deps.attached).toEqual([{ command: 'tmux', args: ['attach', '-t', '=demo'], cwd: undefined }]);
     expect(tmux.commands().some((line) => line.startsWith('switch-client'))).toBe(false);
     expect(output.json).toMatchObject({ started: true, attached: true });
-    expect(output.lines.at(-1)?.text).toBe('Left the session demo. It still runs.');
+    expect(output.lines.filter((line) => !line.text.startsWith('Guards:')).at(-1)?.text).toBe('Left the session demo. It still runs.');
   });
 
   it('switches the tmux client when it runs inside tmux', async () => {
@@ -593,7 +592,7 @@ describe('start:attach', () => {
     expect(deps.attached).toEqual([]);
     expect(tmux.commands().at(-1)).toBe('switch-client -t =demo');
     expect(output.json).toMatchObject({ attached: true });
-    expect(output.lines.at(-1)?.text).toBe('Switched to the session demo.');
+    expect(output.lines.filter((line) => !line.text.startsWith('Guards:')).at(-1)?.text).toBe('Switched to the session demo.');
   });
 
   it('only prints when the output is not a terminal, also when the input is one', async () => {
@@ -662,7 +661,7 @@ describe('start:a session that runs already', () => {
   it('says that the coordinator has ended also when nobody types, and still prints how to attach', async () => {
     const { deps } = make({ tmux: { sessions: { demo: HOME }, endedCoordinators: ['demo'] } });
     const output = await succeeded(deps);
-    expect(output.lines.at(-1)?.text).toBe('Session demo runs. Attach with: tmux attach -t demo');
+    expect(output.lines.filter((line) => !line.text.startsWith('Guards:')).at(-1)?.text).toBe('Session demo runs. Attach with: tmux attach -t demo');
     expect(output.lines.some((line) => line.level === 'warn')).toBe(true);
     expectShortOutput(plainText(output));
   });
@@ -683,7 +682,7 @@ describe('start:a session that runs already', () => {
   it('prints how to attach when nobody types', async () => {
     const { deps } = make({ tmux: { sessions: { demo: HOME } } });
     const output = await succeeded(deps);
-    expect(output.lines).toEqual([{ level: 'text', text: 'Session demo runs. Attach with: tmux attach -t demo' }]);
+    expect(output.lines.filter((line) => !line.text.startsWith('Guards:'))).toEqual([{ level: 'text', text: 'Session demo runs. Attach with: tmux attach -t demo' }]);
     expectShortOutput(plainText(output));
   });
 
@@ -943,7 +942,7 @@ describe('start:--dry-run', () => {
   it('shows the attach call as the last call', async () => {
     const { deps } = make({ tty: true });
     const output = await succeeded(deps, { dryRun: true });
-    expect(output.lines.at(-1)?.text).toBe('  tmux attach -t =demo');
+    expect(output.lines.filter((line) => !line.text.startsWith('Guards:')).at(-1)?.text).toBe('  tmux attach -t =demo');
     expect(deps.attached).toEqual([]);
   });
 
@@ -970,6 +969,51 @@ describe('start:--dry-run', () => {
     expect(text).toContain('The session demo runs already');
     expect(text).not.toContain('new-session');
     expect(text).toContain('tmux attach -t =demo');
+  });
+});
+
+describe('start:the guard summary', () => {
+  it('names each unmatched value and the absent prefix record in one line', async () => {
+    const config = sampleConfig();
+    const { deps } = make({ config: { ...config, core: { ...config.core, guards: { 'install-rules': 'off' } } } });
+    deps.seed('/state/factory/guard-records.json', JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: { 'resume-routines': { value: 'off', at: '2030-01-02T03:04:05.678Z' } },
+    }] }));
+    const output = await succeeded(deps, { dryRun: true });
+    const lines = output.lines.map((line) => line.text).filter((line) => line.startsWith('Guards:'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('unmatched install-rules');
+    expect(lines[0]).toContain('unmatched resume-routines');
+    expect(lines[0]).toContain('factory guard confirm');
+    expect(lines[0]).toContain('Own file Edit rules are incomplete.');
+    expectShortOutput(plainText(output));
+  });
+
+  it('prints no summary when every guard is on and all records and rules are in place', async () => {
+    const { deps } = make();
+    deps.seed('/state/factory/guard-records.json', JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex(sampleConfig().core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const deny = await ownDenyRulesOf(deps, HOME, COORDINATOR);
+    if (!deny.ok) throw new Error(deny.error.message);
+    deps.seed(SETTINGS_FILE, JSON.stringify({ ...ownSettingsEntries, permissions: { deny: deny.value.rules } }));
+    const output = await succeeded(deps, { dryRun: true });
+    expect(output.lines.filter((line) => line.text.startsWith('Guards:'))).toEqual([]);
+  });
+
+  it('reports the off counts and every direct proxy in one summary line', async () => {
+    const config = sampleConfig();
+    const { deps } = make({ config: { ...config, core: { ...config.core, guards: { 'install-rules': 'off' },
+      proxies: [{ id: 'relay', base_url: 'http://localhost:8080', health: '/', on_fail: 'direct' }] } } });
+    deps.seed('/state/factory/guard-records.json', JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: { 'install-rules': { value: 'off', at: '2030-01-02T03:04:05.678Z' } },
+    }] }));
+    const output = await succeeded(deps, { dryRun: true });
+    const lines = output.lines.map((line) => line.text).filter((line) => line.startsWith('Guards:'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('1 off; 1 with H');
+    expect(lines[0]).toContain('direct proxy relay');
+    expectShortOutput(plainText(output));
   });
 });
 
@@ -1084,6 +1128,7 @@ describe('start:the hook settings of the coordinator', () => {
       expect(writes).toEqual([]);
       const warned = [...deps.warned.slice(warnedBefore), ...output.warnings, ...output.lines.filter((line) => line.level === 'warn').map((line) => line.text)];
       expect(warned.filter((line) => line.includes('This changes the settings of Claude Code'))).toEqual([]);
+      expect(warned.filter((line) => line.includes('is a settings file in the coordinator folder'))).toEqual([]);
     });
 
     it('asks nothing and writes nothing when the entries are in place with another layout', async () => {
@@ -1271,7 +1316,9 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     for (const id of seed.workers ?? IDS) {
       must(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${COPIES}/${id}`, branch: `worker/${id}` }));
       deps.seedDir(`${COPIES}/${id}`);
-      seedOwnHooks(deps, `${COPIES}/${id}`);
+      const deny = await ownDenyRulesOf(deps, HOME, `${COPIES}/${id}`);
+      if (!deny.ok) throw new Error(deny.error.message);
+      deps.seed(`${COPIES}/${id}/.claude/settings.local.json`, JSON.stringify({ ...ownSettingsEntries, permissions: { deny: deny.value.rules } }));
       const own = IDS.find((known) => known === id);
       const pointer = seed.pointers !== undefined && id in seed.pointers ? seed.pointers[id] : own === undefined ? null : SESSION[own];
       if (pointer === null || pointer === undefined) continue;

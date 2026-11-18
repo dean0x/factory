@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseBlocks, renderBlock } from '../../src/blocks/managed.js';
+import { sha256Hex, parseBlocks, renderBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import {
@@ -33,7 +33,7 @@ import {
   type CheckResult,
 } from '../../src/commands/doctor.js';
 import { renderConfig } from '../../src/config/render.js';
-import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
@@ -48,6 +48,7 @@ import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { inspectState } from '../../src/state/load.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { requireOwnHooks } from '../../src/workers/session-checks.js';
+import { expectShortOutput } from '../helpers/short-output.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, registerRoot, withFsWatch, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
@@ -175,6 +176,96 @@ describe('doctor: shared guard state', () => {
       expect.objectContaining({ id: checkIds.roleDelivery, level: 'ok', text: expect.stringContaining(`role text ${size} of`) }),
     ]) });
     expect(counted.count()).toBe(1);
+  });
+
+  const guardCheck = async (deps: FakeDeps) => {
+    const output = await doctor(deps);
+    const checks = (output.json['checks'] as CheckResult[]).filter((entry) => entry.id === checkIds.guards);
+    expect(checks).toHaveLength(1);
+    expectShortOutput(`${output.lines[0]?.text ?? ''}\n${checks[0]?.text ?? ''}`);
+    return checks[0];
+  };
+
+  it('reports zero off guards and the no-key notice at the ok level', async () => {
+    const deps = await initialized();
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex(sampleConfig().core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const found = await guardCheck(deps);
+    expect(found).toMatchObject({ level: 'ok', text: expect.stringContaining('0 off; 0 with H') });
+    expect(found?.text).toContain('No guards key: every guard is on.');
+  });
+
+  it('reports off counts, direct proxies and the record time in json', async () => {
+    const deps = await initialized();
+    const config = sampleConfig();
+    writeConfig(deps, { ...config, core: { ...config.core, guards: { 'approval-merge': 'off' },
+      proxies: [{ id: 'relay', base_url: 'http://localhost:8080', health: '/', on_fail: 'direct' }] } });
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME,
+      prefix: { hash: sha256Hex(config.core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
+      values: { 'approval-merge': { value: 'off', at: '2030-01-02T03:04:05.678Z' } },
+    }] }));
+    const found = await guardCheck(deps);
+    expect(found).toMatchObject({ level: 'ok', since: { 'approval-merge': '2030-01-02T03:04:05.678Z' } });
+    expect(found?.text).toContain('1 off; 1 with H');
+    expect(found?.text).toContain('direct proxy relay');
+    expect(found?.text).not.toContain('No guards key');
+  });
+
+  it.each(['local-off', 'record-off'] as const)('names the remedy for an unmatched value: %s', async (direction) => {
+    const deps = await initialized();
+    const config = withGuards({ 'install-rules': direction === 'local-off' ? 'off' : 'on' });
+    writeConfig(deps, config);
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: { 'install-rules': { value: direction === 'local-off' ? 'on' : 'off', at: '2030-01-02T03:04:05.678Z' } },
+    }] }));
+    const found = await guardCheck(deps);
+    expect(found?.level).toBe('warn');
+    expect(found?.text).toContain('unmatched install-rules');
+    expect(found?.text).toContain('factory guard set install-rules on');
+    expect(found?.text).toContain('factory guard confirm');
+  });
+
+  it('warns for an unwired off value and absent deny rules', async () => {
+    const deps = await initialized();
+    writeConfig(deps, withGuards({ 'work-conduct': 'off' }));
+    deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(ownSettingsEntries));
+    const found = await guardCheck(deps);
+    expect(found?.level).toBe('warn');
+    expect(found?.text).toContain('work-conduct');
+    expect(found?.text).toContain('not wired');
+    expect(found?.text).toContain('Own file Edit rules are incomplete.');
+  });
+
+  it('names every path with no exact rule', async () => {
+    const deps = await initialized({ env: { XDG_STATE_HOME: '/state/[local]' } });
+    const deny = await ownDenyRulesOf(deps, HOME, `${HOME}/coordinator`);
+    if (!deny.ok) throw new Error(deny.error.message);
+    const found = await guardCheck(deps);
+    expect(found?.level).toBe('warn');
+    expect(deny.value.skipped.length).toBeGreaterThan(0);
+    for (const path of deny.value.skipped) expect(found?.text).toContain(path);
+  });
+
+  it('fails on a store fault and states the recovery effect', async () => {
+    const deps = await initialized();
+    deps.seed(STORE, 'invalid');
+    const found = await guardCheck(deps);
+    expect(found?.level).toBe('fail');
+    expect(found?.text).toContain(STORE);
+    expect(found?.text).toContain('move the file away');
+    expect(found?.text).toContain('every guard on');
+    expect(found?.text).toContain('prefix records of every node');
+  });
+
+  it('fails when the owner prefix differs from its record', async () => {
+    const deps = await initialized();
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex(sampleConfig().core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const config = sampleConfig();
+    writeConfig(deps, { ...config, core: { ...config.core, owner: { ...config.core.owner, prefix: `${config.core.owner.prefix} Extra` } } });
+    expect(await guardCheck(deps)).toMatchObject({ level: 'fail', text: expect.stringContaining('owner prefix differs') });
   });
 
   it('reads the guard store once even with all guards on', async () => {
@@ -2240,6 +2331,7 @@ describe('doctor: the command', () => {
     const ids = (output.json['checks'] as CheckResult[]).map((result) => result.id);
     expect(ids).toEqual([
       'config',
+      'guards',
       'config-version',
       'local-file',
       'state',
@@ -2271,7 +2363,7 @@ describe('doctor: the command', () => {
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('31 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('31 ok, 1 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -2294,7 +2386,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(31);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(32);
   });
 
   it('finds the node by walking up from the current folder', async () => {
@@ -2768,7 +2860,7 @@ describe('doctor: the path from the setup text to the sessions of the workers', 
       const deps = await initialized();
       const workCopy = await withWorker(deps, 'alpha');
       seed(deps, workCopy);
-      const launch = await requireOwnHooks(deps, { folder: workCopy, then: 'worker resume alpha' });
+      const launch = await requireOwnHooks(deps, { home: HOME, folder: workCopy, then: 'worker resume alpha' });
       outcomes.push({ name, warns: (await check(deps)).level === 'warn', refuses: !launch.ok });
     }
     expect(outcomes.filter((outcome) => outcome.warns !== outcome.refuses)).toEqual([]);

@@ -26,6 +26,8 @@ import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { readGuardState } from '../core/guard-records.js';
+import { requireConfirmedPrefix } from './launch-checks.js';
+import { isRecord } from '../migrate/inspect.js';
 import { allOn } from '../guards/effective.js';
 import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
@@ -37,6 +39,8 @@ import {
   dirs,
   flags,
   flagText,
+  guardDoctorWords,
+  guardKeys,
   homeIndex,
   localFileModes,
   overwriteCommand,
@@ -260,34 +264,36 @@ const lockedBoardText = async (deps: Deps, layout: Layout, plan: BoardQueueKeyPl
 
 const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };
 
-/** The setup texts that the run may render, and the warnings of the accept step. */
+/** The warnings of the setup accept step. */
 interface AcceptedSetup {
-  readonly texts: SetupTexts;
   readonly warnings: readonly string[];
 }
 
-/**
- * The setup texts that this run may render. The text goes into session instructions, so it needs the owner's acceptance
- * before the run renders it. The check comes before any plan or write, also in a dry run. A first acceptance belongs to
- * `init`, and a change is accepted here only by the owner on a terminal window.
- * A folder that the factory list does not list yet is a FAC-M1 folder: it holds no setup text, and the files that its git
- * repo tracks get their acceptance from `init` once the upgrade has made the layout. A config that names no node id fails
- * the plan with its own message, and until then the run renders no setup text.
- */
-const acceptedSetupTexts = async (
+interface PlannedSetup {
+  readonly texts: SetupTexts;
+  readonly accept: () => Promise<CliResult<AcceptedSetup>>;
+}
+
+/** Read the setup once. Defer consent and its write until the prefix gate passes, with the same checked bytes. */
+const plannedSetupTexts = async (
   deps: Deps,
   home: string,
   unregistered: boolean,
   dryRun: boolean,
   registry: RecipeRegistry,
-): Promise<CliResult<AcceptedSetup>> => {
+): Promise<CliResult<PlannedSetup>> => {
   const identity = await readNodeIdentity(deps, home, registry);
-  if (!identity.ok) return ok({ texts: NO_SETUP_TEXTS, warnings: [] });
+  if (!identity.ok) return ok({ texts: NO_SETUP_TEXTS, accept: async () => ok({ warnings: [] }) });
   const node = identity.value.id;
   const received = !unregistered && (await originOfHome(deps, home)) === homeIndex.origins.received;
   const check = await checkRootSetup(deps, { home, node, received });
-  const settled = await settleSetup(deps, { home, node, check, dryRun, reason: acceptReason(commands.upgrade) });
-  return settled.ok ? ok({ texts: settled.value.texts, warnings: settled.value.warnings }) : settled;
+  return ok({
+    texts: check.kind === 'empty' || check.kind === 'unusable' ? NO_SETUP_TEXTS : check.setup.texts,
+    accept: async () => {
+      const settled = await settleSetup(deps, { home, node, check, dryRun, reason: acceptReason(commands.upgrade) });
+      return settled.ok ? ok({ warnings: settled.value.warnings }) : settled;
+    },
+  });
 };
 
 export const runUpgrade = async (
@@ -316,16 +322,13 @@ export const runUpgrade = async (
   // The link rule comes first, also in a dry run: no read or write below goes through a link.
   const plain = await requireNoRootLinks(deps, layout);
   if (!plain.ok) return plain;
-  const setup = await acceptedSetupTexts(deps, home, located.value.unregistered, options.dryRun, registry);
-  if (!setup.ok) return setup;
+  const setupPlan = await plannedSetupTexts(deps, home, located.value.unregistered, options.dryRun, registry);
+  if (!setupPlan.ok) return setupPlan;
 
   const config = await planFile(deps, layout.configFile, upgrade.config);
   if (!config.ok) return config;
   const local = await planLocal(deps, layout, config.value, upgrade);
   if (!local.ok) return local;
-  // A real run sets a wide mode of the local file back to 600. A dry run only names the command.
-  const modeNotes = await settleLocalMode(deps, home, !options.dryRun);
-  if (!modeNotes.ok) return modeNotes;
   const state = await planFile(deps, layout.nodeJson, upgrade.state);
   if (!state.ok) return state;
   const stateFiles = await planFiles(deps, layout, state.value, upgrade.files);
@@ -339,15 +342,24 @@ export const runUpgrade = async (
   const stateGitignore = await planStateGitignore(deps, layout);
   if (!stateGitignore.ok) return stateGitignore;
   let allOnPackage: readonly BlockTemplate[] | undefined;
+  let prefix: CliResult<void> = ok(undefined);
   const blockSet = await planBlockSet(
-    config.value, local.value, upgrade, setup.value.texts,
+    config.value, local.value, upgrade, setupPlan.value.texts,
     (parsed) => effectiveModes(deps, home, parsed),
     async (parsed) => {
       allOnPackage = workerFileTemplatesFor(parsed, null, allOn);
-      return (await readGuardState(deps, home, parsed, 'always')).values;
+      const guards = await readGuardState(deps, home, parsed, 'always');
+      prefix = requireConfirmedPrefix(parsed, guards);
+      return guards.values;
     },
   );
   if (!blockSet.ok) return blockSet;
+  // The same guard read supplies the render and the gate, before acceptance writes or mode changes.
+  if (!options.dryRun && !prefix.ok) return prefix;
+  const setup = await setupPlan.value.accept();
+  if (!setup.ok) return setup;
+  const modeNotes = await settleLocalMode(deps, home, !options.dryRun);
+  if (!modeNotes.ok) return modeNotes;
 
   const known = blockSet.value.templates.map((template) => template.name);
   // A block can hold an old name from an earlier run, so the old names of every step count, not those of this run only.
@@ -420,7 +432,10 @@ export const runUpgrade = async (
   const roleSizeWarning = roleTextSizeWarning(blockSet.value.templates, commandText(commands.upgrade), allOnPackage);
   const roleSizeWarnings = roleSizeWarning === null ? [] : [roleSizeWarning];
 
+  const guardRaw = local.value.kind === 'create' ? config.value.raw : local.value.raw;
+  const noGuardKey = isRecord(guardRaw) && !Object.hasOwn(guardRaw, guardKeys.local);
   const lines: OutLine[] = [
+    ...(options.dryRun && noGuardKey ? [{ level: 'ok' as const, text: guardDoctorWords.noKey }] : []),
     ...planLines(config.value, local.value, state.value, files, stateGitignore.value, boardKey.value, guard.value, root.value, blocks, upgrade),
     ...resumeLines(changes),
     ...localNotices.map((text): OutLine => ({ level: 'ok', text })),

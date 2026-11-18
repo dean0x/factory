@@ -135,8 +135,8 @@ describe('init: the owner prefix record', () => {
     const { deps } = setup({}, channel);
     deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(OWN_SETTINGS_WITH_DENY));
     const seen: string[] = [];
-    const result = await runInit(withFsWatch(deps, (_method, path) => {
-      if (path === store) seen.push(path);
+    const result = await runInit(withFsWatch(deps, (method, path) => {
+      if (path === store && method !== 'stat' && method !== 'realpath') seen.push(`${method} ${path}`);
     }), options());
     expect(result.ok).toBe(true);
     expect(result.ok ? result.value.warnings.filter((text) => text.includes('factory guard confirm')) : []).toHaveLength(1);

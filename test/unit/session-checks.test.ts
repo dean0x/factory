@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { dirs, hookNames, localSettingsFile, maxFileBytes, roleText } from '../../src/names.js';
 import {
   paneProcessStart,
@@ -250,7 +250,7 @@ describe('the resume file', () => {
 describe('the hook settings of a session folder', () => {
   const FOLDER = '/h/node/work-copies/web/alpha';
   const FILE = join(FOLDER, dirs.claude, localSettingsFile);
-  const request = { folder: FOLDER, then: 'restart alpha' };
+  const request = { home: '/h/node', folder: FOLDER, then: 'restart alpha' };
   const make = (more: Parameters<typeof createFakeDeps>[0] = {}): FakeDeps => createFakeDeps({ now: NOW, ...more });
 
   const withoutEvent = (event: string): string =>
@@ -260,6 +260,24 @@ describe('the hook settings of a session folder', () => {
     const deps = make();
     deps.seed(FILE, JSON.stringify(ownSettingsEntries));
     expect((await requireOwnHooks(deps, request)).ok).toBe(true);
+  });
+
+  it('warns once for absent own rules without a stop or a write', async () => {
+    const deps = make();
+    deps.seed(FILE, JSON.stringify(ownSettingsEntries));
+    const before = [...deps.files];
+    expect((await requireOwnHooks(deps, request)).ok).toBe(true);
+    expect(deps.warned).toEqual(['Own file Edit rules are incomplete. Run "factory upgrade" to add the own file Edit rules.']);
+    expect([...deps.files]).toEqual(before);
+  });
+
+  it('gives no rule warning when every own rule is present', async () => {
+    const deps = make();
+    const deny = await ownDenyRulesOf(deps, '/h/node', FOLDER);
+    if (!deny.ok) throw new Error(deny.error.message);
+    deps.seed(FILE, JSON.stringify({ ...ownSettingsEntries, permissions: { deny: deny.value.rules } }));
+    expect((await requireOwnHooks(deps, request)).ok).toBe(true);
+    expect(deps.warned).toEqual([]);
   });
 
   it.each(hookNames.events)('settings without the event %s are exit 3, and the refusal names the event', async (event) => {
@@ -489,12 +507,12 @@ describe('the remedy option of the own hook check', () => {
   const FOLDER = '/h/node/work-copies/web/alpha';
   it('replaces the default remedy for a missing event, and leaves the refusal of a link as it is', async () => {
     const deps = createFakeDeps({ now: NOW });
-    const missing = errorOf(await requireOwnHooks(deps, { folder: FOLDER, then: 'restart alpha', remedy: 'Do this.' }));
+    const missing = errorOf(await requireOwnHooks(deps, { home: '/h/node', folder: FOLDER, then: 'restart alpha', remedy: 'Do this.' }));
     expect(missing.hint).toBe('Do this.');
     const linked = createFakeDeps({ now: NOW, links: { [`${FOLDER}/.claude/settings.local.json`]: '/elsewhere/settings.json' } });
     linked.seedDir(`${FOLDER}/.claude`);
     linked.seed('/elsewhere/settings.json', OWN_SETTINGS_TEXT);
-    const link = errorOf(await requireOwnHooks(linked, { folder: FOLDER, then: 'restart alpha', remedy: 'Do this.' }));
+    const link = errorOf(await requireOwnHooks(linked, { home: '/h/node', folder: FOLDER, then: 'restart alpha', remedy: 'Do this.' }));
     expect(link.hint).toContain('factory restart alpha');
     expect(link.hint).not.toBe('Do this.');
   });

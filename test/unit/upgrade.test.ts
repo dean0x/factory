@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { inspectBlocks, recordedBlockNames, type BlockStatus } from '../../src/blocks/status.js';
-import { parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
+import { sha256Hex, parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
@@ -331,10 +331,70 @@ describe('upgrade: effective guard values', () => {
         deps.seed(`${folder}/.claude/settings.local.json`, JSON.stringify({ ...ownSettingsEntries, permissions: { deny: deny.value.rules } }));
       }
       const before = snapshot(deps);
-      expect(success(await upgrade(deps)).json).toMatchObject({ changed: false });
+      expect(success(await upgrade(deps, currentSpec, { dryRun: fault === 'invalid' || fault === 'link' })).json).toMatchObject({ changed: false });
       expect(snapshot(deps)).toEqual(before);
     },
   );
+
+  it.each(['mismatch', 'invalid'] as const)('refuses a real upgrade before any write on a prefix or store fault: %s', async (fault) => {
+    const { deps } = await makeNode();
+    if (fault === 'invalid') deps.seed(STORE, 'invalid');
+    else deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex('another prefix'), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    deps.modes.set(LOCAL, 0o644);
+    const before = snapshot(deps);
+    const counted = countReadsOf(deps, STORE);
+    const result = await upgrade(counted.deps);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(exitCodeOf[result.error.kind]).toBe(4);
+    expect(snapshot(deps)).toEqual(before);
+    expect(deps.modes.get(LOCAL)).toBe(0o644);
+    expect(counted.count()).toBe(1);
+  });
+
+  it('refuses a prefix mismatch before consent can save a changed setup acceptance', async () => {
+    const { deps } = await makeNode();
+    const setupFile = `${HOME}/setup/coordinator.md`;
+    deps.seed(setupFile, `${text(deps, setupFile)}\nA changed instruction.\n`);
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
+      prefix: { hash: sha256Hex('another prefix'), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const before = snapshot(deps);
+    const asked: string[] = [];
+    const result = await upgrade({ ...deps, stdinIsTTY: true, stdoutIsTTY: true, prompt: async (question) => {
+      asked.push(question);
+      return ok('y');
+    } });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toBe('the owner prefix differs from its record');
+    expect(asked).toEqual([]);
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('shows the no-key notice only in a dry run with no new json key', async () => {
+    const { deps } = await makeNode();
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [] }));
+    const before = snapshot(deps);
+    const counted = countReadsOf(deps, STORE);
+    const dry = success(await upgrade(counted.deps, currentSpec, { dryRun: true }));
+    expect(dry.lines.filter((line) => line.text.includes('No guards key'))).toEqual([
+      { level: 'ok', text: 'No guards key: every guard is on.' },
+    ]);
+    expect(counted.count()).toBe(1);
+    expect(snapshot(deps)).toEqual(before);
+    const real = success(await upgrade(deps));
+    expect(real.lines.some((line) => line.text.includes('No guards key'))).toBe(false);
+    expect(Object.keys(dry.json)).toEqual(Object.keys(real.json));
+  });
+
+  it('omits the no-key notice for an explicit guards key', async () => {
+    const { deps } = await makeNode();
+    seedGuards(deps, {});
+    expect(success(await upgrade(deps, currentSpec, { dryRun: true })).lines.some((line) => line.text.includes('No guards key'))).toBe(false);
+  });
 
   it('keeps the all-on setup allowance in the size warning when install text is off', async () => {
     const { deps } = await makeNode();

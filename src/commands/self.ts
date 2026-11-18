@@ -69,7 +69,7 @@ const THEN_AGAIN = `Then run "${BASE_LINE}" again.`;
 
 /** The hook settings of the coordinator hold every hook event. The remedy is `upgrade`, then `reboot`, so the session reads them. */
 const requireCoordinatorHooks = (deps: Deps, home: string): Promise<CliResult<void>> =>
-  requireOwnHooks(deps, { folder: layoutOf(home).coordinatorDir, then: commands.reboot });
+  requireOwnHooks(deps, { home, folder: layoutOf(home).coordinatorDir, then: commands.reboot });
 
 /**
  * The last-seen line of the coordinator: it is valid, it belongs to this node, and it holds an event. The state `busy` and the state
