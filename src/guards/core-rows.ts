@@ -473,7 +473,7 @@ const dismissRows: readonly GuardRow[] = [
     name: `A dismiss by the ${coordinator} needs a closed item, a pushed head, a clean copy and a decision row, checked again under the lock`,
     applies: 'Dismiss with the closed flag',
     harm: true,
-    sites: at('src/commands/dismiss.ts', 'closedWorkOf', 'dismissClosed'),
+    sites: at('src/commands/dismiss.ts', 'closedWorkOf', 'closedChecks', 'dismissClosed'),
   }),
   codeRow({
     id: 'dismiss-work-item-unknown',
@@ -482,6 +482,18 @@ const dismissRows: readonly GuardRow[] = [
     applies: `${commandLines.workerList}, dismiss and report`,
     harm: true,
     sites: [...at('src/board/work-items.ts', 'boardWorkItems'), ...at('src/workers/status.ts', 'activityOf', 'isStalledAt')],
+  }),
+  codeRow({
+    id: 'dismiss-ask-owner',
+    guard: guardIds.dismiss,
+    name: `The ${coordinator} can ask the ${owner} to free a ${worker} that is ready, but the request frees nothing`,
+    applies: 'Dismiss with the ask-owner flag, request and decide',
+    harm: true,
+    sites: [
+      ...at('src/commands/dismiss.ts', 'dismissAskOwner', 'closedChecks'),
+      ...at('src/board/free-request.ts', 'freeCommandLines', 'freeWorkerOf'),
+      ...at('src/commands/request.ts', 'parseAction'),
+    ],
   }),
 ];
 
