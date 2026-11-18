@@ -1006,6 +1006,7 @@ describe('item record: the record check belongs to the recipe of the node', () =
       parseCalls.push(text);
       return /^[0-9]+$/.test(text) ? ok(text) : usageError('the reference must be a number');
     },
+    parseHead: (text) => (text === 'proof-1' ? ok(text) : usageError('the head must name the signed proof')),
     check: async (_deps, input) => {
       checkCalls.push(input);
       return verdict === 'pass'

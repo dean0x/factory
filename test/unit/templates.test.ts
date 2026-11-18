@@ -182,7 +182,7 @@ it('keeps the base text and block versions when every guard is on', () => {
     [
       [
         {
-          "hash": "5e2a69c0fe504dad38bbf0da2d9636386d2f84f41fe3c908ef80e3bcd2f103d7",
+          "hash": "e4622d3b3da7d0ea019ad54cfb54271bfadc79dc2d375659e35609e1d7f35abc",
           "name": "coordinator",
           "target": "claudeFile",
           "version": 7,

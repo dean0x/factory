@@ -23,15 +23,22 @@ export interface OpenBoard {
  * connector tells the person to run again. The tracker kind of the config decides whether a write is allowed: only the kind `local`
  * writes.
  */
-export const localBoardOf = (deps: Deps, home: string, config: FactoryConfig, command: CommandName): LocalBoard =>
-  createLocalBoard(deps, layoutOf(home), {
+export const localBoardOf = (deps: Deps, home: string, config: FactoryConfig, command: CommandName): LocalBoard => {
+  const check = config.entry.recordCheck;
+  return createLocalBoard(deps, layoutOf(home), {
     queueKey: queueKeyOf(config.entry),
     recipe: config.entry.board,
     config: config.core.board,
     command,
     tracker: config.core.tracker.kind,
     node: config.core.node.id,
+    requestLinkRules: check === undefined ? undefined : {
+      points: config.entry.approvalPoints.map((point) => point.id),
+      parseRef: check.parseRef,
+      parseHead: check.parseHead,
+    },
   });
+};
 
 /**
  * Find the node folder, load its config and build the board connector for it. Every command that reads or changes the board opens

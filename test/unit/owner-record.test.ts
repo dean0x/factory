@@ -14,6 +14,7 @@ import {
   effectiveModes,
   putDecision,
   readDecisionProof,
+  readDecisionStore,
   readOwnerRecords,
   recordDelegation,
   recordScope,
@@ -905,6 +906,20 @@ describe('the decision writer', () => {
     const deps = person();
     expect(await put(deps, overrides)).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(deps.files.has(DECISIONS)).toBe(false);
+  });
+});
+
+describe('the decision store read', () => {
+  it('returns only the requested record', async () => {
+    const deps = person();
+    const record = decisionRecord();
+    seedDecisions(deps, [decisionRecord({ id: 'D-9' }), record]);
+    expect(await readDecisionStore(deps, await placeOf(deps), ID)).toEqual({ ok: true, value: { record } });
+  });
+
+  it('returns a null record when there is no store path', async () => {
+    const deps = person({ env: {} });
+    expect(await readDecisionStore(deps, await placeOf(deps), ID)).toEqual({ ok: true, value: { record: null } });
   });
 });
 

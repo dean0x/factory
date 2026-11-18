@@ -405,6 +405,19 @@ export const decisionPlaceOf = async (deps: Deps, root: string, node: string): P
   return path.ok ? ok({ node, root: real.value, path: path.value }) : path;
 };
 
+interface DecisionStoreRead {
+  readonly record: Readonly<DecisionRecord> | null;
+}
+
+/** Read one record for this id, node and real root. */
+export const readDecisionStore = async (deps: Deps, place: DecisionPlace, id: string): Promise<Result<DecisionStoreRead, string>> => {
+  if (place.path === null) return ok({ record: null });
+  const records = await readDecisionRecords(deps, place.path);
+  if (!records.ok) return records;
+  const scoped = recordsOfPlace(deps, place, records.value);
+  return ok({ record: scoped.find((record) => record.id === id) ?? null });
+};
+
 /**
  * The proof that the owner answered request `id` with the request text `requestText`. The call hashes the text itself. It
  * reads only the decision file, and counts only the records of the node id and the real root of the place. A null path or
