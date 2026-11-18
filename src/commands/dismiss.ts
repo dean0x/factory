@@ -317,7 +317,7 @@ const CLOSED_GUARDS = {
   pushed: 'dismiss-pushed',
 } as const;
 
-type ClosedWorkError = { readonly kind: 'read' | 'not-met'; readonly reason: string };
+type ClosedWorkError = { readonly kind: 'read-fault' | 'unknown' | 'not-met'; readonly reason: string };
 
 /**
  * Check for open work and open items with an unassign mark for this worker. The absence of these items is not proof.
@@ -325,10 +325,10 @@ type ClosedWorkError = { readonly kind: 'read' | 'not-met'; readonly reason: str
  */
 const closedWorkOf = async (deps: Deps, workItems: WorkItemPort, home: string, id: string): Promise<Result<KnownWorkItem, ClosedWorkError>> => {
   const read = await workItems.itemsOf(deps, home, [id]);
-  if (!read.ok) return err({ kind: 'read', reason: `cannot read the board: ${read.error.message}` });
+  if (!read.ok) return err({ kind: 'read-fault', reason: `cannot read the board: ${read.error.message}` });
   const work = read.value.get(id);
   if (work === undefined || work.state !== 'known') {
-    return err({ kind: 'read', reason: `the board does not say what work the ${roles.worker} ${id} has` });
+    return err({ kind: 'unknown', reason: `the board does not say what work the ${roles.worker} ${id} has` });
   }
   if (work.item !== null) return err({ kind: 'not-met', reason: `the ${roles.worker} ${id} has open work: ${work.item}` });
   if (work.parked.length > 0) {
@@ -355,6 +355,7 @@ const refuseClosed = (reason: string, id: string): CliResult<never> =>
 
 type ClosedChecks =
   | { readonly kind: 'checked'; readonly record: WorkerRecord; readonly facts: Facts; readonly entry: WorkerStatus; readonly work: KnownWorkItem }
+  | { readonly kind: 'read-fault'; readonly reason: string }
   | { readonly kind: 'guard-not-met'; readonly guard: typeof CLOSED_GUARDS.endable; readonly reason: string; readonly stop: CliError }
   | { readonly kind: 'guard-not-met'; readonly guard: typeof CLOSED_GUARDS.proof | typeof CLOSED_GUARDS.unknown; readonly reason: string };
 
@@ -381,7 +382,8 @@ const closedChecks = async (
   const work = await closedWorkOf(deps, workItems, home, id);
   if (!work.ok) {
     const { kind, reason } = work.error;
-    const guard = kind === 'read' ? CLOSED_GUARDS.unknown : CLOSED_GUARDS.proof;
+    if (kind === 'read-fault') return ok({ kind, reason });
+    const guard = kind === 'unknown' ? CLOSED_GUARDS.unknown : CLOSED_GUARDS.proof;
     return ok({ kind: 'guard-not-met', guard, reason });
   }
   return ok({ kind: 'checked', record: record.value, facts: facts.value, entry, work: work.value });
@@ -487,6 +489,7 @@ const dismissAskOwner = async (
   const checkedAt = deps.now().toISOString();
   const checked = await closedChecks(deps, options, workItems, home, config, again);
   if (!checked.ok) return stopAsk(checked.error);
+  if (checked.value.kind === 'read-fault') return failure(checked.value.reason, STOP);
   if (checked.value.kind === 'guard-not-met') {
     const { guard, reason } = checked.value;
     const message = guardLine(guard, reason);
@@ -570,6 +573,7 @@ const dismissClosed = async (
   const config = loaded.value;
   const checked = await closedChecks(deps, options, workItems, home, config, again);
   if (!checked.ok) return checked;
+  if (checked.value.kind === 'read-fault') return refuseClosed(checked.value.reason, id);
   if (checked.value.kind === 'guard-not-met') {
     return checked.value.guard === CLOSED_GUARDS.endable ? err(checked.value.stop) : refuseClosed(checked.value.reason, id);
   }

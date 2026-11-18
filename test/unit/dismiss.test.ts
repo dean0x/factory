@@ -1763,19 +1763,47 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
       await expectKept(given);
     });
 
-    it.each<[string, Partial<Setup>, string | null, string]>([
+    it.each<[string, Partial<Setup>, string, string]>([
       ['dismiss-endable', { workers: [{ id: 'alpha', event: 'UserPromptSubmit' }] }, CLOSED, 'alpha'],
       ['dismiss-closed-proof', {}, boardText([itemRecord('B-1', { status: 'doing', [boardKeys.unassignedFrom]: ['alpha'] })]), 'unassign mark'],
       ['dismiss-endable', {}, boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha' })]), 'open work'],
       ['dismiss-closed-proof', {}, boardText([]), 'no closed item'],
       ['dismiss-closed-proof', { git: { heads: {} } }, CLOSED, 'no commit'],
-      ['dismiss-work-item-unknown', {}, null, 'cannot read the board'],
     ])('names guard %s for setup %j and board %j', async (guard, setup, board, reason) => {
       const given = await world(setup, board);
       const { port, writes } = askWorld();
       const result = await runAsk(given, port);
       expectRefusal(result, 1, `opened no request: the guard ${guard} is not met:`);
       expect(!result.ok && result.error.message).toContain(reason);
+      expect(writes).toEqual([]);
+      await expectKept(given);
+    });
+
+    it('names the unknown work item guard when the board gives no known state', async () => {
+      const given = await world();
+      const { port, writes } = askWorld();
+      const result = await runAsk(given, port, unknownPort);
+      expectRefusal(result, 1, 'opened no request: the guard dismiss-work-item-unknown is not met:');
+      expect(writes).toEqual([]);
+      await expectKept(given);
+    });
+
+    it('stops without a guard or a request when it cannot read the work item board', async () => {
+      const given = await world({}, null);
+      const { port, writes } = askWorld();
+      const result = await runAsk(given, port);
+      expectRefusal(result, 1, 'cannot read the board');
+      expect(!result.ok && result.error.message).not.toMatch(/\bdismiss-/);
+      expect(writes).toEqual([]);
+      await expectKept(given);
+    });
+
+    it('stops without a guard or a request when it cannot read the request board', async () => {
+      const given = await world();
+      const { port, writes } = askWorld(failure('the request file is missing', 'Run the command again.'));
+      const result = await runAsk(given, port);
+      expectRefusal(result, 1, 'cannot read the board: the request file is missing');
+      expect(!result.ok && result.error.message).not.toMatch(/\bdismiss-/);
       expect(writes).toEqual([]);
       await expectKept(given);
     });
