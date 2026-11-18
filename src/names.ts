@@ -143,9 +143,9 @@ export const trackCommands = { add: 'add', list: 'list' } as const;
 
 /**
  * The subcommands of `request`. `log` records a decision that no request asked for. The command has no subcommand that changes the
- * options of a request that is open.
+ * options of a request that is open. The one context change is `doc`, which adds a path before the owner answers.
  */
-export const requestCommands = { add: 'add', list: 'list', close: 'close', log: 'log' } as const;
+export const requestCommands = { add: 'add', list: 'list', close: 'close', log: 'log', doc: 'doc' } as const;
 
 /** The subcommands of `queue`. */
 export const queueCommands = { set: 'set', show: 'show' } as const;
@@ -187,6 +187,7 @@ export const commandLines = {
   requestList: `${commands.request} ${requestCommands.list}`,
   requestClose: `${commands.request} ${requestCommands.close}`,
   requestLog: `${commands.request} ${requestCommands.log}`,
+  requestDoc: `${commands.request} ${requestCommands.doc}`,
   queueSet: `${commands.queue} ${queueCommands.set}`,
   queueShow: `${commands.queue} ${queueCommands.show}`,
   lockRun: `${commands.lock} ${lockCommands.run}`,
@@ -235,6 +236,9 @@ export const flags = {
   width: 'width',
   roadmap: 'roadmap',
   question: 'question',
+  kind: 'kind',
+  why: 'why',
+  doc: 'doc',
   option: 'option',
   recommend: 'recommend',
   later: 'later',
@@ -767,6 +771,7 @@ export const itemWords = {
 export const requestWords = {
   request: commands.request,
   requests: `${commands.request}s`,
+  kind: `${commands.request} kind`,
   columns: { id: 'ID', title: 'TITLE', options: 'OPTIONS' },
   optionSeparator: '=',
   optionKeySeparator: ',',
@@ -780,6 +785,8 @@ export const requestWords = {
  * waits for FAC-M11, so `decide read` is a usage error.
  */
 export const decideWords = { read: 'read' } as const;
+
+export const decideDocContext = `A doc is context. Its text is not part of the ${commands.request} or of the ${roles.owner} proof.`;
 
 /** The words of the output of `queue`. The columns of the owner fields of a row come between the items and the note. */
 export const queueWords = {
@@ -846,8 +853,16 @@ export const decisionKeys = {
   openedAt: 'opened_at',
   /** The group of a request: one of `requestGroups`. */
   group: 'group',
+  kind: 'kind',
+  fields: 'fields',
+  docs: 'docs',
 } as const;
-export const optionKeys = { key: 'key', text: 'text', rec: 'rec' } as const;
+export const optionKeys = { key: 'key', text: 'text', rec: 'rec', why: 'why' } as const;
+
+export const requestFieldKeys = { label: 'label', text: 'text' } as const;
+
+/** A request kind is display data. Every kind needs the same options and owner answer. */
+export const requestKinds = { decision: 'decision', command: 'command', information: 'information' } as const;
 
 /** The groups of a request. A new request is in `now`, and the asker puts it in `later` with the `later` flag. */
 export const requestGroups = { now: 'now', later: 'later' } as const;
@@ -871,6 +886,11 @@ export const boardTextLimits = {
   maxReleaseGroupChars: 60,
   /** The most docs that one item holds. A write that would pass it is a usage error. */
   maxItemDocs: 10,
+  maxRequestDocs: 5,
+  maxRequestFields: 6,
+  maxFieldLabelChars: 60,
+  maxFieldTextChars: 200,
+  maxWhyChars: 200,
 } as const;
 
 /**
@@ -1448,7 +1468,7 @@ export const workerRowKeys = {
   hold: 'hold',
 } as const;
 export const workItemDisplayKeys = { title: 'title', stage: 'stage', stageAt: 'stageAt', status: 'status' } as const;
-export const requestRowKeys = { openedAt: 'openedAt', group: 'group' } as const;
+export const requestRowKeys = { openedAt: 'openedAt', group: 'group', kind: 'kind', question: 'question' } as const;
 export const powerKeys = { power: 'power', source: 'source', percent: 'percent' } as const;
 export const powerSources = { ac: 'ac', battery: 'battery', unknown: 'unknown' } as const;
 

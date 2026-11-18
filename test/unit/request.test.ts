@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { commandTable, parseFlags, renderCommandHelp } from '../../src/cli/table.js';
 import { runRequest, type RequestOptions } from '../../src/commands/request.js';
 import {
   boardTextLimits,
@@ -30,6 +31,10 @@ const BASE: RequestOptions = {
   words: [],
   title: undefined,
   question: undefined,
+  kind: undefined,
+  fields: [],
+  whys: [],
+  docs: [],
   options: [],
   recommend: undefined,
   decider: undefined,
@@ -135,6 +140,7 @@ describe('request add', () => {
         ],
         [decisionKeys.openedAt]: at,
         [decisionKeys.group]: requestGroups.now,
+        [decisionKeys.kind]: 'decision',
       },
     ]);
     expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.waiting]]);
@@ -180,7 +186,7 @@ describe('request add', () => {
     expect(linesOf(await run(repo, ADD))).toEqual(['Added D-8: Pick a plan']);
   });
 
-  it('has no subcommand that changes a request, and a second add leaves the first request as it was', async () => {
+  it('refuses update, and a second add leaves the first request as it was', async () => {
     const repo = await boardNode();
     valueOf(await run(repo, ADD));
     const first = waitingOf(repo).items[0];
@@ -199,6 +205,70 @@ describe('request add', () => {
     expect(both.every((result) => result.ok)).toBe(true);
     expect(waitingOf(repo).items.map((item) => item['id']).sort()).toEqual(['D-1', 'D-2']);
     expect(repo.commits).toHaveLength(2);
+  });
+});
+
+describe('request add: context flags', () => {
+  it.each(['decision', 'command', 'information'])('stores kind %s with the same options and close forms', async (kind) => {
+    const repo = await boardNode();
+    valueOf(await run(repo, { ...ADD, kind }));
+    expect(waitingOf(repo).items[0]?.['kind']).toBe(kind);
+    const output = valueOf(await run(repo, { words: ['close', 'D-1'], decider: 'delegate', decision: 'Use plan A' }));
+    expect(output.json['decider']).toBe('delegate');
+    expect(logOf(repo).rows[0]).toMatchObject({ decider: 'delegate', decision: 'Use plan A' });
+    expect(logOf(repo).rows[0]).not.toHaveProperty('by');
+  });
+
+  it('keeps field order and splits fields and reasons at the first equals sign', async () => {
+    const repo = await boardNode();
+    valueOf(await run(repo, { ...ADD, fields: ['Scope=Web=API', 'Cost=Small'], whys: ['b=Fits=now'] }));
+    expect(waitingOf(repo).items[0]).toMatchObject({
+      fields: [{ label: 'Scope', text: 'Web=API' }, { label: 'Cost', text: 'Small' }],
+      options: [{ key: 'a', text: 'Plan A', rec: true }, { key: 'b', text: 'Plan B', why: 'Fits=now' }],
+    });
+  });
+
+  it('stores docs in flag order and accepts all context caps', async () => {
+    const repo = await boardNode();
+    const docs = Array.from({ length: boardTextLimits.maxRequestDocs }, (_, at) => `docs/plan${at}.md`);
+    for (const path of docs) repo.deps.seed(join(HOME, path), '# Plan\n');
+    const fields = Array.from({ length: boardTextLimits.maxRequestFields }, (_, at) => `${String(at).padEnd(60, 'x')}=${'y'.repeat(200)}`);
+    valueOf(await run(repo, { ...ADD, fields, whys: [`a=${'w'.repeat(200)}`], docs }));
+    expect(waitingOf(repo).items[0]?.['docs']).toEqual(docs);
+    expect(waitingOf(repo).items[0]?.['fields']).toHaveLength(boardTextLimits.maxRequestFields);
+    expect(waitingOf(repo).items[0]?.['options']).toEqual([
+      { key: 'a', text: 'Plan A', rec: true, why: 'w'.repeat(200) }, { key: 'b', text: 'Plan B' },
+    ]);
+  });
+
+  const BAD: readonly (readonly [string, Partial<RequestOptions>])[] = [
+    ['an unknown kind', { kind: 'other' }],
+    ['a field with no equals sign', { fields: ['Scope'] }],
+    ['a field with no label', { fields: ['=Web'] }],
+    ['an empty field text', { fields: ['Scope='] }],
+    ['a seventh field', { fields: Array.from({ length: 7 }, (_, at) => `Field${at}=Text`) }],
+    ['a repeated field label', { fields: ['Scope=Web', 'Scope=API'] }],
+    ['a label over 60 characters', { fields: [`${'x'.repeat(61)}=Web`] }],
+    ['field text over 200 characters', { fields: [`Scope=${'x'.repeat(201)}`] }],
+    ['a hidden character in a label', { fields: [`Sc${String.fromCodePoint(0x200b)}ope=Web`] }],
+    ['a hidden character in field text', { fields: [`Scope=We${String.fromCodePoint(0x202e)}b`] }],
+    ['a why with no equals sign', { whys: ['a'] }],
+    ['a why with no key', { whys: ['=Small'] }],
+    ['an empty why', { whys: ['a='] }],
+    ['a why for an unknown key', { whys: ['z=Small'] }],
+    ['a repeated why key', { whys: ['a=Small', 'a=Fast'] }],
+    ['a why over 200 characters', { whys: [`a=${'x'.repeat(201)}`] }],
+    ['a hidden character in why', { whys: [`a=Fa${String.fromCodePoint(0x200b)}st`] }],
+    ['a sixth doc', { docs: Array.from({ length: 6 }, (_, at) => `docs/plan${at}.md`) }],
+    ['a repeated doc path', { docs: ['docs/plan.md', 'docs/plan.md'] }],
+  ];
+
+  it.each(BAD)('refuses %s with exit 2 and writes nothing', async (_name, overrides) => {
+    const repo = await boardNode();
+    const before = filesOf(repo);
+    expect(await run(repo, { ...ADD, ...overrides })).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
   });
 });
 
@@ -269,6 +339,9 @@ describe('request add: the text of the question', () => {
   const BAD: readonly (readonly [string, Partial<RequestOptions>])[] = [
     ['a title with a line break', { title: 'Two\nlines' }],
     ['an empty title', { title: ' ' }],
+    ['a title with a zero-width space', { title: `Pick${String.fromCodePoint(0x200b)} a plan` }],
+    ['a question with a zero-width space', { question: `Which${String.fromCodePoint(0x200b)} plan?` }],
+    ['option text with a zero-width space', { options: [`a=Plan${String.fromCodePoint(0x200b)} A`] }],
     ['an option key that is not a token', { options: ['bad key=Plan'], recommend: undefined }],
     ['an option key that is used twice', { options: ['a=Plan A', 'a=Plan B'] }],
     ['an option text of more than the most characters', { options: [`a=${'x'.repeat(201)}`], recommend: undefined }],
@@ -334,6 +407,82 @@ describe('the words and the flags of request', () => {
   });
 });
 
+describe('request doc with other action flags', () => {
+  const FLAGS: readonly (readonly [string, Partial<RequestOptions>])[] = [
+    ['--title', { title: 'Other' }],
+    ['--question', { question: 'Why?' }],
+    ['--option', { options: ['a=Plan'] }],
+    ['--recommend', { recommend: 'a' }],
+    ['--later', { later: true }],
+    ['--made-by', { decider: 'coordinator' }],
+    ['--decision', { decision: 'Yes' }],
+    ['--relayed', { relayed: true }],
+  ];
+
+  it.each(FLAGS)('refuses %s before a file read', async (flag, options) => {
+    const repo = await boardNode();
+    const touched: string[] = [];
+    const result = await runRequest(
+      withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)),
+      { ...BASE, words: ['doc', 'D-1', 'docs/plan.md'], ...options },
+      recipes,
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining(`${flag} is not for`) } });
+    expect(touched).toEqual([]);
+  });
+});
+
+describe('request context flags in other actions', () => {
+  const CONTEXT: readonly (readonly [string, Partial<RequestOptions>])[] = [
+    ['--kind', { kind: 'decision' }], ['--field', { fields: ['Scope=Web'] }],
+    ['--why', { whys: ['a=Small'] }], ['--doc', { docs: ['docs/plan.md'] }],
+  ];
+  const WORDS = [['list'], ['close', 'D-1'], ['log'], ['doc', 'D-1', 'docs/plan.md']];
+  it.each(WORDS.flatMap((words) => CONTEXT.map(([flag, context]) => [words, flag, context] as const)))(
+    'refuses %j with %s before a file read', async (words, flag, context) => {
+      const repo = await boardNode();
+      const touched: string[] = [];
+      const result = await runRequest(withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)), { ...BASE, words, ...context }, recipes);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining(`${flag} is not for`) } });
+      expect(touched).toEqual([]);
+    },
+  );
+});
+
+describe('request flag wiring and help', () => {
+  const command = commandTable.find((entry) => entry.name === 'request');
+
+  it('passes each new flag through the command table with repeated values in order', async () => {
+    if (command === undefined) throw new Error('no request command');
+    const repo = await boardNode();
+    repo.deps.seed(join(HOME, 'docs/plan.md'), '# Plan\n');
+    repo.deps.seed(join(HOME, 'docs/other.md'), '# Other\n');
+    const parsed = parseFlags([
+      'add', '--home', HOME, '--title', 'Pick', '--question', 'Which?', '--option', 'a=Yes', '--option', 'b=No', '--kind', 'information',
+      '--field', 'Scope=Web=API', '--field', 'Cost=Small', '--why', 'a=Fits=now', '--why', 'b=More work',
+      '--doc', 'docs/plan.md', '--doc', 'docs/other.md',
+    ], command.options, command.positionals);
+    expect(parsed).toMatchObject({ ok: true });
+    valueOf(await command.run(valueOf(parsed), repo.deps));
+    expect(waitingOf(repo).items[0]).toMatchObject({
+      kind: 'information', fields: [{ label: 'Scope', text: 'Web=API' }, { label: 'Cost', text: 'Small' }],
+      options: [{ key: 'a', text: 'Yes', why: 'Fits=now' }, { key: 'b', text: 'No', why: 'More work' }], docs: ['docs/plan.md', 'docs/other.md'],
+    });
+  });
+
+  it('names the doc action, the kind words and the free label in help', () => {
+    if (command === undefined) throw new Error('no request command');
+    const text = renderCommandHelp(command);
+    expect(text).toContain('factory request doc ID PATH');
+    expect(text).toContain('decision|command|information');
+    expect(text).toContain('free label');
+    expect(text).toContain('--field LABEL=TEXT');
+    expect(text).toContain('--why KEY=TEXT');
+    expect(text).toContain('--doc PATH');
+    expect(text).toContain('pane of the coordinator');
+  });
+});
+
 describe('request list', () => {
   it('lists the open requests with their numbers, titles and option keys, and makes no commit', async () => {
     const repo = await boardNode({ waiting: waitingText([entry('D-1'), entry('D-2', { options: [{ key: 'a', text: 'Yes' }, { key: 'b', text: 'No' }] })]) });
@@ -375,11 +524,11 @@ describe('request list', () => {
     expect(lines[19]).toBe('8 more requests.');
   });
 
-  it('prints the JSON document with the title as it is stored, one entry for each request, and null and now for a row from before the two keys', async () => {
+  it('keeps the old JSON keys and adds the default kind and the stored question for an old row', async () => {
     const repo = await boardNode({ waiting: waitingText([entry('D-1')]) });
     expect(valueOf(await run(repo, { words: ['list'] })).json).toEqual({
       schema: 'factory.request-list/v1',
-      requests: [{ id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: null, group: 'now' }],
+      requests: [{ id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: null, group: 'now', kind: 'decision', question: 'A question?' }],
     });
   });
 
@@ -393,10 +542,35 @@ describe('request list', () => {
     expect(valueOf(await run(repo, { words: ['list'] })).json).toEqual({
       schema: 'factory.request-list/v1',
       requests: [
-        { id: 'D-1', title: 'Pick a plan', options: ['a', 'b'], openedAt: first, group: requestGroups.now },
-        { id: 'D-2', title: 'Other', options: ['a', 'b'], openedAt: second, group: requestGroups.later },
+        { id: 'D-1', title: 'Pick a plan', options: ['a', 'b'], openedAt: first, group: requestGroups.now, kind: 'decision', question: ADD.question },
+        { id: 'D-2', title: 'Other', options: ['a', 'b'], openedAt: second, group: requestGroups.later, kind: 'decision', question: ADD.question },
       ],
     });
+  });
+
+  it.each([
+    ['missing', undefined, 'decision'],
+    ['unknown', 'other', 'decision'],
+    ['not text', 7, 'decision'],
+    ['decision', 'decision', 'decision'],
+    ['command', 'command', 'command'],
+    ['information', 'information', 'information'],
+  ])('reads a %s kind (%j) as %s without a new text column', async (_name, stored, expected) => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1', { kind: stored })]) });
+    expect((await listedRows(repo))[0]?.['kind']).toBe(expected);
+    expect(linesOf(await run(repo, { words: ['list'] })).slice(1).map((line) => line.split(/ {2,}/))).toEqual([
+      ['ID', 'TITLE', 'OPTIONS'], ['D-1', 'Request D-1', 'a'],
+    ]);
+  });
+
+  it.each([
+    ['missing', undefined, null],
+    ['not text', 7, null],
+    ['empty text', '', ''],
+    ['text', '  Which plan?  ', '  Which plan?  '],
+  ])('reads a %s question as text or null', async (_name, stored, expected) => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1', { question: stored })]) });
+    expect((await listedRows(repo))[0]?.['question']).toBe(expected);
   });
 
   it.each([
@@ -458,7 +632,7 @@ describe('request close', () => {
     valueOf(await run(repo, { words: ['close', 'D-2'] }));
     expect(waitingOf(repo).items).toEqual([kept]);
     expect(await listedRows(repo)).toEqual([
-      { id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: '2030-01-02T03:04:05.678Z', group: requestGroups.later },
+      { id: 'D-1', title: 'Request D-1', options: ['a'], openedAt: '2030-01-02T03:04:05.678Z', group: requestGroups.later, kind: 'decision', question: 'A question?' },
     ]);
   });
 
@@ -675,6 +849,122 @@ describe('request close --relayed', () => {
   });
 });
 
+describe('request doc', () => {
+  const PATH = 'docs/plan.md';
+  const OPEN = async (): Promise<BoardRepo> => {
+    const repo = await boardNode({ waiting: waitingText([entry('D-1')]) });
+    repo.deps.seed(join(HOME, PATH), '# Plan\n');
+    return repo;
+  };
+  const link = (deps: FakeDeps, words: readonly string[] = ['doc', 'D-1', PATH]): Promise<CliResult<CommandOutput>> =>
+    runRequest(deps, { ...BASE, words }, recipes);
+
+  it('links once from the coordinator pane and makes no commit on a repeat', async () => {
+    const repo = await OPEN();
+    const deps = inPane(repo.deps, '%0');
+    const result = await link(deps);
+    expect(result).toMatchObject({ ok: true });
+    expect(plainText(valueOf(result)).trimEnd()).toBe('Linked docs/plan.md to D-1.');
+    expect(valueOf(result).json).toEqual({ schema: 'factory.request/v1', action: 'doc', id: 'D-1', path: PATH, changed: true });
+    expect(waitingOf(repo).items[0]?.['docs']).toEqual([PATH]);
+    expect(repo.commits).toHaveLength(1);
+    expect(repo.commits[0]?.staged).toEqual([fileNames.waiting]);
+    expect(repo.commits[0]?.message).toContain('D-1');
+    expect(repo.commits[0]?.message).not.toContain(PATH);
+    const repeated = valueOf(await link(deps));
+    expect(plainText(repeated).trimEnd()).toBe('Already linked docs/plan.md to D-1.');
+    expect(repeated.json).toEqual({ schema: 'factory.request/v1', action: 'doc', id: 'D-1', path: PATH, changed: false });
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it.each(['outside', 'worker'] as const)('refuses a caller %s the coordinator pane before the connector reads a file', async (place) => {
+    const repo = await OPEN();
+    const before = new Map(repo.deps.files);
+    const touched: string[] = [];
+    const caller = place === 'worker' ? inPane(repo.deps, '%1') : repo.deps;
+    const deps = withFsWatch(caller, (_method, path) => touched.push(path));
+    const result = await link(deps);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(errorOf(result).hint).toContain('factory request doc D-1 PATH');
+    expect(touched).not.toContain(join(HOME, PATH));
+    expect(touched.some((path) => [...FILES, fileNames.ownerDecisions].some((file) => path.endsWith(`/${file}`)))).toBe(false);
+    expect(repo.gitCommands()).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('checks the request id before a tmux call', async () => {
+    const repo = await OPEN();
+    const calls: (readonly string[])[] = [];
+    const result = await link(inPane(repo.deps, '%0', calls), ['doc', 'bad\nid', PATH]);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(calls).toEqual([]);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each([['doc'], ['doc', 'D-1'], ['doc', 'D-1', PATH, PATH]].map((words) => [words] as const))('refuses the wrong number of words %j before a file read', async (words) => {
+    const repo = await OPEN();
+    const touched: string[] = [];
+    const result = await link(withFsWatch(repo.deps, (_method, path) => touched.push(path)), words);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(touched).toEqual([]);
+  });
+
+  it('refuses an id in the owner store with exit 2 and no change', async () => {
+    const repo = await nodeWithStore(storeText([storedRecord()]), { waiting: waitingText([entry('D-1')]) });
+    repo.deps.seed(join(HOME, PATH), '# Plan\n');
+    const before = filesOf(repo);
+    expect(await link(inPane(repo.deps, '%0'))).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining('answered') } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('fails closed for an unreadable owner store', async () => {
+    const repo = await nodeWithStore('not json', { waiting: waitingText([entry('D-1')]) });
+    repo.deps.seed(join(HOME, PATH), '# Plan\n');
+    const before = filesOf(repo);
+    expect(await link(inPane(repo.deps, '%0'))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('refuses an unknown request with exit 2 and no change', async () => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    expect(await link(inPane(repo.deps, '%0'), ['doc', 'D-9', PATH])).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each(['FACTORY.LOCAL.YAML', '.hidden/plan.md'])('gives the correct retry hint for refused path %s on add and link', async (path) => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    const results = [
+      ['factory request add', await run(repo, { ...ADD, docs: [path] })],
+      ['factory request doc', await link(inPane(repo.deps, '%0'), ['doc', 'D-1', path])],
+    ] as const;
+    for (const [command, result] of results) {
+      const error = errorOf(result);
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.hint).toBe(`Link a file whose path has no part that starts with a dot. Do not link the factory.local.yaml of the factory folder. Then run "${command}" again with that file.`);
+    }
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each([
+    ['docs/missing.md', 'usage'], ['../outside.md', 'usage'],
+    ['FACTORY.LOCAL.YAML', 'safety'], ['.hidden/plan.md', 'safety'],
+  ])('uses the doc path rule for %s on add and link', async (path, kind) => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    expect(await run(repo, { ...ADD, docs: [path] })).toMatchObject({ ok: false, error: { kind } });
+    expect(await link(inPane(repo.deps, '%0'), ['doc', 'D-1', path])).toMatchObject({ ok: false, error: { kind } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+});
+
 describe('request log', () => {
   const run = (repo: BoardRepo, overrides: Partial<RequestOptions> = {}): Promise<CliResult<CommandOutput>> =>
     runRequest(repo.deps, { ...BASE, ...LOG, ...overrides }, recipes);
@@ -751,6 +1041,15 @@ describe('request with a hosted tracker kind', () => {
     const config = { ...base, core: { ...base.core, tracker: { kind: 'jira' as const, items: 'ACME', decisions: 'ACME-DEC', watch_interval: '5m' } } };
     return boardNode({ config, waiting: waitingText([entry('D-1')]), board: boardText() });
   };
+
+  it('refuses a doc link from the coordinator pane with exit 4 and no change', async () => {
+    const repo = await hosted();
+    const before = filesOf(repo);
+    const result = await runRequest(inPane(repo.deps, '%0'), { ...BASE, words: ['doc', 'D-1', 'docs/plan.md'] }, recipes);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
 
   it('refuses a relayed close from the pane of the coordinator with exit 4 and writes nothing', async () => {
     const repo = await hosted();

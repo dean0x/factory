@@ -1,7 +1,9 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { launchArgv } from '../../src/launch/argv.js';
 import { files, stateGuard } from '../../src/names.js';
+import { startCommandText } from '../helpers/tmux-fake.js';
 import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 import { scaled } from './load.js';
 
@@ -63,9 +65,35 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
+/** A tmux boundary fake lets the doc command reach the state guard from its required caller. */
+const requestCaller = async (): Promise<Readonly<Record<string, string>>> => {
+  const command = launchArgv({
+    effort: 'high', model: 'default', proxyBaseUrl: null, path: box.env['PATH'] ?? '/bin', agent: 'claude',
+    home: box.node, coordinatorDir: join(box.node, 'coordinator'), stateDir: stateDir(), sessionId: 'demo', projects: [],
+  });
+  expect(command.ok).toBe(true);
+  if (!command.ok) throw new Error(command.error);
+  const bin = join(box.root, 'caller-bin');
+  await mkdir(bin);
+  await writeFile(join(bin, 'tmux'), [
+    '#!/bin/sh',
+    'case "$1" in',
+    '  has-session) exit 0 ;;',
+    '  show-options) printf "%s\\n" "$FACTORY_HOME" ;;',
+    '  display-message) printf "%s\\n" "%0|123|0|1|$TEST_COORDINATOR_COMMAND" ;;',
+    '  *) exit 1 ;;',
+    'esac', '',
+  ].join('\n'));
+  await chmod(join(bin, 'tmux'), 0o755);
+  return {
+    PATH: `${bin}:${box.env['PATH'] ?? '/bin'}`, FACTORY_HOME: box.node, FACTORY_SESSION: 'demo', TMUX_PANE: '%0',
+    TEST_COORDINATOR_COMMAND: startCommandText(command.value),
+  };
+};
+
 describe('the board commands with the delete guard off', () => {
   it(
-    'exits 4 for item add, update, move, close and doc, track add, request add and queue set, writes nothing, and the lists still work',
+    'exits 4 for item, track, request context and doc writes and queue set, writes nothing, and the lists still work',
     async () => {
       await mustRun(['item', 'add', '--title', 'First']);
       await mustRun(['track', 'add', 'core', '--name', 'Core']);
@@ -76,6 +104,8 @@ describe('the board commands with the delete guard off', () => {
       expect((await stateGit(['config', stateGuard.hooksPathKey, '/somewhere/else'])).code).toBe(0);
       const filesBefore = await boardFilesNow();
       const commitsBefore = await commitCount();
+      const caller = await requestCaller();
+      const run = vi.spyOn(box, 'run');
 
       const writes: readonly (readonly string[])[] = [
         ['item', 'add', '--title', 'Second'],
@@ -86,14 +116,23 @@ describe('the board commands with the delete guard off', () => {
         ['item', 'doc', 'B-1', DOC],
         ['track', 'add', 'docs', '--name', 'Docs'],
         ['request', 'add', '--title', 'Other', '--question', 'Why?', '--option', 'a=Yes'],
+        ['request', 'add', '--title', 'Context', '--question', 'Why?', '--option', 'a=Yes',
+          '--kind', 'information', '--field', 'Scope=Web', '--why', 'a=Fits', '--doc', DOC],
+        ['request', 'doc', 'D-1', DOC],
         ['queue', 'set', 'Docs', '--note', 'Changed'],
         ['queue', 'set', 'Docs', '--release-group', 'Launch'],
       ];
       for (const args of writes) {
-        const result = await factory(args);
+        const result = args[0] === 'request' && args[1] === 'doc'
+          ? await box.run([...args, '--home', box.node], { env: caller })
+          : await factory(args);
         expect(result.code, `${args.join(' ')}: ${result.stderr}`).toBe(4);
-        expect(result.stderr).not.toBe('');
+        expect(result.stderr).toContain('the delete guard of .factory is off');
       }
+      expect(run.mock.calls.map(([, options]) => options?.env === undefined)).toEqual(
+        writes.map(([command, action]) => command !== 'request' || action !== 'doc'),
+      );
+      run.mockRestore();
       expect(await boardFilesNow()).toEqual(filesBefore);
       expect(await commitCount()).toBe(commitsBefore);
 

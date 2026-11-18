@@ -25,11 +25,14 @@ import {
   relayedMarker,
   requestDeciders,
   requestGroups,
+  requestFieldKeys,
+  requestKinds,
   requestWords,
   roles,
   trackLimits,
   waitingKeys,
   workerFieldGuard,
+  type CommandText,
 } from '../names.js';
 import type { CheckedRecord, RecipeBoard } from '../recipes/entry.js';
 import { isPlainPath } from '../state/board-commit.js';
@@ -47,6 +50,8 @@ import type {
   RequestClosed,
   RequestDecider,
   RequestGroup,
+  RequestKind,
+  RequestField,
   RequestSettlement,
   TrackAddInput,
 } from './contract.js';
@@ -234,6 +239,9 @@ export interface CheckedDecision {
   /** The options as the waiting file stores them. */
   readonly options: readonly Stored[];
   readonly group: RequestGroup;
+  readonly kind: RequestKind;
+  readonly fields: readonly RequestField[];
+  readonly docs: readonly string[];
 }
 
 const optionOf = (option: DecisionAskInput['options'][number]): CliResult<Stored> => {
@@ -242,9 +250,56 @@ const optionOf = (option: DecisionAskInput['options'][number]): CliResult<Stored
       `the option key ${shown(option.key)} is not a token: 1 to ${boardLimits.maxTokenChars} letters, digits, dots, underscores or hyphens`,
     );
   }
-  const text = lineOf(`text of option ${option.key}`, option.text, boardTextLimits.maxOptionChars);
+  const text = shownLineOf(`text of option ${option.key}`, option.text, boardTextLimits.maxOptionChars);
   if (!text.ok) return text;
-  return ok({ [optionKeys.key]: option.key, [optionKeys.text]: text.value, ...(option.rec === true ? { [optionKeys.rec]: true } : {}) });
+  const why = optionalShownLineOf(`${optionKeys.why} of option ${option.key}`, option.why, boardTextLimits.maxWhyChars);
+  if (!why.ok) return why;
+  return ok({
+    [optionKeys.key]: option.key,
+    [optionKeys.text]: text.value,
+    ...(option.rec === true ? { [optionKeys.rec]: true } : {}),
+    ...(why.value === undefined ? {} : { [optionKeys.why]: why.value }),
+  });
+};
+
+const requestKindOf = (value: string | undefined): CliResult<RequestKind> => {
+  const kind = value ?? requestKinds.decision;
+  switch (kind) {
+    case requestKinds.decision:
+    case requestKinds.command:
+    case requestKinds.information:
+      return ok(kind);
+    default:
+      return usageError(`unknown ${requestWords.kind} ${shown(kind)}; the kinds are: ${Object.values(requestKinds).join(', ')}`);
+  }
+};
+
+const requestFieldsOf = (input: readonly RequestField[]): CliResult<readonly RequestField[]> => {
+  if (input.length > boardTextLimits.maxRequestFields) return usageError(`a ${requestWords.request} holds at most ${boardTextLimits.maxRequestFields} fields`);
+  const labels = new Set<string>();
+  const fields: RequestField[] = [];
+  for (const field of input) {
+    const label = shownLineOf(`field ${requestFieldKeys.label}`, field.label, boardTextLimits.maxFieldLabelChars);
+    if (!label.ok) return label;
+    if (labels.has(label.value)) return usageError(`the field label ${shown(label.value)} is used twice`);
+    const text = shownLineOf(`field ${requestFieldKeys.text}`, field.text, boardTextLimits.maxFieldTextChars);
+    if (!text.ok) return text;
+    labels.add(label.value);
+    fields.push({ label: label.value, text: text.value });
+  }
+  return ok(fields);
+};
+
+const requestDocsOf = (input: readonly string[]): CliResult<readonly string[]> => {
+  if (input.length > boardTextLimits.maxRequestDocs) return usageError(`a ${requestWords.request} holds at most ${boardTextLimits.maxRequestDocs} docs`);
+  const paths = new Set<string>();
+  for (const path of input) {
+    const checked = checkDocPath(path, commandLines.requestAdd);
+    if (!checked.ok) return checked;
+    if (paths.has(path)) return usageError(`the doc path ${shown(path)} is used twice`);
+    paths.add(path);
+  }
+  return ok([...paths]);
 };
 
 /**
@@ -253,10 +308,16 @@ const optionOf = (option: DecisionAskInput['options'][number]): CliResult<Stored
  * errors (exit 2).
  */
 export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecision> => {
-  const title = lineOf('title', input.title, boardTextLimits.maxTitleChars);
+  const kind = requestKindOf(input.kind);
+  if (!kind.ok) return kind;
+  const fields = requestFieldsOf(input.fields ?? []);
+  if (!fields.ok) return fields;
+  const docs = requestDocsOf(input.docs ?? []);
+  if (!docs.ok) return docs;
+  const title = shownLineOf(decisionKeys.title, input.title, boardTextLimits.maxTitleChars);
   if (!title.ok) return title;
   if (holdsBreak(input.question.trim())) return failure(`cannot write ${files.waiting}: the question holds a line break, a control character or a mark of text direction`);
-  const question = lineOf(decisionKeys.question, input.question, boardTextLimits.maxQuestionChars);
+  const question = shownLineOf(decisionKeys.question, input.question, boardTextLimits.maxQuestionChars);
   if (!question.ok) return question;
   const { options } = input;
   if (options.length < 1 || options.length > boardTextLimits.maxOptions) {
@@ -272,7 +333,10 @@ export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecisio
     stored.push(record.value);
   }
   if (options.filter((option) => option.rec === true).length > 1) return usageError('only one option can be the recommended one');
-  return ok({ title: title.value, question: question.value, options: stored, group: input.group ?? requestGroups.now });
+  return ok({
+    title: title.value, question: question.value, options: stored, group: input.group ?? requestGroups.now,
+    kind: kind.value, fields: fields.value, docs: docs.value,
+  });
 };
 
 /**
@@ -309,7 +373,7 @@ export const docPathIssue = (path: string): DocPathIssue | null => {
   return place === null ? null : { kind: 'place', reason: `is refused: ${displayLine(place, maxEchoChars)}` };
 };
 
-export const checkDocPath = (path: string): CliResult<string> => {
+export const checkDocPath = (path: string, again: CommandText): CliResult<string> => {
   const issue = docPathIssue(path);
   if (issue === null) return ok(path);
   const message = `the path ${shown(path)} ${issue.reason}`;
@@ -317,7 +381,7 @@ export const checkDocPath = (path: string): CliResult<string> => {
     ? usageError(message)
     : safetyRefusal(
         message,
-        `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}. Then run "${commandText(commandLines.itemDoc)}" again with that file.`,
+        `Link a file whose path has no part that starts with a dot. Do not link the ${files.localConfig} of the ${places.folder}. Then run "${commandText(again)}" again with that file.`,
       );
 };
 
@@ -705,8 +769,33 @@ export const askIn = (
     [decisionKeys.options]: decision.options,
     [decisionKeys.openedAt]: at,
     [decisionKeys.group]: decision.group,
+    [decisionKeys.kind]: decision.kind,
+    ...(decision.fields.length === 0 ? {} : { [decisionKeys.fields]: decision.fields }),
+    ...(decision.docs.length === 0 ? {} : { [decisionKeys.docs]: decision.docs }),
   };
   return ok({ top: { ...waiting.top, [waitingKeys.items]: [...listAt(waiting.top, waitingKeys.items), stored] }, value: id.value });
+};
+
+/** Add a doc path to an open request. A repeat leaves the file text as it is. */
+export const linkRequestDocIn = (waiting: WaitingDoc, id: string, path: string): CliResult<Edit<boolean>> => {
+  const found = waiting.items.find((entry) => entry.id === id);
+  if (found === undefined) return usageError(`${files.waiting} has no ${requestWords.request} ${shown(id)}`);
+  const docs = found.record[decisionKeys.docs];
+  if (docs !== undefined && !(Array.isArray(docs) && docs.every((entry) => typeof entry === 'string'))) {
+    return failure(`${files.waiting}: the "${decisionKeys.docs}" of ${id} is not a list of text`);
+  }
+  const checked = requestDocsOf(docs ?? []);
+  if (!checked.ok) return failure(`${files.waiting}: the "${decisionKeys.docs}" of ${id} is invalid: ${checked.error.message}`);
+  const current = checked.value;
+  if (current.includes(path)) return ok({ top: null, value: false });
+  if (current.length >= boardTextLimits.maxRequestDocs) {
+    return usageError(`the ${requestWords.request} ${id} holds ${boardTextLimits.maxRequestDocs} docs already, so it takes no more`);
+  }
+  const record = { ...found.record, [decisionKeys.docs]: [...current, path] };
+  return ok({
+    top: { ...waiting.top, [waitingKeys.items]: waiting.items.map((entry) => entry.id === id ? record : entry.record) },
+    value: true,
+  });
 };
 
 /** The new top objects of the waiting file and of the decision log after a close, and the request that the close took off. */

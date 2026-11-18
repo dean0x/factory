@@ -60,7 +60,7 @@ const connectorOf = (deps: Deps, tracker: string, command: CommandName = PASSED_
 
 /** The input of a decision record, from a request of the waiting file. The writer is never called by a refused write. */
 const RECORD_CALL: DecisionRecordCall = {
-  request: { id: 'D-1', title: 'Open', question: 'Why?', options: [{ key: 'a', text: 'Yes' }], openedAt: null, group: null, canonical: '{}', hash: 'f'.repeat(64) },
+  request: { id: 'D-1', title: 'Open', question: 'Why?', options: [{ key: 'a', text: 'Yes' }], openedAt: null, group: null, kind: null, fields: null, docs: [], canonical: '{}', hash: 'f'.repeat(64) },
   option: 'a',
   note: null,
   at: '2030-01-02T03:04:05.678Z',
@@ -86,6 +86,10 @@ const WRITES: readonly (readonly [string, Write])[] = [
   ['track add', (c) => c.addTrack({ id: 'core', name: 'Core', roadmap: true })],
   ['doc link', (c) => c.linkDoc({ id: 'B-1', path: DOC_PATH })],
   ['decision ask', (c) => c.askDecision(DECISION)],
+  ['request doc link', (c) => {
+    expect(typeof c.linkRequestDoc).toBe('function');
+    return c.linkRequestDoc({ id: 'D-1', path: DOC_PATH });
+  }],
   ['request close', (c) => c.closeRequest('D-1')],
   ['queue set', (c) => c.setQueueRow({ name: 'Docs', items: ['B-1'] })],
   ['queue set with a release group', (c) => c.setQueueRow({ name: 'Docs', items: ['B-1'], releaseGroup: 'Release 2' })],
@@ -102,6 +106,10 @@ const BAD_WRITES: readonly (readonly [string, Write])[] = [
   ['track add', (c) => c.addTrack({ id: 'Bad Id', name: '', roadmap: true })],
   ['doc link', (c) => c.linkDoc({ id: 'B-1', path: '../outside.md' })],
   ['decision ask', (c) => c.askDecision({ title: '', question: '', options: [] })],
+  ['request doc link', (c) => {
+    expect(typeof c.linkRequestDoc).toBe('function');
+    return c.linkRequestDoc({ id: 'nope', path: '../outside.md' });
+  }],
   ['request close', (c) => c.closeRequest('nope')],
   ['queue set', (c) => c.setQueueRow({ name: ' ' })],
   ['queue set with a release group', (c) => c.setQueueRow({ name: 'Docs', releaseGroup: 'two\nlines' })],
@@ -229,7 +237,9 @@ describe('a hosted tracker kind reads the local files; the local kind writes', (
     expect(connector.kind).toBe(kind);
     expect(valueOf(await connector.listItems({ all: true })).map((item) => item.id)).toEqual(['B-1']);
     expect(valueOf(await connector.listTracks())).toEqual([]);
-    expect(valueOf(await connector.listRequests()).map((request) => request.id)).toEqual(['D-1']);
+    expect(valueOf(await connector.listRequests())).toEqual([
+      { id: 'D-1', title: 'Open', options: ['a'], openedAt: null, group: 'now', kind: 'decision', question: 'Why?' },
+    ]);
     expect(valueOf(await connector.listQueue())).toEqual([]);
     expect(valueOf(await connector.readChanges(null))).toEqual({ events: [], cursor: null });
     expect(repo.deps.warned).toEqual([]);

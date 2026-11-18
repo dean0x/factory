@@ -13,7 +13,7 @@ const boardPath = join(layoutOf(BOARD_HOME).stateDir, files.board);
 
 const expected = {
   schema: 'factory.board/v1', home: BOARD_HOME,
-  requests: [{ id: 'D-1', title: 'Choose the view', options: ['a'], openedAt: BOARD_TIME, group: 'later' }],
+  requests: [{ id: 'D-1', title: 'Choose the view', options: ['a'], openedAt: BOARD_TIME, group: 'later', kind: 'decision', question: 'Which view?' }],
   queue: [{ position: 1, name: 'Ship the board', items: ['B-1'], note: 'Check the view', releaseGroup: 'Next', fields: { release: true } }],
   workers: [{
     id: 'alpha', project: 'web', pane: null, dead: false, state: 'unknown', contextPct: null, mark: null,

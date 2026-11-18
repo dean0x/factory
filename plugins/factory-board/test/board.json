@@ -9,7 +9,9 @@
         "a"
       ],
       "openedAt": "2030-01-02T03:04:05.678Z",
-      "group": "later"
+      "group": "later",
+      "kind": "decision",
+      "question": "Which view?"
     }
   ],
   "workers": [

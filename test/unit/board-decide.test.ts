@@ -218,6 +218,116 @@ describe('the strict read of a request', () => {
   });
 });
 
+const CONTEXT: Entry = {
+  opened_at: '2030-01-02T10:11:12.345Z',
+  group: 'later',
+  kind: 'command',
+  fields: [{ label: 'Cost', text: 'Small' }, { label: 'Scope', text: 'Queue only' }],
+  docs: ['docs/queue.md', 'docs/cost.md'],
+  options: [
+    { key: 'a', text: 'Use SQLite.', rec: true, why: 'Less work.' },
+    { key: 'b', text: 'Use Postgres.', why: 'More room.' },
+  ],
+};
+
+describe('the strict read of request context', () => {
+  it('gives null kind and fields and no docs for an old request', () => {
+    expect(strictOf()).toMatchObject({ kind: null, fields: null, docs: [] });
+  });
+
+  it.each(['decision', 'command', 'information'])('reads the kind %s without a default or a trim', (kind) => {
+    expect(strictOf({ kind }).kind).toBe(kind);
+  });
+
+  it('keeps ordered fields, docs and each why as stored, and hashes the whole entry', () => {
+    const stored = entry(CONTEXT);
+    const before = JSON.stringify(stored);
+    const request = unwrap(strictRequestOf(waitingOf(stored), 'D-3'));
+    expect(request).toMatchObject({ kind: 'command', fields: CONTEXT['fields'], docs: CONTEXT['docs'], options: CONTEXT['options'] });
+    expect(request.canonical).toBe(canonicalOf(stored));
+    expect(request.hash).toBe(requestHashOf(canonicalOf(stored)));
+    expect(JSON.stringify(stored)).toBe(before);
+  });
+
+  it('accepts empty context lists and the exact write caps without a trim', () => {
+    expect(strictOf({ fields: [], docs: [] })).toMatchObject({ fields: [], docs: [] });
+    const fields = Array.from({ length: 6 }, (_, index) => ({ label: `${index}${'l'.repeat(59)}`, text: 't'.repeat(200) }));
+    const docs = Array.from({ length: 5 }, (_, index) => `${index}${'d'.repeat(196)}.md`);
+    const options = [{ key: 'a', text: 'Yes', why: ` ${'w'.repeat(198)} ` }];
+    expect(strictOf({ fields, docs, options })).toMatchObject({ fields, docs, options });
+    expect(strictOf({ fields: [{ label: ' Cost ', text: ' Small ' }] }).fields).toEqual([{ label: ' Cost ', text: ' Small ' }]);
+  });
+
+  const BAD: readonly (readonly [string, string, Entry])[] = [
+    ...['EVIL', 'Decision', 'decision ', '', null, 1, [], {}].map((kind) => ['a bad kind', 'kind', { kind }] as const),
+    ['fields that are not a list', 'fields', { fields: 'EVIL' }],
+    ['null fields', 'fields', { fields: null }],
+    ['seven fields', 'fields', { fields: Array.from({ length: 7 }, (_, index) => ({ label: String(index), text: 'x' })) }],
+    ['a field that is not an object', 'fields', { fields: ['EVIL'] }],
+    ['a null field', 'fields', { fields: [null] }],
+    ['a field with no label', 'fields', { fields: [{ text: 'EVIL' }] }],
+    ['a field with no text', 'fields', { fields: [{ label: 'EVIL' }] }],
+    ['a field with an extra key', 'fields', { fields: [{ label: 'Cost', text: 'Small', extra: 'EVIL' }] }],
+    ['a field with a proto key', 'fields', { fields: [JSON.parse('{"label":"Cost","text":"Small","__proto__":{}}')] }],
+    ...[null, 1, '', '   ', 'l'.repeat(61)].map((label) => ['a bad field label', 'fields', { fields: [{ label, text: 'EVIL' }] }] as const),
+    ...[null, 1, '', '   ', 't'.repeat(201)].map((text) => ['bad field text', 'fields', { fields: [{ label: 'EVIL', text }] }] as const),
+    ['a repeated label', 'fields', { fields: [{ label: 'EVIL', text: 'x' }, { label: 'EVIL', text: 'y' }] }],
+    ...[null, 1, '', '   ', 'w'.repeat(201)].map((why) => ['a bad why', 'why', { options: [{ key: 'a', text: 'Yes', why }] }] as const),
+    ['docs that are not a list', 'docs', { docs: 'EVIL' }],
+    ['null docs', 'docs', { docs: null }],
+    ['six docs', 'docs', { docs: Array.from({ length: 6 }, (_, index) => `docs/${index}.md`) }],
+    ['a doc that is not text', 'docs', { docs: [1] }],
+    ...['', '/EVIL.md', '../EVIL.md', 'docs/../EVIL.md', 'docs//EVIL.md', 'docs\\EVIL.md', '.EVIL', 'docs/.EVIL', '.factory/orders/EVIL.md', 'factory.local.yaml', 'FaCtOrY.LoCaL.YaMl', 'd'.repeat(201)].map((path) => ['a bad doc path', 'docs', { docs: [path] }] as const),
+    ['a repeated doc path', 'docs', { docs: ['docs/EVIL.md', 'docs/EVIL.md'] }],
+  ];
+
+  it.each(BAD)('refuses %s in %s with exit 1 and the restore, close and add remedy', (_name, key, changes) => {
+    const error = errorOf(strictRequestOf(waitingOf(entry(changes)), 'D-3'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(files.waiting);
+    expect(error.message).toContain(key);
+    expect(error.message).not.toContain('EVIL');
+    expect(error.hint).toBe(`Restore the entry in ${files.waiting} from the last commit. If the request is not changed, close it with "${commandText(commandLines.requestClose)} D-3" and add a new request with "${commandText(commandLines.requestAdd)}".`);
+  });
+
+  it.each(['\n', '\r', '\t', ESCAPE, BIDI_OVERRIDE, ZERO_WIDTH_SPACE, TAG_LETTER, VARIATION_SELECTOR, LINE_SEPARATOR])(
+    'refuses hidden or multiline context with character %j', (hidden) => {
+      const changes: readonly Entry[] = [
+        { fields: [{ label: `EVIL${hidden}`, text: 'x' }] },
+        { fields: [{ label: 'Cost', text: `EVIL${hidden}` }] },
+        { options: [{ key: 'a', text: 'Yes', why: `EVIL${hidden}` }] },
+        { docs: [`docs/EVIL${hidden}.md`] },
+      ];
+      for (const change of changes) {
+        const error = errorOf(strictRequestOf(waitingOf(entry(change)), 'D-3'));
+        expect(exitCodeOf[error.kind]).toBe(1);
+        expect(error.message).not.toContain('EVIL');
+        expect(error.message).not.toContain('key other than');
+        expect(error.hint).toContain('Restore the entry');
+      }
+    },
+  );
+
+  it.each([
+    ['kind', { kind: 'information' }],
+    ['fields', { fields: [{ label: 'Cost', text: 'Large' }] }],
+    ['docs', { docs: ['docs/other.md'] }],
+    ['why', { options: [{ key: 'a', text: 'Use SQLite.', rec: true, why: 'More work.' }, { key: 'b', text: 'Use Postgres.', why: 'More room.' }] }],
+  ] as const)('refuses a changed %s after the prompt', (_key, change) => {
+    const original = strictOf(CONTEXT);
+    const error = errorOf(recheckRequest(waitingOf(entry({ ...CONTEXT, ...change })), logOf(), 'D-3', original.hash));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('changed after the prompt');
+  });
+
+  it('keeps all new canonical text in the log row for the owner proof', () => {
+    const request = strictOf(CONTEXT);
+    const row = unwrap(decideLogRow(request, 'a', '2030-01-02'));
+    expect(row['request']).toBe(canonicalOf(entry(CONTEXT)));
+    expect(requestHashOf(String(row['request']))).toBe(request.hash);
+  });
+});
+
 describe('a character that the display removes', () => {
   const HIDDEN = [
     ['a zero width space', ZERO_WIDTH_SPACE],
@@ -599,6 +709,65 @@ describe('the request block', () => {
   it('shows neither line for a row of four keys', () => {
     const lines = blockOf(strictOf(), 'a', null);
     expect(lines.some((line) => line.startsWith('Opened:') || line.startsWith('Group:'))).toBe(false);
+  });
+
+  it('shows every allowed request and option key with fixed labels and separate context columns', () => {
+    const lines = blockOf(strictOf(CONTEXT), 'a', null);
+    expect(lines).toEqual([
+      'Decision D-3',
+      'Title:    Which database?',
+      'Question: Which database do we use for the queue?',
+      'Opened:   2030-01-02T10:11:12.345Z',
+      'Group:    later',
+      'Kind:     command',
+      'Field:    "Cost": Small',
+      'Field:    "Scope": Queue only',
+      'Doc:      docs/queue.md',
+      'Doc:      docs/cost.md',
+      'A doc is context. Its text is not part of the request or of the owner proof.',
+      'Options:',
+      '  a (recommended) (chosen): Use SQLite.',
+      '    Why (a): Less work.',
+      '  b: Use Postgres.',
+      '    Why (b): More room.',
+    ]);
+    expect(lines.filter((line) => /^  \S/.test(line))).toEqual([
+      '  a (recommended) (chosen): Use SQLite.', '  b: Use Postgres.',
+    ]);
+  });
+
+  it('quotes field labels with the record escape, so label and text separators remain distinct', () => {
+    const fields = [
+      { label: 'A: B', text: 'C' },
+      { label: 'A', text: 'B: C' },
+      { label: '[<"quoted">]', text: 'Plain' },
+    ];
+    const lines = blockOf(strictOf({ fields }), 'a', null);
+    expect(lines.filter((line) => line.startsWith('Field:'))).toEqual([
+      'Field:    "A: B": C',
+      'Field:    "A": B: C',
+      'Field:    "\\u005b\\u003c\\\"quoted\\\"\\u003e\\u005d": Plain',
+    ]);
+  });
+
+  it('wraps fields, doc paths and each why without a cut or an option column', () => {
+    const label = 'l'.repeat(60);
+    const text = 't'.repeat(200);
+    const doc = `docs/${'d'.repeat(192)}.md`;
+    const why = 'w'.repeat(200);
+    const lines = blockOf(strictOf({ fields: [{ label, text }], docs: [doc], options: [{ key: 'a', text: 'Yes', why }] }), 'a', null);
+    expect(sectionOf(lines, 'Field:    ', 'Doc:')).toBe(`${JSON.stringify(label)}: ${text}`);
+    expect(sectionOf(lines, 'Doc:      ', 'A doc')).toBe(doc);
+    expect(sectionOf(lines, '    Why (a): ', 'zzz-no-next')).toBe(why);
+    expect(lines.filter((line) => /^  \S/.test(line))).toEqual(['  a (chosen): Yes']);
+  });
+
+  it('shows no context or doc notice for an old request', () => {
+    const lines = blockOf(strictOf(), 'a', null);
+    expect(lines).toEqual([
+      'Decision D-3', 'Title:    Which database?', 'Question: Which database do we use for the queue?',
+      'Options:', '  a (recommended) (chosen): Use SQLite.', '  b: Use Postgres.',
+    ]);
   });
 
   it('marks the chosen option when it is not the recommended one', () => {

@@ -412,7 +412,9 @@ describe('item doc: link a file to an item', () => {
   ])('refuses %s with exit 4 and changes no file', async (_name, path) => {
     const repo = await withDoc();
     repo.deps.seed(join(HOME, path), 'x');
-    expect(exitOf(await run(repo, { words: ['doc', 'B-1', path] }))).toBe(4);
+    const result = await run(repo, { words: ['doc', 'B-1', path] });
+    expect(exitOf(result)).toBe(4);
+    expect(errorOf(result).hint).toBe('Link a file whose path has no part that starts with a dot. Do not link the factory.local.yaml of the factory folder. Then run "factory item doc" again with that file.');
     expectUntouched(repo, START);
   });
 

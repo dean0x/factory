@@ -55,6 +55,10 @@ import {
   requestCommands,
   requestGroups,
   requestHash,
+  requestFieldKeys,
+  requestKinds,
+  requestWords,
+  optionKeys,
   requestRowKeys,
   reservedFieldNames,
   reservedRootNames,
@@ -1643,8 +1647,18 @@ describe('the names of the board records', () => {
     expect(commandLines.requestLog).toBe(`${commands.request} ${requestCommands.log}`);
   });
 
-  it('adds the log subcommand of request after the three older ones', () => {
-    expect(Object.values(requestCommands)).toEqual(['add', 'list', 'close', 'log']);
+  it('adds the doc subcommand of request after the older ones', () => {
+    expect(Object.values(requestCommands)).toEqual(['add', 'list', 'close', 'log', 'doc']);
+  });
+
+  it('names request context and its write limits', () => {
+    expect([flags.kind, flags.why, flags.doc]).toEqual(['kind', 'why', 'doc']);
+    expect(commandLines.requestDoc).toBe('request doc');
+    expect([decisionKeys.kind, decisionKeys.fields, decisionKeys.docs, optionKeys.why]).toEqual(['kind', 'fields', 'docs', 'why']);
+    expect(requestFieldKeys).toEqual({ label: 'label', text: 'text' });
+    expect(requestKinds).toEqual({ decision: 'decision', command: 'command', information: 'information' });
+    expect(requestWords.kind).toBe('request kind');
+    expect(boardTextLimits).toMatchObject({ maxRequestDocs: 5, maxRequestFields: 6, maxFieldLabelChars: 60, maxFieldTextChars: 200, maxWhyChars: 200 });
   });
 
   it('adds the record, unassign and doc subcommands of item after the five older ones', () => {
@@ -1789,7 +1803,7 @@ describe('the names of the data for a view outside the core', () => {
   });
 
   it('fixes the keys of a request row, the key of the power reading and its sources', () => {
-    expect(Object.values(requestRowKeys)).toEqual(['openedAt', 'group']);
+    expect(Object.values(requestRowKeys)).toEqual(['openedAt', 'group', 'kind', 'question']);
     expect(Object.values(powerKeys)).toEqual(['power', 'source', 'percent']);
     expect(Object.values(powerSources)).toEqual(['ac', 'battery', 'unknown']);
   });
