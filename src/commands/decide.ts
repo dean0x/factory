@@ -1,6 +1,6 @@
 import type { DecisionPlace, DecisionRecorded, DecisionStored } from '../board/contract.js';
 import { checkNote, chosenOptionOf, requestBlockLines, type DecideRequest } from '../board/decide.js';
-import { freeCommandLines, freeLabelKey, freeTitleOf, freeWorkerOf, homeIssue } from '../board/free-request.js';
+import { freeAnswerLine, freeCommandLines, freeWorkerOf, homeIssue } from '../board/free-request.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, printable, type CommandOutput, type OutLine } from '../cli/output.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
@@ -16,7 +16,6 @@ import {
   files,
   flags,
   flagText,
-  requestKinds,
   requestWords,
   roles,
   schemaIds,
@@ -68,13 +67,9 @@ const addRequestLine = `add a new ${requestWords.request} with "${commandText(co
 
 const freePreviewOf = (request: DecideRequest, home: string): CliResult<readonly string[]> => {
   const worker = freeWorkerOf(request);
-  const remedy = `Close it with "${commandText(commandLines.requestClose)} ${request.id}" and ${addRequestLine}.`;
-  if (!worker.ok) return failure(worker.error.message, remedy);
+  if (!worker.ok) return failure(worker.error.message, `Close it with "${commandText(commandLines.requestClose)} ${request.id}" and tell the ${roles.coordinator}.`);
   const id = worker.value;
   if (id === null) return ok([]);
-  if (request.kind !== requestKinds.command || freeLabelKey(request.title) !== freeLabelKey(freeTitleOf(id))) {
-    return failure(`the ${roles.worker} free ${requestWords.request} has the wrong title or kind`, remedy);
-  }
   const issue = homeIssue(home);
   if (issue !== null) return failure(`the board home ${issue}`);
   return ok(['Run the dry run first. If the checks pass, run the second command.', ...freeCommandLines(id, home)]);
@@ -159,10 +154,10 @@ export const runDecide = async (deps: Deps, options: DecideOptions, registry: Re
   const read = await connector.decisionRequest(id);
   if (!read.ok) return read;
   const { request, stored, place } = read.value;
-  const chosen = chosenOptionOf(request, option);
-  if (!chosen.ok) return chosen;
   const preview = freePreviewOf(request, home);
   if (!preview.ok) return preview;
+  const chosen = chosenOptionOf(request, option);
+  if (!chosen.ok) return chosen;
   const orphanAt = orphanTimeOf(stored, id, option);
   if (!orphanAt.ok) return orphanAt;
   const lines = [...requestBlockLines(request, chosen.value.key, note).map(printable), ...preview.value];
@@ -173,7 +168,9 @@ export const runDecide = async (deps: Deps, options: DecideOptions, registry: Re
   if (!ACCEPT_ANSWER.test(answer.value.trim())) {
     return usageError(
       'nothing is recorded: the answer was not yes',
-      `Run "${commandText(`${commands.decide} ${id} ${option}`)}" again to record the answer.`,
+      preview.value.length === 0
+        ? `Run "${commandText(`${commands.decide} ${id} ${option}`)}" again to record the answer.`
+        : `If the ${roles.worker} stays, record that result with "${freeAnswerLine(id, requestWords.freeKept.key, home)}".`,
     );
   }
   const at = orphanAt.value ?? deps.now().toISOString();

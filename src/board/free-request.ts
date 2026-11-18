@@ -33,6 +33,9 @@ export const namedItems = (ids: readonly string[]): string => {
   return ids.length > max ? `${names} and ${ids.length - max} more` : names;
 };
 
+/** Keep every id in the proof. A display count does not identify the closed items. */
+export const closedItemsText = (ids: readonly string[]): string => ids.join(', ');
+
 export const freeRequestOf = ({ id, project, closed, head, checkedAt }: FreeRequestFacts): DecisionAskInput => ({
   title: freeTitleOf(id),
   question: requestWords.freeQuestion,
@@ -42,14 +45,14 @@ export const freeRequestOf = ({ id, project, closed, head, checkedAt }: FreeRequ
   fields: [
     { label: requestWords.freeWorkerLabel, text: id },
     { label: requestWords.freeProjectLabel, text: project },
-    { label: requestWords.freeClosedItemsLabel, text: namedItems(closed) },
+    { label: requestWords.freeClosedItemsLabel, text: closedItemsText(closed) },
     { label: requestWords.freePushedHeadLabel, text: head },
     { label: requestWords.freeChecksLabel, text: CHECKS_PASSED },
     { label: requestWords.freeCheckedAtLabel, text: checkedAt },
   ],
 });
 
-export const freeLabelKey = (text: string): string => text.trim().replace(/\s+/g, ' ').toLowerCase();
+const freeLabelKey = (text: string): string => text.trim().replace(/\s+/g, ' ').toLowerCase();
 
 const FREE_TITLE_KEY = freeLabelKey(requestWords.freeTitle);
 const FREE_FIELD_KEY = freeLabelKey(requestWords.freeWorkerLabel);
@@ -73,10 +76,21 @@ export const freeWorkerOf = (request: DecideRequest): CliResult<string | null> =
   if (fields.length !== 1 || field === undefined || !isSlug(field.text)) {
     return failure(`the ${roles.worker} free ${requestWords.request} needs one "${requestWords.freeWorkerLabel}" field with a ${roles.worker} id`);
   }
+  if (request.kind !== requestKinds.command || freeLabelKey(request.title) !== freeLabelKey(freeTitleOf(field.text))) {
+    return failure(`the ${roles.worker} free ${requestWords.request} has the wrong title or kind`);
+  }
+  const { freeDone, freeKept } = requestWords;
+  if (request.options.length !== 2 || ![freeDone, freeKept].every(({ key }) => request.options.some((option) => option.key === key))) {
+    return failure(`the ${roles.worker} free ${requestWords.request} needs the options ${freeDone.key} and ${freeKept.key}`);
+  }
   return ok(field.text);
 };
 
 export const homeIssue = (home: string): string | null => visibleLineIssue(home);
+
+/** The owner can use either answer from a terminal outside the factory folder. */
+export const freeAnswerLine = (request: string, key: typeof requestWords.freeDone.key | typeof requestWords.freeKept.key, home: string): string =>
+  `${commandText(commands.decide)} ${request} ${key} ${flagText(flags.home)} ${shellWord(home)}`;
 
 /** Build command lines from the checked worker id and the checked board home. */
 export const freeCommandLines = (id: string, home: string): readonly [string, string] => {

@@ -1714,9 +1714,9 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
       expect(result).toMatchObject({ ok: true, value: { failed: false, json: { closed: true, askOwner: true, freed: false, request: 'D-8', reused: false } } });
       if (result.ok) {
         expect(textOf(result.value)).toContain('D-8');
-        expect(textOf(result.value)).toContain('"factory decide D-8 done"');
+        expect(textOf(result.value)).toContain(`"factory decide D-8 done --home ${HOME}"`);
         expect(textOf(result.value)).toContain('Confirm only if the worker is free.');
-        expect(textOf(result.value)).toContain('"factory decide D-8 kept"');
+        expect(textOf(result.value)).toContain(`"factory decide D-8 kept --home ${HOME}"`);
         checkText(textOf(result.value));
       }
       expect(writes).toEqual([freeRequestOf({ id: 'alpha', project: 'web', closed: ['B-1'], head: HEAD, checkedAt: given.made.deps.now().toISOString() })]);
@@ -1743,9 +1743,20 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
       await expectKept(given);
     });
 
-    it('refuses a malformed free request before the fetch', async () => {
+    it('refuses a stale request when a closed item differs past the display limit', async () => {
       const given = await world();
-      const { port, writes } = askWorld(waitingOf({ ...storedRequest(), extra: true }));
+      const shared = Array.from({ length: dismissWords.maxItemsNamed }, (_, i) => `B-${i + 1}`);
+      const { port, writes } = askWorld(waitingOf(storedRequest('web', [...shared, 'B-21'])));
+      const items = knownItem(null, { closed: [...shared, 'B-22'] });
+      expectRefusal(await runAsk(given, port, portOf({ alpha: items })), 1, 'Close D-5');
+      expect(given.made.git.commands()).toEqual([]);
+      expect(writes).toEqual([]);
+      await expectKept(given);
+    });
+
+    it.each([{ extra: true }, { options: [{ key: 'done', text: 'The worker is free.' }] }])('refuses a malformed free request before the fetch: %j', async (change) => {
+      const given = await world();
+      const { port, writes } = askWorld(waitingOf({ ...storedRequest(), ...change }));
       expectRefusal(await runAsk(given, port), 1, 'D-5');
       expect(given.made.git.commands()).toEqual([]);
       expect(writes).toEqual([]);

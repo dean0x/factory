@@ -504,6 +504,7 @@ describe('decide: worker free requests', () => {
 
     expect(terminal.asked).toHaveLength(1);
     expect(exitOf(result)).toBe(2);
+    expect(errorOf(result).hint).toContain(`factory decide D-1 kept --home '${HOME}/owner'\\''s home'`);
     expect(shownOf(repo).filter((line) => line.startsWith('factory dismiss'))).toEqual([
       `factory dismiss alpha --home '${HOME}/owner'\\''s home'`,
       `factory dismiss alpha --home '${HOME}/owner'\\''s home' --yes`,
@@ -517,6 +518,8 @@ describe('decide: worker free requests', () => {
     ['a doc', { docs: ['notes/context.md'] }],
     ['a different title', { title: 'Pick a plan' }],
     ['a different kind', { kind: 'decision' }],
+    ['no done option', { options: [{ key: 'kept', text: 'The worker stays.' }] }],
+    ['an extra option', { options: [...freeInput.options, { key: 'later', text: 'Decide later.' }] }],
   ])('refuses a free request with %s before it shows the request or asks for an answer', async (_name, overrides) => {
     const repo = await nodeOf({ waiting: waitingOf({ ...freeEntry, ...overrides }) });
     const before = new Map(repo.deps.files);
@@ -527,7 +530,7 @@ describe('decide: worker free requests', () => {
     expect(result.ok).toBe(false);
     expect(exitOf(result)).toBe(1);
     expect(errorOf(result).hint).toContain('factory request close D-1');
-    expect(errorOf(result).hint).toContain('factory request add');
+    expect(errorOf(result).hint).not.toContain('factory request add');
     expectNothingDone(repo, before, terminal);
   });
 

@@ -5,7 +5,7 @@ import { parseWaiting } from '../../src/board/files.js';
 import { freeCommandLines, freeRequestOf, freeTitleOf, freeWorkerOf, homeIssue, isReservedFreeForm } from '../../src/board/free-request.js';
 import { exitCodeOf, type CliResult } from '../../src/cli/errors.js';
 import { printable } from '../../src/cli/output.js';
-import { boardTextLimits, flags, templateValues } from '../../src/names.js';
+import { boardTextLimits, dismissWords, flags, templateValues } from '../../src/names.js';
 
 const HOME = "/example/owner's home";
 const FREE_FIELD = { label: 'Worker to free', text: 'alpha' };
@@ -45,6 +45,12 @@ describe('free request', () => {
     expect(checkDecision(input).ok).toBe(true);
   });
 
+  it('keeps each closed item id even past the display limit', () => {
+    const closed = Array.from({ length: dismissWords.maxItemsNamed + 1 }, (_, i) => `B-${i + 1}`);
+    const input = freeRequestOf({ id: 'alpha', project: 'demo', closed, head: 'a'.repeat(40), checkedAt: '2030-01-02T03:04:05.678Z' });
+    expect(input.fields).toContainEqual({ label: 'Closed items', text: closed.join(', ') });
+  });
+
   it('states what the owner run checks and what it does not check', () => {
     const { question } = freeRequestOf({ id: 'alpha', project: 'demo', closed: ['B-1'], head: 'a'.repeat(40), checkedAt: '2030-01-02T03:04:05.678Z' });
     expect(question.length).toBeLessThanOrEqual(boardTextLimits.maxQuestionChars);
@@ -61,9 +67,9 @@ describe('free request', () => {
 
   it('rebuilds both command lines from the worker field and the board home', () => {
     const request = read({
-      title: 'Stored title', question: 'Stored question', kind: 'command',
+      title: 'Free the worker alpha', question: 'Stored question', kind: 'command',
       fields: [{ ...FREE_FIELD, label: `  WORKER  TO${NO_BREAK_SPACE}FREE ` }, { label: 'Command', text: 'Stored command' }],
-      options: [{ key: 'a', text: 'Stored option' }],
+      options: [{ key: 'done', text: 'Stored option' }, { key: 'kept', text: 'Other option' }],
     });
     const id = valueOf(freeWorkerOf(request));
     expect(id).toBe('alpha');
