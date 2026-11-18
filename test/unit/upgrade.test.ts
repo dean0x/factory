@@ -27,6 +27,7 @@ import { isChange, planBlock, planBoardQueueKey } from '../../src/upgrade/plan.j
 import { writeBlockPlans } from '../../src/upgrade/render.js';
 import { finisher, localFinisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
 import { localOf } from '../../src/config/schema.js';
+import { allOn } from '../../src/guards/effective.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { currentSpec, parseConfigTexts, runInit, runUpgrade } from '../helpers/package-registry.js';
@@ -337,7 +338,7 @@ describe('upgrade: effective guard values', () => {
     await acceptFiles(deps, HOME, 'demo', ['setup/coordinator.md', 'setup/roles/worker.md']);
     const config = await loadConfig(deps, HOME);
     if (!config.ok) throw new Error(config.error.message);
-    const free = roleText.maxChars - composeRoleText(workerFileTemplatesFor(config.value, null)).length - roleText.joiner.length;
+    const free = roleText.maxChars - composeRoleText(workerFileTemplatesFor(config.value, null, allOn)).length - roleText.joiner.length;
     const size = composeRoleText(workerFileTemplatesFor(config.value, setup, { 'install-rules': 'off' })).length;
     const output = success(await upgrade(deps));
     expect(output.warnings).toEqual([

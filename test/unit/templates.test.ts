@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
 import { isSlug } from '../../src/config/primitives.js';
 import { effectiveModes, recordDelegation } from '../../src/core/owner-record.js';
@@ -39,6 +39,7 @@ import {
   blockTemplatesFor,
   fileTemplates,
   roleBlockRenames,
+  safetyTemplateFor,
   workerFileTemplatesFor,
 } from '../../src/templates/index.js';
 import { coordinatorValuesFor, fillTemplate, linesFor, workerValuesFor, type TextPart } from '../../src/templates/fill.js';
@@ -69,6 +70,14 @@ const texts: readonly (readonly [string, string])[] = [
   ...delegatedBlocks.map((template) => [`block ${template.name} with delegated points`, template.body] as const),
   ...Object.entries(fileTemplates).map(([name, text]) => [`file ${name}`, text] as const),
 ];
+
+it('requires explicit guard values at each config-based template entry point', () => {
+  expectTypeOf<[
+    Parameters<typeof blockInputOf>['length'],
+    Parameters<typeof safetyTemplateFor>['length'],
+    Parameters<typeof workerFileTemplatesFor>['length'],
+  ]>().toEqualTypeOf<[4, 3, 3]>();
+});
 
 describe('guarded text parts', () => {
   const group: TextPart = { guards: ['first', 'second'], lines: ['group line', ''] };
@@ -1337,7 +1346,7 @@ describe('the worker text: questions, assignments and resume notes', () => {
 
 describe('the worker text: heavy tests', () => {
   const bodyOfConfig = (config = sampleConfig()): string =>
-    blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: null }, softwareOwnerModes)).find(
+    blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: null }, softwareOwnerModes, allOn)).find(
       (template) => template.name === 'worker',
     )?.body ?? '';
   const heavyOf = (body: string): string => {
@@ -1571,6 +1580,7 @@ describe('what the blocks depend on, from the config (blockInputOf)', () => {
       },
       { coordinator: 'A.\n', worker: null },
       softwareOwnerModes,
+      allOn,
     );
     expect(input).toEqual({
       layer: 2,
@@ -1587,7 +1597,7 @@ describe('what the blocks depend on, from the config (blockInputOf)', () => {
   it('takes the modes as the caller gives them, and does not read them from the config', () => {
     const config = sampleConfig();
     const given: ApprovalModes = { ...softwareOwnerModes, publish: delegated };
-    expect(blockInputOf(config, { coordinator: null, worker: null }, given).modes).toEqual(given);
+    expect(blockInputOf(config, { coordinator: null, worker: null }, given, allOn).modes).toEqual(given);
   });
 });
 
@@ -1630,7 +1640,7 @@ describe('the text follows the effective modes', () => {
   };
   const bodiesFor = async (deps: FakeDeps): Promise<Record<string, string>> => {
     const modes = await effectiveModes(deps, root, delegatedConfig);
-    const input = blockInputOf(delegatedConfig, { coordinator: null, worker: null }, modes);
+    const input = blockInputOf(delegatedConfig, { coordinator: null, worker: null }, modes, allOn);
     return Object.fromEntries(blockTemplatesFor(input).map((template) => [template.name, template.body]));
   };
 
@@ -1674,12 +1684,12 @@ describe('the worker file templates of a config (workerFileTemplatesFor)', () =>
   const config = sampleConfig();
   const worker = 'Text for every worker.\n';
   const workerFileTemplates = (modes: ApprovalModes, text: string | null): readonly BlockTemplate[] =>
-    blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: text }, modes)).filter(
+    blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: text }, modes, allOn)).filter(
       (template) => template.target === 'workerFile',
     );
 
   it('gives the worker block, then the setup worker block with the text as it is', () => {
-    const templates = workerFileTemplatesFor(config, worker);
+    const templates = workerFileTemplatesFor(config, worker, allOn);
     expect(summary(templates)).toEqual([
       ['worker', 5, 'workerFile'],
       ['setup-worker', 1, 'workerFile'],
@@ -1688,17 +1698,17 @@ describe('the worker file templates of a config (workerFileTemplatesFor)', () =>
   });
 
   it('gives the worker block alone when the setup text is absent', () => {
-    expect(workerFileTemplatesFor(config, null).map((template) => template.name)).toEqual(['worker']);
+    expect(workerFileTemplatesFor(config, null, allOn).map((template) => template.name)).toEqual(['worker']);
   });
 
   it('holds no template of the coordinator file', () => {
-    const names = workerFileTemplatesFor(config, worker).map((template) => template.name);
+    const names = workerFileTemplatesFor(config, worker, allOn).map((template) => template.name);
     expect(names).not.toContain('coordinator');
     expect(names).not.toContain('safety');
   });
 
   it('gives the same bodies for the owner mode and for a delegated mode of every approval point', () => {
-    const given = workerFileTemplatesFor(config, worker);
+    const given = workerFileTemplatesFor(config, worker, allOn);
     expect(workerFileTemplates(softwareOwnerModes, worker)).toEqual(given);
     expect(workerFileTemplates(allDelegated, worker)).toEqual(given);
   });

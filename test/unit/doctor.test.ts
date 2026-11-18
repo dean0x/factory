@@ -41,6 +41,7 @@ import { ok } from '../../src/core/result.js';
 import { boardWarnPercent, checkIds, childReasons, dirs, files, guardIds, instructionFiles, lessonLimits, maxFileBytes, roleText } from '../../src/names.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
+import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
@@ -194,7 +195,7 @@ describe('doctor: shared guard state', () => {
     const result = await runDoctor(counted.deps, { home: HOME });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const size = composeRoleText(workerFileTemplatesFor(config, null)).length;
+    const size = composeRoleText(workerFileTemplatesFor(config, null, allOn)).length;
     expect(result.value.json).toMatchObject({ checks: expect.arrayContaining([
       expect.objectContaining({ id: checkIds.blocks, level: 'ok' }),
       expect.objectContaining({ id: checkIds.roleDelivery, level: 'ok', text: expect.stringContaining(`role text ${size} of`) }),

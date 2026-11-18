@@ -8,6 +8,7 @@ import { readGuardState } from '../core/guard-records.js';
 import { ok, type Err } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { acceptedEntryOf, entryOfText, type ManifestEntry } from '../core/setup-acceptance.js';
+import { allOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { blockNames, commands, roleText, setupFileOf, type RoleSizeUnit } from '../names.js';
 import { layoutOf } from '../state/layout.js';
@@ -111,7 +112,7 @@ const sameAsAccepted = (accepted: ManifestEntry | null, read: ManifestEntry): bo
  * no block marker. `plainSetupText` refuses a control character, an invisible filler and a marker with one error, and gives
  * the text with LF line ends. The text of that error is dropped. The fault names the marker when the raw text holds one.
  */
-const roleOfSetupText = (raw: string, config: FactoryConfig, guards: GuardValues | undefined, free: number): CliResult<RoleRead> => {
+const roleOfSetupText = (raw: string, config: FactoryConfig, guards: GuardValues, free: number): CliResult<RoleRead> => {
   const plain = plainSetupText(setupFileOf(blockNames.setupWorker), raw, commands.doctor);
   if (!plain.ok) return refused({ kind: holdsBlockMarker(raw) ? 'blockMarker' : 'notPlainText' });
   if (removedByDisplay(plain.value)) return refused({ kind: 'notPlainText' });
@@ -136,11 +137,11 @@ export const readRoleText = async (
   deps: Deps,
   input: { readonly home: string; readonly config: FactoryConfig; readonly guards?: GuardValues },
 ): Promise<CliResult<RoleRead>> => {
-  const { home, config, guards } = input;
+  const { home, config, guards = allOn } = input;
   const packageTemplates = workerFileTemplatesFor(config, null, guards);
   if (!packageTemplates.some((template) => template.name === blockNames.worker)) return refused({ kind: 'configNotUsable' });
   const packageText = composeRoleText(packageTemplates);
-  const free = freeRoomOf(composeRoleText(workerFileTemplatesFor(config, null)));
+  const free = freeRoomOf(composeRoleText(workerFileTemplatesFor(config, null, allOn)));
 
   const layout = layoutOf(home);
   const linked = await requireNoLinks(deps, home, [layout.setupWorkerFile]);

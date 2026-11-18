@@ -1,5 +1,4 @@
 import { COORDINATOR_LAYER, WORKER_LAYER, type FactoryConfig } from '../config/schema.js';
-import { allOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import type { BlockRename } from '../migrate/files.js';
 import { blockNames } from '../names.js';
@@ -43,7 +42,7 @@ const NO_SETUP: SetupTexts = { coordinator: null, worker: null };
 export const safetyTemplateFor = (
   config: FactoryConfig,
   modes: ApprovalModes,
-  guards: GuardValues = allOn,
+  guards: GuardValues,
 ): BlockTemplate => safetyFor(blockInputOf(config, NO_SETUP, modes, guards));
 
 /** The block of a setup text, or none when the text is absent or empty. The body is the text as it is. */
@@ -84,7 +83,7 @@ export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] =
 export const workerFileTemplatesFor = (
   config: FactoryConfig,
   setupWorker: string | null,
-  guards: GuardValues = allOn,
+  guards: GuardValues,
 ): readonly BlockTemplate[] =>
   blockTemplatesFor(
     blockInputOf(config, { coordinator: null, worker: setupWorker }, ownerModes(config.entry.approvalPoints), guards),
@@ -98,7 +97,7 @@ export const blockInputOf = (
   config: FactoryConfig,
   setup: SetupTexts,
   modes: ApprovalModes,
-  guards: GuardValues = allOn,
+  guards: GuardValues,
 ): BlockInput => ({
   recipe: config.entry,
   layer: config.core.node.layer,

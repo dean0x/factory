@@ -15,6 +15,7 @@ import { stripScript } from '../../src/launch/argv.js';
 import { activeMachine, env, files, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
+import { allOn } from '../../src/guards/effective.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -2710,7 +2711,7 @@ describe('start:the safety block', () => {
     deps.seed(STORE, delegationRecord);
     const delegatedModes = await effectiveModes(deps, HOME, config);
     const safetyOf = (modes: typeof delegatedModes): string => {
-      const block = renderBlock(safetyTemplateFor(config, modes));
+      const block = renderBlock(safetyTemplateFor(config, modes, allOn));
       if (!block.ok) throw new Error(block.error.message);
       return block.value;
     };

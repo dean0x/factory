@@ -37,6 +37,7 @@ import {
   tmuxVersionOf,
   toolNames,
 } from '../core/tools.js';
+import { allOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import type { DocState } from '../migrate/inspect.js';
@@ -492,7 +493,7 @@ export const checkNodeBlocks = async (
   if (!plain.ok) return failedFrom(checkIds.blocks, plain.error);
   const setup = await readSetupTexts(deps, layout, commands.doctor);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
-  const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value), guards);
+  const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value), guards ?? allOn);
   const pending = { ...NO_PENDING_FILES, renames: [...blockRenamesOf(fileSteps), ...roleBlockRenames(input.recipe, input.layer)] };
   // A node state that is not valid gives no record, and every block then counts as recorded.
   const nodeState = await inspectState(deps, home);
@@ -618,7 +619,7 @@ export const checkRoleDelivery = async (
   const id = checkIds.roleDelivery;
   if (state.kind !== 'valid') return notChecked(id, `${files.config} is not valid`);
   const config = state.value;
-  if (workerFileTemplatesFor(config, null, guards).length === 0) return check(id, 'ok', roleText.doctor.noWorkerFile);
+  if (workerFileTemplatesFor(config, null, guards ?? allOn).length === 0) return check(id, 'ok', roleText.doctor.noWorkerFile);
   const listed = await listWorkerRecords(deps, home);
   if (!listed.ok) return failedFrom(id, listed.error);
   const gaps: string[] = [];

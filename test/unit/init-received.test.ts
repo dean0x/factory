@@ -7,6 +7,7 @@ import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
+import { readGuardStore } from '../../src/core/guard-records.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { ok } from '../../src/core/result.js';
 import { env, stateGuard, trackedFiles } from '../../src/names.js';
@@ -131,6 +132,52 @@ const entryOf = (path: string, text: string): ManifestEntry => ({
 const SETUP_HASH = manifestHash(Object.entries(SETUP_FILES).map(([path, text]) => entryOf(path, text)));
 
 const coordinatorText = (deps: FakeDeps): string => deps.files.get(`${ROOT}/coordinator/CLAUDE.md`) ?? '';
+
+describe('init: the owner prefix of a received factory', () => {
+  const store = '/state/factory/guard-records.json';
+
+  it.each([false, true])('records the prefix after the files, with yes set to %s', async (yes) => {
+    const { deps } = received({}, { ...terminal, prompt: () => ok('') });
+    expect((await runInit(deps, options({ yes }))).ok).toBe(true);
+    const records = await readGuardStore(deps, store);
+    expect(records).toMatchObject({ ok: true, value: [{
+      node: 'demo', root: ROOT, values: {}, prefix: {
+        hash: createHash('sha256').update(sampleConfig().core.owner.prefix, 'utf8').digest('hex'),
+        at: deps.now().toISOString(),
+      },
+    }] });
+    expect(deps.atomicWrites.indexOf(store)).toBeGreaterThan(deps.atomicWrites.indexOf(`${ROOT}/factory.local.yaml`));
+    for (const file of ['factory.yaml', 'factory.local.yaml']) {
+      expect(deps.files.get(`${ROOT}/${file}`)).not.toMatch(/^guards:/m);
+    }
+  });
+
+  it.each([
+    { ...terminal, env: { ...ENV, [env.claudeCode]: '1' } },
+    { stdinIsTTY: false, stdoutIsTTY: true },
+    { stdinIsTTY: true, stdoutIsTTY: false },
+  ])('keeps the files and names guard confirm without an owner channel: %j', async (channel) => {
+    const { deps } = received({}, channel);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.value.warnings.filter((text) => text.includes('factory guard confirm')) : []).toHaveLength(1);
+    expect(deps.files.has(store)).toBe(false);
+    expect(deps.files.has(`${ROOT}/factory.local.yaml`)).toBe(true);
+  });
+});
+
+it.each([false, true])('leaves the prefix record unchanged when init has run before: %s', async (hasRecord) => {
+  const { deps } = received();
+  const store = '/state/factory/guard-records.json';
+  expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+  if (hasRecord) deps.seed(store, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT,
+    values: {}, prefix: { hash: 'a'.repeat(64), at: deps.now().toISOString() },
+  }] }));
+  const before = deps.files.get(store);
+  const result = await runInit({ ...deps, ...terminal }, options({ yes: true, ownerName: undefined }));
+  expect(result.ok, messageOf(result)).toBe(true);
+  expect(deps.files.get(store)).toBe(before);
+});
 
 describe('init: a received factory', () => {
   it('registers the root without the check for a new home, and writes only the files of this machine', async () => {

@@ -9,6 +9,7 @@ import {
   verifyBlock,
 } from '../../src/blocks/managed.js';
 import { inspectBlocks, isAddedAsNewBlock, safetyStateOf, type BlockStatus } from '../../src/blocks/status.js';
+import { allOn } from '../../src/guards/effective.js';
 import { blockNames } from '../../src/names.js';
 import { blockInputOf, safetyTemplateFor } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
@@ -194,7 +195,7 @@ describe('safetyStateOf', () => {
   const HOME = '/w/node';
   const CLAUDE = `${HOME}/coordinator/CLAUDE.md`;
   const config = sampleConfig();
-  const safety = safetyTemplateFor(config, softwareOwnerModes);
+  const safety = safetyTemplateFor(config, softwareOwnerModes, allOn);
   const stateWith = async (text: string | null, template = safety) => {
     const deps = createFakeDeps();
     if (text !== null) deps.seed(CLAUDE, text);
@@ -204,7 +205,7 @@ describe('safetyStateOf', () => {
   };
 
   it('is built from the config, the modes and the prefix, and does not depend on the setup texts', () => {
-    const blocks = blockInputOf(config, noSetupTexts, softwareOwnerModes);
+    const blocks = blockInputOf(config, noSetupTexts, softwareOwnerModes, allOn);
     expect(safety.name).toBe(blockNames.safety);
     expect(safety.target).toBe('claudeFile');
     expect(safety.body).toContain(blocks.ownerPrefix);
@@ -219,7 +220,7 @@ describe('safetyStateOf', () => {
   });
 
   it('is different for an intact block after a change of the owner prefix', async () => {
-    const other = safetyTemplateFor({ ...config, core: { ...config.core, owner: { ...config.core.owner, prefix: '[From {owner}, other]' } } }, softwareOwnerModes);
+    const other = safetyTemplateFor({ ...config, core: { ...config.core, owner: { ...config.core.owner, prefix: '[From {owner}, other]' } } }, softwareOwnerModes, allOn);
     expect(await stateWith(`${rendered(safety.name, safety.version, safety.body)}\n`, other)).toBe('different');
   });
 
@@ -243,7 +244,7 @@ describe('safetyStateOf', () => {
 });
 
 describe('isAddedAsNewBlock', () => {
-  const safety = safetyTemplateFor(sampleConfig(), softwareOwnerModes);
+  const safety = safetyTemplateFor(sampleConfig(), softwareOwnerModes, allOn);
   const rules = { ...safety, name: 'work-rules' };
   const FILE = '/w/node/coordinator/CLAUDE.md';
   const missing = (template: BlockTemplate, fileAbsent: boolean): BlockStatus => ({ kind: 'missing', template, file: FILE, fileAbsent });

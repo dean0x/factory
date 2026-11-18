@@ -144,7 +144,7 @@ export const renderSetupText = (
   renderTemplates(
     deps,
     home,
-    blockTemplatesFor(blockInputOf(config, texts, modes)).filter((template) => setupBlockNames.includes(template.name)),
+    blockTemplatesFor(blockInputOf(config, texts, modes, allOn)).filter((template) => setupBlockNames.includes(template.name)),
     SETUP_WRITES,
     command,
   );

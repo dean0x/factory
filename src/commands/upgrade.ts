@@ -26,6 +26,7 @@ import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { readGuardState } from '../core/guard-records.js';
+import { allOn } from '../guards/effective.js';
 import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { blockRenamesOf } from '../migrate/files.js';
@@ -342,7 +343,7 @@ export const runUpgrade = async (
     config.value, local.value, upgrade, setup.value.texts,
     (parsed) => effectiveModes(deps, home, parsed),
     async (parsed) => {
-      allOnPackage = workerFileTemplatesFor(parsed, null);
+      allOnPackage = workerFileTemplatesFor(parsed, null, allOn);
       return (await readGuardState(deps, home, parsed, 'always')).values;
     },
   );

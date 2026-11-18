@@ -5,6 +5,7 @@ import type { CliResult } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
+import { allOn } from '../../src/guards/effective.js';
 import type { HookOutcome } from '../../src/hooks/hook.js';
 import { blockNames, files, guardIds, hookNames, roleText, schemaIds, setupFileOf, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
@@ -684,7 +685,7 @@ describe('factory hook: the role text of a worker session', () => {
   const DECOY_FILE = layoutOf(HOME).workerMd;
   const paths = workerPathsOf(HOME, WORKER_ID);
 
-  const textOf = (setup: string | null): string => composeRoleText(workerFileTemplatesFor(sampleConfig(), setup));
+  const textOf = (setup: string | null): string => composeRoleText(workerFileTemplatesFor(sampleConfig(), setup, allOn));
   const outputOf = (text: string): string =>
     JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } });
   const refusedOutput = outputOf(roleText.refusal);

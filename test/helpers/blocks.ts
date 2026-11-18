@@ -59,7 +59,7 @@ export const workerFileText = (
 ): string => fileTextOf('workerFile', config, texts, modes);
 
 const fileTextOf = (target: BlockTarget, config: FactoryConfig, texts: SetupTexts, modes: ApprovalModes): string => {
-  const blocks = blockTemplatesFor(blockInputOf(config, texts, modes))
+  const blocks = blockTemplatesFor(blockInputOf(config, texts, modes, allOn))
     .filter((template) => template.target === target)
     .map((template) => {
       const rendered = renderBlock(template);

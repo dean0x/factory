@@ -33,6 +33,7 @@ import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-f
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
+import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { countReadsOf } from '../helpers/read-count.js';
 
@@ -690,7 +691,7 @@ describe('init: the text of the coordinator follows a changed mode of a register
 
   /** The text of the coordinator file for these modes, as `init` and `upgrade` render it. */
   const textFor = (modes: ApprovalModes, setup: { coordinator: string | null; worker: string | null } = { coordinator: null, worker: null }): string => {
-    const templates = blockTemplatesFor(blockInputOf(configOf({}), setup, modes));
+    const templates = blockTemplatesFor(blockInputOf(configOf({}), setup, modes, allOn));
     const blocks = templates
       .filter((template) => template.target === 'claudeFile')
       .map((template) => {
