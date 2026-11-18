@@ -1,5 +1,6 @@
 import type { DecisionPlace, DecisionRecorded, DecisionStored } from '../board/contract.js';
 import { checkNote, chosenOptionOf, requestBlockLines, type DecideRequest } from '../board/decide.js';
+import { freeCommandLines, freeLabelKey, freeTitleOf, freeWorkerOf, homeIssue } from '../board/free-request.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, printable, type CommandOutput, type OutLine } from '../cli/output.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
@@ -15,6 +16,7 @@ import {
   files,
   flags,
   flagText,
+  requestKinds,
   requestWords,
   roles,
   schemaIds,
@@ -63,6 +65,20 @@ const parse = (options: DecideOptions): CliResult<Parsed> => {
 };
 
 const addRequestLine = `add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}"`;
+
+const freePreviewOf = (request: DecideRequest, home: string): CliResult<readonly string[]> => {
+  const worker = freeWorkerOf(request);
+  const remedy = `Close it with "${commandText(commandLines.requestClose)} ${request.id}" and ${addRequestLine}.`;
+  if (!worker.ok) return failure(worker.error.message, remedy);
+  const id = worker.value;
+  if (id === null) return ok([]);
+  if (request.kind !== requestKinds.command || freeLabelKey(request.title) !== freeLabelKey(freeTitleOf(id))) {
+    return failure(`the ${roles.worker} free ${requestWords.request} has the wrong title or kind`, remedy);
+  }
+  const issue = homeIssue(home);
+  if (issue !== null) return failure(`the board home ${issue}`);
+  return ok(['Run the dry run first. If the checks pass, run the second command.', ...freeCommandLines(id, home)]);
+};
 
 /**
  * What the owner decision file holds for the open request. `null`: no record. A time: the record of this answer is there, and no
@@ -139,15 +155,18 @@ export const runDecide = async (deps: Deps, options: DecideOptions, registry: Re
   if (!channel.ok) return channel;
   const board = await openBoard(deps, options.home, registry, commands.decide);
   if (!board.ok) return board;
-  const { connector } = board.value;
+  const { connector, home } = board.value;
   const read = await connector.decisionRequest(id);
   if (!read.ok) return read;
   const { request, stored, place } = read.value;
   const chosen = chosenOptionOf(request, option);
   if (!chosen.ok) return chosen;
+  const preview = freePreviewOf(request, home);
+  if (!preview.ok) return preview;
   const orphanAt = orphanTimeOf(stored, id, option);
   if (!orphanAt.ok) return orphanAt;
-  const block = await deps.writeStdout(`${requestBlockLines(request, chosen.value.key, note).map(printable).join('\n')}\n`);
+  const lines = [...requestBlockLines(request, chosen.value.key, note).map(printable), ...preview.value];
+  const block = await deps.writeStdout(`${lines.join('\n')}\n`);
   if (!block.ok) return block;
   const answer = await deps.prompt(printable(`Record the answer ${option} for ${id}? [y/N] `));
   if (!answer.ok) return answer;
