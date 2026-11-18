@@ -1267,17 +1267,27 @@ describe('reboot', () => {
     const oldSettings = `${JSON.stringify({ hooks: ownSettingsEntries.hooks, statusLine: ownSettingsEntries.statusLine })}\n`;
 
     it('starts all sessions with no settings write and one remedy line when no terminal can ask', async () => {
+      const settingsWithoutIdle = (folder: string): string => `${JSON.stringify({
+        hooks: ownSettingsEntries.hooks,
+        statusLine: ownSettingsEntries.statusLine,
+        permissions: ownSettingsWithRules(HOME, folder).permissions,
+      })}\n`;
       const made = await make({
         origin,
-        hookSettings: oldSettings,
-        workers: { alpha: { settings: oldSettings }, beta: { settings: oldSettings }, gamma: { settings: oldSettings } },
+        hookSettings: settingsWithoutIdle(COORDINATOR),
+        workers: {
+          alpha: { settings: settingsWithoutIdle(`${COPIES}/alpha`) },
+          beta: { settings: settingsWithoutIdle(`${COPIES}/beta`) },
+          gamma: { settings: settingsWithoutIdle(`${COPIES}/gamma`) },
+        },
       });
       const output = await succeeded(reboot(made));
       expect(output.json).toMatchObject({ started: true, workers: { resumed: [...IDS], skipped: [], failed: [] } });
       expect(countOf(made, 'new-session')).toBe(1);
       expect(resumesOf(made)).toEqual(SESSION);
-      for (const file of [SETTINGS_FILE, ...IDS.map((id) => `${COPIES}/${id}/.claude/settings.local.json`)]) {
-        expect(made.deps.files.get(file)).toBe(oldSettings);
+      for (const folder of [COORDINATOR, ...IDS.map((id) => `${COPIES}/${id}`)]) {
+        const file = `${folder}/.claude/settings.local.json`;
+        expect(made.deps.files.get(file)).toBe(settingsWithoutIdle(folder));
         expect(made.events).not.toContain(`write ${file}`);
       }
       expect(made.deps.prompts).toEqual([]);

@@ -1668,7 +1668,7 @@ describe('init: the hook settings of a registered root', () => {
     );
     expect(snapshot(deps)).toBe(before);
     expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
-    expect(settingsOf(deps)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+    expect(settingsOf(deps)).toEqual({ ...ownSettingsWithRules(ROOT, COORDINATOR), idleCompaction: idle });
     expect(deps.prompts).toEqual([]);
   });
 

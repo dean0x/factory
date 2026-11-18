@@ -832,9 +832,11 @@ describe('init: the hook settings of a received factory', () => {
     expect((await runInit(deps, options())).ok).toBe(true);
     expect(deps.prompts.filter((question) => question.startsWith(HOOK_QUESTION))).toEqual([
       `This changes the settings of Claude Code in ${HOOK_FILE}:\n` +
-      `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml), and replace the value ${!idle}\nWrite this change? [y/N] `,
+      `  idleCompaction: set to ${idle} (session.idle_compaction in factory.yaml), and replace the value ${!idle}\n` +
+      OWN_SETTINGS_WITH_DENY.permissions.deny.map((rule) => `  permissions.deny: add ${rule}\n`).join('') +
+      'Write this change? [y/N] ',
     ]);
-    expect(settingsOf(deps)).toEqual({ ...ownSettingsEntries, idleCompaction: idle });
+    expect(settingsOf(deps)).toEqual({ ...OWN_SETTINGS_WITH_DENY, idleCompaction: idle });
   });
 
   it('rejects an idle value that is not a boolean before any write', async () => {
