@@ -171,13 +171,14 @@ describe('decide: the words and the flags are checked first, with exit 2', () =>
     const repo = await nodeOf();
     const error = errorOf(await decide(repo.deps, { words: ['read', 'D-1'] }));
     expect(exitCodeOf[error.kind]).toBe(2);
-    expect(error.message).toContain('not in this version');
-    expect(error.message).toContain('decide read');
+    expect(error.message).toBe('The answer form does not take read. Run factory decide read <D-n>.');
   });
 
   it('says the same for decide read with no more words', async () => {
     const repo = await nodeOf();
-    expect(errorOf(await decide(repo.deps, { words: ['read'] })).message).toContain('not in this version');
+    const error = errorOf(await decide(repo.deps, { words: ['read'] }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe('The answer form does not take read. Run factory decide read <D-n>.');
   });
 
   it.each([[[]], [['D-1']], [['D-1', 'a', 'b']]] as const)('exits 2 for %j: decide takes two words', async (words) => {
