@@ -98,6 +98,13 @@ describe('approval verdict', () => {
     expect(verdictOf([], [stop, go])).toMatchObject({ ok: true });
   });
 
+  it('refuses a linked row with no request id after a linked approve', () => {
+    const noId = { ...relay, item: 'Approval without an id' };
+    expect(verdictOf([], [relay, noId])).toMatchObject({
+      ok: false, error: { kind: 'failure', message: 'a linked approval row has no request id' },
+    });
+  });
+
   it('refuses an open linked request even after a linked approve', () => {
     expect(verdictOf([approvalRequest('D-2')], [relay])).toMatchObject(refusal('D-2'));
   });
