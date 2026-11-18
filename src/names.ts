@@ -2439,6 +2439,12 @@ export const guardStartWords = {
   prefixMismatch: 'owner prefix differs from its record',
 } as const;
 
+/** Role block refusals for a folder with no guard record. */
+export const guardRoleWords = {
+  offText: (block: string, guard: string): string => `the block ${block} holds the text of the off guard ${guard} without a guard record`,
+  replace: (block: string): string => `Run "${overwriteCommand(block)}" to replace it. It keeps the old text in a backup file.`,
+} as const;
+
 /** The doctor notice for a node whose local file has no guard values. */
 export const guardDoctorWords = {
   noKey: 'No guards key: every guard is on.',

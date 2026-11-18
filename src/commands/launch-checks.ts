@@ -25,6 +25,7 @@ import {
   files,
   flags,
   flagText,
+  guardRoleWords,
   overwriteCommand,
   program,
   roles,
@@ -82,19 +83,22 @@ const roleTemplates = (config: FactoryConfig, modes: ApprovalModes, values: Guar
   blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: null }, modes, values))
     .filter((template) => template.name !== blockNames.safety);
 
-/** Compare the on and off renders to find the text that each on H guard requires in a role block. */
-const missingRoleGuard = (
-  config: FactoryConfig, modes: ApprovalModes, values: GuardValues, status: Extract<BlockStatus, { readonly kind: 'intact' | 'edited' | 'missing' }>,
+/** A record requires on H guard text. Without a record, only text unique to an off render conflicts. */
+const conflictingRoleGuard = (
+  config: FactoryConfig, modes: ApprovalModes, guards: GuardReadState, status: Extract<BlockStatus, { readonly kind: 'intact' | 'edited' | 'missing' }>,
 ): string | null => {
   for (const guard of guardsFor(config.entry)) {
-    if (!guard.harm || values[guard.id] === 'off') continue;
-    const on = roleTemplates(config, modes, { ...values, [guard.id]: 'on' }).find((block) => block.name === status.template.name);
-    const off = roleTemplates(config, modes, { ...values, [guard.id]: 'off' }).find((block) => block.name === status.template.name);
+    if ((guards.record && !guard.harm) || guards.values[guard.id] === 'off') continue;
+    const on = roleTemplates(config, modes, { ...guards.values, [guard.id]: 'on' }).find((block) => block.name === status.template.name);
+    const off = roleTemplates(config, modes, { ...guards.values, [guard.id]: 'off' }).find((block) => block.name === status.template.name);
     if (on === undefined || off === undefined) continue;
-    const offLines = new Set(off.body.split('\n'));
-    const required = on.body.split('\n').filter((line) => line.trim() !== '' && !offLines.has(line));
+    const selected = guards.record ? on : off;
+    const other = guards.record ? off : on;
+    const otherLines = new Set(other.body.split('\n'));
+    const guardLines = selected.body.split('\n').filter((line) => line.trim() !== '' && !otherLines.has(line));
     const found = new Set(status.kind === 'missing' ? [] : status.block.body.split('\n'));
-    if (required.some((line) => !found.has(line))) return guard.id;
+    const conflict = guards.record ? guardLines.some((line) => !found.has(line)) : guardLines.some((line) => found.has(line));
+    if (conflict) return guard.id;
   }
   return null;
 };
@@ -118,11 +122,14 @@ export const requireRoleBlocks = async (
     if (status.kind === 'malformed') {
       return safetyRefusal(`the role block ${status.template.name} can not be read`, `Run "${overwriteCommand(status.template.name)}" to replace it.`);
     }
-    if (status.kind === 'edited' || status.kind === 'missing') {
-      const missing = missingRoleGuard(config, modes, guards.values, status);
-      if (missing !== null) {
+    if (!guards.record || status.kind === 'edited' || status.kind === 'missing') {
+      const conflict = conflictingRoleGuard(config, modes, guards, status);
+      if (conflict !== null) {
+        if (!guards.record) {
+          return safetyRefusal(guardRoleWords.offText(status.template.name, conflict), guardRoleWords.replace(status.template.name));
+        }
         const remedy = status.kind === 'missing' ? 'add it.' : 'replace it. It keeps the old text in a backup file.';
-        return safetyRefusal(`the ${status.kind} block ${status.template.name} lacks the text of the on guard ${missing}`, `Run "${overwriteCommand(status.template.name)}" to ${remedy}`);
+        return safetyRefusal(`the ${status.kind} block ${status.template.name} lacks the text of the on guard ${conflict}`, `Run "${overwriteCommand(status.template.name)}" to ${remedy}`);
       }
     }
   }
