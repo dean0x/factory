@@ -1674,7 +1674,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
 
   describe('the owner request form', () => {
     const options = { words: ['alpha'], closed: true, askOwner: true };
-    const stop = 'Tell the owner why, and stop.';
+    const stop = 'Tell the owner why, and stop. The owner can check worker state with "factory status".';
     const waitingOf = (...items: readonly unknown[]) => parseWaiting(JSON.stringify({ intro: '', groups: [], items }));
     const storedRequest = (project = 'web', closed = ['B-1']) => {
       const input = freeRequestOf({ id: 'alpha', project, closed, head: OLDER, checkedAt: '2030-01-05T10:00:00.000Z' });

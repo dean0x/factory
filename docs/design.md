@@ -1218,7 +1218,7 @@ The form checks the caller, the closed item, the unassign mark, the worker state
 
 If an open request for the worker exists, the form reuses it only after the checks pass again. The project and the full list of closed item IDs must match. If the list exceeds the field limit, the command stops before the fetch. If they do not match, the command names the open request and exits with code 1. Two runs at the same time can open two requests because the repeat check runs outside the state lock.
 
-The owner verifies the board and runs the dry run before the free. The owner free does not check the closed item or the unassign mark again. A head that the board records after a squash merge can pass the request checks but fail the owner run. If the free fails, the owner records `kept`.
+The owner verifies the board and runs the dry run before the free. The owner free does not check the closed item or the unassign mark again. A head that the board records after a squash merge can pass the request checks but fail the owner run. If the free fails, the owner answers `kept`.
 
 **Stop.** The safe way to stop a session is not known yet. The rule for the word "safe" comes first, in `docs/session-stop.md`, before any test. A way is **safe** when all four facts hold:
 1. The process ends, and the background daemon does not keep the session.

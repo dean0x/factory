@@ -308,7 +308,7 @@ const closedLine = (id: string): string => `${dismissLine(id)} ${flagText(flags.
 const againOf = (id: string, askOwner: boolean): string =>
   askOwner ? `${closedLine(id)} ${flagText(flags.askOwner)}` : closedLine(id);
 
-const STOP = `Tell the ${roles.owner} why, and stop.`;
+const STOP = `Tell the ${roles.owner} why, and stop. The ${roles.owner} can check ${roles.worker} state with "${commandText(commands.status)}".`;
 
 const CLOSED_GUARDS = {
   endable: 'dismiss-endable',

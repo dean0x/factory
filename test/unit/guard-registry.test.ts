@@ -860,7 +860,7 @@ describe('the text rows of the registry', () => {
     'src/hooks/hook.ts': hookOutputOf(roleText.refusal).hookSpecificOutput.additionalContext,
   };
 
-  const askOwnerRule = 'Never run the command of the request.';
+  const askOwnerRule = 'Do not run any command in the request.';
   const FRAGMENTS: Readonly<Record<string, readonly string[]>> = {
     'delegation-wait-text': ['waits for the owner, unless the owner delegated it.'],
     'delegation-session-text': ['A session never sets a delegation.'],

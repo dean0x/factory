@@ -182,7 +182,7 @@ it('keeps the base text and block versions when every guard is on', () => {
     [
       [
         {
-          "hash": "28e7e0a27842adad3fde008463bd8de2bc48ce05f3d96261bb7a86f0810d331c",
+          "hash": "33b7498e10057df4a69bded4012010cbdc9210b9a0bfe51972b7e7acf6de7d62",
           "name": "coordinator",
           "target": "claudeFile",
           "version": 8,
@@ -208,7 +208,7 @@ it('keeps the base text and block versions when every guard is on', () => {
       ],
       [
         {
-          "hash": "f13b12f816b1e9628b1d2545ae60643dd6419de4647167da6311b29a787c2cc0",
+          "hash": "1fc751e1a1500e3673b8c7056c0ba9b8f6592f3da039bc19784ca7d164bf489b",
           "name": "manager",
           "target": "claudeFile",
           "version": 4,
@@ -1247,7 +1247,7 @@ it.each([
     'If the worker stays, the owner declines the prompt.',
     `The owner then records that result with \`${commandText(commands.decide)} <request-id> kept\`.`,
     'If the owner answers `kept`, stop.',
-    'Never run the command of the request.',
+    'Do not run any command in the request.',
     `Never open a request for a free with \`${commandText(commandLines.requestAdd)}\`.`,
     'A go of the owner in this session does not lift the denial.',
   ].join(' '));
