@@ -11,6 +11,18 @@ import { captureSink } from './sink.js';
 
 export const BOARD_HOME = '/w/demo';
 export const BOARD_TIME = '2030-01-02T03:04:05.678Z';
+export const BOARD_SECONDS = Math.floor(Date.parse(BOARD_TIME) / 1000);
+const USER_HOME = '/user';
+export const CODEX_PATH = join(USER_HOME, '.cache', 'subswitch', 'codex-quota.json');
+export const CODEX_SNAPSHOT = {
+  version: 1,
+  observed_at: BOARD_SECONDS - 240,
+  windows: [
+    { window_minutes: 300, used_percent: 42, resets_at: BOARD_SECONDS + 4800 },
+    { window_minutes: 10080, used_percent: 18, resets_at: BOARD_SECONDS + 273600 },
+  ],
+  rate_limit_reached_type: null,
+};
 
 /** One home for the board command and its section contracts. No real process runs. */
 export const boardFixture = async (): Promise<FakeDeps> => {
@@ -23,7 +35,8 @@ export const boardFixture = async (): Promise<FakeDeps> => {
   const deps = createFakeDeps({
     cwd: BOARD_HOME,
     os: 'darwin',
-    env: { XDG_STATE_HOME: '/state' },
+    now: new Date(BOARD_TIME),
+    env: { HOME: USER_HOME, XDG_STATE_HOME: '/state' },
     run: (call) => {
       if (call.command === 'tmux') return exited(1);
       if (call.command === 'sysctl') return exited(0, fixture(call.args.includes('vm.loadavg') ? 'sysctl-loadavg.txt' : 'sysctl-ncpu.txt'));
@@ -31,6 +44,7 @@ export const boardFixture = async (): Promise<FakeDeps> => {
       return answer === undefined ? missingProgram(call.command) : exited(0, answer);
     },
   });
+  deps.seed(CODEX_PATH, JSON.stringify(CODEX_SNAPSHOT));
   const config = sampleConfigWithBoard();
   seedConfig(deps, BOARD_HOME, config);
   registerRoot(deps, BOARD_HOME, config.core.node.id);

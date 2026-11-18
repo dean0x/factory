@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
 import { files } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
-import { BOARD_HOME, BOARD_TIME, boardCommand, boardFixture } from '../helpers/board-fixture.js';
+import { BOARD_HOME, BOARD_SECONDS, BOARD_TIME, CODEX_PATH, CODEX_SNAPSHOT, boardCommand, boardFixture } from '../helpers/board-fixture.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { captureSink } from '../helpers/sink.js';
