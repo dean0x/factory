@@ -180,10 +180,10 @@ it('keeps the base text and block versions when every guard is on', () => {
     [
       [
         {
-          "hash": "298a69630a73a6d7120827ca6dda887658b5f96afddd131530ff47a4e8705114",
+          "hash": "ed75783be16afc3f6902619867e1c38a3e10c56685b62b319943f0358b45ced0",
           "name": "coordinator",
           "target": "claudeFile",
-          "version": 6,
+          "version": 7,
         },
         {
           "hash": "03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41",
@@ -320,7 +320,7 @@ const summary = (blocks: readonly { name: string; version: number; target: strin
 describe('block templates', () => {
   it('gives layer 1 the coordinator, safety, work rules and worker blocks with their versions and targets', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
-      ['coordinator', 6, 'claudeFile'],
+      ['coordinator', 7, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['work-rules', 1, 'claudeFile'],
       ['worker', 5, 'workerFile'],
@@ -1892,7 +1892,7 @@ describe('the work rules block of the coordinator', () => {
 
   it('leaves the coordinator block, its version and its approval point lines as they were', () => {
     const template = layer1Blocks.find((candidate) => candidate.name === 'coordinator');
-    expect(template?.version).toBe(6);
+    expect(template?.version).toBe(7);
     expect(template?.body).not.toContain('Work rules');
     for (const line of approvalLines(points, softwareOwnerModes)) expect(rules()).not.toContain(line);
   });

@@ -87,7 +87,7 @@ describe('the card of an item, from the text of board.json alone', () => {
     const card = cardOf(item as StoredItem);
     expect(card.title).toBe(TITLE);
     expect(card.epic).toBe('Launch');
-    expect(card.strip.map((entry) => entry.name)).toEqual(['ticket', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released']);
+    expect(card.strip.map((entry) => entry.name)).toEqual(['ticket', 'planning', 'plan-approved', 'building', 'review', 'fixes', 'merged', 'released']);
     expect(currentOf(card)).toEqual(['building']);
     expect(card.docs).toEqual([DOC]);
   });

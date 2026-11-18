@@ -11,6 +11,7 @@ describe('the board data of the software recipe', () => {
   it('lists the stages of an item in order', () => {
     expect(softwareRecipe.board.stages).toEqual([
       'ticket',
+      'planning',
       'plan-approved',
       'building',
       'review',
