@@ -14,6 +14,7 @@ import { requestView } from '../board/list-view.js';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
+import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import {
   approvalOptions,
@@ -23,6 +24,7 @@ import {
   files,
   flags,
   flagText,
+  prefixPlaceholders,
   relayedMarker,
   requestCommands,
   requestDeciders,
@@ -343,6 +345,26 @@ const requireRelayer = async (deps: Deps, board: OpenBoard, id: string): Promise
   return caller.ok ? ok(undefined) : caller;
 };
 
+/** Only the node and date slots vary. The literal parts must occur in order, with the exact letter case. */
+const hasOwnerPrefix = (decision: string, prefix: string, display: string): boolean => {
+  const parts = prefix.split(prefixPlaceholders.node).flatMap((part) => part.split(prefixPlaceholders.date));
+  let offset = 0;
+  for (const part of parts) {
+    const text = part.replaceAll(prefixPlaceholders.owner, () => display);
+    const found = decision.indexOf(text, offset);
+    if (found === -1) return false;
+    offset = found + text.length;
+  }
+  return true;
+};
+
+const relayScopeOf = async (deps: Deps, { config, home }: OpenBoard): Promise<readonly string[]> => {
+  const point = config.entry.recordCheck?.point;
+  if (point === undefined) return [];
+  const modes = await effectiveModes(deps, home, config);
+  return modes[point] === roles.owner ? [point] : [];
+};
+
 /** Use the recipe rules and the current open items before the connector takes the write lock. */
 const resolveLink = async (board: OpenBoard, link: LinkFlags): Promise<CliResult<RequestLink>> => {
   const check = board.config.entry.recordCheck;
@@ -376,8 +398,13 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       if (relayed) {
         const relayer = await requireRelayer(deps, board, action.id);
         if (!relayer.ok) return relayer;
+        const { prefix, display } = board.config.core.owner;
+        if (hasOwnerPrefix(action.settlement.decision, prefix, display)) {
+          return needsUsage(`the relayed decision must not include the ${roles.owner} prefix`);
+        }
       }
-      const closed = await connector.closeRequest(action.id, action.settlement);
+      const relayScope = relayed ? await relayScopeOf(deps, board) : [];
+      const closed = await connector.closeRequest(action.id, action.settlement, relayScope);
       return closed.ok ? ok(closeAnswer(closed.value, relayed)) : closed;
     }
     case requestCommands.log: {

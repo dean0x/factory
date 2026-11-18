@@ -58,9 +58,9 @@ import type {
   TrackAddInput,
 } from './contract.js';
 import { declaredFields, itemTarget, resolveFields, rowTarget, type FieldInput } from './fields.js';
-import type { BoardDoc, DecisionLogDoc, WaitingDoc } from './files.js';
+import type { BoardDoc, DecisionLogDoc, WaitingDoc, WaitingItem } from './files.js';
 import { rowItemsOf, rowNameOf, rowReleaseGroupOf } from './queue.js';
-import { requestTitleOf } from './requests.js';
+import { linkOfFields, optionKeysOf, requestTitleOf, type RequestLinkRules } from './requests.js';
 import { firstStageOf, requireSettableStage, requireStage, stagesOf } from './stages.js';
 import { holdsBreak, lineIssue } from './text.js';
 import { trackIdIssue, trackNameIssue } from './tracks.js';
@@ -882,34 +882,56 @@ export const checkLogEntry = (input: DecisionLogInput): CliResult<CheckedLogEntr
   return settlement.ok ? ok({ title: title.value, settlement: settlement.value }) : settlement;
 };
 
-/**
- * Take a request off the waiting file and add a row for it to the decision log, so the number of the request stays used. The row
- * holds the id and the title in its `item` text, the decision text and the date. With a settlement, the decision text is the text of
- * the settlement and the row names its decider; without one, the text says that the request closed with no answer. A relayed
- * settlement adds the fixed relayed marker (`relayedMarker`) to the row. The row never holds the owner key `by`, so no reader counts
- * it as an owner answer. A request that is not in the waiting file is a usage error (exit 2).
- * A log that names the id already is a failure (exit 1), because the log would name the id twice. Every other entry of both files
- * stays as it is.
- */
-export const closeRequestIn = (
+interface CheckedClose {
+  readonly entry: WaitingItem;
+  readonly link: RequestLink | null;
+  readonly settlement: CheckedSettlement | undefined;
+}
+
+/** Check the stored request under the lock. Only a linked relay needs a point in scope and a stored option key. */
+export const checkRequestClose = (
   waiting: WaitingDoc,
   log: DecisionLogDoc,
   id: string,
-  date: string,
-  settlement?: CheckedSettlement,
-): CliResult<RequestCloseEdit> => {
+  settlement: CheckedSettlement | undefined,
+  relayScope: readonly string[],
+  rules: RequestLinkRules | undefined,
+): CliResult<CheckedClose> => {
   const found = waiting.items.find((entry) => entry.id === id);
   if (found === undefined) return usageError(`${files.waiting} has no ${requestWords.request} ${shown(id)}`);
   if (log.rows.some((row) => row.id === id)) return failure(`${files.decisionLog}: the id ${id} is used already`);
-  const title = requestTitleOf(found);
+  const link = linkOfFields(found.record[decisionKeys.fields], rules);
+  if (!link.ok) return link;
+  if (link.value !== null && settlement?.relayed === true) {
+    if (!relayScope.includes(link.value.point)) return usageError(`the approval point of ${id} does not allow a relay`);
+    if (!optionKeysOf(found).includes(settlement.decision)) return usageError(`the relayed decision for ${id} must be an option key of the request`);
+  }
+  return ok({ entry: found, link: link.value, settlement });
+};
+
+/** Move the checked request to the log. Copy its link, if present. The row never holds the owner key `by`. */
+export const closeRequestIn = (
+  waiting: WaitingDoc,
+  log: DecisionLogDoc,
+  { entry, link, settlement }: CheckedClose,
+  date: string,
+): RequestCloseEdit => {
+  const { id } = entry;
+  const title = requestTitleOf(entry);
   const row = {
     [decisionLogKeys.item]: title === null ? id : `${id}: ${title.trim()}`,
     [decisionLogKeys.decision]: settlement?.decision ?? requestWords.closedDecision,
     [decisionLogKeys.date]: date,
     ...(settlement === undefined ? {} : { [decisionLogKeys.decider]: settlement.decider }),
     ...(settlement?.relayed === true ? { [decisionLogKeys.relayed]: relayedMarker } : {}),
+    ...(link === null ? {} : {
+      [decisionLogKeys.point]: link.point,
+      [decisionLogKeys.boardItem]: link.item,
+      [decisionLogKeys.ref]: link.ref,
+      [decisionLogKeys.head]: link.head,
+    }),
   };
-  return ok({ ...settleRequestIn(waiting, log, id, row), closed: { id, title, decider: settlement?.decider ?? null } });
+  return { ...settleRequestIn(waiting, log, id, row), closed: { id, title, decider: settlement?.decider ?? null } };
 };
 
 /**

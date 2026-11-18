@@ -59,6 +59,7 @@ import {
   checkQueueRow,
   checkRecorded,
   checkRequestId,
+  checkRequestClose,
   checkSettlement,
   checkWorkerField,
   closeItemIn,
@@ -656,7 +657,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       return waiting.ok ? ok(requestsOf(waiting.value)) : waiting;
     },
 
-    async closeRequest(id, settlement) {
+    async closeRequest(id, settlement, relayScope = []) {
       const local = requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkRequestId(id);
@@ -670,12 +671,14 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         if (!read.ok) return read;
         const stored = await storedIdsOf(place.value);
         if (!stored.ok) return stored;
-        const edited = closeRequestIn(read.value.waiting, read.value.log, id, deps.now().toISOString().slice(0, DATE_CHARS), settled.value);
-        if (!edited.ok) return edited;
+        const { waiting: currentWaiting, log: currentLog } = read.value;
+        const checked = checkRequestClose(currentWaiting, currentLog, id, settled.value, relayScope, options.requestLinkRules);
+        if (!checked.ok) return checked;
         if (stored.value.includes(id)) return answeredCannotClose(id);
-        const waiting = newText(files.waiting, edited.value.waiting, parseWaiting);
+        const edited = closeRequestIn(currentWaiting, currentLog, checked.value, deps.now().toISOString().slice(0, DATE_CHARS));
+        const waiting = newText(files.waiting, edited.waiting, parseWaiting);
         if (!waiting.ok) return waiting;
-        const log = newText(files.decisionLog, edited.value.log, parseDecisionLog);
+        const log = newText(files.decisionLog, edited.log, parseDecisionLog);
         if (!log.ok) return log;
         const room = requireLogRoom(log.value.text);
         if (!room.ok) return room;
@@ -684,7 +687,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
             [files.waiting, waiting.value.text],
             [files.decisionLog, log.value.text],
           ]),
-          value: edited.value.closed,
+          value: edited.closed,
         });
       });
     },

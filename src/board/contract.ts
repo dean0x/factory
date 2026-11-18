@@ -187,8 +187,8 @@ export type RequestDecider = (typeof requestDeciders)[keyof typeof requestDecide
 export type RequestGroup = (typeof requestGroups)[keyof typeof requestGroups];
 
 /**
- * The decision of a request that is not an approval point, and who made it. The text is one line. A relayed settlement passes on an
- * answer of the owner: only the coordinator relays, so its decider is fixed. It is never an owner answer.
+ * The decision text of a close and its decider. The text is one line. A relayed settlement always names the coordinator.
+ * It can record an answer the owner gave to the coordinator, but it is never owner proof.
  */
 export type RequestSettlement =
   | { readonly decider: RequestDecider; readonly decision: string; readonly relayed?: undefined }
@@ -368,9 +368,10 @@ export interface LocalBoard extends BoardConnector {
    * so it is no owner answer, and the number of the request is never given again. With a settlement, the row holds the decision text
    * and the decider (the coordinator or a delegate). Without one, it says that the request closed with no answer. A request that has a
    * record in the owner decision file is refused, and so is a decision file that can not be read. A relayed settlement adds the fixed
-   * relayed marker to the row: the row names the coordinator as its decider and is no owner answer.
+   * relayed marker to the row: the row names the coordinator as its decider and is no owner answer. A linked close copies the stored
+   * link. A linked relay needs a stored option key and a point in `relayScope`. The default scope is empty.
    */
-  closeRequest(id: string, settlement?: RequestSettlement): Promise<CliResult<RequestClosed>>;
+  closeRequest(id: string, settlement?: RequestSettlement, relayScope?: readonly string[]): Promise<CliResult<RequestClosed>>;
   /**
    * Add one row to the decision log, with the next decision number, and no waiting entry. The row names its decider, who is never the
    * owner. The value is the new number. It writes no owner record and no profile record.

@@ -13,7 +13,7 @@ import type {
   RequestSettlement,
 } from '../../src/board/contract.js';
 import { strictRequestOf, type DecideRequest } from '../../src/board/decide.js';
-import { changeItemIn, checkPatch, checkSettlement, closeRequestIn } from '../../src/board/edit.js';
+import { changeItemIn, checkPatch, checkRequestClose, checkSettlement, closeRequestIn } from '../../src/board/edit.js';
 import { resolveFields, declaredFields } from '../../src/board/fields.js';
 import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readDecisionLog, readWaiting } from '../../src/board/files.js';
 import { boardJsonText } from '../../src/board/json.js';
@@ -2598,7 +2598,8 @@ describe('the checked settlement of a close', () => {
   it('closes a request with the text and the decider that checkSettlement gave', () => {
     const { waiting, log } = docs();
     const checked = valueOf(checkSettlement({ decider: requestDeciders.delegate, decision: '  Use plan A  ' }));
-    const edited = valueOf(closeRequestIn(valueOf(waiting), valueOf(log), 'D-1', DATE, checked));
+    const close = valueOf(checkRequestClose(valueOf(waiting), valueOf(log), 'D-1', checked, [], undefined));
+    const edited = closeRequestIn(valueOf(waiting), valueOf(log), close, DATE);
     expect(edited.closed).toEqual({ id: 'D-1', title: 'Pick a plan', decider: requestDeciders.delegate });
     expect(edited.log).toEqual({ rows: [{ item: 'D-1: Pick a plan', decision: 'Use plan A', date: DATE, decider: requestDeciders.delegate }] });
   });
@@ -2606,9 +2607,9 @@ describe('the checked settlement of a close', () => {
   it('does not compile a settlement that checkSettlement did not check', () => {
     const { waiting, log } = docs();
     const raw: RequestSettlement = { decider: requestDeciders.coordinator, decision: 'Yes' };
-    // @ts-expect-error The settlement of closeRequestIn is the one that checkSettlement made.
-    const edited = closeRequestIn(valueOf(waiting), valueOf(log), 'D-1', DATE, raw);
-    expect(edited.ok).toBe(true);
+    // @ts-expect-error The settlement of checkRequestClose is the one that checkSettlement made.
+    const close = checkRequestClose(valueOf(waiting), valueOf(log), 'D-1', raw, [], undefined);
+    expect(close.ok).toBe(true);
   });
 });
 

@@ -31,7 +31,7 @@ export const requestTitleOf = (item: WaitingItem): string | null => {
 };
 
 /** The keys of the options of a waiting entry, in order. An option with no text key is left out. */
-const optionKeysOf = (item: WaitingItem): readonly string[] => {
+export const optionKeysOf = (item: WaitingItem): readonly string[] => {
   const options = item.record[decisionKeys.options];
   if (!Array.isArray(options)) return [];
   return options.flatMap((option): string[] => {

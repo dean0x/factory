@@ -5,7 +5,9 @@ import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.
 import type { CommandOutput } from '../../src/cli/output.js';
 import { commandTable, parseFlags, renderCommandHelp } from '../../src/cli/table.js';
 import { runDecide } from '../../src/commands/decide.js';
+import { runDecideRead } from '../../src/commands/decide-read.js';
 import { runRequest, type RequestOptions } from '../../src/commands/request.js';
+import { recordDelegation } from '../../src/core/owner-record.js';
 import { requestHashOf } from '../../src/core/request-hash.js';
 import { ok } from '../../src/core/result.js';
 import {
@@ -946,6 +948,128 @@ describe('request close --relayed', () => {
     const before = filesOf(repo);
     expect(exitCodeOf[errorOf(await relay(inPane(repo.deps, '%0'), { words: ['close', 'D-9'] })).kind]).toBe(2);
     expect(filesOf(repo)).toEqual(before);
+  });
+});
+
+describe('request close: approval links', () => {
+  const point = 'merge';
+  const rowLink = { point, board_item: 'B-1', ref: '12', head: LINK_HEAD };
+  const linkedEntry = (changes: Partial<typeof rowLink> = {}) => {
+    const link = { ...rowLink, ...changes };
+    return entry('D-1', {
+      fields: [
+        { label: 'link point', text: link.point }, { label: 'link item', text: link.board_item },
+        { label: 'link reference', text: link.ref }, { label: 'link head', text: link.head },
+      ],
+      options: [{ key: 'approve', text: 'Yes' }, { key: 'stop', text: 'No' }],
+    });
+  };
+  const close = (repo: BoardRepo, change: Partial<RequestOptions> = {}) => runRequest(inPane(repo.deps, '%0'), {
+    ...BASE, words: ['close', 'D-1'], relayed: true, decision: 'approve', ...change,
+  }, recipes);
+
+  it.each(['approve', 'stop'])('copies the link for a relay of %s and reports no owner proof', async (decision) => {
+    const repo = await nodeWithItem();
+    valueOf(await run(repo, LINKED_ADD));
+    expect(await close(repo, { decision })).toMatchObject({ ok: true });
+    expect(logOf(repo).rows).toEqual([{
+      item: 'D-1: Pick a plan', decision, date: '2030-01-02', decider: 'coordinator', relayed: relayedMarker, ...rowLink,
+    }]);
+    const read = await runDecideRead(repo.deps, { home: HOME, words: ['D-1'], note: undefined }, recipes);
+    expect(read).toMatchObject({ ok: true, value: { failed: true, json: {
+      ...rowLink, proof: 'relayed', option: null, decider: 'coordinator', reason: expect.stringContaining('no owner proof'),
+    } } });
+  });
+
+  it.each([
+    [{ relayed: false, decision: undefined }, { decision: 'closed with no answer' }],
+    [{ relayed: false, decider: 'delegate', decision: 'Use plan A' }, { decision: 'Use plan A', decider: 'delegate' }],
+  ] as const)('copies the link for a close without relay (%j)', async (change, settlement) => {
+    const repo = await boardNode({ waiting: waitingText([linkedEntry()]) });
+    expect(await close(repo, change)).toMatchObject({ ok: true });
+    expect(logOf(repo).rows).toEqual([{ item: 'D-1: Request D-1', date: '2030-01-02', ...rowLink, ...settlement }]);
+  });
+
+  it.each([
+    ['a point outside the relay scope', { point: 'release' }, 'approve', 'usage', 'approval point'],
+    ['an option label', {}, 'Yes', 'usage', 'option key'],
+    ['an option in a different letter case', {}, 'APPROVE', 'usage', 'option key'],
+    ['a malformed link', { head: '123' }, 'approve', 'failure', 'request link'],
+  ] as const)('refuses %s and changes no file', async (_name, linkChange, decision, kind, message) => {
+    const repo = await boardNode({ waiting: waitingText([linkedEntry(linkChange)]) });
+    const before = filesOf(repo);
+    expect(await close(repo, { decision })).toMatchObject({ ok: false, error: { kind, message: expect.stringContaining(message) } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  const nodeWithDelegationSetting = () => {
+    const base = sampleConfigWithBoard();
+    return boardNode({
+      config: { ...base, core: { ...base.core, approval: { ...base.core.approval, [point]: 'delegated' } } },
+      waiting: waitingText([linkedEntry()]),
+    });
+  };
+
+  it('refuses a relay in effective delegated mode and changes no file', async () => {
+    const repo = await nodeWithDelegationSetting();
+    const terminal = { ...repo.deps, stdinIsTTY: true };
+    valueOf(await recordDelegation(terminal, { root: HOME, node: 'demo', point, mode: 'delegated' }));
+    const before = filesOf(repo);
+    expect(await close(repo)).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining('approval point') } });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('allows a relay when no record backs the delegation', async () => {
+    const repo = await nodeWithDelegationSetting();
+    expect(await close(repo)).toMatchObject({ ok: true });
+    expect(logOf(repo).rows[0]).toMatchObject(rowLink);
+  });
+
+  it('tells the owner to run decide again when a store record exists', async () => {
+    const repo = await nodeWithStore(storeText([storedRecord({ option: 'approve' })]), { waiting: waitingText([linkedEntry()]) });
+    const before = filesOf(repo);
+    expect(await close(repo)).toMatchObject({
+      ok: false, error: { kind: 'failure', message: expect.stringContaining('answered'), hint: expect.stringContaining(commandText(commands.decide)) },
+    });
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+});
+
+describe('request close: owner prefix', () => {
+  const display = 'Test $& (Owner)';
+  const prefix = '[From {owner}, by {node}, at {date}]';
+  const nodeWithPrefix = (template: string) => {
+    const config = sampleConfigWithBoard();
+    return boardNode({
+      config: { ...config, core: { ...config.core, owner: { ...config.core.owner, display, prefix: template } } },
+      waiting: waitingText([entry('D-1')]),
+    });
+  };
+
+  it.each([
+    [prefix, `Private: [From ${display}, by any node, at any date] approve`],
+    ['{owner}', `Private: ${display} said yes`],
+  ])('refuses a relay with the owner prefix %s without an echo or write', async (template, decision) => {
+    const repo = await nodeWithPrefix(template);
+    const before = filesOf(repo);
+    const result = await runRequest(inPane(repo.deps, '%0'), { ...BASE, words: ['close', 'D-1'], relayed: true, decision }, recipes);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining('owner prefix') } });
+    expect(JSON.stringify(result)).not.toContain('Private:');
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each([
+    `From another owner, at any date] and from ${display}, by any node`,
+    `[From ${display}, at any date, by any node]`,
+    `[from ${display}, by any node, at any date]`,
+  ])('keeps the relay text %j when it does not have the exact prefix', async (decision) => {
+    const repo = await nodeWithPrefix(prefix);
+    expect(await runRequest(inPane(repo.deps, '%0'), { ...BASE, words: ['close', 'D-1'], relayed: true, decision }, recipes)).toMatchObject({ ok: true });
+    expect(logOf(repo).rows[0]?.['decision']).toBe(decision);
   });
 });
 
