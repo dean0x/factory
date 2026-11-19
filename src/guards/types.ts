@@ -15,7 +15,7 @@ export type GuardNeed = 'when-off' | 'always';
 
 /**
  * The effective guard values of one node home. For every other home, and for a null home, every guard is on. `state` is the one
- * read that gave the values, and null only while a command line has made no read yet.
+ * read that gave the values. It is null when no read was made: then `guardReadOf` makes the read, with its proof.
  */
 export interface GuardContext {
   readonly home: string | null;

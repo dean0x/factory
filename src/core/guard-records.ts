@@ -298,7 +298,8 @@ const provenConfig = async (deps: Deps, home: string, config: GuardConfig): Prom
 
 /**
  * Read at most one store. An off value counts only with its proof (`provenConfig`) and a matching record, and its rules use the
- * proved config. A failed proof or a failed read supplies only on values to every consumer, and the fault stays in the state.
+ * proved config. A failed proof or a failed read supplies only on values to every consumer. The reason stays in the state: `proof`
+ * holds the reason of a failed proof, and `fault` holds the reason of a failed read.
  */
 export const readGuardState = async (deps: Deps, home: string, config: GuardConfig, need: GuardNeed): Promise<GuardReadState> => {
   const off = holdsLocalOff(config);
