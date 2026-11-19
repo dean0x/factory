@@ -509,6 +509,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
       ...at('src/core/paths.ts', 'requireOutsideUserClaudeFolder'),
       ...at('src/core/home.ts', 'chosenHome', 'locateHome'),
       ...at('src/core/private-file.ts', 'userStatePathOf'),
+      ...at('src/core/claude-settings.ts', 'requireOutsideUserFolder'),
     ],
   }),
   codeRow({

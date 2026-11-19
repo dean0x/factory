@@ -1070,12 +1070,12 @@ describe.each(FOLDER_ORIGINS)('start in %s: the path checks of the guard of the 
     return { code, err: sink.errors.join('') };
   };
 
-  it.each([true, false])('stops at a settings file in the user folder of Claude Code only while the guard is on (guard on: %s)', async (on) => {
+  it.each([true, false])('stops at a settings file in the user folder of Claude Code, and the write stays refused with the guard off (guard on: %s)', async (on) => {
     const { deps } = node(on, { hookSettings: false, env: { [env.userHome]: COORDINATOR } });
     const result = await startOf(deps);
-    expect(result.code, result.err).toBe(on ? 4 : 0);
-    expect(result.err.includes('settings folder of Claude Code')).toBe(on);
-    expect(deps.files.has(SETTINGS_FILE)).toBe(!on);
+    expect(result.code, result.err).toBe(4);
+    expect(result.err).toContain('settings folder of Claude Code');
+    expect(deps.files.has(SETTINGS_FILE)).toBe(false);
   });
 
   it.each([true, false])('stops when the settings file changed after the change was shown only while the guard is on (guard on: %s)', async (on) => {

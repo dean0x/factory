@@ -628,18 +628,19 @@ interface TargetRead {
  * The checks of the target, then the read of the file. A path in the user settings folder, a link, a real path outside the
  * session folder or a file that is no object stops it. The first check compares the written path of the file and makes no call
  * of the file system, so it comes before any call on the target.
- * With the guard of the settings write off, the checks of the path do not run, and only the file must be a JSON object.
+ * With the guard of the settings write off, the link check and the check of the session folder do not run. The check of the user
+ * folder of Claude Code runs whatever the value, because the file safety guard, which this version cannot set, shares it.
  */
 const readTarget = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<TargetRead>> => {
   const target = targetOf(request.folder);
-  const checked = await guardOn(deps, guardIds.settingsWrite, request.home);
-  const written = checked ? requireOutsideUserFolder(deps, target, request.command, target.file) : ok(undefined);
+  const written = requireOutsideUserFolder(deps, target, request.command, target.file);
   if (!written.ok) return written;
+  const checked = await guardOn(deps, guardIds.settingsWrite, request.home);
   const parts = await checkParts(deps, target, request.command, checked);
   if (!parts.ok) return parts;
   const real = checked ? await requireInsideSession(deps, target, request.command) : ok(target.file);
   if (!real.ok) return real;
-  const resolved = checked ? requireOutsideUserFolder(deps, target, request.command, real.value) : ok(undefined);
+  const resolved = requireOutsideUserFolder(deps, target, request.command, real.value);
   if (!resolved.ok) return resolved;
   const content = parts.value.exists ? await readSettings(deps, target.file, request.command) : ok(null);
   return content.ok ? ok({ target, content: content.value }) : content;
@@ -759,7 +760,8 @@ export const ensureHookSettings = async (
  * consent rule and a file that is no JSON object stop the command before the folder exists.
  * The call asks nothing and writes nothing. A session folder written inside the user settings folder stops it before any call
  * of the file system.
- * With the guard of the settings write off, no check of the path runs and a missing consent does not stop the command.
+ * With the guard of the settings write off, a missing consent does not stop the command, and only the check of the user folder
+ * of Claude Code stays of the checks of the path.
  */
 export const requireHookConsent = async (
   deps: Deps,
@@ -767,9 +769,9 @@ export const requireHookConsent = async (
   checkoutText: string | null = null,
 ): Promise<CliResult<void>> => {
   const target = targetOf(request.folder);
-  const checked = await guardOn(deps, guardIds.settingsWrite, request.home);
-  const written = checked ? requireOutsideUserFolder(deps, target, request.command, target.file) : ok(undefined);
+  const written = requireOutsideUserFolder(deps, target, request.command, target.file);
   if (!written.ok) return written;
+  const checked = await guardOn(deps, guardIds.settingsWrite, request.home);
   const folder = await deps.fs.lstat(request.folder);
   if (!folder.ok) return folder;
   const planned = folder.value === null ? futureFilePlan(request, checkoutText) : await planChange(deps, request);

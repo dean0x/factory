@@ -147,7 +147,7 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'settings-write-changed', path: 'src/core/claude-settings.ts', symbol: 'ensureHookSettings', reason: 'Calls askConsent and planAfterConsent, which read the value.' },
   { row: 'settings-write-no-link', path: 'src/core/claude-settings.ts', symbol: 'checkParts', reason: 'Takes the value of readTarget as an argument and lets a link pass when the guard is off.' },
   { row: 'settings-write-inside-folder', path: 'src/core/claude-settings.ts', symbol: 'requireInsideSession', reason: targetPartReason },
-  { row: 'settings-write-user-folder', path: 'src/core/claude-settings.ts', symbol: 'requireOutsideUserFolder', reason: targetPartReason },
+  { row: 'settings-write-user-folder', path: 'src/core/claude-settings.ts', symbol: 'requireOutsideUserFolder', reason: 'Its stop is shared with a row of the file and link safety guard, which this version cannot set, so it stays on.' },
 ];
 
 const software = {

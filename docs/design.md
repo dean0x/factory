@@ -1403,7 +1403,7 @@ The off text of an approval point applies in both `owner` and `delegated` mode. 
 |---|---|
 | `approval-delegation` | Count a local `delegated` value of an approval point with no approval record, and remove the delegation lines from the role text. |
 | `settings-check` | Skip the checks of the Claude Code settings files at doctor, start and the launch of a worker. A setting that skips the permission prompts still stops the step. |
-| `settings-write` | Write the hook settings with no consent question and no check of the path. The change still shows, and a yes flag in a session still stops. |
+| `settings-write` | Write the hook settings with no consent question, no link check and no check of the session folder. The change still shows, and a yes flag in a session still stops. A write into the settings folder of Claude Code in the user folder still stops, because the file and link safety guard shares that check. |
 | `delete-guard` | Let a commit in the state folder remove an item id, skip the checks and warnings about the installed hooks, and remove the board rule text. The installed hooks stay as they are. |
 
 The code checks of every other guard and all integrity checks still run.
