@@ -234,8 +234,8 @@ describe('doctor: shared guard state', () => {
     deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(ownSettingsEntries));
     const found = await guardCheck(deps);
     expect(found?.level).toBe('warn');
-    expect(found?.text).toContain('work-conduct');
-    expect(found?.text).toContain('not wired');
+    expect(found?.text).toContain('work-conduct is not settable in this version; its value stays on');
+    expect(found?.text).not.toContain('wired');
     expect(found?.text).toContain('Own file Edit rules are incomplete.');
   });
 

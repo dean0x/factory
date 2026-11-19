@@ -918,7 +918,7 @@ const checkGuards = async (
   if (isRecord(config.raw) && !Object.hasOwn(config.raw, guardKeys.local)) parts.push(guardDoctorWords.noKey);
   for (const guard of state.unmatched) warnings.push(`${guardStartWords.unmatched(guard)}: run "${commandText(commandLines.guardSet)} ${guard} on"`);
   for (const guard of definitions) {
-    if (!guard.wired && config.value.core.guards[guard.id] === 'off') warnings.push(`${guard.id} is not wired; its value stays on`);
+    if (!guard.wired && config.value.core.guards[guard.id] === 'off') warnings.push(guardDoctorWords.unsettableOff(guard.id));
   }
   const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
   if (state.recordCount !== null) {

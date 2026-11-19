@@ -2553,6 +2553,8 @@ export const guardDoctorWords = {
   recordCount: (count: number): string => `The guard store holds ${count} of ${guardRecords.maxRecords} records.`,
   nearCap: 'The guard store is near its record cap.',
   atCap: 'The guard store is at its record cap.',
+  /** The warning for an off value of a guard that this version cannot set. */
+  unsettableOff: (id: string): string => `${id} is ${guardListWords.notSettable}; its value stays on`,
   /** The line of a check that did not run, because its guard is off. */
   notChecked: (id: string): string => `not checked: the guard ${id} is off`,
   /** The line of a check of which only a part ran, because its guard is off. */
