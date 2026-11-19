@@ -5,6 +5,7 @@
 - Add `factory board`: one text view of requests, workers, open items, the queue and machine facts. `--width` sets the text width. `--json` prints `factory.board/v1`, with section faults and a cap of 500 open items.
 - Add the optional `factory-board` Claude Code mod and repo marketplace. `/board` opens a pane with factory text and this session's context and limits.
 - `doctor` warns when the host of a proxy in use is not `127.0.0.1`, `::1` or `localhost`. The warning names only the proxy id, the host and the port.
+- A resumed worker whose pane shows a folder trust question of Claude Code now gets a remedy that names the pane and `factory worker watch --ready ID`. The exit code stays 3. This holds for `worker resume`, `restart` and `reboot`. `reboot` exits 3 when each worker that did not start again waits on that question.
 
 Renames
 

@@ -670,6 +670,8 @@ A resume with `--resume` prints "Resumed" only after the new session proves itse
 - 1: the pane is gone or its program ended. The message starts with "resume failed". A usual cause is a pointer to a session that has no transcript. To start a new conversation, delete the file `.factory/workers/ID/last-session` (the message gives the full path), then run `factory worker resume ID`.
 - 3: the pane runs, but no matching line came within 10 seconds. The message starts with "resume not confirmed" and names the pane. Run `factory worker summon ID` to look at it. If the earlier conversation did not load, run `factory worker stop ID`, delete the same file, and run `factory worker resume ID`.
 
+While Claude Code asks to trust a folder of the launch, the session holds back its hooks, so no line comes. After the last check, the command reads the screen of the pane once and types nothing. If the screen shows the folder trust question, the exit code is still 3, and the message says that the pane waits on that question. Answer each folder trust question in the pane, then run `factory worker watch --ready ID`.
+
 ### Shut down, restart and reboot
 
 ```sh
@@ -689,11 +691,11 @@ After these checks, a stop can still fail: a process that does not end gives exi
 
 `shutdown` stops each worker, clears the mark of the active machine (a mark of another machine stays), stops the coordinator with `kill -TERM` and the same bounded wait, and then ends the tmux session by its exact name. Run in the coordinator pane, it does not stop its own pane: it prints its report first, and then ends the session. A coordinator that does not end in the wait gives exit code 1, and the session stays. If a session of the same name belongs to another factory folder, or has no home option, it ends nothing and exits with code 4. The remedy is `factory shutdown` in the folder that owns the session. With no session it says that nothing runs and exits with code 0, and it still clears the mark of the active machine of this machine.
 
-`restart ID` stops the worker and starts it again with `--resume` and its session id. The id must have a record, else exit code 2. With no tmux session it exits with code 3 and names `factory start`. If the new session does not write its line, the message says that the worker stopped and did not start again, and names `factory worker resume ID`.
+`restart ID` stops the worker and starts it again with `--resume` and its session id. The id must have a record, else exit code 2. With no tmux session it exits with code 3 and names `factory start`. If the new session does not write its line, the message says that the worker stopped and did not start again, and names `factory worker resume ID`. If the new pane waits on a folder trust question, the exit code is 3, and the remedy names the pane and `factory worker watch --ready ID`.
 
 `reboot` stops every worker and starts each recorded worker again with its session id. Outside the session, it first runs the file steps of `start`, before it stops any worker. It renders a safety block that is out of date and checks the coordinator settings, with the consent rules of `start`. `reboot` has no `--yes`. With no terminal window, a change with hook or status line lines stops with exit code 2. A change of only the idle value writes nothing, prints one line that names `factory upgrade`, and lets the reboot go on. Outside a factory session, the remedy offers `--yes`. Inside one, it tells the owner to run the upgrade outside the session or in a terminal window and answer the question.
 
-Then it ends the session as `shutdown` does and starts it again with the recovery of `start`. It prints the command that attaches. Run in a pane of the session, it stops and starts only the workers, and the session and the coordinator pane stay. A worker that did not start again is named, and the exit code is 1. One run asks each proxy once.
+Then it ends the session as `shutdown` does and starts it again with the recovery of `start`. It prints the command that attaches. Run in a pane of the session, it stops and starts only the workers, and the session and the coordinator pane stay. A worker that did not start again is named, and the exit code is 1. If the new pane of each such worker waits on a folder trust question, the exit code is 3, and the warning of each worker names its pane and `factory worker watch --ready ID`. One run asks each proxy once.
 
 ### Summon a worker
 
