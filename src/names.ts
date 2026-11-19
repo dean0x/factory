@@ -1407,6 +1407,20 @@ export const watchRun = {
  */
 export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionStart' } as const;
 
+/**
+ * Claude Code asks about each folder the owner has not trusted: the work copy or a folder of `--add-dir`.
+ * The session holds back every hook until the owner answers, so no `launchConfirm.event` line comes.
+ * Only a resume with no confirmation reads the screen, once. The check needs a dialog with choices.
+ * `pattern` matches both whole words "trust" and "folder", in any case, on a choice line or the line directly above the choices.
+ * The terminal text has no public specification, so the two words are a guess until a live check confirms them.
+ * `capture-pane -p` has no `-J`, so a pane narrower than about 29 columns can split the words across rows and keep the usual result.
+ * A match keeps the reason from the last check and gives the owner the trust remedy.
+ * It changes the error for `worker resume` and `restart` and the worker warning for `start` and `reboot`.
+ * A false match changes the remedy but not the exit code for `worker resume`, `restart` (both 3) or `start` (0).
+ * For `reboot`, a false match can change exit code 1 to 3 if every worker that did not start again matches.
+ */
+export const trustQuestion = { pattern: /^(?=.*\btrust\b)(?=.*\bfolder\b)/im } as const;
+
 /** What a session reset of a worker needs to name for one kind: the flag, the typed line, the events that confirm it, and the verb of the verdict. */
 interface ResetKindWords {
   readonly flag: string;

@@ -143,7 +143,7 @@ const recovered = async (
 ): Promise<RecoveryReport> => {
   const result = await recoverWorkers(made.deps, { home: HOME, config, proxyAnswers });
   if (!result.ok) throw new Error(`${result.error.message} ${result.error.hint ?? ''}`);
-  return result.value;
+  return result.value.report;
 };
 
 /** The panes that carry a worker mark, in the order of their making. */

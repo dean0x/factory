@@ -60,14 +60,28 @@ const bottomLines = (screen: string): readonly string[] => {
 /**
  * True when the bottom lines hold a list of choices of a dialog: one line starts with a pointer, then digits and a dot, and
  * another line starts with digits and a dot. A pointer line never starts with a digit, so the two lines are two lines. A numbered
- * list with no pointer line, for example the end of an answer, is no dialog.
+ * list with no pointer line, for example the end of an answer, is no dialog. With a line check, the choices must be consecutive.
+ * One choice line or the prompt directly above the choices must pass the line check.
  */
-const showsChoiceList = (screen: string): boolean => {
-  const lines = bottomLines(screen);
-  return (
-    lines.some((line) => typing.optionList.pointerLine.test(line)) &&
-    lines.some((line) => typing.optionList.numberedLine.test(line))
-  );
+export const showsChoiceList = (screen: string, matchesDialogLine?: (line: string) => boolean): boolean => {
+  let pointer = false;
+  let numbered = false;
+  let matches = matchesDialogLine === undefined;
+  for (const line of bottomLines(screen)) {
+    const isPointer = typing.optionList.pointerLine.test(line);
+    const isNumbered = typing.optionList.numberedLine.test(line);
+    if (isPointer || isNumbered) {
+      pointer ||= isPointer;
+      numbered ||= isNumbered;
+      matches ||= matchesDialogLine?.(line) ?? false;
+      if (pointer && numbered && matches) return true;
+    } else if (matchesDialogLine !== undefined) {
+      pointer = false;
+      numbered = false;
+      matches = matchesDialogLine(line);
+    }
+  }
+  return false;
 };
 
 /**

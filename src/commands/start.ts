@@ -49,7 +49,14 @@ import type { RecipeRegistry } from '../recipes/index.js';
 import type { SetupTexts } from '../templates/types.js';
 import { renderSetupText } from '../upgrade/render.js';
 import { chooseProxy, newProxyAnswers, sessionProxyWish, type ProxyAnswers, type ProxyChoice } from '../workers/launch.js';
-import { coordinatorResumeOf, noPaneWarning, recoverWorkers, workersWithoutPane, type RecoveryReport } from '../workers/recovery.js';
+import {
+  coordinatorResumeOf,
+  noPaneWarning,
+  recoverWorkers,
+  workersWithoutPane,
+  type RecoveryReport,
+  type RecoveryRun,
+} from '../workers/recovery.js';
 import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { failsOnlyOnSetup, requireRootClean, rootNotices, scanRoot, withSetupAccepted } from './root-content.js';
 import { acceptReason, settleSetup } from './setup-check.js';
@@ -188,7 +195,7 @@ type Recovery = RecoveryReport | null;
  * stays 0, with one exception: a git that can not list its config scopes stops the run (exit 1) before any worker runs. `runStart`
  * makes that check before it makes the session, so the claim meets the fault only for a caller that did not.
  */
-const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers, guards: GuardValues | undefined): Promise<CliResult<Recovery>> => {
+const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers, guards: GuardValues | undefined): Promise<CliResult<RecoveryRun | null>> => {
   const claimed = await claimActiveMachine(deps, home);
   if (!claimed.ok) return claimed;
   const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers, guards });
@@ -224,6 +231,8 @@ export interface RestartedSession {
   readonly coordinatorResumed: boolean;
   /** The workers by what happened, or null when the workers could not be listed. */
   readonly workers: RecoveryReport | null;
+  /** The workers of `workers.failed` whose new pane waits on a folder trust question. */
+  readonly waitsOnTrust: readonly string[];
   /** The warnings of the plan: a project folder that is missing, a coordinator that is not resumed, a proxy that does not answer. */
   readonly warnings: readonly string[];
 }
@@ -265,7 +274,8 @@ export const startAgain = async (
   return ok({
     proxy: proxy.label,
     coordinatorResumed: resumeId !== null,
-    workers: workers.value,
+    workers: workers.value?.report ?? null,
+    waitsOnTrust: workers.value?.waitsOnTrust ?? [],
     warnings: [...warnings, ...(proxy.warning === undefined ? [] : [proxy.warning])],
   });
 };
@@ -611,7 +621,7 @@ export const runStart = async (
   // The recovery runs only for a session that this run made, and before the person is in the session.
   const recoveryResult = planned === null ? ok(null) : await recoverSession(deps, home, loaded.value, answers, guards.values);
   if (!recoveryResult.ok) return recoveryResult;
-  const recovery = recoveryResult.value;
+  const recovery = recoveryResult.value?.report ?? null;
   // A session that runs already resumes no worker. It claims the mark and names the workers that have no pane.
   const withoutPaneResult = planned === null ? await checkRunningSession(deps, home, id) : ok<readonly string[]>([]);
   if (!withoutPaneResult.ok) return withoutPaneResult;

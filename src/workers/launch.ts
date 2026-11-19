@@ -302,7 +302,8 @@ const markPane = async (deps: Deps, request: PaneFailureRequest): Promise<CliRes
  * 7. the tile of the workers window, so that the next launch finds room (a failed tile is a warning);
  * 8. the wait for the pane to prove itself (`confirmLaunch`): the pane must still run the launch after the first wait, and a launch
  *    with a resume id must also see the SessionStart line of the new session. A pane that ends is exit 1. A resume that the line
- *    does not confirm is exit 3 with "resume not confirmed". Nothing is undone: the pane stays for a person to read.
+ *    does not confirm is exit 3 with "resume not confirmed", and a pane that shows a folder trust question then gets a remedy that
+ *    names the pane and `worker watch --ready`. Nothing is typed or undone: the pane stays for a person to read.
  * The caller makes the work copy and the record, and it checks that the tmux session is its own.
  */
 export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Promise<CliResult<WorkerLaunch>> => {

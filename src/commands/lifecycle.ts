@@ -1,5 +1,5 @@
 import { err, ok } from '../core/result.js';
-import { failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
+import { exitCodeOf, failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
@@ -262,6 +262,15 @@ const recoveryLines = (workers: RecoveryReport | null): readonly OutLine[] =>
 /** True when a worker that the run tried to start again did not run. A skipped folder with no record is no fault of the run. */
 const someFailed = (workers: RecoveryReport | null): boolean => workers !== null && workers.failed.length > 0;
 
+/**
+ * The exit code of a run in which a worker did not start again. When the new pane of each such worker waits on a folder trust
+ * question, the run is not ready (exit 3): the owner answers in each pane. Any other fault keeps the common failure code.
+ */
+const failedExit = (workers: RecoveryReport | null, waitsOnTrust: readonly string[]): Pick<CommandOutput, 'exitCode'> =>
+  workers !== null && workers.failed.length > 0 && workers.failed.every((id) => waitsOnTrust.includes(id))
+    ? { exitCode: exitCodeOf['not-ready'] }
+    : {};
+
 /** What the end of the session gives when no session runs: no worker stopped, and the mark stays as it is. */
 const NOTHING_ENDED: EndedSession = { stopped: [], mark: 'absent' };
 
@@ -283,15 +292,17 @@ const rebootInside = async (deps: Deps, run: RebootRun, panes: readonly PaneRow[
   if (stopped.fault !== null) return err(rebootFault(stopped.fault, stopped.stopped, false));
   const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers, guards: run.guards });
   if (!recovered.ok) return err(rebootFault(recovered.error, stopped.stopped, false));
+  const { report, waitsOnTrust } = recovered.value;
   return ok({
     lines: [
       ...stoppedLines(stopped.stopped),
       text(`Kept the session ${session} and the ${roles.coordinator} pane.`),
-      ...recoveryLines(recovered.value),
+      ...recoveryLines(report),
     ],
-    json: { schema: schemaIds.reboot, session, inSession: true, stopped: stopped.stopped, started: false, workers: recovered.value },
+    json: { schema: schemaIds.reboot, session, inSession: true, stopped: stopped.stopped, started: false, workers: report },
     warnings: notes,
-    failed: someFailed(recovered.value),
+    failed: someFailed(report),
+    ...failedExit(report, waitsOnTrust),
   });
 };
 
@@ -309,7 +320,7 @@ const rebootOutside = async (
   if (!ended.ok) return ended;
   const started = await startAgain(deps, home, config, answers, run.guards);
   if (!started.ok) return err(rebootFault(started.error, ended.value.stopped, true));
-  const { proxy, coordinatorResumed, workers, warnings } = started.value;
+  const { proxy, coordinatorResumed, workers, waitsOnTrust, warnings } = started.value;
   return ok({
     lines: [
       ...stoppedLines(ended.value.stopped),
@@ -330,6 +341,7 @@ const rebootOutside = async (
     },
     warnings: [...notes, ...warnings],
     failed: someFailed(workers),
+    ...failedExit(workers, waitsOnTrust),
   });
 };
 
@@ -344,7 +356,8 @@ const rebootOutside = async (
  * Outside the session, the steps of `start` that change a file come first (the safety and role blocks rendered again, and the hook
  * settings), before the first stop. Then the session ends as `shutdown` ends it, and it starts again with its recovery. Inside the session (the pane
  * of the caller is a pane of it), only the workers stop and start again, and the coordinator pane stays. A fault after the first
- * stop names the workers that stopped, and its remedy finishes the reboot (`rebootFault`).
+ * stop names the workers that stopped, and its remedy finishes the reboot (`rebootFault`). A worker that did not start again is named,
+ * and the exit code is 1, or 3 when the new pane of each such worker waits on a folder trust question (`failedExit`).
  */
 export const runReboot = async (
   deps: Deps,

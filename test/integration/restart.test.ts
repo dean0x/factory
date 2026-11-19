@@ -40,6 +40,23 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server)'
     expect(await lab.hasSession('demo')).toBe(true);
   }, LIFECYCLE_CASE_MS);
 
+  it('exits 3 when the new pane waits on a folder trust question, and the remedy names the pane and worker watch --ready', async () => {
+    await lab.node();
+    await writeFile(join(lab.outDir, 'trust-question-alpha'), '');
+
+    const result = await lab.factory('restart', ['alpha']);
+    expect(result.code, result.stderr).toBe(3);
+    const after = await lab.livePaneOf('alpha');
+    expect(after).toBeDefined();
+    expect(result.stderr).toContain(`the pane ${after?.pane} of the worker alpha waits on a folder trust question`);
+    expect(result.stderr).toContain('The worker alpha stopped and did not start again');
+    expect(result.stderr).toContain(
+      `The owner answers each folder trust question in the pane ${after?.pane}. Then run "factory worker watch --ready alpha".`,
+    );
+    expect(result.stdout).not.toContain('Resumed');
+    expect(await lab.launchCount('alpha')).toBe(2);
+  }, LIFECYCLE_CASE_MS);
+
   it('exits 3 and names factory start when no tmux session runs', async () => {
     await lab.node();
     expect((await lab.factory('shutdown')).code).toBe(0);

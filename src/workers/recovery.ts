@@ -1,4 +1,4 @@
-import type { CliError, CliResult } from '../cli/errors.js';
+import { hasCode, trustQuestionWait, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
@@ -79,6 +79,16 @@ export interface RecoveryReport {
 
 type Outcome = keyof RecoveryReport;
 
+/** What a recovery did: the report that the output prints, and the workers of `failed` whose new pane waits on a folder trust question. */
+export interface RecoveryRun {
+  readonly report: RecoveryReport;
+  /** The workers of `report.failed` whose launch was not confirmed because the pane waits on a folder trust question. */
+  readonly waitsOnTrust: readonly string[];
+}
+
+/** What happened to one worker: an outcome of the report, or `waits` for a worker that did not start again because its pane waits on a folder trust question. */
+type WorkerOutcome = Outcome | 'waits';
+
 const skipWarning = (home: string, id: string, reason: string): string =>
   `The ${roles.worker} ${id} is NOT resumed: ${reason}. ` +
   `Its pointer file is ${workerPathsOf(home, id).lastSessionFile}. Run "${commandText(resumeLine(id))}" to start it again.`;
@@ -91,7 +101,7 @@ const invalidWarning = (folder: InvalidWorker): string =>
   `The folder ${folder.name} in the folder of the ${roles.worker}s has no valid record: ${folder.reason}. It is NOT resumed.`;
 
 /** One worker: read its id strictly, then resume it. Every problem is a warning, so the run goes on. */
-const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: WorkerRecord): Promise<Outcome> => {
+const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: WorkerRecord): Promise<WorkerOutcome> => {
   const { home, config, proxyAnswers } = request;
   const { id } = record;
   const seen = await readOwnLastSeen(deps, home, id);
@@ -115,7 +125,7 @@ const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: Worke
   });
   if (!launched.ok) {
     deps.warn(failedWarning(id, launched.error));
-    return 'failed';
+    return hasCode(launched.error, trustQuestionWait) ? 'waits' : 'failed';
   }
   for (const warning of launched.value.warnings) deps.warn(warning);
   return 'resumed';
@@ -131,22 +141,26 @@ const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: Worke
  *   conversation is never started for a worker here;
  * - the launch checks the settings files of the work copy before the pane (`resumeWorker`), asks the proxy of the worker at most
  *   once for the run (`proxyAnswers`) and waits for the session to write its line. A launch that fails, or that is not confirmed,
- *   is one warning that names the worker. It is not tried again, and the run goes on. A pane that the launch made stays.
+ *   is one warning that names the worker. It is not tried again, and the run goes on. A pane that the launch made stays. A worker
+ *   whose pane waits on a folder trust question is one of the failed workers, and `waitsOnTrust` names it too.
  * A folder with no valid record is skipped with a warning. The warnings are printed at once. The failure is a list of the workers
  * that can not be read (a workers folder that is a link is a security stop), and nothing has started then.
  */
-export const recoverWorkers = async (deps: Deps, request: RecoveryRequest): Promise<CliResult<RecoveryReport>> => {
+export const recoverWorkers = async (deps: Deps, request: RecoveryRequest): Promise<CliResult<RecoveryRun>> => {
   const listed = await listWorkerRecords(deps, request.home);
   if (!listed.ok) return listed;
   const report: Record<Outcome, string[]> = { resumed: [], skipped: [], failed: [] };
+  const waitsOnTrust: string[] = [];
   for (const record of listed.value.workers) {
-    report[await recoverWorker(deps, request, record)].push(record.id);
+    const outcome = await recoverWorker(deps, request, record);
+    report[outcome === 'waits' ? 'failed' : outcome].push(record.id);
+    if (outcome === 'waits') waitsOnTrust.push(record.id);
   }
   for (const folder of listed.value.invalid) {
     deps.warn(invalidWarning(folder));
     report.skipped.push(folder.name);
   }
-  return ok(report);
+  return ok({ report, waitsOnTrust });
 };
 
 /**
