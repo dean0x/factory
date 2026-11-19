@@ -46,7 +46,9 @@ import {
   type RunCall,
   type RunHandler,
 } from '../helpers/fake-deps.js';
-import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withStoreReadFault } from '../helpers/guarded-node.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withStoreReadFault,
+} from '../helpers/guarded-node.js';
 import { captureSink } from '../helpers/sink.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
@@ -771,6 +773,17 @@ describe('upgrade: the delete guard of the state repo', () => {
       expect(await runCli(['upgrade', '--home', HOME, '--json'], withStoreReadFault(deps, 2), sink), sink.errors.join('')).toBe(0);
       expect(JSON.parse(sink.out.join(''))).toMatchObject({ stateGuard: 'current' });
       expect(deps.files.has(HOOK)).toBe(false);
+    });
+
+    it('writes the missing hook when only the proof finds that the factory list names another node id', async () => {
+      const { deps } = await unguarded();
+      registerRoot(deps, HOME, OTHER_NODE_ID, [], origin);
+      deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify({ [guardIds.deleteGuard]: 'off' })}\n`);
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, [guardIds.deleteGuard], deps.now()));
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME, '--json'], withFirstConfigReadFault(deps, HOME), sink), sink.errors.join('')).toBe(0);
+      expect(JSON.parse(sink.out.join(''))).toMatchObject({ stateGuard: 'install' });
+      expect(deps.files.has(HOOK)).toBe(true);
     });
   });
 

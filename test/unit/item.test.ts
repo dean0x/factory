@@ -24,7 +24,9 @@ import { inPane } from '../helpers/coordinator-pane.js';
 import { BOARD_PATH, LAYOUT, LOG_PATH, WAITING_PATH, type BoardRepo } from '../helpers/board-repo.js';
 import { exited, missingProgram, registerRoot, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { HOME, HOOK } from '../helpers/guard-fixture.js';
-import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff,
+} from '../helpers/guarded-node.js';
 import { publishBoard, publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
 import { sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
@@ -752,6 +754,22 @@ describe('item record: linked approval', () => {
     expect(await runMerge(world)).toMatchObject(missingApproval);
     expect(world.gh.calls).toEqual([]);
     expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it('requires a linked approval when only the proof finds that the factory list names another node id', async () => {
+      const off = ['approval-merge'];
+      const config = withGuardsOff(sampleConfigWithBoard(), off);
+      const world = await mergeWorld({ config, decisionLog: logOf() });
+      registerRoot(world.repo.deps, HOME, OTHER_NODE_ID, [], origin);
+      world.repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, world.repo.deps.now()));
+      const sink = captureSink();
+      const code = await runCli(['item', 'record', 'B-1', '--ref', '12', '--home', HOME], withFirstConfigReadFault(world.gh.deps, HOME), sink);
+      expect(code, sink.errors.join('')).toBe(1);
+      expect(sink.errors.join('')).toContain(missingApproval.error.message);
+      expect(world.gh.calls).toEqual([]);
+      expectUntouched(world.repo, MERGE_BOARD);
+    });
   });
 
   it('requires a linked approval after it accepts the project and before it calls gh', async () => {

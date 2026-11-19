@@ -39,7 +39,9 @@ import {
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
-import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, withStoreReadFault } from '../helpers/guarded-node.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, withStoreReadFault,
+} from '../helpers/guarded-node.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
@@ -1049,6 +1051,17 @@ describe.each(FOLDER_ORIGINS)('start in %s: one guard decision for the summary a
     const sink = captureSink();
     expect(await runCli([commands.start, '--dry-run', '--home', HOME], withStoreReadFault(deps, faulted), sink), sink.errors.join('')).toBe(code);
     expect(sink.out.join('').includes(`${guardStartWords.prefix} ${guardStartWords.off(1)}`)).toBe(shown);
+  });
+
+  it('shows no off guard when only the proof finds that the factory list names another node id', async () => {
+    const off = [guardIds.settingsCheck];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config, registered: false });
+    registerRoot(deps, HOME, OTHER_NODE_ID, [], origin);
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], withFirstConfigReadFault(deps, HOME), sink), sink.errors.join('')).toBe(0);
+    expect(sink.out.join('')).not.toContain(`${guardStartWords.prefix} ${guardStartWords.off(1)}`);
   });
 });
 

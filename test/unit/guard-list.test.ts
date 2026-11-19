@@ -9,6 +9,7 @@ import { dirs, files, guardIds, guardListWords, schemaIds } from '../../src/name
 import { recipes, type RecipeEntry, type RecipeRegistry } from '../../src/recipes/index.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { publishRecipe, twoRecipeRegistry } from '../helpers/publish-recipe.js';
+import { FOLDER_ORIGINS, GUARDED_HOME, guardedNode, OFF_GUARD, OTHER_NODE_ID, withFirstConfigReadFault } from '../helpers/guarded-node.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput } from '../helpers/short-output.js';
@@ -435,5 +436,14 @@ describe('guard list', () => {
       expect(result.out).not.toMatch(/[\u001b‮\t]/);
       expect(result.out).toContain(flags.includes('--family') ? 'Data  stays private.' : 'sample [31m');
     }
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('guard list in %s', (_folder, origin) => {
+  it('shows an off guard with a matching record as on when only the proof finds that the factory list names another node id', async () => {
+    const deps = guardedNode({}, { origin, listed: OTHER_NODE_ID });
+    const result = await run(withFirstConfigReadFault(deps), ['--home', GUARDED_HOME, '--json']);
+    expect(result.code, result.err).toBe(0);
+    expect(JSON.parse(result.out)).toMatchObject({ guards: expect.arrayContaining([expect.objectContaining({ id: OFF_GUARD, value: 'on' })]) });
   });
 });

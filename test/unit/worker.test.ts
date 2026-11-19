@@ -12,7 +12,9 @@ import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
-import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, withStoreReadFault } from '../helpers/guarded-node.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, withStoreReadFault,
+} from '../helpers/guarded-node.js';
 import {
   createFakeDeps,
   exited,
@@ -1123,6 +1125,20 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings
     const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME], withStoreReadFault(made.deps, 2), sink);
     expect(code, sink.errors.join('')).toBe(0);
     expect(made.deps.files.has(SETTINGS_FILE)).toBe(true);
+  });
+
+  it('needs a consent for the hook settings when only the proof finds that the factory list names another node id', async () => {
+    const off = [guardIds.settingsWrite];
+    const made = make({
+      origin,
+      config: withGuardsOff(sampleConfig(), off),
+      seed: { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+    });
+    registerRoot(made.deps, HOME, OTHER_NODE_ID, [], origin);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME], withFirstConfigReadFault(made.deps, HOME), sink);
+    expect(code, sink.errors.join('')).toBe(2);
+    expect(made.deps.files.has(SETTINGS_FILE)).toBe(false);
   });
 });
 

@@ -3,7 +3,7 @@ import { exitCodeFor, failure, type CliResult } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { entryOfText, manifestOf } from '../../src/core/setup-acceptance.js';
-import { files, guardIds, roleText } from '../../src/names.js';
+import { commandLines, commandText, files, guardIds, roleText } from '../../src/names.js';
 import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { recipes } from '../../src/recipes/index.js';
@@ -19,6 +19,7 @@ import {
   type RoleRead,
 } from '../../src/workers/role-text.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStoreText, OTHER_NODE_ID } from '../helpers/guarded-node.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES } from '../helpers/setup-acceptance.js';
 
@@ -103,6 +104,19 @@ describe('worker role text with guard values', () => {
     }] }));
     const result = await requireRoleText(deps, { home: HOME, config: guarded, retry: 'factory start' });
     expect(result).toEqual({ ok: true, value: undefined });
+  });
+
+  // A direct call makes no registration check before the proof, so the proof is the first read of the config and needs no fault.
+  it.each(FOLDER_ORIGINS)('refuses the role check of a worker reset in %s when the proof finds that the factory list names another node id', async (_folder, origin) => {
+    const deps = worldOf({ text: 'x'.repeat(FREE + 1) });
+    const guarded = { ...config, core: { ...config.core, guards } };
+    seedConfig(deps, HOME, guarded);
+    registerRoot(deps, HOME, OTHER_NODE_ID, [], origin);
+    deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, Object.keys(guards), deps.now()));
+    const result = await requireRoleText(deps, { home: HOME, config: guarded, retry: commandText(commandLines.workerReset) });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(exitCodeFor(result.error)).toBe(1);
+    expect(result.error.message).toMatch(/^the role text has \d+ characters, and the cap is 9000 characters$/);
   });
 
   it('keeps the all-on setup allowance in the rendered size warning', () => {

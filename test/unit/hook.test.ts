@@ -20,7 +20,7 @@ import {
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
-import { FOLDER_ORIGINS, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
+import { FOLDER_ORIGINS, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff } from '../helpers/guarded-node.js';
 import { runHook } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { countReadsOf } from '../helpers/read-count.js';
@@ -777,6 +777,17 @@ describe('factory hook: the role text of a worker session', () => {
       const ran = await ranFor(deps);
       expect(ran).toEqual({ code: 0, out: [outputOf(composeRoleText(workerFileTemplatesFor(sampleConfig(), SETUP, values)))], err: [] });
       expect(ran.out[0]?.includes('Do not compact or clear yourself.')).toBe(on);
+    });
+
+    it('gives the rules when only the proof finds that the factory list names another node id', async () => {
+      const deps = await makeStart();
+      const off = [guardIds.contextLimits];
+      registerRoot(deps, HOME, OTHER_NODE_ID, [], origin);
+      seedConfig(deps, HOME, withGuardsOff(sampleConfig(), off));
+      deps.seed(STORE, guardStoreText(NODE_ID, HOME, off, new Date(NOW)));
+      const ran = await ranFor(withFirstConfigReadFault(deps, HOME));
+      expect(ran).toEqual({ code: 0, out: [outputOf(composeRoleText(workerFileTemplatesFor(sampleConfig(), SETUP, allOn)))], err: [] });
+      expect(ran.out[0]?.includes('Do not compact or clear yourself.')).toBe(true);
     });
   });
 

@@ -36,7 +36,9 @@ import { acceptSetupText } from '../helpers/setup-acceptance.js';
 import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { countReadsOf } from '../helpers/read-count.js';
-import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OFF_GUARD, OTHER_NODE_ID, withGuardsOff,
+} from '../helpers/guarded-node.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 
 const ROOT = '/w/node';
@@ -541,6 +543,27 @@ describe.each(FOLDER_ORIGINS)('init: the guard of approval delegation on a regis
     expect(sink.errors.join('').includes('--yes cannot set the approval point merge to delegated')).toBe(on);
     expect(recordsOf(deps)).toEqual([]);
     if (!on) expect(sink.out.join('')).toContain('Approval points: merge delegated, release owner.');
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('init: the guard values of a state folder that is made again on a listed root in %s', (_title, origin) => {
+  const WORKER_FILE = `${STATE}/roles/worker.md`;
+
+  // The first read of the shared config decides that the folder is a node, so this test needs no read fault: init accepts an entry
+  // with another node id and lists the folder again, and only the proof of the guard values must find the other id. The marker
+  // holds only block versions, so the worker file of the state folder is where the guard values show.
+  it('writes the worker file of every guard on when the factory list names another node id at the guard read', async () => {
+    const plain = existing({ state: 'absent', origin });
+    const plainSink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--yes'], plain.deps, plainSink), plainSink.errors.join('')).toBe(0);
+    const allOnWorker = plain.deps.files.get(WORKER_FILE);
+    expect(allOnWorker).toBeDefined();
+    const { deps } = existing({ state: 'absent', origin, entry: OTHER_NODE_ID });
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), [OFF_GUARD]));
+    deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, [OFF_GUARD], deps.now()));
+    const sink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--yes'], deps, sink), sink.errors.join('')).toBe(0);
+    expect(deps.files.get(WORKER_FILE)).toBe(allOnWorker);
   });
 });
 
