@@ -7,7 +7,7 @@ import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { allOn } from '../../src/guards/effective.js';
 import type { HookOutcome } from '../../src/hooks/hook.js';
-import { blockNames, files, guardIds, hookNames, roleText, schemaIds, setupFileOf, type HookEvent } from '../../src/names.js';
+import { blockNames, files, guardIds, guardValues, hookNames, roleText, schemaIds, setupFileOf, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { workerFileTemplatesFor } from '../../src/templates/index.js';
 import {
@@ -20,6 +20,7 @@ import {
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
+import { FOLDER_ORIGINS, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { runHook } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { countReadsOf } from '../helpers/read-count.js';
@@ -763,6 +764,20 @@ describe('factory hook: the role text of a worker session', () => {
     if (fault === 'missing record') deps.files.delete(STORE);
     else deps.seed(STORE, 'invalid');
     expect(await ranFor(deps)).toEqual({ code: 0, out: [outputOf(textOf(SETUP))], err: [] });
+  });
+
+  describe.each(FOLDER_ORIGINS)('the context limit rules in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.contextLimits))('gives the rules only while the guard counts as on: %s', async (_state, setup, on) => {
+      const deps = await makeStart();
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, NODE_ID, [], origin);
+      seedConfig(deps, HOME, withGuardsOff(sampleConfig(), off));
+      if (setup.record !== false) deps.seed(STORE, guardStoreText(NODE_ID, HOME, off, new Date(NOW)));
+      const values = on ? allOn : { [guardIds.contextLimits]: guardValues.off };
+      const ran = await ranFor(deps);
+      expect(ran).toEqual({ code: 0, out: [outputOf(composeRoleText(workerFileTemplatesFor(sampleConfig(), SETUP, values)))], err: [] });
+      expect(ran.out[0]?.includes('Do not compact or clear yourself.')).toBe(on);
+    });
   });
 
   it('reads no guard store at a worker start with no local off value', async () => {

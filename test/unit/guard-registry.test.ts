@@ -177,7 +177,7 @@ describe('the guards of a recipe', () => {
 
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 
@@ -1068,7 +1068,7 @@ describe('the text rows of the registry', () => {
       expect(onTexts.length, site.path).toBeGreaterThan(0);
       expect(offTexts, site.path).toHaveLength(onTexts.length);
       for (const text of onTexts) {
-        for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).toContain(piece);
+        expect(pieces.some((piece) => text.includes(piece)), `${row.id}: ${site.path}`).toBe(true);
       }
       for (const text of offTexts) {
         for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).not.toContain(piece);

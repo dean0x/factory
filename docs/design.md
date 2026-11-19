@@ -1385,12 +1385,13 @@ A missing key means `on`. New nodes and existing nodes with no guard keys keep e
 
 A local `off` takes effect only with a matching record of the owner for that node id and real factory folder. A missing or different record keeps the guard on. A move of the folder ends its guard records. A guard that this version cannot set always stays on, even with a local `off` and a record.
 
-**Text guards.** This version can set four guards:
+**Text guards.** This version can set five guards:
 
 | Guard | Effect of `off` |
 |---|---|
 | `approval-merge` | Replace the merge approval text with the off text and the request log command. |
 | `approval-release` | Replace the release approval text with the off text and the request log command. |
+| `context-limits` | Remove the context limit rules from the role text. |
 | `resume-routines` | Remove the resume and routine instructions. |
 | `install-rules` | Remove the rule about installs outside the session folder. |
 

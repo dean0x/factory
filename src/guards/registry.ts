@@ -57,7 +57,7 @@ const coreGuards: readonly GuardDefinition[] = [
     'Clone and project rules',
     'A clone takes a plain URL and goes only into a missing folder of its own project.',
   ),
-  guardOf(guardIds.contextLimits, 'Context limits', 'A session saves its work before its context is full.', contextKeys),
+  wiredGuard(guardOf(guardIds.contextLimits, 'Context limits', 'A session saves its work before its context is full.', contextKeys)),
   guardOf(
     guardIds.deleteGuard,
     'Delete guard',
