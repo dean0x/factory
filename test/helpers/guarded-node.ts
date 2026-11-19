@@ -1,6 +1,7 @@
+import { failure } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
-import { env, files, guardIds, guardRecords, guardValues, program } from '../../src/names.js';
+import { env, files, guardIds, guardRecords, guardValues, program, roles } from '../../src/names.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from './fake-deps.js';
 import { sampleConfig, seedConfig } from './sample-config.js';
 
@@ -28,6 +29,12 @@ export const withGuardsOff = (config: FactoryConfig, off: readonly string[]): Fa
   ...config,
   core: { ...config.core, guards: { ...config.core.guards, ...Object.fromEntries(off.map((id) => [id, guardValues.off])) } },
 });
+
+/** A config with valid guard keys whose full load fails: the local file names an approval point that the recipe does not have. */
+export const unloadableConfig = (): FactoryConfig => {
+  const sample = sampleConfig();
+  return { ...sample, core: { ...sample.core, approval: { ...sample.core.approval, 'no-such-point': roles.owner } } };
+};
 
 /** The text of a guard store with one owner record: each guard of `off` is off for the node id and the root. */
 export const guardStoreText = (node: string, root: string, off: readonly string[], at: Date): string => {
@@ -60,6 +67,21 @@ export const FOLDER_ORIGINS = [
   ['an own folder', 'own'],
   ['a received folder', 'received'],
 ] as const;
+
+/** The deps with one failed read of the guard store: the read with the place `faulted` in the order of the reads. */
+export const withStoreReadFault = (deps: FakeDeps, faulted: number): Deps => {
+  let reads = 0;
+  return {
+    ...deps,
+    fs: {
+      ...deps.fs,
+      openCheckedCore: async (path, request) => {
+        if (path === GUARD_STORE) reads += 1;
+        return path === GUARD_STORE && reads === faulted ? failure(`cannot read ${path}: EIO`) : deps.fs.openChecked(path, request);
+      },
+    },
+  };
+};
 
 /** The faults of the pre-read of the guard values. Each one gives every guard on. */
 export const PRE_READ_FAULTS: readonly (readonly [string, (deps: FakeDeps) => Deps])[] = [

@@ -1,7 +1,6 @@
 import { resolve } from 'node:path';
 import type { ProxyConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { comparable } from '../core/paths.js';
 import { guardStartWords, guardValues, keys } from '../names.js';
 import type { Guard, GuardContext, GuardSource, GuardState, GuardValue, GuardValues } from './types.js';
 
@@ -11,16 +10,20 @@ export const allOn: GuardValues = Object.freeze({});
 /** The values when no node home was read: every guard is on for every home. */
 export const noGuardHome: GuardContext = Object.freeze({ home: null, values: allOn });
 
+/** A source that gives one read to every site that asks. A command that read the guard state itself gives its sites that read. */
+export const guardSourceOf = (context: GuardContext): GuardSource => Object.freeze({ read: async () => context });
+
 /** The source of every command that finds no home, and of every deps that no pre-read changed. It reads no file. */
-export const allGuardsOn: GuardSource = Object.freeze({ read: async () => noGuardHome });
+export const allGuardsOn: GuardSource = guardSourceOf(noGuardHome);
 
 /**
  * The effective values for the node home that a site acts on: the values of the pre-read when the site names its home, else every
- * guard on. A caller that has the deps gives these values as a parameter to a site that has none.
+ * guard on. The paths compare exactly, with no letter case fold: on a volume that tells letter case apart, two homes that differ
+ * only in letter case are two folders. A caller that has the deps gives these values as a parameter to a site that has none.
  */
 export const guardValuesFor = async (deps: Deps, home: string): Promise<GuardValues> => {
   const read = await deps.guards.read();
-  const same = read.home !== null && comparable(deps, resolve(deps.cwd, read.home)) === comparable(deps, resolve(deps.cwd, home));
+  const same = read.home !== null && resolve(deps.cwd, read.home) === resolve(deps.cwd, home);
   return same ? read.values : allOn;
 };
 
@@ -36,7 +39,7 @@ export interface RecordedGuardValue {
   readonly at: string;
 }
 
-/** A record key uses the real root, in the compared form of the platform. */
+/** A record key uses the real root, exactly as the file system gives it. */
 export interface GuardRecord {
   readonly node: string;
   readonly root: string;

@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { failure } from '../../src/cli/errors.js';
 import { foundHomeOption } from '../../src/cli/home-option.js';
 import type { Deps } from '../../src/core/deps.js';
 import { guardOn } from '../../src/guards/effective.js';
-import { GUARDED_HOME, guardedNode, OFF_GUARD, OTHER_HOME, PRE_READ_FAULTS } from '../helpers/guarded-node.js';
+import { GUARD_STORE, GUARDED_HOME, guardedNode, guardStoreText, OFF_GUARD, OTHER_HOME, PRE_READ_FAULTS } from '../helpers/guarded-node.js';
 import {
   createStyle,
   detectStyle,
@@ -19,6 +20,7 @@ import { commandTable, commandTableFor, globalOptions, parseFlags, type Command 
 import { ok } from '../../src/core/result.js';
 import {
   commands,
+  files,
   flags,
   itemCommands,
   queueCommands,
@@ -1351,22 +1353,46 @@ describe('the command seam of a recipe', () => {
 });
 
 describe('the guard values of a command line', () => {
-  /** A row that prints the install rules guard value for the guarded node and for another node. */
-  const probeRow = (name: string, options: Command['options']): Command => ({
+  /** The guarded node in other letter case: on a volume that tells letter case apart, another folder. */
+  const CASE_HOME = '/h/Guarded';
+  const CONFIG_FILE = `${GUARDED_HOME}/${files.config}`;
+
+  /** A row that prints the install rules guard value for the guarded node and for another home. */
+  const probeRow = (name: string, options: Command['options'], other: string = OTHER_HOME): Command => ({
     name,
     summary: 'A row for the test.',
     usage: `factory ${name}`,
     options,
     run: async (_given, deps) => {
-      const text = `${await guardOn(deps, OFF_GUARD, GUARDED_HOME)} ${await guardOn(deps, OFF_GUARD, OTHER_HOME)}`;
+      const text = `${await guardOn(deps, OFF_GUARD, GUARDED_HOME)} ${await guardOn(deps, OFF_GUARD, other)}`;
       return ok({ lines: [{ level: 'text', text }], json: { schema: 'test/v1' }, warnings: [], failed: false });
     },
   });
   const [software] = recipes;
   const registry: RecipeRegistry = [{
     ...software,
-    commands: (host) => [...(software.commands?.(host) ?? []), probeRow('probe', { [flags.home]: foundHomeOption }), probeRow('probe-plain', {})],
+    commands: (host) => [
+      ...(software.commands?.(host) ?? []),
+      probeRow('probe', { [flags.home]: foundHomeOption }),
+      probeRow('probe-plain', {}),
+      probeRow('probe-case', { [flags.home]: foundHomeOption }, CASE_HOME),
+    ],
   }];
+
+  /** The deps where the first read of the shared file of the node fails: the read of the node id in the registration check. */
+  const withFirstConfigReadFault = (deps: FakeDeps): Deps => {
+    let reads = 0;
+    return {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        readTextLimited: async (path, maxBytes, decode) => {
+          if (path === CONFIG_FILE) reads += 1;
+          return path === CONFIG_FILE && reads === 1 ? failure(`cannot read ${path}: EIO`) : deps.fs.readTextLimited(path, maxBytes, decode);
+        },
+      },
+    };
+  };
   const runProbe = async (argv: readonly string[], deps: Deps) => {
     const sink = captureSink();
     const code = await runCli([...argv], deps, sink, registry);
@@ -1402,6 +1428,29 @@ describe('the guard values of a command line', () => {
 
   it.each(PRE_READ_FAULTS)('gives every guard on to the command and prints nothing more with %s', async (_name, fault) => {
     expect(await runProbe(['probe', '--home', GUARDED_HOME], fault(guardedNode()))).toEqual({ code: 0, out: 'true true\n', err: '' });
+  });
+
+  it.each([
+    ['a shared file that only the full parse refuses', (deps: FakeDeps): Deps => {
+      deps.seed(CONFIG_FILE, `${deps.files.get(CONFIG_FILE) ?? ''}unknown_key: 1\n`);
+      return deps;
+    }],
+    ['a read fault of the node id, for a list entry with another node id', (deps: FakeDeps): Deps => {
+      registerRoot(deps, GUARDED_HOME, 'another-node');
+      return withFirstConfigReadFault(deps);
+    }],
+  ])('gives every guard on when the registration check can not read the node id: %s', async (_name, fault) => {
+    expect(await runProbe(['probe', '--home', GUARDED_HOME], fault(guardedNode()))).toEqual({ code: 0, out: 'true true\n', err: '' });
+  });
+
+  it('gives no effect to a record whose root differs from the home only in letter case', async () => {
+    const deps = guardedNode({ os: 'darwin' });
+    deps.seed(GUARD_STORE, guardStoreText(sampleConfig().core.node.id, CASE_HOME, [OFF_GUARD], deps.now()));
+    expect(await runProbe(['probe', '--home', GUARDED_HOME], deps)).toEqual({ code: 0, out: 'true true\n', err: '' });
+  });
+
+  it('gives every guard on to a home that differs from the home of the command only in letter case', async () => {
+    expect(await runProbe(['probe-case', '--home', GUARDED_HOME], guardedNode({ os: 'darwin' }))).toEqual({ code: 0, out: 'false true\n', err: '' });
   });
 
   it('gives the hook the values of the home that FACTORY_HOME names', async () => {

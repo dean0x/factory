@@ -6,7 +6,7 @@ import { runState } from '../../src/commands/state.js';
 import { commandLines, commands, commandText, dirs, guardIds, maxFileBytes, schemaIds, stateCommands, stateGuard } from '../../src/names.js';
 import { createFakeDeps, exited, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { STATE_GIT, STATE_GIT_WORDS, withoutStateWords } from '../helpers/git-fake.js';
-import { FOLDER_ORIGINS, GUARDED_HOME, guardedNode, guardStatesOf } from '../helpers/guarded-node.js';
+import { FOLDER_ORIGINS, GUARDED_HOME, guardedNode, guardStatesOf, unloadableConfig } from '../helpers/guarded-node.js';
 import { captureSink } from '../helpers/sink.js';
 
 const STATE = '/h/node/.factory';
@@ -431,6 +431,14 @@ describe.each(FOLDER_ORIGINS)('the state guard command in %s, as git runs it in 
     const code = await runCli([commands.state, stateCommands.guard], deps, sink);
     expect(code).toBe(on ? 1 : 0);
     expect(sink.errors.join('').includes('B-2')).toBe(on);
+  });
+
+  it('keeps the delete guard on when the config has valid guard keys but does not load', async () => {
+    const deps = guardedNode(
+      { cwd: STATE_OF_NODE, run: gitFor({ head: board(['B-1', 'B-2']), index: board(['B-1']) }) },
+      { off: [guardIds.deleteGuard], origin, config: unloadableConfig() },
+    );
+    expect(await runCli([commands.state, stateCommands.guard], deps, captureSink())).toBe(1);
   });
 
   it('keeps the delete guard on for a folder that does not have the name of the state folder', async () => {
