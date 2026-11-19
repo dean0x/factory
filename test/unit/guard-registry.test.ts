@@ -89,6 +89,67 @@ const recordExceptions = [
   { path: 'src/core/access.ts', symbol: 'accessFaultFor', reason: proofReason },
 ];
 
+/** The reason of a pure helper of the settings check: `judgeSettings` reads the value and drops its findings when the guard is off. */
+const analyzerReason = 'A pure analysis of one settings text; judgeSettings reads the value and keeps only the permission stop when the guard is off.';
+/** The reason of a part of the folder scan: each caller of the scan reads the value and drops these findings when the guard is off. */
+const scanPartReason = 'A part of the folder scan; scanSettings, checkFolderSettings and checkTrackedSettings read the value and drop its findings when the guard is off.';
+/** The reason of a part of the target check of the settings write. */
+const targetPartReason = 'A part of the target check; readTarget and requireHookConsent read the value and skip this call when the guard is off.';
+/** The reason of a command step that writes the hook settings through the one writer. */
+const consentCallerReason = 'Calls requireHookConsent, ensureHookSettings or holdsOwnHook, which read the value.';
+
+/**
+ * The listed sites of a code row of a wired guard whose own declaration does not name the guard id. Each one has its reason: the
+ * value is read by its caller or its callee, or the site holds a stop that the guard shares with a guard that this version cannot
+ * set, so the stop stays on.
+ */
+const unreadSiteExceptions: readonly { readonly row: string; readonly path: string; readonly symbol: string; readonly reason: string }[] = [
+  { row: 'delegation-record', path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Merges the mode of the local file; delegationReport reads the value and gives the mode that counts.' },
+  { row: 'delegation-store-fallback', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
+  { row: 'delegation-move', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
+  { row: 'delegation-owner-channel', path: 'src/commands/init-approval.ts', symbol: 'ownerCanSet', reason: 'Decides only whether init asks and which points it records; recordApprovals reads the value and counts an off point with no record.' },
+  { row: 'delegation-no-flag', path: 'src/commands/init-approval.ts', symbol: 'ownerCanSet', reason: 'Decides only whether init asks and which points it records; recordApprovals reads the value and counts an off point with no record.' },
+  { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'requireOwnerChannel', reason: 'The channel check of every owner record; approvalsFromFlags reads the value before it calls it, and the release scope records share it.' },
+  { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'putRecord', reason: 'The one writer of owner records, which the release scope records share; recordApprovals reads the value and writes no record for an off point.' },
+  { row: 'delegation-warning', path: 'src/commands/root-content.ts', symbol: 'delegationFindings', reason: 'Lists the unmatched points of delegationReport, which reads the value and gives none when the guard is off.' },
+  { row: 'delete-hook', path: 'src/state/head-board.ts', symbol: 'earlierReadableBoard', reason: 'A helper of runStateGuard, which reads the value and lets the commit pass when the guard is off.' },
+  { row: 'delete-hook-install', path: 'src/commands/init-state.ts', symbol: 'makeStateFolder', reason: 'Calls guardPlanOf, which reads the value and plans no install when the guard is off.' },
+  { row: 'delete-hook-install', path: 'src/state/guard.ts', symbol: 'folderRefusal', reason: 'A refusal text of installGuard, which runs only when guardPlanOf, which reads the value, plans an install.' },
+  { row: 'delete-hook-install', path: 'src/state/guard.ts', symbol: 'gitFolderRefusal', reason: 'A refusal text of installGuard, which runs only when guardPlanOf, which reads the value, plans an install.' },
+  { row: 'delete-hook-required', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Calls requireGuardOn, which reads the value.' },
+  { row: 'delete-hook-required', path: 'src/state/board-commit.ts', symbol: 'commitLocked', reason: 'Calls requireGuardOn and requireNoLostIds, which read the value.' },
+  { row: 'delete-hook-warning', path: 'src/commands/start.ts', symbol: 'runStart', reason: 'Calls guardWarning, which reads the value.' },
+  { row: 'delete-hook-warning', path: 'src/state/guard.ts', symbol: 'guardPlanWarnings', reason: 'A pure text of the plan of guardPlanOf, which reads the value and gives no warning when the guard is off.' },
+  { row: 'no-lost-item-ids', path: 'src/commands/upgrade.ts', symbol: 'runUpgrade', reason: 'Reaches requireNoLostIds through lockedBoardText, and requireNoLostIds reads the value.' },
+  { row: 'no-lost-item-ids', path: 'src/state/item-ids.ts', symbol: 'lostItemIds', reason: 'A pure comparison of two board texts; requireNoLostIds reads the value.' },
+  { row: 'settings-check-fails-closed', path: 'src/commands/root-content.ts', symbol: 'inUserFolder', reason: 'Keeps every read out of the user folder of Claude Code; with the guard off the scan still never reads there, which loosens nothing.' },
+  { row: 'settings-check-fails-closed', path: 'src/commands/root-content.ts', symbol: 'tooManySettings', reason: scanPartReason },
+  { row: 'settings-check-fails-closed', path: 'src/commands/root-content.ts', symbol: 'settingsOfFolder', reason: scanPartReason },
+  { row: 'settings-check-fails-closed', path: 'src/commands/root-content.ts', symbol: 'requireNoFailures', reason: 'The stop over a list of findings, shared with a row of the folder scan guard; the settings findings in the list come only from callers that read the value.' },
+  { row: 'settings-check-fails-closed', path: 'src/commands/setup-check.ts', symbol: 'trackedSetOfRoot', reason: 'Its tracked link stop and its cap stop are shared with rows of the setup text, folder trust and folder scan guards, which this version cannot set, so they stay on.' },
+  { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
+  { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'envPrefixIn', reason: analyzerReason },
+  { row: 'settings-env-traffic', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
+  { row: 'settings-env-state', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
+  { row: 'settings-hooks-kept', path: 'src/safety/settings.ts', symbol: 'disablesHooks', reason: analyzerReason },
+  { row: 'settings-commands', path: 'src/safety/settings.ts', symbol: 'runsCommands', reason: analyzerReason },
+  { row: 'settings-wide-allow', path: 'src/safety/settings.ts', symbol: 'allowsAnyLockRunCommand', reason: analyzerReason },
+  { row: 'settings-wide-allow', path: 'src/safety/settings.ts', symbol: 'allowsEveryUse', reason: analyzerReason },
+  { row: 'settings-default-mode', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
+  { row: 'settings-mcp-approval', path: 'src/safety/settings.ts', symbol: 'approvesMcp', reason: analyzerReason },
+  { row: 'settings-cross-session', path: 'src/safety/settings.ts', symbol: 'heldCrossSession', reason: analyzerReason },
+  { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanSettings', reason: 'Calls checkFolderSettings, which reads the value and drops its findings when the guard is off.' },
+  { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanTrackedSettings', reason: 'Calls checkTrackedSettings, which reads the value and drops its findings when the guard is off.' },
+  { row: 'settings-write-consent', path: 'src/commands/init-hook.ts', symbol: 'checkHookConsent', reason: consentCallerReason },
+  { row: 'settings-write-consent', path: 'src/commands/start.ts', symbol: 'settleHook', reason: consentCallerReason },
+  { row: 'settings-write-consent', path: 'src/upgrade/hook-settings.ts', symbol: 'planHookSettings', reason: consentCallerReason },
+  { row: 'settings-write-consent', path: 'src/upgrade/hook-settings.ts', symbol: 'applyHookSettings', reason: consentCallerReason },
+  { row: 'settings-write-changed', path: 'src/core/claude-settings.ts', symbol: 'ensureHookSettings', reason: 'Calls askConsent and planAfterConsent, which read the value.' },
+  { row: 'settings-write-no-link', path: 'src/core/claude-settings.ts', symbol: 'checkParts', reason: 'Takes the value of readTarget as an argument and lets a link pass when the guard is off.' },
+  { row: 'settings-write-inside-folder', path: 'src/core/claude-settings.ts', symbol: 'requireInsideSession', reason: targetPartReason },
+  { row: 'settings-write-user-folder', path: 'src/core/claude-settings.ts', symbol: 'requireOutsideUserFolder', reason: targetPartReason },
+];
+
 const software = {
   guards: guardsFor(softwareRecipe),
   rows: guardRowsFor(softwareRecipe),
@@ -187,7 +248,7 @@ describe('the guards of a recipe', () => {
     ]);
   });
 
-  it('reads the value of a wired guard in a top-level declaration of each of its code rows', () => {
+  it('reads the value of a wired guard in each listed site of each of its code rows, or names the reason of a site that does not', () => {
     const codeRows = software.rows.filter((row) =>
       row.kind === guardKinds.code && software.guards.some((guard) => guard.id === row.guard && guard.wired));
     const paths = [...new Set(codeRows.flatMap((row) => row.sites.map((site) => site.path)))];
@@ -197,9 +258,16 @@ describe('the guards of a recipe', () => {
       return core === undefined ? `softwareGuardIds.${Object.entries(softwareGuardIds).find(([, value]) => value === id)?.[0] ?? id}` : `guardIds.${core[0]}`;
     };
     expect(codeRows.length).toBeGreaterThan(0);
-    const unread = codeRows.filter((row) =>
-      !sourceScan.declarationTextsOf(sources, row.sites).some((text) => text?.includes(idNameOf(row.guard)) === true));
-    expect(unread.map((row) => row.id)).toEqual([]);
+    const unread = codeRows.flatMap((row) => {
+      const texts = sourceScan.declarationTextsOf(sources, row.sites);
+      return row.sites.filter((_site, index) => texts[index]?.includes(idNameOf(row.guard)) !== true)
+        .map((site) => `${row.id} ${site.path} ${site.symbol}`);
+    });
+    const excepted = unreadSiteExceptions.map((site) => `${site.row} ${site.path} ${site.symbol}`);
+    expect(duplicatesOf(excepted)).toEqual([]);
+    expect(unreadSiteExceptions.filter((site) => site.reason.trim() === '')).toEqual([]);
+    expect(unread.filter((site) => !excepted.includes(site))).toEqual([]);
+    expect(excepted.filter((site) => !unread.includes(site))).toEqual([]);
   });
 
   it('marks a guard as wired without a change to its definition', () => {
