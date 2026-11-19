@@ -41,8 +41,29 @@ import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE } from '../helpers/slot-fixture.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
 
-/** A test-only hook event: the hook prints the guard value that its deps give for the install rules guard of the guarded node. */
-const guardProbe = vi.hoisted(() => ({ event: 'GuardProbe', home: '/h/guarded' }));
+/**
+ * A test-only hook event: the hook prints the guard value that its deps give for the install rules guard of the guarded node. An
+ * init with the test-only node name prints that value for the home of the init, then for the guarded node.
+ */
+const guardProbe = vi.hoisted(() => ({ event: 'GuardProbe', home: '/h/guarded', initName: 'guard-probe' }));
+
+vi.mock('../../src/commands/init.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/commands/init.js')>();
+  const effective = await import('../../src/guards/effective.js');
+  const { guardIds } = await import('../../src/names.js');
+  const { ok: okOf } = await import('../../src/core/result.js');
+  const { resolve } = await import('node:path');
+  return {
+    ...actual,
+    runInit: async (...args: Parameters<typeof actual.runInit>) => {
+      const [deps, options] = args;
+      if (options.name !== guardProbe.initName) return actual.runInit(...args);
+      const homes = [resolve(deps.cwd, options.home ?? '.'), guardProbe.home];
+      const text = (await Promise.all(homes.map((home) => effective.guardOn(deps, guardIds.installRules, home)))).join(' ');
+      return okOf({ lines: [{ level: 'text' as const, text }], json: { schema: 'test/v1' }, warnings: [], failed: false });
+    },
+  };
+});
 
 vi.mock('../../src/hooks/hook.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/hooks/hook.js')>();
@@ -1368,6 +1389,15 @@ describe('the guard values of a command line', () => {
     const deps = withFsWatch(guardedNode({ cwd: GUARDED_HOME }), (method) => calls.push(method));
     expect(await runProbe(['probe-plain'], deps)).toEqual({ code: 0, out: 'true true\n', err: '' });
     expect(calls).toEqual([]);
+  });
+
+  it.each([
+    ['a new folder by the home flag, run in the node', ['--home', '/h/new'], GUARDED_HOME, 'true true'],
+    ['a new folder inside the node, with no home flag', [], `${GUARDED_HOME}/new`, 'true false'],
+    ['the node by the home flag', ['--home', GUARDED_HOME], '/w', 'false false'],
+  ])('gives init of %s the values of its home, and every guard on for a folder that is not a node yet', async (_name, words, cwd, shown) => {
+    const result = await runProbe(['init', '--name', guardProbe.initName, ...words], guardedNode({ cwd }));
+    expect(result).toEqual({ code: 0, out: `${shown}\n`, err: '' });
   });
 
   it.each(PRE_READ_FAULTS)('gives every guard on to the command and prints nothing more with %s', async (_name, fault) => {
