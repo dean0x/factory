@@ -1608,6 +1608,15 @@ describe('restart and reboot of a worker whose new pane waits on a folder trust 
     expect(output.exitCode).toBeUndefined();
     expect(made.deps.warned.join('\n')).toContain('resume not confirmed');
   });
+
+  it('reboot keeps exit 1 and the old remedy when the new pane shows earlier conversation text with "trust" but no "folder" on that line', async () => {
+    const made = await make({ newPaneScreen: 'The work copy is trusted now.\nTrust comes from the git root.\n> ', program: silentBeta });
+    const output = await succeeded(reboot(made));
+    expect(output.failed).toBe(true);
+    expect(output.exitCode).toBeUndefined();
+    expect(made.deps.warned.join('\n')).toContain('resume not confirmed');
+    expect(made.deps.warned.join('\n')).not.toContain('Answer each folder trust question');
+  });
 });
 
 describe('restart: the proxy of the worker', () => {

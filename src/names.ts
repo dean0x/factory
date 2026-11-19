@@ -1410,11 +1410,14 @@ export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionS
 /**
  * The words that mark the folder trust question of Claude Code on the screen of a worker pane. Claude Code asks it for each folder of
  * the launch (the work copy, or a folder of `--add-dir`) that the user did not trust, and an interactive session holds back every hook
- * until the answer, so the `launchConfirm.event` line of a resume can not come. The exact text of the question is not documented, so
- * `pattern` is one word in any case. Only a resume that the line does not confirm reads the screen, once. A match changes the message
- * and the remedy, never the exit code.
+ * until the answer, so the `launchConfirm.event` line of a resume can not come. Only a resume that the line does not confirm reads the
+ * screen, once. `pattern` matches a screen when one line holds both the word "trust" and the word "folder", in any case. The public
+ * title of the question in VS Code is "Trust this folder in Claude Code?"; the terminal text is not documented, so the two words are a
+ * guess until a live check. A pane that did not load shows the end of the earlier conversation, and a line there with both words can
+ * still match. A match changes the message and the remedy of `worker resume` and `restart` (exit 3 in both cases), and it changes the
+ * exit code of `reboot` from 1 to 3 when each worker that did not start again matches.
  */
-export const trustQuestion = { pattern: /\btrust/i } as const;
+export const trustQuestion = { pattern: /^(?=.*\btrust\b)(?=.*\bfolder\b)/im } as const;
 
 /** What a session reset of a worker needs to name for one kind: the flag, the typed line, the events that confirm it, and the verb of the verdict. */
 interface ResetKindWords {

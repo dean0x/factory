@@ -101,8 +101,8 @@ const notConfirmed = (request: LaunchConfirmRequest, reason: string): CliResult<
 };
 
 /**
- * True when the screen of the pane shows the folder trust question (`trustQuestion`). It reads the screen once and types nothing. A
- * capture that fails counts as no question, so the caller keeps its own verdict.
+ * True when one line of the screen of the pane holds the words of the folder trust question (`trustQuestion`). It reads the screen
+ * once and types nothing. A capture that fails counts as no question, so the caller keeps its own verdict.
  */
 const showsTrustQuestion = async (deps: Deps, paneId: string): Promise<boolean> => {
   const args = capturePaneArgs(paneId);

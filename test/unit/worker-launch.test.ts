@@ -1030,6 +1030,25 @@ describe('the launch of a worker: a resume whose pane shows a folder trust quest
     expect(error.hint).not.toContain('trust');
   });
 
+  it.each([
+    ['earlier conversation text with "trusted" and "trust", and no "folder" on those lines', 'The work copy is trusted now.\nTrust comes from the git root.\n> '],
+    ['"trust" and "folder" on two different lines', 'Do you trust it?\nThe folder is the work copy.\n> '],
+  ])('keeps the "resume not confirmed" result (exit 3) when the screen shows %s', async (_words, screen) => {
+    const made = make({ tmux: { newPaneScreen: screen }, program: noLine });
+    const error = await failed(made, { resumeId: UUID });
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain(NOT_CONFIRMED);
+    expect(error.hint).toContain('"factory worker summon alpha"');
+    expect(error.hint).not.toContain('trust');
+  });
+
+  it('names the trust question when one line of the screen holds "Trust this folder"', async () => {
+    const made = make({ tmux: { newPaneScreen: 'Trust this folder in Claude Code?\n> 1. Yes\n  2. No\n' }, program: noLine });
+    const error = await failed(made, { resumeId: UUID });
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.hint).toBe(TRUST_REMEDY);
+  });
+
   it('keeps the "resume not confirmed" result (exit 3) when the capture of the screen fails', async () => {
     const made = make({ tmux: { newPaneScreen: TRUST_SCREEN, failing: 'capture-pane' }, program: noLine });
     const error = await failed(made, { resumeId: UUID });
