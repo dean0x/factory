@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, unlink, writeFi
 import { join, resolve, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
-import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, tmuxSocketOf, treeOf, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
 import { loadNote, scaled } from './load.js';
 
@@ -91,9 +91,6 @@ const outOf = async (name: string): Promise<string> => (await readFile(join(outD
 /** The panes of the workers window, as `<pane id> <worker mark>` lines. A pane with no mark has an empty mark. */
 const workerPanes = async (): Promise<string[]> =>
   (await tmux(['list-panes', '-t', '=demo:workers', '-F', '#{pane_id} #{@worker}'])).stdout.split('\n').filter((line) => line !== '');
-
-/** Every path below a folder, as relative paths. */
-const treeOf = async (folder: string): Promise<string[]> => (await readdir(folder, { recursive: true })).sort();
 
 /**
  * One line for a path and one for each entry below it: the relative path, the mode with its type bits, the time of the last

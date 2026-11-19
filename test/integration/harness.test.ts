@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { makeSandbox, removeOpenSandboxes, tmuxSocketOf } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, treeOf } from './harness.js';
 
 afterAll(removeOpenSandboxes);
 
@@ -41,6 +41,36 @@ describe('the sandbox of the integration tests', () => {
     expect(box.node.startsWith(box.root)).toBe(true);
     await box.remove();
     expect(existsSync(box.env['HOME'] ?? '')).toBe(false);
+  });
+});
+
+describe('the folder tree of a test', () => {
+  // Issue 64: background git maintenance makes and removes .git/objects/maintenance.lock at any time. The tree must not show it.
+  it('stays the same when git makes or removes a file below a .git folder', async () => {
+    const box = await makeSandbox();
+    const web = await box.makeProject('web');
+    expect((await box.git(web, ['commit', '--allow-empty', '-q', '-m', 'first'])).code).toBe(0);
+    const before = await treeOf(box.root);
+
+    await writeFile(join(web, '.git', 'objects', 'maintenance.lock'), '');
+    expect(await treeOf(box.root)).toEqual(before);
+    await rm(join(web, '.git', 'objects', 'maintenance.lock'));
+    expect(await treeOf(box.root)).toEqual(before);
+    await box.remove();
+  });
+
+  it('shows a new file or folder outside a .git folder, and the .git entry of a new work copy', async () => {
+    const box = await makeSandbox();
+    const web = await box.makeProject('web');
+    expect((await box.git(web, ['commit', '--allow-empty', '-q', '-m', 'first'])).code).toBe(0);
+    const before = await treeOf(box.root);
+
+    await writeFile(join(web, 'notes.txt'), 'new\n');
+    const copy = join(box.root, 'copies', 'alpha');
+    expect((await box.git(web, ['worktree', 'add', '-q', '-b', 'worker/alpha', copy])).code).toBe(0);
+    const added = (await treeOf(box.root)).filter((path) => !before.includes(path));
+    expect(added).toEqual(['copies', 'copies/alpha', 'copies/alpha/.git', 'web/notes.txt']);
+    await box.remove();
   });
 });
 
