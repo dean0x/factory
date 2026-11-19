@@ -544,6 +544,18 @@ describe.each(FOLDER_ORIGINS)('init: the guard of approval delegation on a regis
     expect(recordsOf(deps)).toEqual([]);
     if (!on) expect(sink.out.join('')).toContain('Approval points: merge delegated, release owner.');
   });
+
+  it.each(guardStatesOf(guardIds.approvalDelegation))('sets a delegation with no terminal window only while the guard is off, with the guard %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const { deps } = existing({ origin });
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), off));
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, off, deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', ROOT, '--approval', 'merge=delegated', '--approval', 'release=owner'], deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('the approval point merge cannot be delegated: an approval record needs a terminal window')).toBe(on);
+    expect(recordsOf(deps)).toEqual([]);
+  });
 });
 
 describe.each(FOLDER_ORIGINS)('init: the guard values of a state folder that is made again on a listed root in %s', (_title, origin) => {
