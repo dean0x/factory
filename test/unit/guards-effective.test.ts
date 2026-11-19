@@ -95,7 +95,7 @@ describe('effective guard values', () => {
 });
 
 describe('the guard value of a code site', () => {
-  const offSource: GuardSource = { read: async () => ({ home: GUARDED_HOME, values: { [OFF_GUARD]: guardValues.off } }) };
+  const offSource: GuardSource = { read: async () => ({ home: GUARDED_HOME, values: { [OFF_GUARD]: guardValues.off }, state: null }) };
   const deps = withGuards(createFakeDeps(), offSource);
 
   it('reads off only for the guard that the pre-read found off', async () => {

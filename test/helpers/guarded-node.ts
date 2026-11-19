@@ -20,6 +20,8 @@ export interface GuardedSetup {
   readonly record?: boolean;
   /** The origin of the folder in the factory list. Default: none, so the folder counts as received. */
   readonly origin?: string;
+  /** The node id of the entry in the factory list. Default: the node id of the config. */
+  readonly listed?: string;
   /** The config of the node before the guard values. Default: the sample config. */
   readonly config?: FactoryConfig;
 }
@@ -47,7 +49,7 @@ export const guardedNode = (options: FakeOptions = {}, setup: GuardedSetup = {})
   const sample = setup.config ?? sampleConfig();
   const off = setup.off ?? [OFF_GUARD];
   seedConfig(deps, GUARDED_HOME, withGuardsOff(sample, off));
-  registerRoot(deps, GUARDED_HOME, sample.core.node.id, [], setup.origin);
+  registerRoot(deps, GUARDED_HOME, setup.listed ?? sample.core.node.id, [], setup.origin);
   if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(sample.core.node.id, GUARDED_HOME, off, deps.now()));
   return deps;
 };
@@ -99,3 +101,25 @@ export const PRE_READ_FAULTS: readonly (readonly [string, (deps: FakeDeps) => De
   }],
   ['a file call that throws', (deps) => ({ ...deps, fs: { ...deps.fs, stat: () => Promise.reject(new Error('EIO')) } })],
 ];
+
+/** The node id that the factory list names in a test of a failed proof: not the id of the config. */
+export const OTHER_NODE_ID = 'other-node';
+
+/**
+ * The deps whose first read of the shared config of `home` fails. The registration check of a command lets a failed read of the node
+ * id pass, so with a factory list entry of `OTHER_NODE_ID` only the proof of the guard values finds the other id.
+ */
+export const withFirstConfigReadFault = <T extends Deps>(deps: T, home = GUARDED_HOME): T => {
+  const path = `${home}/${files.config}`;
+  let reads = 0;
+  return {
+    ...deps,
+    fs: {
+      ...deps.fs,
+      readTextLimited: async (file, maxBytes) => {
+        if (file === path) reads += 1;
+        return file === path && reads === 1 ? failure(`cannot read ${file}: EIO`) : deps.fs.readTextLimited(file, maxBytes);
+      },
+    },
+  };
+};

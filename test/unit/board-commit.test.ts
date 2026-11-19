@@ -228,7 +228,7 @@ describe('the board commit helper: a change that loses an item id', () => {
   });
 
   it('commits the change while the delete guard of the node is off, and stops it while the guard is on for another home', async () => {
-    const offFor = (home: string): GuardSource => ({ read: async () => ({ home, values: { [guardIds.deleteGuard]: guardValues.off } }) });
+    const offFor = (home: string): GuardSource => ({ read: async () => ({ home, values: { [guardIds.deleteGuard]: guardValues.off }, state: null }) });
     const { change } = changing(ok(texts({ 'board.json': board(['B-1']) })));
     const off = await setup();
     expect(await commitBoardChange(withGuards(off.deps, offFor(HOME)), LAYOUT, request({ change }))).toEqual({ ok: true, value: { committed: true } });

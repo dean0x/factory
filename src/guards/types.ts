@@ -1,3 +1,4 @@
+import type { GuardReadState } from '../core/guard-records.js';
 import type { guardKinds, guardListWords, guardValues } from '../names.js';
 
 /** The kind of a row: a check in code, or a rule in the role text. */
@@ -9,10 +10,17 @@ export type GuardValue = (typeof guardValues)[keyof typeof guardValues];
 /** Guard values by id, shared by config and text consumers. */
 export type GuardValues = Readonly<Record<string, GuardValue>>;
 
-/** The effective guard values of one node home. For every other home, and for a null home, every guard is on. */
+/** How much of the guard store a read needs: the store only when a local value is off, or always (a report or the prefix check). */
+export type GuardNeed = 'when-off' | 'always';
+
+/**
+ * The effective guard values of one node home. For every other home, and for a null home, every guard is on. `state` is the one
+ * read that gave the values, and null only while a command line has made no read yet.
+ */
 export interface GuardContext {
   readonly home: string | null;
   readonly values: GuardValues;
+  readonly state: GuardReadState | null;
 }
 
 /**

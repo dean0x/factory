@@ -18,7 +18,7 @@ import {
 import { entryProblemOf, markerProblemOf, reasonOf, rootRefusalOf } from '../core/home.js';
 import { recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { readGuardState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import { guardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { err, ok } from '../core/result.js';
@@ -223,7 +223,7 @@ const checkExisting = async (
   return ok({
     root: root.value,
     config: config.value,
-    guards: (await readGuardState(deps, home, config.value, 'when-off')).values,
+    guards: (await guardReadOf(deps, home, config.value, 'when-off')).state.values,
     standing: standing.value,
     repair: repair.value,
     guardDue,

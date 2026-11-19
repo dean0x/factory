@@ -4,9 +4,9 @@ import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, noConsentRemedy, ownDenyRulesOf, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
-import { withGuards, type AttachedEnd, type Deps } from '../core/deps.js';
-import { readGuardState, type GuardReadState } from '../core/guard-records.js';
-import { guardSourceOf } from '../guards/effective.js';
+import type { AttachedEnd, Deps } from '../core/deps.js';
+import type { GuardReadState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import type { GuardValues } from '../guards/types.js';
 import { guardsFor } from '../guards/registry.js';
 import { readHookSettings } from '../workers/session-checks.js';
@@ -529,8 +529,7 @@ export const runStart = async (
   const notes = await settleLocalMode(base, home, !dryRun);
   if (!notes.ok) return notes;
   // One read of the guard values serves the summary, the render and every step of the run that acts on a guard.
-  const guards = await readGuardState(base, home, loaded.value, 'always');
-  const deps = withGuards(base, guardSourceOf({ home, values: guards.values }));
+  const { deps, state: guards } = await guardReadOf(base, home, loaded.value, 'always');
 
   // The root checks come before the tool check, the proxy health request and any launch, also in a dry run. A warning is
   // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.

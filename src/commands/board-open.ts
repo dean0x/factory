@@ -5,7 +5,7 @@ import type { CliResult } from '../cli/errors.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { readGuardState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
@@ -20,14 +20,12 @@ export interface OpenBoard {
   readonly connector: LocalBoard;
 }
 
-/** An off guard gives the record point the same rules as delegated mode. */
+/** An off guard gives the record point the same rules as delegated mode. The delegation check acts on the same guard read. */
 export const recordApprovalMode = async (deps: Deps, { home, config }: OpenBoard, point: string): Promise<ApprovalMode | undefined> => {
   const guard = config.entry.approvalPoints.find((entry) => entry.id === point)?.guard;
-  if (guard !== undefined) {
-    const state = await readGuardState(deps, home, config, 'when-off');
-    if (state.values[guard] === guardValues.off) return values.approvalModes[1];
-  }
-  const modes = await effectiveModes(deps, home, config);
+  const read = await guardReadOf(deps, home, config, 'when-off');
+  if (guard !== undefined && read.state.values[guard] === guardValues.off) return values.approvalModes[1];
+  const modes = await effectiveModes(read.deps, home, config);
   return modes[point];
 };
 

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { failure, type CliError, type CliResult } from '../cli/errors.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { Deps } from '../core/deps.js';
-import { readGuardState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok, type Err } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
@@ -169,7 +169,7 @@ const roleOutcomeOf = async (deps: Deps, home: string, registry: RecipeRegistry)
   try {
     const config = await loadConfig(deps, home, registry);
     if (!config.ok) return refusedWith(roleText.reasons.configNotUsable);
-    const guards = await readGuardState(deps, home, config.value, 'when-off');
+    const guards = (await guardReadOf(deps, home, config.value, 'when-off')).state;
     const read = await readRoleText(deps, { home, config: config.value, guards: guards.values });
     if (!read.ok) return refusedWith(roleText.reasons.readFailed);
     return read.value.kind === 'ok'

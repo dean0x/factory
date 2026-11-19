@@ -2526,6 +2526,8 @@ export const guardRecordWords = {
   writeFault: (reason: string): string => `The guard store cannot be changed: ${reason}. Run "${commandText(commands.doctor)}".`,
   invalidChange: 'The guard change has no valid node, factory folder or value.',
   unreadableRemedy: `move the file away to turn every guard on and remove the prefix records of every ${roles.node}`,
+  unproved: `Every guard is on: the config, the ${roles.node} id or the factory list entry of the ${places.folder} did not pass its check.`,
+  otherHome: `Every guard is on: the guard values of this command belong to another ${places.folder}.`,
 } as const;
 
 /** Parts of the one-line guard summary at start. */

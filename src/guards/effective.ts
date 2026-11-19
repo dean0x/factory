@@ -7,8 +7,8 @@ import type { Guard, GuardContext, GuardSource, GuardState, GuardValue, GuardVal
 /** An absent value means on. This constant has no file or environment dependency. */
 export const allOn: GuardValues = Object.freeze({});
 
-/** The values when no node home was read: every guard is on for every home. */
-export const noGuardHome: GuardContext = Object.freeze({ home: null, values: allOn });
+/** The values when no node home was read: every guard is on for every home, and no read was made. */
+export const noGuardHome: GuardContext = Object.freeze({ home: null, values: allOn, state: null });
 
 /** A source that gives one read to every site that asks. A command that read the guard state itself gives its sites that read. */
 export const guardSourceOf = (context: GuardContext): GuardSource => Object.freeze({ read: async () => context });
@@ -17,14 +17,19 @@ export const guardSourceOf = (context: GuardContext): GuardSource => Object.free
 export const allGuardsOn: GuardSource = guardSourceOf(noGuardHome);
 
 /**
+ * True when the read is of the node home that a site acts on. The paths compare exactly, with no letter case fold: on a volume that
+ * tells letter case apart, two homes that differ only in letter case are two folders.
+ */
+export const isReadOf = (deps: Deps, read: GuardContext, home: string): boolean =>
+  read.home !== null && resolve(deps.cwd, read.home) === resolve(deps.cwd, home);
+
+/**
  * The effective values for the node home that a site acts on: the values of the pre-read when the site names its home, else every
- * guard on. The paths compare exactly, with no letter case fold: on a volume that tells letter case apart, two homes that differ
- * only in letter case are two folders. A caller that has the deps gives these values as a parameter to a site that has none.
+ * guard on. A caller that has the deps gives these values as a parameter to a site that has none.
  */
 export const guardValuesFor = async (deps: Deps, home: string): Promise<GuardValues> => {
   const read = await deps.guards.read();
-  const same = read.home !== null && resolve(deps.cwd, read.home) === resolve(deps.cwd, home);
-  return same ? read.values : allOn;
+  return isReadOf(deps, read, home) ? read.values : allOn;
 };
 
 /** True unless the values hold the guard off. A site with no deps reads the values that its nearest caller with the deps gives. */

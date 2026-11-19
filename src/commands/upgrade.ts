@@ -26,10 +26,10 @@ import { locateHomeFolder, type NodeIdReader } from '../core/home.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { readGuardState, type GuardReadState } from '../core/guard-records.js';
+import { guardReadOf, type GuardRead } from '../core/guard-source.js';
 import { requireConfirmedPrefix } from './launch-checks.js';
 import { isRecord } from '../migrate/inspect.js';
-import { allOn, guardSourceOf } from '../guards/effective.js';
+import { allGuardsOn, allOn } from '../guards/effective.js';
 import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { blockRenamesOf } from '../migrate/files.js';
@@ -344,18 +344,18 @@ export const runUpgrade = async (
   const stateGitignore = await planStateGitignore(base, layout);
   if (!stateGitignore.ok) return stateGitignore;
   let allOnPackage: readonly BlockTemplate[] | undefined;
-  // One read of the guard values serves the approval modes, the render, the prefix gate and every later step of the run.
-  const guardRead: { state: GuardReadState | null } = { state: null };
-  const guardStateOf = async (parsed: FactoryConfig): Promise<GuardReadState> =>
-    (guardRead.state ??= await readGuardState(base, home, parsed, 'always'));
-  const actingOn = (state: GuardReadState | null): Deps => withGuards(base, guardSourceOf({ home, values: state?.values ?? allOn }));
+  // One read of the guard values serves the approval modes, the render, the prefix gate and every later step of the run. An off
+  // value counts only from the config on disk that loads now, never from the config after the migrations.
+  const guardRead: { value: GuardRead | null } = { value: null };
+  const guardReadFor = async (parsed: FactoryConfig): Promise<GuardRead> =>
+    (guardRead.value ??= await guardReadOf(base, home, parsed, 'always'));
   const prefix: { result: CliResult<void> | null } = { result: null };
   const blockSet = await planBlockSet(
     config.value, local.value, upgrade, setupPlan.value.texts,
-    async (parsed) => effectiveModes(actingOn(await guardStateOf(parsed)), home, parsed),
+    async (parsed) => effectiveModes((await guardReadFor(parsed)).deps, home, parsed),
     async (parsed) => {
       allOnPackage = workerFileTemplatesFor(parsed, null, allOn);
-      const guards = await guardStateOf(parsed);
+      const guards = (await guardReadFor(parsed)).state;
       prefix.result = requireConfirmedPrefix(parsed, guards);
       return guards.values;
     },
@@ -364,7 +364,7 @@ export const runUpgrade = async (
   // The same guard read supplies the render and the gate, before acceptance writes or mode changes.
   if (prefix.result === null) return failure(guardConfirmWords.checkIncomplete);
   if (!prefix.result.ok) return prefix.result;
-  const deps = actingOn(guardRead.state);
+  const deps = guardRead.value?.deps ?? withGuards(base, allGuardsOn);
   const setup = await setupPlan.value.accept();
   if (!setup.ok) return setup;
   const modeNotes = await settleLocalMode(deps, home, !options.dryRun);

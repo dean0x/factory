@@ -3,10 +3,12 @@ import { z } from 'zod';
 import { sha256Hex } from '../blocks/managed.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { removedByDisplay } from '../cli/output.js';
+import { loadConfig } from '../config/load.js';
 import { absolutePath, slug } from '../config/primitives.js';
+import { CONFIG_SCHEMA_VERSION } from '../config/schema.js';
 import { guardRulesOf, type GuardProxies, type GuardRecord, type GuardRules } from '../guards/effective.js';
 import { guardsFor } from '../guards/registry.js';
-import type { GuardDefinition, GuardValue, GuardValues } from '../guards/types.js';
+import type { GuardDefinition, GuardNeed, GuardValue, GuardValues } from '../guards/types.js';
 import { commandLines, commandText, env, files, guardRecords, guardRecordWords, guardSetWords, guardValues, privateFile, type CommandText } from '../names.js';
 import type { RecipeEntry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
@@ -14,6 +16,7 @@ import { accessFaultCore } from './access.js';
 import type { Deps, LinkInfo } from './deps.js';
 import { inFactorySession } from './factory-session.js';
 import { freeLock, holdsLock, takeAgeLock } from './file-lock.js';
+import { entryProblemOf } from './home.js';
 import { isSameOrInsideFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { userFileLock, userFileLockPath, userStatePlaceOf, type StateFilePlace } from './private-file.js';
 import { err, ok, type Result } from './result.js';
@@ -244,17 +247,22 @@ export const recordPrefix = async (
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
 };
 
+/**
+ * The guard state of one node home. The store fields (`record`, `prefix`, `fault`, `remedy`, `recordCount`) come from the store
+ * alone, so the prefix check reads them whatever the proof gives. `proof` is null, or the reason that no off value counts.
+ */
 export interface GuardReadState extends GuardRules {
   readonly record: boolean;
   readonly prefix: GuardRecord[typeof keys.prefix];
   readonly fault: string | null;
   readonly remedy: string | null;
   readonly recordCount: number | null;
+  readonly proof: string | null;
 }
 
 /** What the guard values need of a config. A full config fits, and so do the few keys that the pre-read of the guard values parses. */
 export interface GuardConfig {
-  readonly entry: Pick<RecipeEntry, 'guards' | 'guardRows'>;
+  readonly entry: RecipeEntry;
   readonly core: {
     readonly node: { readonly id: string };
     readonly guards: GuardValues;
@@ -267,26 +275,52 @@ export interface GuardConfig {
 export const holdsLocalOff = (config: GuardConfig): boolean =>
   guardsFor(config.entry).some((guard) => guard.wired && config.core.guards[guard.id] === guardValues.off);
 
-/** Read at most one store. A failed read supplies only on values to every consumer. */
-export const readGuardState = async (
-  deps: Deps, home: string, config: GuardConfig, need: 'when-off' | 'always',
-): Promise<GuardReadState> => {
-  const guards = guardsFor(config.entry);
-  const facts = { node: config.core.node.id, local: config.core.guards, shared: config.core.shared_guards, proxies: config.core.proxies };
+/** True when the state holds what the store gave: its records or its fault. */
+export const readsStore = (state: GuardReadState): boolean => state.recordCount !== null || state.fault !== null;
+
+/** The state of a read that has no facts of the node: every guard is on, the store is not read, and `proof` gives the reason. */
+export const unprovedState = (reason: string): GuardReadState => ({
+  ...guardRulesOf([], { node: '', root: '' }), record: false, prefix: null, fault: null, remedy: null, recordCount: null, proof: reason,
+});
+
+/**
+ * The proof of an off value: the full config of the files loads with every guard on and the recipe of the facts, it names the node
+ * id of the facts, and the factory list names the home with that id. The value is the loaded config. A config that is not on disk,
+ * for example a config after migrations that are not written yet, has no proof.
+ */
+const provenConfig = async (deps: Deps, home: string, config: GuardConfig): Promise<Result<GuardConfig, string>> => {
+  const loaded = await loadConfig(deps, home, [config.entry]);
+  if (!loaded.ok || loaded.value.core.node.id !== config.core.node.id) return err(guardRecordWords.unproved);
+  const identity = { id: loaded.value.core.node.id, schema: CONFIG_SCHEMA_VERSION };
+  const listed = await entryProblemOf(deps, home, async () => ok(identity));
+  return listed.ok && listed.value === null ? ok(loaded.value) : err(guardRecordWords.unproved);
+};
+
+/**
+ * Read at most one store. An off value counts only with its proof (`provenConfig`) and a matching record, and its rules use the
+ * proved config. A failed proof or a failed read supplies only on values to every consumer, and the fault stays in the state.
+ */
+export const readGuardState = async (deps: Deps, home: string, config: GuardConfig, need: GuardNeed): Promise<GuardReadState> => {
+  const off = holdsLocalOff(config);
+  const proved = off ? await provenConfig(deps, home, config) : ok(config);
+  const facts = proved.ok ? proved.value : config;
+  const proof = proved.ok ? null : proved.error;
+  const guards = guardsFor(facts.entry);
+  const known = { node: facts.core.node.id, local: facts.core.guards, shared: facts.core.shared_guards, proxies: facts.core.proxies };
   const stateOf = (
     root: string, record: GuardRecord | null, fault: string | null,
     details: { readonly remedy?: string; readonly recordCount?: number } = {},
   ): GuardReadState => ({
-    ...guardRulesOf(guards, { ...facts, root, record, fault }), record: record !== null, prefix: record?.prefix ?? null, fault,
-    remedy: details.remedy ?? null, recordCount: details.recordCount ?? null,
+    ...guardRulesOf(guards, { ...known, root, record, fault: fault ?? proof }), record: record !== null, prefix: record?.prefix ?? null, fault,
+    remedy: details.remedy ?? null, recordCount: details.recordCount ?? null, proof,
   });
-  if (need === 'when-off' && !holdsLocalOff(config)) return stateOf(home, null, null);
+  if (need === 'when-off' && !off) return stateOf(home, null, null);
   const place = await guardPlaceOf(deps, home);
   if (!place.ok) return stateOf(home, null, place.error.message, place.error.hint === undefined ? {} : { remedy: place.error.hint });
   if (place.value.path === null) return stateOf(place.value.root, null, null, { recordCount: 0 });
   const read = await readGuardStore(deps, place.value.path);
   if (!read.ok) return stateOf(place.value.root, null, read.error, { remedy: guardRecordWords.unreadableRemedy });
-  const key = recordKey(facts.node, place.value.root);
+  const key = recordKey(config.core.node.id, place.value.root);
   const found = read.value.find((record) => recordKey(record.node, record.root) === key);
   const record = found === undefined ? null : { ...found, root: place.value.root };
   return stateOf(place.value.root, record, null, { recordCount: read.value.length });

@@ -4,15 +4,15 @@ import { inspectBlock, inspectBlocks, safetyStateOf, type BlockStatus } from '..
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { loadConfig, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { withGuards, type Deps } from '../core/deps.js';
-import { readGuardState, type GuardReadState } from '../core/guard-records.js';
+import type { Deps } from '../core/deps.js';
+import type { GuardReadState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
-import { guardSourceOf } from '../guards/effective.js';
 import { guardsFor } from '../guards/registry.js';
 import type { GuardValues } from '../guards/types.js';
 import { requireSession } from '../launch/tmux-run.js';
@@ -276,8 +276,7 @@ export const prepareRoot = async (base: Deps, home: string, registry: RecipeRegi
   const notes = await settleLocalMode(base, home, true);
   if (!notes.ok) return notes;
   // One read of the guard values serves the checks, the role text and every later step of the launch.
-  const guards = await readGuardState(base, home, config, 'always');
-  const deps = withGuards(base, guardSourceOf({ home, values: guards.values }));
+  const { deps, state: guards } = await guardReadOf(base, home, config, 'always');
   const ready = await requireLaunchReady(deps, home, config, guards);
   if (!ready.ok) return ready;
   return ok({ config, guards, deps, launchNotes: ready.value, notes: notes.value });
