@@ -957,18 +957,19 @@ describe('the name of the worker window in the docs that a user reads', () => {
 
 describe('the install command builds the commit of the hand-over, not the tag name', () => {
   /**
-   * A tag can move. So the command that builds the package takes the full commit SHA of the hand-over, which step 1 of the
+   * A tag can move. So the clone that builds the package goes to the full commit SHA of the hand-over, which step 1 of the
    * guide proved is the commit of the tag. The tag stays the name of the hand-over and the target of that check.
+   * npm 10 can not make a package file from a GitHub URL, so no install command gives npm a git URL.
    */
   const INSTALL_DOCS = ['README.md', 'docs/quick-start.md', 'CHANGELOG.md'];
   const SHA_DOCS = ['README.md', 'docs/quick-start.md'];
   const textOf = (name: string): string => readFileSync(join(__dirname, '..', '..', name), 'utf8');
-  const gitUrlsOf = (text: string): string[] => text.match(/git\+(?:ssh|https):\/\/[^\s"'`]+/g) ?? [];
 
-  it.each(INSTALL_DOCS)('ends every git URL of an install command with #<sha> in %s', (name) => {
-    const urls = gitUrlsOf(textOf(name));
-    expect(urls.length).toBeGreaterThan(0);
-    expect(urls.filter((url) => !url.endsWith('#<sha>'))).toEqual([]);
+  it.each(INSTALL_DOCS)('checks out <sha>, never a tag name, and gives npm no git URL in %s', (name) => {
+    const text = textOf(name);
+    expect(text).toContain('git checkout --detach <sha>');
+    expect(text.match(/git checkout(?! --detach <sha>)[^\n`]*/g) ?? []).toEqual([]);
+    expect(text.match(/git\+(?:ssh|https|file):\/\/[^\s"'`]+/g) ?? []).toEqual([]);
   });
 
   it.each(SHA_DOCS)('says once what <sha> is in %s', (name) => {

@@ -71,7 +71,7 @@ gh auth login
 gh auth setup-git
 ```
 
-`gh auth login` asks you to log in. Keep the default place where gh stores the token. `gh auth setup-git` makes git use gh for the credentials of github.com. Then use the `git+https` URL in part 4.
+`gh auth login` asks you to log in. Keep the default place where gh stores the token. `gh auth setup-git` makes git use gh for the credentials of github.com. Then use the `https` URL in part 4.
 
 Never put a token in a URL. Never write a token in a command or in a file.
 
@@ -121,18 +121,22 @@ This step is a clean-up. It removes the link and keeps the clone that the link p
 cd "$(mktemp -d)"
 ```
 
-Then run this pair of commands in that folder:
+Then run these commands in that folder:
 
 ```sh
-npm pack "git+https://github.com/dean0x/factory.git#<sha>"
+git clone https://github.com/dean0x/factory.git
+cd factory
+git checkout --detach <sha>
+npm ci
+npm pack
 npm install --global ./dean0x-factory-0.2.0.tgz
 ```
 
-npm can not build the program in a one-step global install from git. So this guide builds a package file first, and then installs that file.
+On Path A, you can use `git@github.com:dean0x/factory.git` in the first command.
 
-On Path A, you can use `"git+ssh://git@github.com/dean0x/factory.git#<sha>"` in the first command.
+The first three commands clone the repo and go to the commit `<sha>`. `npm ci` installs the build tools and builds the program from source. `npm pack` builds it again and makes a package file. The last command installs that file. The steps work with npm 10 and npm 11.
 
-The first command builds the program from source, at the commit `<sha>`. It takes some seconds, and a minute or more on a slow network. If the build fails, the command stops with an error. Never install from a branch.
+The build takes some seconds, and a minute or more on a slow network. If a command fails, stop. Do not run the next command. Never install from a branch.
 
 **Step 4. Check the result.** Place: the terminal window of Step 3.
 
@@ -148,30 +152,11 @@ If your shell does not find `factory`, check that the folder `bin` inside the ou
 
 ### Scripts that the install runs
 
-The `npm pack` command runs the build script of factory. It also runs the install scripts of the build tools. npm takes the build tools from the npm registry. These scripts run with the rights of your user. Do not count on `ignore-scripts=true` to stop the build of this command.
+The commands `npm ci` and `npm pack` run the build script `prepare` of factory. `npm ci` also runs the install scripts of the build tools. npm takes the build tools from the npm registry. These scripts run with the rights of your user.
 
-If you do not want to run these scripts before you read the code, use the clone path. Place: a terminal window, in a folder for your clones.
+To read the code before these scripts run, stop after `git checkout --detach <sha>`. Read the code in the clone. Then run `npm ci` and the next commands.
 
-```sh
-git clone https://github.com/dean0x/factory.git
-cd factory
-git checkout v0.2.0-ea.N
-git rev-parse HEAD
-```
-
-On Path A, you can use `git@github.com:dean0x/factory.git` in place of `https://github.com/dean0x/factory.git`.
-
-The command `git rev-parse HEAD` must print the full commit SHA of your build. If it does not, stop and report the problem (part 13). Read the code. Then run these commands in the clone:
-
-```sh
-npm ci
-npm run build
-npm link
-```
-
-The `npm ci` command also runs the build script and the install scripts of the build tools. The clone path gives you the time to read the code first.
-
-The script `prepare` is the build, so `npm run build` builds a second time. Keep this command. If you set `ignore-scripts=true`, `npm ci` does not run `prepare`, but the named command `npm run build` still runs.
+If you set `ignore-scripts=true`, npm does not run the build. Then the package file has no `dist/factory.js`, and the check of Step 4 fails.
 
 ### The installed commit
 
@@ -324,18 +309,6 @@ git log <old-tag>..<new-tag>
 
 **Step 3. Install the new build.** Do Step 1 to Step 4 of part 4 again, with the new tag and the new `<sha>`. Start with the `git ls-remote` check. Use a new empty folder. If you used `npm link` before, run `npm rm -g @dean0x/factory` first.
 
-On the clone path, run these commands in the clone instead. The command `git rev-parse HEAD` must print the full commit SHA of your build. The link to the clone stays, so you need no new `npm link`.
-
-```sh
-git fetch --tags
-git checkout v0.2.0-ea.N
-git rev-parse HEAD
-npm ci
-npm run build
-```
-
-Here too, `npm ci` runs `prepare`, so `npm run build` builds a second time. Keep this command, because `npm run build` still runs when `ignore-scripts=true` makes `npm ci` skip `prepare`.
-
 Claude Code runs `factory hook` from the settings of each session. After the install, the live sessions use the new program for the hook at once.
 
 **Step 4. Upgrade the factory.** Place: a terminal window outside the factory session, in the factory folder.
@@ -362,7 +335,7 @@ The command stops every worker and starts each one again with its session id. Ou
 - **Authority of the owner.** A message between sessions carries no authority of the owner. To give a worker the authority of the owner, type in its pane. Start the text with the owner prefix. The prefix is in `factory.local.yaml`.
 - **devflow.** Factory has no devflow setup yet. If you want devflow, install it as a normal Claude Code plugin.
 - **The installed commit.** No `npm ls` form shows the commit of an install from a package file. The command `npm ls --global @dean0x/factory` shows the version only. Every build prints `0.2.0` for `factory version`. Keep the tag and the full commit SHA of your build, and give both in a problem report. The command `git ls-remote` shows the commit that a tag has now. It does not show the commit that you installed.
-- **The npm version.** The install commands of this guide were tested with npm 10.9.8.
+- **The npm version.** The install commands of this guide were tested with npm 10.9.8 and npm 11.6.0.
 
 ## 13. Report a problem
 
