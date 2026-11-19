@@ -683,10 +683,9 @@ export const checkProxyEnv = (deps: Deps): CheckResult => {
     : check(checkIds.proxyEnv, 'warn', `${env.proxyBaseUrl} is set in the shell. ${program} clears it at launch.`);
 };
 
-/** The warning for a proxy host that is not on this machine. It names no part of the URL: the label holds the host. */
-const REMOTE_PROXY_HOST_NOTE =
-  'The host is not on this machine (127.0.0.1, ::1 or localhost), and it receives the API traffic of the sessions. ' +
-  `Use only a proxy that you control, or set ${keys.session.proxy} to ${values.noProxy} for the session.`;
+/** The note for a proxy host that is not loopback. It names no part of the URL: the label holds the host. */
+const REMOTE_PROXY_HOST = 'The host is not 127.0.0.1, ::1 or localhost. This host receives the API traffic of the sessions.';
+const REMOTE_PROXY_FIX = `Use only a proxy that you control, or set ${keys.session.proxy} to ${values.noProxy} for the session.`;
 
 /**
  * One health request for each proxy in use. The home passed the registration check of the lookup, so its config
@@ -706,12 +705,18 @@ export const checkProxies = async (deps: Deps, state: DocState<FactoryConfig>): 
       const id = `${checkIds.proxy}:${proxy.id}`;
       const health = await checkProxyHealth(deps, proxy);
       const remote = !isLoopbackProxy(proxy.base_url);
-      const hostNote = remote ? ` ${REMOTE_PROXY_HOST_NOTE}` : '';
-      if (health.up) return check(id, remote ? 'warn' : 'ok', `${health.label} answers${remote ? '.' : ''}${hostNote}`);
+      if (health.up) {
+        return remote
+          ? check(id, 'warn', `${health.label} answers. ${REMOTE_PROXY_HOST} ${REMOTE_PROXY_FIX}`)
+          : check(id, 'ok', `${health.label} answers`);
+      }
+      if (proxy.on_fail === values.onFail[1]) {
+        const note = remote ? ` ${REMOTE_PROXY_HOST} ${REMOTE_PROXY_FIX}` : '';
+        return check(id, 'warn', `${health.label} does not answer. ${keys.proxy.onFail} is ${proxy.on_fail}: sessions start without it.${note}`);
+      }
+      // The fix of a proxy that is down already names proxy none, so the host note adds no second fix.
       const fix = `Start the proxy, or set ${keys.session.proxy} to ${values.noProxy} for the session.`;
-      return proxy.on_fail === values.onFail[1]
-        ? check(id, 'warn', `${health.label} does not answer. ${keys.proxy.onFail} is ${proxy.on_fail}: sessions start without it.${hostNote}`)
-        : check(id, 'fail', `${health.label} does not answer. ${fix}${hostNote}`);
+      return check(id, 'fail', `${health.label} does not answer. ${fix}${remote ? ` ${REMOTE_PROXY_HOST}` : ''}`);
     }),
   );
 };
