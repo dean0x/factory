@@ -47,6 +47,7 @@ import {
   dirs,
   env,
   files,
+  guardDoctorWords,
   guardIds,
   homeIndex,
   localSettingsFile,
@@ -90,6 +91,8 @@ export interface RootScan {
   readonly setupFinding: RootFinding | null;
   /** The mode of each approval point and the active delegations, or null when the config is not valid. */
   readonly delegations: DelegationReport | null;
+  /** False when the guard of the settings check is off: then only the check for a skip of the permission prompts ran. */
+  readonly settingsChecked: boolean;
 }
 
 export interface RootCheckResult {
@@ -896,6 +899,7 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
     setup: setup.check,
     setupFinding: setup.finding,
     delegations,
+    settingsChecked: isGuardOn(await guardValuesFor(deps, home), guardIds.settingsCheck),
   };
 };
 
@@ -921,6 +925,13 @@ const OK_TEXT: Readonly<Record<string, string>> = {
   [checkIds.permissionMode]: 'no settings file skips the permission checks, runs a command, or sets the proxy or the credential of the session',
 };
 
+/** The ok text of the permission check when its guard is off: only the check for a skip of the permission prompts ran. */
+const PERMISSION_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  'no settings file skips the permission checks',
+  'the commands, the proxy and the credential in the settings are',
+  guardIds.settingsCheck,
+);
+
 const RESULT_ORDER = [checkIds.rootRepo, checkIds.rootFiles, checkIds.projectPaths, checkIds.permissionMode, checkIds.delegations];
 
 const resultOf = (scan: RootScan, id: string): RootCheckResult => {
@@ -930,7 +941,8 @@ const resultOf = (scan: RootScan, id: string): RootCheckResult => {
     if (scan.delegations === null) return { id, level: 'warn', text: `not checked: ${NOT_VALID}` };
     return { id, level, text: [modesLine(scan.delegations), ...own.map(sentence)].join('. ') };
   }
-  return { id, level, text: own.length === 0 ? (OK_TEXT[id] ?? '') : own.map(sentence).join(' ') };
+  if (own.length > 0) return { id, level, text: own.map(sentence).join(' ') };
+  return { id, level, text: id === checkIds.permissionMode && !scan.settingsChecked ? PERMISSION_ONLY_TEXT : (OK_TEXT[id] ?? '') };
 };
 
 /** One result for each root check, in a fixed order, for `doctor`. */

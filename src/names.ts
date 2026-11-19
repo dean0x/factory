@@ -2553,6 +2553,10 @@ export const guardDoctorWords = {
   recordCount: (count: number): string => `The guard store holds ${count} of ${guardRecords.maxRecords} records.`,
   nearCap: 'The guard store is near its record cap.',
   atCap: 'The guard store is at its record cap.',
+  /** The line of a check that did not run, because its guard is off. */
+  notChecked: (id: string): string => `not checked: the guard ${id} is off`,
+  /** The line of a check of which only a part ran, because its guard is off. */
+  partlyChecked: (done: string, skipped: string, id: string): string => `${done}; ${skipped} ${guardDoctorWords.notChecked(id)}`,
 } as const;
 
 /** The names and notice of the Edit rules for files that the program owns. */

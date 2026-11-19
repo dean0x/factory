@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
-import { checkIds, commands, flags, flagText, guardIds, guardRecordWords, guardStartWords } from '../../src/names.js';
+import { checkIds, commands, flags, flagText, guardDoctorWords, guardIds, guardRecordWords, guardStartWords } from '../../src/names.js';
 import {
   FOLDER_ORIGINS, GUARDED_HOME, guardedNode, guardStatesOf, OTHER_NODE_ID, unloadableConfig, withFirstConfigReadFault, withStoreReadFault,
 } from '../helpers/guarded-node.js';
@@ -32,7 +32,9 @@ describe('the guard of the Claude Code settings check', () => {
     it.each(guardStatesOf(guardIds.settingsCheck))('doctor checks a settings file that sets a program variable with the guard %s', async (_state, setup, on) => {
       const deps = guardedNode({}, { ...setup, origin });
       deps.seed(SETTINGS_FILE, PROGRAM_VARIABLE);
-      expect((await settingsCheckOf(deps))?.level).toBe(on ? 'fail' : 'ok');
+      const check = await settingsCheckOf(deps);
+      expect(check?.level).toBe(on ? 'fail' : 'ok');
+      expect(check?.text.includes(guardDoctorWords.notChecked(guardIds.settingsCheck))).toBe(!on);
     });
 
     it('doctor still stops a settings file that skips the permissions with the guard off and a matching record', async () => {

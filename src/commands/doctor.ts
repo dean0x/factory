@@ -38,7 +38,7 @@ import {
   tmuxVersionOf,
   toolNames,
 } from '../core/tools.js';
-import { allGuardsOn, allOn } from '../guards/effective.js';
+import { allGuardsOn, allOn, guardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
@@ -52,6 +52,7 @@ import {
   commandLines,
   guardDenyWords,
   guardDoctorWords,
+  guardIds,
   guardRecordWords,
   guardRecords,
   guardStartWords,
@@ -795,12 +796,14 @@ export const checkStateRepo = async (deps: Deps, home: string): Promise<CheckRes
 /**
  * The delete guard of the state repo. An off guard is a warning with the remedy, never a failure: a factory with the guard off keeps
  * working, and only the commands that change the board refuse. The state-repo check names a folder that is no repo, and a missing git.
+ * With the delete guard of the node off, the line says that the check did not run, at the ok level.
  */
 export const checkStateGuard = async (deps: Deps, home: string): Promise<CheckResult> => {
   const stateDir = layoutOf(home).stateDir;
   const repo = await deps.fs.stat(join(stateDir, GIT_ENTRY));
   if (!repo.ok || repo.value === null) return notChecked(checkIds.stateGuard, `${dirs.state} is not a git repository`);
   if (!(await onPath(deps, 'git'))) return notChecked(checkIds.stateGuard, 'git is missing');
+  if (!(await guardOn(deps, guardIds.deleteGuard, home))) return check(checkIds.stateGuard, 'ok', guardDoctorWords.notChecked(guardIds.deleteGuard));
   const warning = await guardWarning(deps, stateDir);
   return warning === null
     ? check(checkIds.stateGuard, 'ok', `the delete guard of ${dirs.state} is on`)

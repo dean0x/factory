@@ -39,7 +39,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText, workerRecord } from '../../src/names.js';
+import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardDoctorWords, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText, workerRecord } from '../../src/names.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { allOn } from '../../src/guards/effective.js';
@@ -58,6 +58,7 @@ import { OWN_SETTINGS_TEXT, seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup
 import { checkChildren, inspectConfig, runDoctor, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
+import { GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 
@@ -2147,6 +2148,19 @@ describe('doctor: the delete guard of the state repository', () => {
     const output = await doctor(deps);
     expect(levelOf(output.json['checks'] as CheckResult[], 'state-guard')).toBe('warn');
     expect(output.failed).toBe(false);
+  });
+
+  it.each(guardStatesOf(guardIds.deleteGuard))('says that the check did not run only while the delete guard counts as off: %s', async (_state, setup, on) => {
+    const deps = await initialized({ git: GUARD_ON });
+    deps.files.set(HOOK, '#!/bin/sh\nexit 0\n');
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    writeConfig(deps, config);
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const found = (await doctor(deps)).json['checks'] as CheckResult[];
+    expect(found.find((entry) => entry.id === checkIds.stateGuard)).toMatchObject(on
+      ? { level: 'warn', text: expect.stringContaining('The delete guard of .factory is off') }
+      : { level: 'ok', text: guardDoctorWords.notChecked(guardIds.deleteGuard) });
   });
 
   it('names the cause and the step by hand, and not factory upgrade, when the .git entry of the state folder is a link', async () => {
