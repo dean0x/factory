@@ -228,6 +228,14 @@ describe('the guards of a recipe', () => {
     expect(result.sites.filter((site) => renders.includes(site.symbol))).toEqual([]);
   });
 
+  it('reads the guard state only in the one owner of the guard decision, the value of a site and the record command', () => {
+    const readers = allSourceFiles(join(REPO, 'src'))
+      .filter((path) => /\breadGuardState\(|\.guards\.read\(\)/.test(readFileSync(path, 'utf8')))
+      .map((path) => path.slice(REPO.length + 1));
+    // The record command reads only the store fields of the state: the prefix record and the fault.
+    expect(readers.sort()).toEqual(['src/commands/guard-set.ts', 'src/core/guard-source.ts', 'src/guards/effective.ts']);
+  });
+
   it('retires no guard id yet', () => {
     expect(retiredGuardIds).toEqual([]);
   });
