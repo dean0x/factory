@@ -132,7 +132,10 @@ export const removeOpenSandboxes = async (): Promise<void> => {
   await Promise.all([...openRoots].map(removeRoot));
 };
 
-/** True for a path below a folder `.git`. The entry `.git` itself is not below it, so a new work copy still shows. */
+/**
+ * True for a path below a folder `.git`. The entry `.git` itself is not below it, so a new work copy still shows.
+ * A bare repo (a folder such as `web.git`) is not left out, so do not take the tree of a folder that holds one.
+ */
 const isInsideGit = (path: string): boolean => path.split(sep).slice(0, -1).includes('.git');
 
 /**

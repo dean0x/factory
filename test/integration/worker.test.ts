@@ -303,12 +303,13 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
   });
 
   it('exits 2 for a project that the config does not list and makes nothing', async () => {
-    await startedNode();
+    const clone = await startedNode();
     const before = await treeOf(box.node);
     const result = await workerNew('alpha', '--project', 'nope', '--yes');
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('is not listed');
     expect(await treeOf(box.node)).toEqual(before);
+    expect((await box.git(clone, ['rev-parse', '--verify', '--quiet', 'refs/heads/worker/alpha'])).code).not.toBe(0);
     expect(await workerPanes()).toHaveLength(1);
   });
 
@@ -329,13 +330,14 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
   });
 
   it('exits 2 with no terminal window and no yes flag, and writes nothing', async () => {
-    await startedNode();
+    const clone = await startedNode();
     const before = await treeOf(box.node);
     const result = await workerNew('alpha', '--project', 'web');
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('This changes the settings of Claude Code in ');
     expect(result.stderr).toContain('factory worker new');
     expect(await treeOf(box.node)).toEqual(before);
+    expect((await box.git(clone, ['rev-parse', '--verify', '--quiet', 'refs/heads/worker/alpha'])).code).not.toBe(0);
     expect(await workerPanes()).toHaveLength(1);
   });
 

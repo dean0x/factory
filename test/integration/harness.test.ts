@@ -48,13 +48,13 @@ describe('the folder tree of a test', () => {
   // Issue 64: background git maintenance makes and removes .git/objects/maintenance.lock at any time. The tree must not show it.
   it('stays the same when git makes or removes a file below a .git folder', async () => {
     const box = await makeSandbox();
+    // No commit here: a commit can start a background maintenance task that uses the same lock file as this test.
     const web = await box.makeProject('web');
-    expect((await box.git(web, ['commit', '--allow-empty', '-q', '-m', 'first'])).code).toBe(0);
     const before = await treeOf(box.root);
 
     await writeFile(join(web, '.git', 'objects', 'maintenance.lock'), '');
     expect(await treeOf(box.root)).toEqual(before);
-    await rm(join(web, '.git', 'objects', 'maintenance.lock'));
+    await rm(join(web, '.git', 'objects', 'maintenance.lock'), { force: true });
     expect(await treeOf(box.root)).toEqual(before);
     await box.remove();
   });
