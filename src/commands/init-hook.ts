@@ -21,7 +21,7 @@ export interface HookStep {
 const requestOf = async (deps: Deps, home: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<HookConsentRequest>> => {
   const folder = layoutOf(home).coordinatorDir;
   const deny = await ownDenyRulesOf(deps, home, folder);
-  return deny.ok ? ok({ folder, session: hookSessions.coordinator, yes, command: commands.init, idleCompaction, deny: { rules: deny.value.rules, add: true } }) : deny;
+  return deny.ok ? ok({ folder, home, session: hookSessions.coordinator, yes, command: commands.init, idleCompaction, deny: { rules: deny.value.rules, add: true } }) : deny;
 };
 
 /** Stop before the first write when the person can not give the consent later: no terminal window and no yes that counts. */

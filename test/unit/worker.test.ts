@@ -1097,6 +1097,22 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings write in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.settingsWrite))('needs a consent for the hook settings with no terminal window only while the guard is on, with the guard %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const made = make({
+      origin,
+      config: withGuardsOff(sampleConfig(), off),
+      seed: setup.record === false ? {} : { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+    });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 2 : 0);
+    expect(made.deps.files.has(SETTINGS_FILE)).toBe(!on);
+    expect(made.deps.prompts).toEqual([]);
+  });
+});
+
 describe('worker new: the role text of the new worker stops the command before the work copy exists', () => {
   const HOOKS_OFF = '{"disableAllHooks":true}\n';
 

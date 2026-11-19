@@ -290,7 +290,7 @@ const settingsWriteRows: readonly GuardRow[] = [
     name: 'A write of the settings follows no link in any part of the path',
     applies: 'Every write of the hook settings',
     harm: true,
-    sites: at('src/core/claude-settings.ts', 'checkParts'),
+    sites: at('src/core/claude-settings.ts', 'checkParts', 'readTarget'),
   }),
   codeRow({
     id: 'settings-write-inside-folder',
@@ -298,7 +298,7 @@ const settingsWriteRows: readonly GuardRow[] = [
     name: 'A write of the settings stays inside the session folder',
     applies: 'Every write of the hook settings',
     harm: true,
-    sites: at('src/core/claude-settings.ts', 'requireInsideSession'),
+    sites: at('src/core/claude-settings.ts', 'requireInsideSession', 'readTarget'),
   }),
   codeRow({
     id: 'settings-write-user-folder',
@@ -306,7 +306,7 @@ const settingsWriteRows: readonly GuardRow[] = [
     name: 'A write of the settings never goes into the user folder of Claude Code',
     applies: 'Every write of the hook settings',
     harm: true,
-    sites: at('src/core/claude-settings.ts', 'requireOutsideUserFolder'),
+    sites: at('src/core/claude-settings.ts', 'requireOutsideUserFolder', 'readTarget', 'requireHookConsent'),
   }),
   codeRow({
     id: 'settings-write-changed',

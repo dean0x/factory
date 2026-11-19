@@ -95,6 +95,7 @@ const logged = <T extends Deps>(deps: T, log: string[]): T => ({
 
 const request = (overrides: Partial<HookSettingsRequest> = {}): HookSettingsRequest => ({
   folder: FOLDER,
+  home: FOLDER,
   session: 'coordinator',
   yes: false,
   dryRun: false,

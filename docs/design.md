@@ -1401,6 +1401,7 @@ The off text of an approval point applies in both `owner` and `delegated` mode. 
 | Guard | Effect of `off` |
 |---|---|
 | `settings-check` | Skip the checks of the Claude Code settings files at doctor, start and the launch of a worker. A setting that skips the permission prompts still stops the step. |
+| `settings-write` | Write the hook settings with no consent question and no check of the path. The change still shows, and a yes flag in a session still stops. |
 
 The code checks of every other guard and all integrity checks still run.
 

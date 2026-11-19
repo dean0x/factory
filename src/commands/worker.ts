@@ -101,7 +101,7 @@ const newLine = (id: string, project: string): string =>
 const hookRequestOf = async (deps: Deps, home: string, workCopy: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<HookConsentRequest>> => {
   const deny = await ownDenyRulesOf(deps, home, workCopy);
   return deny.ok
-    ? ok({ folder: workCopy, session: hookSessions.workCopy, yes, command: commandLines.workerNew, idleCompaction, deny: { rules: deny.value.rules, add: true } })
+    ? ok({ folder: workCopy, home, session: hookSessions.workCopy, yes, command: commandLines.workerNew, idleCompaction, deny: { rules: deny.value.rules, add: true } })
     : deny;
 };
 

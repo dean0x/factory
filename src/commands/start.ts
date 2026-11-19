@@ -387,6 +387,7 @@ const settleHook = async (
   if (!deny.ok) return deny;
   const settings: HookSettingsRequest = {
     folder,
+    home,
     session: hookSessions.coordinator,
     ...request,
     deny: { rules: deny.value.rules, add: false },
