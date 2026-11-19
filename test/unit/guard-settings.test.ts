@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
-import { checkIds, commands, flags, flagText, guardIds, guardStartWords } from '../../src/names.js';
+import { checkIds, commands, flags, flagText, guardIds, guardRecordWords, guardStartWords } from '../../src/names.js';
 import {
   FOLDER_ORIGINS, GUARDED_HOME, guardedNode, guardStatesOf, OTHER_NODE_ID, unloadableConfig, withFirstConfigReadFault, withStoreReadFault,
 } from '../helpers/guarded-node.js';
@@ -66,6 +66,13 @@ describe('the guard of the Claude Code settings check', () => {
       const checks = await doctorChecksOf(withFirstConfigReadFault(deps));
       expect(checks.find((check) => check.id === checkIds.permissionMode)?.level).toBe('fail');
       expect(checks.find((check) => check.id === checkIds.guards)?.text).toContain(guardStartWords.off(0));
+    });
+
+    it('doctor names the failed proof in its guards check only when the proof fails', async () => {
+      const failed = await doctorChecksOf(withFirstConfigReadFault(guardedNode({}, { off: [guardIds.settingsCheck], origin, listed: OTHER_NODE_ID })));
+      const proved = await doctorChecksOf(guardedNode({}, { off: [guardIds.settingsCheck], origin }));
+      expect(failed.find((check) => check.id === checkIds.guards)).toMatchObject({ level: 'warn', text: expect.stringContaining(guardRecordWords.unproved) });
+      expect(proved.find((check) => check.id === checkIds.guards)?.text).not.toContain(guardRecordWords.unproved);
     });
   });
 });
