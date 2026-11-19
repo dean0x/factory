@@ -100,6 +100,24 @@ describe.each(FOLDER_ORIGINS)('item add in %s while the hook of the delete guard
   });
 });
 
+describe.each(FOLDER_ORIGINS)('item add in %s on a board file that lost an item id since the last commit', (_folder, origin) => {
+  const HEAD = boardText([itemRecord('B-1', { stage: 'ticket' }), itemRecord('B-2', { stage: 'ticket' })], TRACKS);
+  const LOST = boardText([itemRecord('B-2', { stage: 'ticket' })], TRACKS);
+
+  it.each(guardStatesOf(guardIds.deleteGuard))('stops with exit 4 and no commit only while the delete guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfigWithBoard(), off);
+    const repo = await boardNode({ board: LOST, head: HEAD, config });
+    registerRoot(repo.deps, HOME, config.core.node.id, [], origin);
+    if (setup.record !== false) repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, repo.deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['item', 'add', '--title', 'New', '--field', 'priority=P1', '--home', HOME], repo.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('this change removes the item id B-1')).toBe(on);
+    expect(repo.commits).toHaveLength(on ? 0 : 1);
+  });
+});
+
 describe('item: each write is one state commit of the local files', () => {
   const WRITES: readonly (readonly [string, Partial<ItemOptions>])[] = [
     ['add', { words: ['add'], title: 'New', fields: ['priority=P1'] }],
