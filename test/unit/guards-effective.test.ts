@@ -139,7 +139,7 @@ describe('the pre-read of the guard values', () => {
     const source = sourceOf(deps);
     const read = await source.read();
     expect(read.values).toEqual(allOn);
-    expect(read.state?.proof).toBe(guardRecordWords.unproved);
+    expect(read.state).toMatchObject({ proof: guardRecordWords.unproved });
     expect(await offIn(deps, source)).toBe(false);
   });
 });
