@@ -108,7 +108,33 @@ describe('guarded text parts', () => {
   });
 });
 
-const textGuardIds = ['approval-merge', 'approval-release', guardIds.resumeRoutines, guardIds.installRules] as const;
+const textGuardIds = [
+  'approval-merge',
+  'approval-release',
+  guardIds.resumeRoutines,
+  guardIds.installRules,
+  guardIds.approvalDelegation,
+  guardIds.contextLimits,
+  guardIds.deleteGuard,
+] as const;
+
+/** The start of each rendered line that a guard removes when it is off. */
+const guardedLineStarts: readonly (readonly [string, string])[] = [
+  [guardIds.installRules, '- Do not install outside'],
+  [guardIds.resumeRoutines, '- To compact this session'],
+  ['approval-merge', '- For a delegated merge,'],
+  [guardIds.approvalDelegation, '- A step that needs an approval is an approval point.'],
+  [guardIds.approvalDelegation, '- A delegation counts only for work that'],
+  [guardIds.approvalDelegation, '- An approval point waits for the'],
+  [guardIds.contextLimits, '- The context limits are in'],
+  [guardIds.contextLimits, '- Measure your context as a percent'],
+  [guardIds.contextLimits, '- At `'],
+  [guardIds.contextLimits, '- Never go past `'],
+  [guardIds.contextLimits, '- Do not compact or clear yourself.'],
+];
+
+/** The text at the end of a rendered line that the delete guard removes when it is off. */
+const deleteGuardTail = ' Mark an item closed. Never remove an item from it.';
 const guardRenderSets: readonly (readonly [string, GuardValues])[] = [
   ['all on', allOn],
   ['all off', Object.fromEntries(textGuardIds.map((id) => [id, guardValues.off]))],
@@ -128,17 +154,22 @@ const withGuards = (layer: number, guards: GuardValues): BlockInput => blockInpu
 const guardedBody = (body: string, guards: GuardValues): string =>
   body
     .split('\n')
-    .filter((line) =>
-      !(guards[guardIds.installRules] === guardValues.off && line.startsWith('- Do not install outside')) &&
-      !(guards[guardIds.resumeRoutines] === guardValues.off && line.startsWith('- To compact this session')) &&
-      !(guards['approval-merge'] === guardValues.off && line.startsWith('- For a delegated merge,')),
-    )
+    .filter((line) => !guardedLineStarts.some(([id, start]) => guards[id] === guardValues.off && line.startsWith(start)))
+    .map((line) =>
+      guards[guardIds.deleteGuard] === guardValues.off && line.endsWith(deleteGuardTail) ? line.slice(0, -deleteGuardTail.length) : line)
     .map((line) => {
       const point = points.find((candidate) => line.startsWith(`- \`${candidate.id}\` (`));
       if (point === undefined || guards[point.guard] !== guardValues.off) return line;
       return fillTemplate([`- \`${point.id}\` (${point.label}): ${point.offText}`], coordinatorValuesFor(blockInput(1)));
     })
     .join('\n');
+
+it('finds each guarded line and the delete guard text in the layer 1 templates when every guard is on', () => {
+  const lines = blockTemplatesFor(blockInput(1, { modes: { ...softwareOwnerModes, merge: 'delegated' as const } }))
+    .flatMap((block) => block.body.split('\n'));
+  expect(guardedLineStarts.filter(([, start]) => !lines.some((line) => line.startsWith(start)))).toEqual([]);
+  expect(lines.filter((line) => line.endsWith(deleteGuardTail))).toHaveLength(1);
+});
 
 describe.each([1, 2])('guard values in layer %i templates', (layer) => {
   it.each(guardRenderSets)('changes only the selected guard text for %s', (_label, guards) => {
