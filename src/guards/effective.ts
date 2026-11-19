@@ -24,9 +24,12 @@ export const guardValuesFor = async (deps: Deps, home: string): Promise<GuardVal
   return same ? read.values : allOn;
 };
 
+/** True unless the values hold the guard off. A site with no deps reads the values that its nearest caller with the deps gives. */
+export const isGuardOn = (values: GuardValues, id: string): boolean => values[id] !== guardValues.off;
+
 /** True unless the pre-read found the guard off for the node home that the site acts on. Only a wired guard can be off there. */
 export const guardOn = async (deps: Deps, id: string, home: string): Promise<boolean> =>
-  (await guardValuesFor(deps, home))[id] !== guardValues.off;
+  isGuardOn(await guardValuesFor(deps, home), id);
 
 export interface RecordedGuardValue {
   readonly value: GuardValue;

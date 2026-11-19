@@ -211,7 +211,7 @@ const settingsCheckRows: readonly GuardRow[] = [
     name: 'A settings file gets a warning when it lowers the permission mode of a session',
     applies: 'Scan of the folder, start and the launch of a session',
     harm: true,
-    sites: at('src/safety/settings.ts', 'analyzeSettings'),
+    sites: [...at('src/safety/settings.ts', 'analyzeSettings'), ...at('src/commands/root-content.ts', 'judgeSettings')],
   }),
   codeRow({
     id: 'settings-mcp-approval',
@@ -227,7 +227,7 @@ const settingsCheckRows: readonly GuardRow[] = [
     name: 'A settings file gets a warning when it lets other sessions send input to a session',
     applies: 'Scan of the folder, start and the launch of a session',
     harm: true,
-    sites: at('src/safety/settings.ts', 'heldCrossSession'),
+    sites: [...at('src/safety/settings.ts', 'heldCrossSession'), ...at('src/commands/root-content.ts', 'judgeSettings')],
   }),
   codeRow({
     id: 'settings-other-warnings',
@@ -245,6 +245,7 @@ const settingsCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/commands/root-content.ts', 'inUserFolder', 'tooManySettings', 'settingsOfFolder', 'requireNoFailures'),
+      ...at('src/commands/root-content.ts', 'scanSettings', 'checkFolderSettings', 'checkTrackedSettings'),
       ...at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
     ],
   }),

@@ -1394,7 +1394,15 @@ A local `off` takes effect only with a matching record of the owner for that nod
 | `resume-routines` | Remove the resume and routine instructions. |
 | `install-rules` | Remove the rule about installs outside the session folder. |
 
-The off text of an approval point applies in both `owner` and `delegated` mode. The three rules of `merge-quality` stay on when `approval-merge` is off. General approval and record instructions still name the owner go. All code checks and integrity checks still run.
+The off text of an approval point applies in both `owner` and `delegated` mode. The three rules of `merge-quality` stay on when `approval-merge` is off. General approval and record instructions still name the owner go.
+
+**Code guards.** This version can also set these guards:
+
+| Guard | Effect of `off` |
+|---|---|
+| `settings-check` | Skip the checks of the Claude Code settings files at doctor, start and the launch of a worker. A setting that skips the permission prompts still stops the step. |
+
+The code checks of every other guard and all integrity checks still run.
 
 **Set a guard.** Run `factory guard set ID on|off` to change one guard. Run `factory guard set --all on|off` to change every guard that this version can set. The command counts the guards that it skips. It writes the local values and their records of the owner. It keeps all other guard values and records.
 

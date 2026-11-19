@@ -6,6 +6,7 @@ import { glossary } from '../../src/glossary.js';
 import { isRecord } from '../../src/migrate/inspect.js';
 import { recipes } from '../../src/recipes/index.js';
 import { workerSectionLines } from '../../src/recipes/software/roles/coordinator.js';
+import { softwareGuardIds } from '../../src/recipes/software/guards.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
 import { guardOf, wiredGuard } from '../../src/guards/build.js';
 import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
@@ -174,10 +175,25 @@ describe('the guards of a recipe', () => {
     expect(idsOf(software.guards).filter((id) => taken.has(id))).toEqual([]);
   });
 
-  it('wires only the four text guards of the software recipe', () => {
+  it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.settingsCheck, guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
+  });
+
+  it('reads the value of a wired guard in a top-level declaration of each of its code rows', () => {
+    const codeRows = software.rows.filter((row) =>
+      row.kind === guardKinds.code && software.guards.some((guard) => guard.id === row.guard && guard.wired));
+    const paths = [...new Set(codeRows.flatMap((row) => row.sites.map((site) => site.path)))];
+    const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
+    const idNameOf = (id: string): string => {
+      const core = Object.entries(guardIds).find(([, value]) => value === id);
+      return core === undefined ? `softwareGuardIds.${Object.entries(softwareGuardIds).find(([, value]) => value === id)?.[0] ?? id}` : `guardIds.${core[0]}`;
+    };
+    expect(codeRows.length).toBeGreaterThan(0);
+    const unread = codeRows.filter((row) =>
+      !sourceScan.declarationTextsOf(sources, row.sites).some((text) => text?.includes(idNameOf(row.guard)) === true));
+    expect(unread.map((row) => row.id)).toEqual([]);
   });
 
   it('marks a guard as wired without a change to its definition', () => {

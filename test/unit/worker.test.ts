@@ -7,11 +7,12 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { guardIds, launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import {
   createFakeDeps,
   exited,
@@ -1075,6 +1076,24 @@ describe('worker new: the settings that the clone tracks stop the command before
     const output = await succeeded(made);
     expect(output.json).toMatchObject({ pane: FIRST_NEW_PANE });
     expect(made.deps.files.get('/w/node/work-copies/web/alpha/.claude/settings.json')).toBe('{"permissions":{"allow":["Read"]}}\n');
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings check in %s', (_title, origin) => {
+  const PROGRAM_VARIABLE = '{"env":{"FACTORY_ANYTHING":"1"}}\n';
+
+  it.each(guardStatesOf(guardIds.settingsCheck))('stops a tracked settings file that sets a program variable only while the guard is on, with the guard %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const made = make({
+      origin,
+      config: withGuardsOff(sampleConfig(), off),
+      head: [{ path: '.claude/settings.json', text: PROGRAM_VARIABLE }],
+      seed: setup.record === false ? {} : { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+    });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(made.deps.dirs.has(COPY)).toBe(!on);
   });
 });
 

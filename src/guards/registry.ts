@@ -35,11 +35,13 @@ const coreGuards: readonly GuardDefinition[] = [
     'Board edits',
     'Board data changes only through the commands, in local files that hold no link.',
   ),
-  guardOf(
-    guardIds.settingsCheck,
-    'Claude Code settings check',
-    'The settings files that a session reads cannot change its environment, its hooks or its commands.',
-    [statuslineKey],
+  wiredGuard(
+    guardOf(
+      guardIds.settingsCheck,
+      'Claude Code settings check',
+      'The settings files that a session reads cannot change its environment, its hooks or its commands.',
+      [statuslineKey],
+    ),
   ),
   guardOf(
     guardIds.settingsWrite,

@@ -403,3 +403,11 @@ export const shellValue = (script: string, name: string): string | undefined =>
  */
 export const runtimeImportPathsOf = (source: string): string[] =>
   importPathsOf(source.replace(/\b(?:import|export)\s+type\b[^;]*?\bfrom\s*['"][^'"]+['"]/g, ''));
+
+/** The text of the top-level declaration of each site, or null when its file does not declare it. */
+export const declarationTextsOf = (sources: Readonly<Record<string, string>>, sites: readonly RowSite[]): readonly (string | null)[] => {
+  const paths = Object.keys(sources);
+  const modules = withSourceFiles(paths.map((path) => sources[path] ?? ''), (files) =>
+    new Map(files.map((file, index) => [paths[index] ?? '', moduleOf(paths[index] ?? '', file)])));
+  return sites.map((site) => modules.get(site.path)?.declarations.get(site.symbol)?.body ?? null);
+};
