@@ -1407,6 +1407,15 @@ export const watchRun = {
  */
 export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionStart' } as const;
 
+/**
+ * The words that mark the folder trust question of Claude Code on the screen of a worker pane. Claude Code asks it for each folder of
+ * the launch (the work copy, or a folder of `--add-dir`) that the user did not trust, and an interactive session holds back every hook
+ * until the answer, so the `launchConfirm.event` line of a resume can not come. The exact text of the question is not documented, so
+ * `pattern` is one word in any case. Only a resume that the line does not confirm reads the screen, once. A match changes the message
+ * and the remedy, never the exit code.
+ */
+export const trustQuestion = { pattern: /\btrust/i } as const;
+
 /** What a session reset of a worker needs to name for one kind: the flag, the typed line, the events that confirm it, and the verb of the verdict. */
 interface ResetKindWords {
   readonly flag: string;
