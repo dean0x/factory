@@ -4,11 +4,11 @@ import { sha256Hex } from '../blocks/managed.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { removedByDisplay } from '../cli/output.js';
 import { absolutePath, slug } from '../config/primitives.js';
-import type { FactoryConfig } from '../config/schema.js';
-import { guardRulesOf, type GuardRecord, type GuardRules } from '../guards/effective.js';
+import { guardRulesOf, type GuardProxies, type GuardRecord, type GuardRules } from '../guards/effective.js';
 import { guardsFor } from '../guards/registry.js';
-import type { GuardDefinition, GuardValue } from '../guards/types.js';
+import type { GuardDefinition, GuardValue, GuardValues } from '../guards/types.js';
 import { commandLines, commandText, env, files, guardRecords, guardRecordWords, guardSetWords, guardValues, privateFile, type CommandText } from '../names.js';
+import type { RecipeEntry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import { accessFaultCore } from './access.js';
 import type { Deps, LinkInfo } from './deps.js';
@@ -248,9 +248,20 @@ export interface GuardReadState extends GuardRules {
   readonly recordCount: number | null;
 }
 
+/** What the guard values need of a config. A full config fits, and so do the few keys that the pre-read of the guard values parses. */
+export interface GuardConfig {
+  readonly entry: Pick<RecipeEntry, 'guards' | 'guardRows'>;
+  readonly core: {
+    readonly node: { readonly id: string };
+    readonly guards: GuardValues;
+    readonly shared_guards: GuardValues;
+    readonly proxies: GuardProxies;
+  };
+}
+
 /** Read at most one store. A failed read supplies only on values to every consumer. */
 export const readGuardState = async (
-  deps: Deps, home: string, config: FactoryConfig, need: 'when-off' | 'always',
+  deps: Deps, home: string, config: GuardConfig, need: 'when-off' | 'always',
 ): Promise<GuardReadState> => {
   const guards = guardsFor(config.entry);
   const facts = { node: config.core.node.id, local: config.core.guards, shared: config.core.shared_guards, proxies: config.core.proxies };

@@ -1,11 +1,15 @@
-import type { Deps } from '../core/deps.js';
-import { hookOutputOf, runHook } from '../hooks/hook.js';
+import { withGuards, type Deps } from '../core/deps.js';
+import { guardSourceFor } from '../core/guard-source.js';
+import { allGuardsOn } from '../guards/effective.js';
+import type { GuardSource } from '../guards/types.js';
+import { hasFactoryHome, hookOutputOf, runHook } from '../hooks/hook.js';
 import { runStatusline } from '../hooks/statusline.js';
-import { commands, commandText, flags, flagShorts, flagText, helpTopics, hookNames, program, schemaIds } from '../names.js';
+import { commands, commandText, env, flags, flagShorts, flagText, helpTopics, hookNames, program, schemaIds, type CommandName } from '../names.js';
 import { exitCodeFor, exitCodeOf, failure } from './errors.js';
+import { foundHomeOption } from './home-option.js';
 import { detectStyle, printable, renderError, renderJson, renderText, renderWarnings } from './output.js';
 import { recipes, type RecipeRegistry } from '../recipes/index.js';
-import { commandTableFor, globalOptions, parseFlags, renderCommandHelp, renderHelp } from './table.js';
+import { commandTableFor, globalOptions, parseFlags, renderCommandHelp, renderHelp, type Command, type Given } from './table.js';
 import { wordsOutput } from './words.js';
 
 export interface Sink {
@@ -54,6 +58,16 @@ const runHookRoute = async (words: readonly string[], deps: Deps, sink: Sink, re
   return EXIT_OK;
 };
 
+/**
+ * The guard source of a command row. A row with the home flag finds its node home, so its pre-read uses that flag in the order of
+ * the command. Every other row, for example `init`, has every guard on. The name only fills a remedy line that the pre-read never shows.
+ */
+const guardSourceOfRow = (deps: Deps, command: Command, given: Given, registry: RecipeRegistry): GuardSource => {
+  if (command.options[flags.home] !== foundHomeOption) return allGuardsOn;
+  const name: CommandName = Object.values(commands).find((known) => known === command.name) ?? commands.help;
+  return guardSourceFor(deps, given.string(flags.home), registry, name);
+};
+
 /** Run one command line. The registry sets the recipes that the commands accept. The package registry is the default. */
 export const runCli = async (
   argv: readonly string[],
@@ -64,7 +78,11 @@ export const runCli = async (
   const table = commandTableFor(registry);
   const findCommand = (name: string) => table.find((command) => command.name === name);
   const [first, ...rest] = argv;
-  if (isHookRoute(argv)) return runHookRoute(rest, deps, sink, registry);
+  if (isHookRoute(argv)) {
+    // The hook acts on the node that FACTORY_HOME names, so its pre-read uses that home. With no such home it reads nothing.
+    const guards = hasFactoryHome(deps) ? guardSourceFor(deps, deps.env[env.home], registry, commands.hook) : allGuardsOn;
+    return runHookRoute(rest, withGuards(deps, guards), sink, registry);
+  }
   if (deps.platform.os === NATIVE_WINDOWS) {
     // The remedy names the command that the person typed, when the table holds it. The name comes from the table, not from the line.
     const typed = (first === undefined ? undefined : findCommand(first)?.name) ?? commands.help;
@@ -120,7 +138,7 @@ export const runCli = async (
   }
 
   const json = given.bool(flags.json);
-  const result = await command.run(given, deps);
+  const result = await command.run(given, withGuards(deps, guardSourceOfRow(deps, command, given, registry)));
 
   if (!result.ok) {
     // A command with the double dash rule keeps stdout for its child, so a usage error with the JSON flag writes no document there.

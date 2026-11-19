@@ -9,6 +9,20 @@ export type GuardValue = (typeof guardValues)[keyof typeof guardValues];
 /** Guard values by id, shared by config and text consumers. */
 export type GuardValues = Readonly<Record<string, GuardValue>>;
 
+/** The effective guard values of one node home. For every other home, and for a null home, every guard is on. */
+export interface GuardContext {
+  readonly home: string | null;
+  readonly values: GuardValues;
+}
+
+/**
+ * The guard values of one command line. The read runs at most once, at the first ask, so a command that asks for no value reads
+ * no file for it. The read never fails: a fault of any kind gives every guard on.
+ */
+export interface GuardSource {
+  read(): Promise<GuardContext>;
+}
+
 /** A place in the source that a row cites: a file below the repo folder and a declaration at the top level of it. */
 export interface RowSite {
   readonly path: string;

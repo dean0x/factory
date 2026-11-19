@@ -270,6 +270,12 @@ const recipeBlockSchemaFor = (ids: readonly string[]) => {
   });
 };
 
+/** The guard map of the shared file: it can only turn a guard on. The full parse and the pre-read of the guard values share it. */
+export const sharedGuardsSchema = z.record(slug, z.literal(guardValues.on, { error: guardConfigWords.sharedOnOnly })).default({});
+
+/** The guard map of the local file: each value is on or off. The full parse and the pre-read of the guard values share it. */
+export const localGuardsSchema = z.record(slug, z.enum([guardValues.on, guardValues.off])).default({});
+
 /** The shared file: what makes the same factory on every machine. It holds no personal key and no key of one machine. */
 const sharedCoreSchemaFor = (ids: readonly string[]) =>
   z.strictObject({
@@ -278,7 +284,7 @@ const sharedCoreSchemaFor = (ids: readonly string[]) =>
     [keys.root.session]: sharedSessionSchema,
     [keys.root.limits]: limitsSchema,
     [keys.root.tracker]: trackerSchema,
-    [guardKeys.shared]: z.record(slug, z.literal(guardValues.on, { error: guardConfigWords.sharedOnOnly })).default({}),
+    [guardKeys.shared]: sharedGuardsSchema,
     [keys.root.board]: boardSchema.optional(),
     [keys.root.recipe]: recipeBlockSchemaFor(ids),
   });
@@ -295,7 +301,7 @@ const localFileSchema = z
       .refine((workers) => Object.keys(workers).length <= MAX_WORKERS, { error: 'has too many entries' })
       .default({}),
     [keys.root.approval]: approvalSchema,
-    [guardKeys.local]: z.record(slug, z.enum([guardValues.on, guardValues.off])).default({}),
+    [guardKeys.local]: localGuardsSchema,
     [keys.root.parent]: linkSchema.nullable().default(null),
     [keys.root.children]: z.array(linkSchema).max(MAX_CHILDREN).default([]),
     [keys.root.sources]: sourcesSchema,

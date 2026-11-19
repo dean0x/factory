@@ -1,8 +1,15 @@
-import { allOn, guardRulesOf } from '../../src/guards/effective.js';
+import { allOn, guardOn, guardRulesOf } from '../../src/guards/effective.js';
 import { describe, expect, it } from 'vitest';
+import { withGuards, type Deps } from '../../src/core/deps.js';
+import { guardSourceFor } from '../../src/core/guard-source.js';
 import { guardsFor } from '../../src/guards/registry.js';
-import type { Guard } from '../../src/guards/types.js';
+import type { Guard, GuardSource } from '../../src/guards/types.js';
+import { commands, guardIds, guardValues } from '../../src/names.js';
+import { recipes } from '../../src/recipes/index.js';
 import { softwareRecipe } from '../helpers/blocks.js';
+import { createFakeDeps } from '../helpers/fake-deps.js';
+import { GUARD_STORE, GUARDED_HOME, guardedNode, OFF_GUARD, OTHER_HOME, PRE_READ_FAULTS } from '../helpers/guarded-node.js';
+import { countReadsOf } from '../helpers/read-count.js';
 
 const guards = guardsFor(softwareRecipe).map((guard): Guard => ({ ...guard, wired: true }));
 const node = 'demo';
@@ -84,5 +91,44 @@ describe('effective guard values', () => {
     expect(guardRulesOf(guards, { node, root, local, record, proxies: [{ id: 'direct', on_fail: 'direct' }, { id: 'closed', on_fail: 'stop' }] })).toMatchObject({
       loosened: [...guards.map(({ id }) => id), 'direct proxy direct'],
     });
+  });
+});
+
+describe('the guard value of a code site', () => {
+  const offSource: GuardSource = { read: async () => ({ home: GUARDED_HOME, values: { [OFF_GUARD]: guardValues.off } }) };
+  const deps = withGuards(createFakeDeps(), offSource);
+
+  it('reads off only for the guard that the pre-read found off', async () => {
+    expect(await guardOn(deps, OFF_GUARD, GUARDED_HOME)).toBe(false);
+    expect(await guardOn(deps, guardIds.resumeRoutines, GUARDED_HOME)).toBe(true);
+  });
+
+  it('reads every guard as on for a site that acts on another home than the pre-read home', async () => {
+    expect(await guardOn(deps, OFF_GUARD, OTHER_HOME)).toBe(true);
+  });
+
+  it('reads every guard as on with deps that no pre-read changed', async () => {
+    expect(await guardOn(createFakeDeps(), OFF_GUARD, GUARDED_HOME)).toBe(true);
+  });
+});
+
+describe('the pre-read of the guard values', () => {
+  const sourceOf = (deps: Deps): GuardSource => guardSourceFor(deps, GUARDED_HOME, recipes, commands.status);
+  const offIn = async (deps: Deps, source: GuardSource): Promise<boolean> => !(await guardOn(withGuards(deps, source), OFF_GUARD, GUARDED_HOME));
+
+  it('reads nothing before the first ask, then gives the off value of a matching record with one store read for every ask', async () => {
+    const counted = countReadsOf(guardedNode(), GUARD_STORE);
+    const source = sourceOf(counted.deps);
+    expect(counted.count()).toBe(0);
+    expect([await offIn(counted.deps, source), await offIn(counted.deps, source)]).toEqual([true, true]);
+    expect(counted.count()).toBe(1);
+  });
+
+  it.each(PRE_READ_FAULTS)('gives every guard on and prints nothing with %s', async (_name, fault) => {
+    const node = guardedNode();
+    const deps = fault(node);
+    expect(await offIn(deps, sourceOf(deps))).toBe(false);
+    expect(node.warned).toEqual([]);
+    expect(node.written).toEqual([]);
   });
 });

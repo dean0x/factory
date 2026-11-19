@@ -1,9 +1,32 @@
+import { resolve } from 'node:path';
 import type { ProxyConfig } from '../config/schema.js';
+import type { Deps } from '../core/deps.js';
+import { comparable } from '../core/paths.js';
 import { guardStartWords, guardValues, keys } from '../names.js';
-import type { Guard, GuardState, GuardValue, GuardValues } from './types.js';
+import type { Guard, GuardContext, GuardSource, GuardState, GuardValue, GuardValues } from './types.js';
 
 /** An absent value means on. This constant has no file or environment dependency. */
 export const allOn: GuardValues = Object.freeze({});
+
+/** The values when no node home was read: every guard is on for every home. */
+export const noGuardHome: GuardContext = Object.freeze({ home: null, values: allOn });
+
+/** The source of every command that finds no home, and of every deps that no pre-read changed. It reads no file. */
+export const allGuardsOn: GuardSource = Object.freeze({ read: async () => noGuardHome });
+
+/**
+ * The effective values for the node home that a site acts on: the values of the pre-read when the site names its home, else every
+ * guard on. A caller that has the deps gives these values as a parameter to a site that has none.
+ */
+export const guardValuesFor = async (deps: Deps, home: string): Promise<GuardValues> => {
+  const read = await deps.guards.read();
+  const same = read.home !== null && comparable(deps, resolve(deps.cwd, read.home)) === comparable(deps, resolve(deps.cwd, home));
+  return same ? read.values : allOn;
+};
+
+/** True unless the pre-read found the guard off for the node home that the site acts on. Only a wired guard can be off there. */
+export const guardOn = async (deps: Deps, id: string, home: string): Promise<boolean> =>
+  (await guardValuesFor(deps, home))[id] !== guardValues.off;
 
 export interface RecordedGuardValue {
   readonly value: GuardValue;
@@ -18,6 +41,9 @@ export interface GuardRecord {
   readonly prefix: { readonly hash: string; readonly at: string } | null;
 }
 
+/** The proxies of a node, as the list of loosened guards names them. */
+export type GuardProxies = readonly Pick<ProxyConfig, typeof keys.proxy.id | typeof keys.proxy.onFail>[];
+
 export interface GuardFacts {
   readonly node: string;
   readonly root: string;
@@ -26,7 +52,7 @@ export interface GuardFacts {
   readonly record?: GuardRecord | null;
   readonly loadError?: boolean;
   readonly fault?: string | null;
-  readonly proxies?: readonly Pick<ProxyConfig, typeof keys.proxy.id | typeof keys.proxy.onFail>[];
+  readonly proxies?: GuardProxies;
 }
 
 export interface GuardRules {
