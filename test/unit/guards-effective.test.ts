@@ -4,11 +4,13 @@ import { withGuards, type Deps } from '../../src/core/deps.js';
 import { guardSourceFor } from '../../src/core/guard-source.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import type { Guard, GuardSource } from '../../src/guards/types.js';
-import { commands, guardIds, guardValues } from '../../src/names.js';
+import { commands, guardIds, guardRecordWords, guardValues } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { softwareRecipe } from '../helpers/blocks.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
-import { GUARD_STORE, GUARDED_HOME, guardedNode, OFF_GUARD, OTHER_HOME, PRE_READ_FAULTS } from '../helpers/guarded-node.js';
+import {
+  GUARD_STORE, GUARDED_HOME, guardedNode, OFF_GUARD, OTHER_HOME, OTHER_NODE_ID, PRE_READ_FAULTS, withFirstConfigReadFault,
+} from '../helpers/guarded-node.js';
 import { countReadsOf } from '../helpers/read-count.js';
 
 const guards = guardsFor(softwareRecipe).map((guard): Guard => ({ ...guard, wired: true }));
@@ -130,5 +132,14 @@ describe('the pre-read of the guard values', () => {
     expect(await offIn(deps, sourceOf(deps))).toBe(false);
     expect(node.warned).toEqual([]);
     expect(node.written).toEqual([]);
+  });
+
+  it('gives every guard on and names the reason when only the proof finds that the factory list names another node id', async () => {
+    const deps = withFirstConfigReadFault(guardedNode({}, { listed: OTHER_NODE_ID }));
+    const source = sourceOf(deps);
+    const read = await source.read();
+    expect(read.values).toEqual(allOn);
+    expect(read.state?.proof).toBe(guardRecordWords.unproved);
+    expect(await offIn(deps, source)).toBe(false);
   });
 });

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
 import { checkIds, commands, flags, flagText, guardIds, guardStartWords } from '../../src/names.js';
-import { FOLDER_ORIGINS, GUARDED_HOME, guardedNode, guardStatesOf, unloadableConfig, withStoreReadFault } from '../helpers/guarded-node.js';
+import {
+  FOLDER_ORIGINS, GUARDED_HOME, guardedNode, guardStatesOf, OTHER_NODE_ID, unloadableConfig, withFirstConfigReadFault, withStoreReadFault,
+} from '../helpers/guarded-node.js';
 import { captureSink } from '../helpers/sink.js';
 
 interface CheckLine {
@@ -56,6 +58,14 @@ describe('the guard of the Claude Code settings check', () => {
       const checks = await doctorChecksOf(withStoreReadFault(deps, faulted));
       expect(checks.find((check) => check.id === checkIds.guards)?.text).toContain(guardStartWords.off(on ? 0 : 1));
       expect(checks.find((check) => check.id === checkIds.permissionMode)?.level).toBe(on ? 'fail' : 'ok');
+    });
+
+    it('doctor checks the settings with every guard on when only the proof finds that the factory list names another node id', async () => {
+      const deps = guardedNode({}, { off: [guardIds.settingsCheck], origin, listed: OTHER_NODE_ID });
+      deps.seed(SETTINGS_FILE, PROGRAM_VARIABLE);
+      const checks = await doctorChecksOf(withFirstConfigReadFault(deps));
+      expect(checks.find((check) => check.id === checkIds.permissionMode)?.level).toBe('fail');
+      expect(checks.find((check) => check.id === checkIds.guards)?.text).toContain(guardStartWords.off(0));
     });
   });
 });
