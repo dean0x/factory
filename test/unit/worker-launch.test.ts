@@ -993,7 +993,9 @@ describe('the launch of a worker: a resume whose pane shows a folder trust quest
     '  2. No, exit',
   ].join('\n');
   const OTHER_SCREEN = 'Welcome back. The earlier conversation is loading.\n> ';
-  const TRUST_REMEDY = `Answer each folder trust question in the pane ${FIRST_NEW_PANE}. Then run "factory worker watch --ready alpha".`;
+  const TRUST_REMEDY = `The owner answers each folder trust question in the pane ${FIRST_NEW_PANE}. Then run "factory worker watch --ready alpha".`;
+  const FALLBACK = `If the owner sees no question in the pane and the earlier conversation did not load, run "factory worker stop alpha", ` +
+    `delete the file ${POINTER}, and run "factory worker resume alpha" to start a new conversation.`;
   const NOT_CONFIRMED = `resume not confirmed: the pane ${FIRST_NEW_PANE} of the worker alpha runs, but its session wrote no SessionStart line`;
   /** The program of the pane runs and writes no line. */
   const noLine: Program = () => undefined;
@@ -1006,9 +1008,22 @@ describe('the launch of a worker: a resume whose pane shows a folder trust quest
     expect(error.kind).toBe('not-ready');
     expect(exitCodeOf[error.kind]).toBe(3);
     expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha waits on a folder trust question`);
-    expect(error.hint).toBe(TRUST_REMEDY);
+    expect(error.hint?.startsWith(TRUST_REMEDY)).toBe(true);
     expect(made.events).not.toContain('tmux kill-pane');
     expect(panesOf(made)).toBe(START_PANES + 1);
+  });
+
+  it('keeps the last check reason without printing the pane text', async () => {
+    const made = make({ tmux: { newPaneScreen: TRUST_SCREEN }, program: noLine });
+    const error = await failed(made, { resumeId: UUID });
+    expect(error.message).toContain('(the worker has no last-seen line)');
+    expect(error.message).not.toContain('Yes, I trust this folder');
+  });
+
+  it('gives the ordinary recovery steps if the owner sees no question', async () => {
+    const made = make({ tmux: { newPaneScreen: TRUST_SCREEN }, program: noLine });
+    const error = await failed(made, { resumeId: UUID });
+    expect(error.hint).toContain(FALLBACK);
   });
 
   it('types nothing into the pane, and reads its screen once, after the last check', async () => {
@@ -1032,7 +1047,11 @@ describe('the launch of a worker: a resume whose pane shows a folder trust quest
 
   it.each([
     ['earlier conversation text with "trusted" and "trust", and no "folder" on those lines', 'The work copy is trusted now.\nTrust comes from the git root.\n> '],
-    ['"trust" and "folder" on two different lines', 'Do you trust it?\nThe folder is the work copy.\n> '],
+    ['"trust" and "folder" on two different lines', 'Do you trust it?\nThe folder is the work copy.\n> 1. Yes\n  2. No\n'],
+    ['an earlier quote above unrelated choices', 'Earlier answer: "Yes, I trust this folder".\nProceed?\n> 1. Yes\n  2. No\n'],
+    ['"trusted" and "folder" above choices', 'The trusted folder list is empty.\n> 1. Yes\n  2. No\n'],
+    ['"trust" and "folders" above choices', 'Do you trust these folders?\n> 1. Yes\n  2. No\n'],
+    ['"untrusted" and "subfolder" above choices', 'An untrusted subfolder stays closed.\n> 1. Yes\n  2. No\n'],
   ])('keeps the "resume not confirmed" result (exit 3) when the screen shows %s', async (_words, screen) => {
     const made = make({ tmux: { newPaneScreen: screen }, program: noLine });
     const error = await failed(made, { resumeId: UUID });
@@ -1046,7 +1065,7 @@ describe('the launch of a worker: a resume whose pane shows a folder trust quest
     const made = make({ tmux: { newPaneScreen: 'Trust this folder in Claude Code?\n> 1. Yes\n  2. No\n' }, program: noLine });
     const error = await failed(made, { resumeId: UUID });
     expect(exitCodeOf[error.kind]).toBe(3);
-    expect(error.hint).toBe(TRUST_REMEDY);
+    expect(error.hint).toBe(`${TRUST_REMEDY} ${FALLBACK}`);
   });
 
   it('keeps the "resume not confirmed" result (exit 3) when the capture of the screen fails', async () => {

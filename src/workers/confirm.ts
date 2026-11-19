@@ -1,4 +1,5 @@
 import { codedNotReady, failure, notReady, trustQuestionWait, type CliResult } from '../cli/errors.js';
+import { showsChoiceList } from '../comms/typing.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
@@ -85,30 +86,34 @@ export const paneFailure = (request: PaneFailureRequest, life: Exclude<PaneLife,
     : failure(message, `Run "${again}" to try again.`);
 };
 
+/** The steps after a person sees that the earlier conversation did not load. */
+const recoverySteps = ({ home, workerId }: LaunchConfirmRequest): string =>
+  `run "${commandFor(commandLines.workerStop, workerId)}", ` +
+  `delete the file ${pointerFile(home, workerId)}, and run "${commandFor(commandLines.workerResume, workerId)}" to start a new conversation.`;
+
 /**
  * The pane runs, but the line of the new session did not come. This is a check verdict (exit 3), not a fault: the command can not
  * tell if the session loaded. It never says that the worker resumed.
  */
 const notConfirmed = (request: LaunchConfirmRequest, reason: string): CliResult<never> => {
-  const { home, paneId, workerId } = request;
+  const { paneId, workerId } = request;
   return notReady(
     `resume not confirmed: the pane ${paneId} of the ${roles.worker} ${workerId} runs, but its session wrote no ${launchConfirm.event} line ` +
       `within ${SECONDS} seconds (${reason})`,
     `Run "${commandFor(commandLines.workerSummon, workerId)}" to look at the pane ${paneId}. ` +
-      `If the earlier conversation did not load, run "${commandFor(commandLines.workerStop, workerId)}", ` +
-      `delete the file ${pointerFile(home, workerId)}, and run "${commandFor(commandLines.workerResume, workerId)}" to start a new conversation.`,
+      `If the earlier conversation did not load, ${recoverySteps(request)}`,
   );
 };
 
 /**
- * True when one line of the screen of the pane holds the words of the folder trust question (`trustQuestion`). It reads the screen
+ * True when a line of a dialog with choices holds the words of the folder trust question (`trustQuestion`). It reads the screen
  * once and types nothing. A capture that fails counts as no question, so the caller keeps its own verdict.
  */
 const showsTrustQuestion = async (deps: Deps, paneId: string): Promise<boolean> => {
   const args = capturePaneArgs(paneId);
   if (!args.ok) return false;
   const screen = await tmuxStep(deps, args.value);
-  return screen.ok && trustQuestion.pattern.test(screen.value);
+  return screen.ok && showsChoiceList(screen.value, (line) => trustQuestion.pattern.test(line));
 };
 
 /**
@@ -116,14 +121,15 @@ const showsTrustQuestion = async (deps: Deps, paneId: string): Promise<boolean> 
  * verdict (exit 3) with a code, so that a caller can tell it apart. The owner answers each question in the pane, and
  * `worker watch --ready` then waits for the worker. It never says that the worker resumed.
  */
-const waitsOnTrust = (request: LaunchConfirmRequest): CliResult<never> => {
+const waitsOnTrust = (request: LaunchConfirmRequest, reason: string): CliResult<never> => {
   const { paneId, workerId } = request;
   return codedNotReady(
     trustQuestionWait,
     `resume not confirmed: the pane ${paneId} of the ${roles.worker} ${workerId} waits on a folder trust question, ` +
-      `so its session wrote no ${launchConfirm.event} line within ${SECONDS} seconds`,
-    `Answer each folder trust question in the pane ${paneId}. ` +
-      `Then run "${commandText(commandLines.workerWatch)} ${flagText(flags.ready)} ${workerId}".`,
+      `so its session wrote no ${launchConfirm.event} line within ${SECONDS} seconds (${reason})`,
+    `The ${roles.owner} answers each folder trust question in the pane ${paneId}. ` +
+      `Then run "${commandText(commandLines.workerWatch)} ${flagText(flags.ready)} ${workerId}". ` +
+      `If the ${roles.owner} sees no question in the pane and the earlier conversation did not load, ${recoverySteps(request)}`,
   );
 };
 
@@ -190,7 +196,7 @@ export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): 
     if (missing === null) return ok(undefined);
     reason = missing;
   }
-  return (await showsTrustQuestion(deps, paneId)) ? waitsOnTrust(request) : notConfirmed(request, reason);
+  return (await showsTrustQuestion(deps, paneId)) ? waitsOnTrust(request, reason) : notConfirmed(request, reason);
 };
 
 /** What the confirm of a reset needs to know. */

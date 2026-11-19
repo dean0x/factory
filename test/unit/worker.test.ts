@@ -1929,7 +1929,7 @@ describe('worker resume: the command says Resumed only when the session wrote it
       const made = await withWorkers({ origin, program: () => undefined, tmux: { newPaneScreen: screen } });
       const error = await notConfirmed(made);
       expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha waits on a folder trust question`);
-      expect(error.hint).toBe(`Answer each folder trust question in the pane ${FIRST_NEW_PANE}. Then run "factory worker watch --ready alpha".`);
+      expect(error.hint).toContain(`The owner answers each folder trust question in the pane ${FIRST_NEW_PANE}. Then run "factory worker watch --ready alpha".`);
       expect(made.tmux.typed()).toEqual([]);
     },
   );

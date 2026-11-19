@@ -670,7 +670,7 @@ A resume with `--resume` prints "Resumed" only after the new session proves itse
 - 1: the pane is gone or its program ended. The message starts with "resume failed". A usual cause is a pointer to a session that has no transcript. To start a new conversation, delete the file `.factory/workers/ID/last-session` (the message gives the full path), then run `factory worker resume ID`.
 - 3: the pane runs, but no matching line came within 10 seconds. The message starts with "resume not confirmed" and names the pane. Run `factory worker summon ID` to look at it. If the earlier conversation did not load, run `factory worker stop ID`, delete the same file, and run `factory worker resume ID`.
 
-While Claude Code asks to trust a folder of the launch, the session holds back its hooks, so no line comes. After the last check, the command reads the screen of the pane once and types nothing. If the screen shows the folder trust question, the exit code is still 3, and the message says that the pane waits on that question. Answer each folder trust question in the pane, then run `factory worker watch --ready ID`.
+While Claude Code asks to trust a folder of the launch, the session holds back its hooks, so no line comes. After the last check, the command reads the screen of the pane once and types nothing. If the screen shows the folder trust question with its choices, the exit code is still 3. The message names the question and the reason from the last check. The owner answers each folder trust question in the pane. Then run `factory worker watch --ready ID`. If the owner sees no question and the earlier conversation did not load, use the recovery steps above.
 
 ### Shut down, restart and reboot
 

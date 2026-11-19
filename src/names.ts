@@ -1413,8 +1413,8 @@ export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionS
  * until the answer, so the `launchConfirm.event` line of a resume can not come. Only a resume that the line does not confirm reads the
  * screen, once. `pattern` matches a screen when one line holds both the word "trust" and the word "folder", in any case. The public
  * title of the question in VS Code is "Trust this folder in Claude Code?"; the terminal text is not documented, so the two words are a
- * guess until a live check. A pane that did not load shows the end of the earlier conversation, and a line there with both words can
- * still match. A match changes the message and the remedy of `worker resume` and `restart` (exit 3 in both cases), and it changes the
+ * guess until a live check. The pane check also requires that the line belongs to a dialog with choices. A match changes the
+ * message and the remedy of `worker resume` and `restart` (exit 3 in both cases), and it changes the
  * exit code of `reboot` from 1 to 3 when each worker that did not start again matches.
  */
 export const trustQuestion = { pattern: /^(?=.*\btrust\b)(?=.*\bfolder\b)/im } as const;

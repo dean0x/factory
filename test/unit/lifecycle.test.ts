@@ -1547,12 +1547,13 @@ describe('restart and reboot of a worker whose new pane waits on a folder trust 
   const newPaneOf = (made: Made, id: Id): string | undefined =>
     made.tmux.panes().filter((pane) => pane.options[tmuxNames.optionWorker] === id).at(-1)?.id;
   const trustRemedy = (pane: string | undefined, id: Id): string =>
-    `Answer each folder trust question in the pane ${pane ?? 'none'}. Then run "factory worker watch --ready ${id}".`;
-  /** Every resume starts its session, except the resume of beta: its pane runs and writes no line. */
-  const silentBeta: Program = async (wait) => {
-    if (wait.resumeId === SESSION.beta) return;
+    `The owner answers each folder trust question in the pane ${pane ?? 'none'}. Then run "factory worker watch --ready ${id}".`;
+  /** Each resume starts its session, except for these workers: their panes run and write no line. */
+  const silentWorkers = (...ids: readonly Id[]): Program => async (wait) => {
+    if (ids.some((id) => wait.resumeId === SESSION[id])) return;
     await startsSessions(HOME, byResume)(wait);
   };
+  const silentBeta = silentWorkers('beta');
 
   it.each(ORIGINS)('restart exits 3 in %s factory folder, says that the worker stopped, and names the pane and worker watch --ready', async (_words, origin) => {
     const made = await make({ origin, newPaneScreen: TRUST_SCREEN, program: () => undefined });
@@ -1561,7 +1562,7 @@ describe('restart and reboot of a worker whose new pane waits on a folder trust 
     expect(exitCodeOf[error.kind]).toBe(3);
     expect(error.message).toContain('waits on a folder trust question');
     expect(error.message).toContain('The worker alpha stopped and did not start again');
-    expect(error.hint).toBe(trustRemedy(newPaneOf(made, 'alpha'), 'alpha'));
+    expect(error.hint).toContain(trustRemedy(newPaneOf(made, 'alpha'), 'alpha'));
     expect(made.tmux.typed()).toEqual([]);
   });
 
@@ -1576,6 +1577,18 @@ describe('restart and reboot of a worker whose new pane waits on a folder trust 
     expect(made.tmux.typed()).toEqual([]);
   });
 
+  it('reboot exits 3 and warns for each pane when beta and gamma wait on the question', async () => {
+    const made = await make({ newPaneScreen: TRUST_SCREEN, program: silentWorkers('beta', 'gamma') });
+    const output = await succeeded(reboot(made));
+    expect(output.failed).toBe(true);
+    expect(output.exitCode).toBe(3);
+    expect(output.json['workers']).toEqual({ resumed: ['alpha'], skipped: [], failed: ['beta', 'gamma'] });
+    expect(made.deps.warned).toEqual(expect.arrayContaining([
+      expect.stringContaining(trustRemedy(newPaneOf(made, 'beta'), 'beta')),
+      expect.stringContaining(trustRemedy(newPaneOf(made, 'gamma'), 'gamma')),
+    ]));
+  });
+
   it('reboot in the coordinator pane exits 3 when each worker that did not start again waits on the question', async () => {
     const made = await make({ from: 'coordinator', newPaneScreen: TRUST_SCREEN, program: silentBeta });
     const output = await succeeded(reboot(made));
@@ -1586,19 +1599,22 @@ describe('restart and reboot of a worker whose new pane waits on a folder trust 
     expect(made.tmux.typed()).toEqual([]);
   });
 
-  it('reboot keeps exit 1 when another worker did not start again for another fault', async () => {
-    const endsGamma: Program = async (wait) => {
-      if (wait.resumeId === SESSION.gamma) {
+  it.each([
+    ['gamma', 'alpha', ['beta', 'gamma']],
+    ['alpha', 'gamma', ['alpha', 'beta']],
+  ] as const)('reboot keeps exit 1 when the pane of %s ends and beta waits on the question', async (ended, resumed, failedIds) => {
+    const program: Program = async (wait) => {
+      if (wait.resumeId === SESSION[ended]) {
         await endsPane(wait);
         return;
       }
       await silentBeta(wait);
     };
-    const made = await make({ newPaneScreen: TRUST_SCREEN, program: endsGamma });
+    const made = await make({ newPaneScreen: TRUST_SCREEN, program });
     const output = await succeeded(reboot(made));
     expect(output.failed).toBe(true);
     expect(output.exitCode).toBeUndefined();
-    expect(output.json['workers']).toEqual({ resumed: ['alpha'], skipped: [], failed: ['beta', 'gamma'] });
+    expect(output.json['workers']).toEqual({ resumed: [resumed], skipped: [], failed: failedIds });
   });
 
   it('reboot keeps exit 1 when the new pane of a worker that did not start again shows no trust question', async () => {
@@ -1615,7 +1631,20 @@ describe('restart and reboot of a worker whose new pane waits on a folder trust 
     expect(output.failed).toBe(true);
     expect(output.exitCode).toBeUndefined();
     expect(made.deps.warned.join('\n')).toContain('resume not confirmed');
-    expect(made.deps.warned.join('\n')).not.toContain('Answer each folder trust question');
+    expect(made.deps.warned.join('\n')).not.toContain('factory worker watch --ready');
+  });
+
+  it('reboot keeps exit 1 when the pane shows a trust quote with no choice list', async () => {
+    const quote = 'Earlier answer: "Yes, I trust this folder".';
+    const made = await make({ newPaneScreen: `${quote}\n> `, program: silentBeta });
+    const output = await succeeded(reboot(made));
+    expect(output.failed).toBe(true);
+    expect(output.exitCode).toBeUndefined();
+    const warning = made.deps.warned.join('\n');
+    expect(warning).toContain('the last event is Stop, not SessionStart');
+    expect(warning).toContain('factory worker summon beta');
+    expect(warning).not.toContain('factory worker watch --ready');
+    expect(warning).not.toContain(quote);
   });
 });
 

@@ -82,7 +82,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server)',
     expect(beta).toBeDefined();
     expect(result.stderr).toContain(`the pane ${beta?.pane} of the worker beta waits on a folder trust question`);
     expect(result.stderr).toContain(
-      `Answer each folder trust question in the pane ${beta?.pane}. Then run "factory worker watch --ready beta".`,
+      `The owner answers each folder trust question in the pane ${beta?.pane}. Then run "factory worker watch --ready beta".`,
     );
     expect(await lab.launchCount('beta')).toBe(2);
   }, LIFECYCLE_CASE_MS);

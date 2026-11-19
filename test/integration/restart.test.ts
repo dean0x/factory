@@ -51,7 +51,7 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server)'
     expect(result.stderr).toContain(`the pane ${after?.pane} of the worker alpha waits on a folder trust question`);
     expect(result.stderr).toContain('The worker alpha stopped and did not start again');
     expect(result.stderr).toContain(
-      `Answer each folder trust question in the pane ${after?.pane}. Then run "factory worker watch --ready alpha".`,
+      `The owner answers each folder trust question in the pane ${after?.pane}. Then run "factory worker watch --ready alpha".`,
     );
     expect(result.stdout).not.toContain('Resumed');
     expect(await lab.launchCount('alpha')).toBe(2);
