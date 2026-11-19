@@ -1068,6 +1068,91 @@ describe('doctor: proxies', () => {
     expect(results.map((result) => result.id)).toEqual(['proxy:spare']);
   });
 
+  describe('the host of the proxy', () => {
+    const withBaseUrl = (baseUrl: string, onFail: 'stop' | 'direct' = 'stop'): FactoryConfig => {
+      const config = withProxies(onFail);
+      return {
+        ...config,
+        core: {
+          ...config.core,
+          proxies: config.core.proxies.map((proxy) => (proxy.id === 'local' ? { ...proxy, base_url: baseUrl } : proxy)),
+        },
+      };
+    };
+
+    it('warns with the fix when the host of a proxy in use is not loopback', async () => {
+      const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
+      const results = await checkProxies(deps, await stateOf(deps, withBaseUrl('https://proxy.example.com/secret-path')));
+      expect(results).toHaveLength(1);
+      const [result] = results;
+      expect(result?.id).toBe('proxy:local');
+      expect(result?.level).toBe('warn');
+      expect(result?.text).toContain('local (proxy.example.com:443) answers');
+      expect(result?.text).toContain('is not 127.0.0.1, ::1 or localhost');
+      expect(result?.text).toContain('set proxy to none for the session');
+      expect(result?.text).not.toContain('secret-path');
+      expect(result?.text).not.toContain('https://');
+    });
+
+    it.each([
+      'http://127.0.0.1:8787/v1',
+      'http://[::1]:8787',
+      'http://localhost:8787',
+      'http://LOCALHOST:8787',
+      'http://127.1:8787',
+      'http://[0:0:0:0:0:0:0:1]:8787',
+    ])(
+      'gives no host warning for the loopback proxy %s',
+      async (baseUrl) => {
+        const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
+        const [result] = await checkProxies(deps, await stateOf(deps, withBaseUrl(baseUrl)));
+        expect(result?.level).toBe('ok');
+        expect(result?.text).not.toContain('is not 127.0.0.1');
+      },
+    );
+
+    it.each(['http://localhost.example.com:8787', 'http://127.0.0.1.nip.io:8787', 'http://localhost.:8787'])(
+      'warns for the host of %s, which only looks local',
+      async (baseUrl) => {
+        const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
+        const [result] = await checkProxies(deps, await stateOf(deps, withBaseUrl(baseUrl)));
+        expect(result?.level).toBe('warn');
+        expect(result?.text).toContain('is not 127.0.0.1, ::1 or localhost');
+      },
+    );
+
+    it('still fails a proxy that is down with on_fail stop, and adds the host warning', async () => {
+      const deps = makeDeps();
+      const [result] = await checkProxies(deps, await stateOf(deps, withBaseUrl('http://10.0.0.5:8787')));
+      expect(result?.level).toBe('fail');
+      expect(result?.text).toContain('local (10.0.0.5:8787) does not answer');
+      expect(result?.text).toContain('is not 127.0.0.1, ::1 or localhost');
+      expect(result?.text.match(/set proxy to none/g)).toHaveLength(1);
+    });
+
+    it('keeps the warning of a proxy that is down with on_fail direct, and adds the host warning', async () => {
+      const deps = makeDeps();
+      const [result] = await checkProxies(deps, await stateOf(deps, withBaseUrl('http://10.0.0.5:8787', 'direct')));
+      expect(result?.level).toBe('warn');
+      expect(result?.text).toContain('on_fail is direct');
+      expect(result?.text).toContain('is not 127.0.0.1, ::1 or localhost');
+    });
+
+    it('gives no host warning for a proxy that nothing uses', async () => {
+      const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
+      const config = withProxies('stop');
+      const remoteSpare = {
+        ...config,
+        core: {
+          ...config.core,
+          proxies: config.core.proxies.map((proxy) => (proxy.id === 'spare' ? { ...proxy, base_url: 'https://proxy.example.com' } : proxy)),
+        },
+      };
+      const results = await checkProxies(deps, await stateOf(deps, remoteSpare));
+      expect(results).toEqual([{ id: 'proxy:local', level: 'ok', text: 'local (127.0.0.1:8787) answers' }]);
+    });
+  });
+
   it('warns that it did not check when the config is not valid', async () => {
     const deps = makeDeps();
     deps.seed(`${HOME}/factory.yaml`, 'schema: 1\n');

@@ -78,7 +78,7 @@ import {
   values,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { checkProxyHealth } from '../safety/proxy.js';
+import { checkProxyHealth, isLoopbackProxy } from '../safety/proxy.js';
 import { findTokenPaths } from '../safety/secrets.js';
 import { locateShareList } from '../state/files.js';
 import { guardWarning } from '../state/guard.js';
@@ -683,9 +683,14 @@ export const checkProxyEnv = (deps: Deps): CheckResult => {
     : check(checkIds.proxyEnv, 'warn', `${env.proxyBaseUrl} is set in the shell. ${program} clears it at launch.`);
 };
 
+/** The note for a proxy host that is not loopback. It names no part of the URL: the label holds the host. */
+const REMOTE_PROXY_HOST = 'The host is not 127.0.0.1, ::1 or localhost. This host receives the API traffic of the sessions.';
+const REMOTE_PROXY_FIX = `Use only a proxy that you control, or set ${keys.session.proxy} to ${values.noProxy} for the session.`;
+
 /**
  * One health request for each proxy in use. The home passed the registration check of the lookup, so its config
- * counts as chosen by the user, whatever way the lookup found it.
+ * counts as chosen by the user, whatever way the lookup found it. A proxy in use whose host is not loopback is a
+ * warning at least: a proxy that answers is never ok then, and a proxy that is down keeps its level.
  */
 export const checkProxies = async (deps: Deps, state: DocState<FactoryConfig>): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
@@ -699,11 +704,19 @@ export const checkProxies = async (deps: Deps, state: DocState<FactoryConfig>): 
     used.map(async (proxy): Promise<CheckResult> => {
       const id = `${checkIds.proxy}:${proxy.id}`;
       const health = await checkProxyHealth(deps, proxy);
-      if (health.up) return check(id, 'ok', `${health.label} answers`);
+      const remote = !isLoopbackProxy(proxy.base_url);
+      if (health.up) {
+        return remote
+          ? check(id, 'warn', `${health.label} answers. ${REMOTE_PROXY_HOST} ${REMOTE_PROXY_FIX}`)
+          : check(id, 'ok', `${health.label} answers`);
+      }
+      if (proxy.on_fail === values.onFail[1]) {
+        const note = remote ? ` ${REMOTE_PROXY_HOST} ${REMOTE_PROXY_FIX}` : '';
+        return check(id, 'warn', `${health.label} does not answer. ${keys.proxy.onFail} is ${proxy.on_fail}: sessions start without it.${note}`);
+      }
+      // The fix of a proxy that is down already names proxy none, so the host note adds no second fix.
       const fix = `Start the proxy, or set ${keys.session.proxy} to ${values.noProxy} for the session.`;
-      return proxy.on_fail === values.onFail[1]
-        ? check(id, 'warn', `${health.label} does not answer. ${keys.proxy.onFail} is ${proxy.on_fail}: sessions start without it.`)
-        : check(id, 'fail', `${health.label} does not answer. ${fix}`);
+      return check(id, 'fail', `${health.label} does not answer. ${fix}${remote ? ` ${REMOTE_PROXY_HOST}` : ''}`);
     }),
   );
 };

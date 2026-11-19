@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
-import { checkProxyHealth, healthUrl, parseProxyUrl, proxyLabel } from '../../src/safety/proxy.js';
+import { checkProxyHealth, healthUrl, isLoopbackProxy, parseProxyUrl, proxyLabel } from '../../src/safety/proxy.js';
 import { findTokenPaths, looksLikeToken, textHasToken } from '../../src/safety/secrets.js';
 import { FAKE_GITHUB_OAUTH_TOKEN, FAKE_GITHUB_TOKEN, FAKE_GOOGLE_API_KEY } from '../helpers/fake-secret.js';
 
@@ -193,6 +193,16 @@ describe('proxy label and health URL', () => {
     if (!parsed.ok) throw new Error('bad test URL');
     return parsed.value;
   };
+
+  it('counts only 127.0.0.1, ::1 and localhost as loopback, after the URL parser makes the host plain', () => {
+    expect(isLoopbackProxy('http://127.0.0.1:8787')).toBe(true);
+    expect(isLoopbackProxy('http://127.1:8787')).toBe(true);
+    expect(isLoopbackProxy('http://[::1]:8787')).toBe(true);
+    expect(isLoopbackProxy('http://LocalHost:8787')).toBe(true);
+    expect(isLoopbackProxy('http://localhost.example.com')).toBe(false);
+    expect(isLoopbackProxy('http://10.0.0.5:8787')).toBe(false);
+    expect(isLoopbackProxy('not a url')).toBe(false);
+  });
 
   it('shows only the id, the host and the port', () => {
     expect(proxyLabel('local', parse('http://127.0.0.1:8787/v1'))).toBe('local (127.0.0.1:8787)');

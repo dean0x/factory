@@ -4,6 +4,7 @@
 
 - Add `factory board`: one text view of requests, workers, open items, the queue and machine facts. `--width` sets the text width. `--json` prints `factory.board/v1`, with section faults and a cap of 500 open items.
 - Add the optional `factory-board` Claude Code mod and repo marketplace. `/board` opens a pane with factory text and this session's context and limits.
+- `doctor` warns when the host of a proxy in use is not `127.0.0.1`, `::1` or `localhost`. The warning names only the proxy id, the host and the port.
 
 Renames
 

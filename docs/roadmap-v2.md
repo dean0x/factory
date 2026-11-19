@@ -231,7 +231,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`. The report core work (PR B1) will meet the keys test and the static test. The `--since` test and the two event tests stay open.
 - [ ] A tmux test: the view slot pane shows the item titles of a fixture `local` board.
 - [ ] Template test: the coordinator role text and the fixed rules follow the approval setting. With `merge: owner`, the text says that every merge waits for the owner. With `merge: delegated`, it names the proofs of design §6.1 and does not say that every merge waits.
-- [ ] Unit test: `doctor` warns, with the fix, when the host of a configured proxy is not loopback (`127.0.0.1`, `::1` or `localhost`). It gives no such warning for a loopback host.
+- [x] Unit test: `doctor` warns, with the fix, when the host of a proxy in use is not loopback (`127.0.0.1`, `::1` or `localhost`). It gives no such warning for a loopback host.
 - [ ] Tests on a separate tmux server:
   - `worker new` makes a pane in the window `workers` with the pane option `@worker`;
   - `worker summon` shows the pane in the view slot, and the slot shows the board again after the time;

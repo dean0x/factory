@@ -18,6 +18,15 @@ export const parseProxyUrl = (raw: string): Result<URL, string> => {
   return ok(url);
 };
 
+/** The host names that stay on this machine. The URL parser gives a lower-case host and the IPv6 host in brackets. */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', '[::1]', 'localhost']);
+
+/** True only for a valid proxy URL whose host is on this machine. A URL that does not parse is not loopback. */
+export const isLoopbackProxy = (raw: string): boolean => {
+  const url = parseProxyUrl(raw);
+  return url.ok && LOOPBACK_HOSTS.has(url.value.hostname);
+};
+
 /** The proxy as output shows it: the id, the host and the port. Nothing else of the URL. */
 export const proxyLabel = (id: string, url: URL): string =>
   `${id} (${url.hostname}:${url.port === '' ? (DEFAULT_PORTS[url.protocol] ?? '') : url.port})`;
