@@ -1985,6 +1985,18 @@ describe('worker resume: the command says Resumed only when the session wrote it
     expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone`);
     expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
   });
+
+  it.each(['own', 'received'] as const)(
+    'says "resume not confirmed" (exit 3) in a %s factory folder when the pane shows a folder trust question, names the pane and worker watch --ready, and types nothing',
+    async (origin) => {
+      const screen = 'Quick safety check: Is this a project you created or one you trust?\n> 1. Yes, I trust this folder\n  2. No, exit\n';
+      const made = await withWorkers({ origin, program: () => undefined, tmux: { newPaneScreen: screen } });
+      const error = await notConfirmed(made);
+      expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha waits on a folder trust question`);
+      expect(error.hint).toContain(`The owner answers each folder trust question in the pane ${FIRST_NEW_PANE}. Then run "factory worker watch --ready alpha".`);
+      expect(made.tmux.typed()).toEqual([]);
+    },
+  );
 });
 
 describe('worker resume: a conversation that does not belong to the worker is not resumed', () => {

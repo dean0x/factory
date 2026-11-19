@@ -20,8 +20,11 @@ export type CliError =
 /** The failure code of a git config list that can not be read. */
 export const gitConfigUnreadable = 'git-config-unreadable';
 
-/** A failure that a caller can tell apart from the other failures without its text. */
-export type FailureCode = typeof gitConfigUnreadable;
+/** The code of a resume that is not confirmed because its pane waits on a folder trust question. */
+export const trustQuestionWait = 'trust-question-wait';
+
+/** An error that a caller can tell apart from the other errors without its text. */
+export type FailureCode = typeof gitConfigUnreadable | typeof trustQuestionWait;
 
 export type CliResult<T> = Result<T, CliError>;
 
@@ -50,7 +53,7 @@ export const failureWithExit = (exitCode: number, message: string, remedy?: stri
 export const codedFailure = (code: FailureCode, message: string, remedy?: string): Err<CliError> =>
   err({ kind: 'failure', message, ...(remedy === undefined ? {} : { hint: remedy }), code });
 
-/** True when the error is a failure that carries `code`. */
+/** True when the error carries `code`. A security stop carries no code. */
 export const hasCode = (error: CliError, code: FailureCode): boolean => error.kind !== 'safety' && error.code === code;
 
 export const usageError = (message: string, remedy?: string): Err<CliError> =>
@@ -59,6 +62,10 @@ export const usageError = (message: string, remedy?: string): Err<CliError> =>
 /** A command that cannot run yet (exit 3). The remedy line is required: it names the command or the step that makes it ready. */
 export const notReady = (message: string, remedy: string): Err<CliError> =>
   err({ kind: 'not-ready', message, hint: remedy });
+
+/** A command that cannot run yet (exit 3), with a code, so a caller can act on this case alone. */
+export const codedNotReady = (code: FailureCode, message: string, remedy: string): Err<CliError> =>
+  err({ kind: 'not-ready', message, hint: remedy, code });
 
 /** A security stop (exit 4). The remedy line is required: it names the command or the step that fixes the cause. */
 export const safetyRefusal = (message: string, remedy: string): Err<CliError> =>

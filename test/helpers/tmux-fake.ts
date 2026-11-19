@@ -55,6 +55,8 @@ export interface TmuxFixture {
   readonly programEndsAtOnce?: boolean;
   /** The program of each pane that `split-window` makes ends at once. The pane stays, as a dead pane. */
   readonly newPanesEndAtOnce?: boolean;
+  /** The text that `capture-pane -p` prints for each pane that `split-window` makes (see `PaneFixture.screen`). Default: empty. */
+  readonly newPaneScreen?: string;
   /**
    * The program of each pane that `split-window` makes ends before the next call, and the window does not keep ended panes, so tmux
    * removes the pane at once. The call itself prints the pane id, as tmux does, and every later call for that pane finds no pane.
@@ -572,6 +574,7 @@ export const tmuxHandler = (
           cwd: after(rest, '-c'),
           command: programOf(rest),
           dead: fixture.newPanesEndAtOnce === true,
+          ...(fixture.newPaneScreen === undefined ? {} : { screen: fixture.newPaneScreen }),
         });
         // Like tmux: the new pane gets the focus, unless the call has -d.
         if (!hasFlag(command, '-d')) makeActive(pane);

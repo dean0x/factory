@@ -1,4 +1,4 @@
-import { unlink } from 'node:fs/promises';
+import { unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { expectLaunchRule, hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded, type Marker } from './lifecycle-lab.js';
@@ -68,6 +68,23 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server)',
     expect(await lab.launchCount('beta')).toBe(2);
     expect(resumeIdOf(await lab.argvOf('alpha'))).toBe(SESSIONS.alpha);
     await expectRuleOf('alpha', 'beta');
+  }, LIFECYCLE_CASE_MS);
+
+  it('exits 3 when the new pane of a worker waits on a folder trust question, and the remedy names the pane and worker watch --ready', async () => {
+    await lab.node();
+    await writeFile(join(lab.outDir, 'trust-question-beta'), '');
+
+    const result = await lab.factory('reboot');
+    expect(result.code, result.stderr).toBe(3);
+    expect(result.stdout).toContain('Resumed the workers: alpha.');
+    expect(result.stdout).toContain('Did not start again: beta.');
+    const beta = await lab.livePaneOf('beta');
+    expect(beta).toBeDefined();
+    expect(result.stderr).toContain(`the pane ${beta?.pane} of the worker beta waits on a folder trust question`);
+    expect(result.stderr).toContain(
+      `The owner answers each folder trust question in the pane ${beta?.pane}. Then run "factory worker watch --ready beta".`,
+    );
+    expect(await lab.launchCount('beta')).toBe(2);
   }, LIFECYCLE_CASE_MS);
 
   it('exits 3 and stops nothing when one worker has no session id that it may resume', async () => {

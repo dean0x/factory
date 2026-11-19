@@ -1,15 +1,21 @@
-import { failure, notReady, type CliResult } from '../cli/errors.js';
+import { codedNotReady, failure, notReady, trustQuestionWait, type CliResult } from '../cli/errors.js';
+import { showsChoiceList } from '../comms/typing.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
+import { capturePaneArgs } from '../launch/tmux.js';
+import { tmuxStep } from '../launch/tmux-run.js';
 import {
   commandLines,
   commandText,
+  flags,
+  flagText,
   lastSeen,
   launchConfirm,
   resetConfirm,
   resetKinds,
   roles,
+  trustQuestion,
   type HookEvent,
   type ResetKind,
 } from '../names.js';
@@ -22,7 +28,8 @@ import { readPaneLife, type PaneLife } from './panes.js';
  * and a `--resume` of a session that can not be loaded ends the program at once, so one read of the pane right after the start
  * proves nothing. The check waits and reads again, at most `launchConfirm.attempts` times. At each check the pane must still be
  * there and still run the launch of the worker. A launch with a session to resume also needs the last-seen line of the worker:
- * the line that the hook of the new session writes, and no older line, confirms that the session loaded.
+ * the line that the hook of the new session writes, and no older line, confirms that the session loaded. A folder trust question
+ * holds back that hook, so a resume that no check confirms reads the screen of the pane once, to name the question in its remedy.
  */
 
 const keys = lastSeen.keys;
@@ -79,18 +86,50 @@ export const paneFailure = (request: PaneFailureRequest, life: Exclude<PaneLife,
     : failure(message, `Run "${again}" to try again.`);
 };
 
+/** The steps after a person sees that the earlier conversation did not load. */
+const recoverySteps = ({ home, workerId }: LaunchConfirmRequest): string =>
+  `run "${commandFor(commandLines.workerStop, workerId)}", ` +
+  `delete the file ${pointerFile(home, workerId)}, and run "${commandFor(commandLines.workerResume, workerId)}" to start a new conversation.`;
+
 /**
  * The pane runs, but the line of the new session did not come. This is a check verdict (exit 3), not a fault: the command can not
  * tell if the session loaded. It never says that the worker resumed.
  */
 const notConfirmed = (request: LaunchConfirmRequest, reason: string): CliResult<never> => {
-  const { home, paneId, workerId } = request;
+  const { paneId, workerId } = request;
   return notReady(
     `resume not confirmed: the pane ${paneId} of the ${roles.worker} ${workerId} runs, but its session wrote no ${launchConfirm.event} line ` +
       `within ${SECONDS} seconds (${reason})`,
     `Run "${commandFor(commandLines.workerSummon, workerId)}" to look at the pane ${paneId}. ` +
-      `If the earlier conversation did not load, run "${commandFor(commandLines.workerStop, workerId)}", ` +
-      `delete the file ${pointerFile(home, workerId)}, and run "${commandFor(commandLines.workerResume, workerId)}" to start a new conversation.`,
+      `If the earlier conversation did not load, ${recoverySteps(request)}`,
+  );
+};
+
+/**
+ * True when a line of a dialog with choices holds the words of the folder trust question (`trustQuestion`). It reads the screen
+ * once and types nothing. A capture that fails counts as no question, so the caller keeps its own verdict.
+ */
+const showsTrustQuestion = async (deps: Deps, paneId: string): Promise<boolean> => {
+  const args = capturePaneArgs(paneId);
+  if (!args.ok) return false;
+  const screen = await tmuxStep(deps, args.value);
+  return screen.ok && showsChoiceList(screen.value, (line) => trustQuestion.pattern.test(line));
+};
+
+/**
+ * The pane runs, but it waits on a folder trust question, and the session holds back its hook until the answer. This is a check
+ * verdict (exit 3) with a code, so that a caller can tell it apart. The owner answers each question in the pane, and
+ * `worker watch --ready` then waits for the worker. It never says that the worker resumed.
+ */
+const waitsOnTrust = (request: LaunchConfirmRequest, reason: string): CliResult<never> => {
+  const { paneId, workerId } = request;
+  return codedNotReady(
+    trustQuestionWait,
+    `resume not confirmed: the pane ${paneId} of the ${roles.worker} ${workerId} waits on a folder trust question, ` +
+      `so its session wrote no ${launchConfirm.event} line within ${SECONDS} seconds (${reason})`,
+    `The ${roles.owner} answers each folder trust question in the pane ${paneId}. ` +
+      `Then run "${commandText(commandLines.workerWatch)} ${flagText(flags.ready)} ${workerId}". ` +
+      `If the ${roles.owner} sees no question in the pane and the earlier conversation did not load, ${recoverySteps(request)}`,
   );
 };
 
@@ -133,7 +172,9 @@ const unconfirmedReason = async (deps: Deps, home: string, workerId: string, exp
  * Waits for the pane to prove itself. Each check comes after a wait of `launchConfirm.intervalMs`. A pane that is gone, that
  * ended, or that does not run the launch is a failure (exit 1). A launch with no session to resume is confirmed by the first check
  * of the pane. A launch with a session to resume is confirmed when a check finds the pane and the line of the new session, and
- * it is "not confirmed" (exit 3) when no check does within `launchConfirm.attempts` checks. Nothing is closed or undone.
+ * it is "not confirmed" (exit 3) when no check does within `launchConfirm.attempts` checks. Then one read of the screen of the pane
+ * picks the remedy: a folder trust question names the pane and `worker watch --ready`, and any other screen, or a read that fails,
+ * keeps the remedy of a resume that did not load. Nothing is typed, closed or undone.
  */
 export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): Promise<CliResult<void>> => {
   const { home, paneId, workerId, launchedAt, resuming } = request;
@@ -155,7 +196,7 @@ export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): 
     if (missing === null) return ok(undefined);
     reason = missing;
   }
-  return notConfirmed(request, reason);
+  return (await showsTrustQuestion(deps, paneId)) ? waitsOnTrust(request, reason) : notConfirmed(request, reason);
 };
 
 /** What the confirm of a reset needs to know. */

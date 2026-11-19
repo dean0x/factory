@@ -57,8 +57,9 @@ export const expectLaunchRule = (argv: readonly string[], proxy: string): void =
  * holds the proxy variable and `no` when it does not, `argv-<marker>` holds the arguments of the last launch, and
  * `launches-<marker>` has one line for each launch that ran on. A launch with `--resume <id>` acts like the program: the hook of the
  * new session writes its last-seen line. A launch whose marker has a file `record-term-<marker>` in the folder records the signal TERM in
- * `termed-<marker>` and ends with the code 143. A hang-up ends it too, but records nothing. The file `proxy-<marker>` comes first, so a
- * wait for any other file of the launch also covers it.
+ * `termed-<marker>` and ends with the code 143. A hang-up ends it too, but records nothing. A launch whose marker has a file
+ * `trust-question-<marker>` in the folder prints a folder trust question and never runs the hook, as a session that waits on the
+ * answer of the owner. The file `proxy-<marker>` comes first, so a wait for any other file of the launch also covers it.
  */
 const fakeClaude = (dir: string): string =>
   [
@@ -66,6 +67,11 @@ const fakeClaude = (dir: string): string =>
     `dir='${dir}'`,
     'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/proxy-$FACTORY_SESSION"; else echo no > "$dir/proxy-$FACTORY_SESSION"; fi',
     'printf \'%s\\n\' "$@" > "$dir/argv-$FACTORY_SESSION"',
+    'if [ -e "$dir/trust-question-$FACTORY_SESSION" ]; then',
+    "  printf '%s\\n' 'Quick safety check: Is this a project you created or one you trust?' '> 1. Yes, I trust this folder' '  2. No, exit'",
+    '  echo launched >> "$dir/launches-$FACTORY_SESSION"',
+    '  exec sleep 300',
+    'fi',
     'resume=""',
     'prev=""',
     'for arg in "$@"; do',
