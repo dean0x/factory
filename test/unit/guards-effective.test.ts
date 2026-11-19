@@ -1,7 +1,8 @@
-import { allOn, guardOn, guardRulesOf } from '../../src/guards/effective.js';
+import { allOn, guardOn, guardRulesOf, guardSourceOf } from '../../src/guards/effective.js';
 import { describe, expect, it } from 'vitest';
 import { withGuards, type Deps } from '../../src/core/deps.js';
-import { guardSourceFor } from '../../src/core/guard-source.js';
+import { readGuardState } from '../../src/core/guard-records.js';
+import { guardReadOf, guardSourceFor } from '../../src/core/guard-source.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import type { Guard, GuardSource } from '../../src/guards/types.js';
 import { commands, guardIds, guardRecordWords, guardValues } from '../../src/names.js';
@@ -9,9 +10,10 @@ import { recipes } from '../../src/recipes/index.js';
 import { softwareRecipe } from '../helpers/blocks.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import {
-  GUARD_STORE, GUARDED_HOME, guardedNode, OFF_GUARD, OTHER_HOME, OTHER_NODE_ID, PRE_READ_FAULTS, withFirstConfigReadFault,
+  GUARD_STORE, GUARDED_HOME, guardedNode, OFF_GUARD, OTHER_HOME, OTHER_NODE_ID, PRE_READ_FAULTS, withFirstConfigReadFault, withGuardsOff,
 } from '../helpers/guarded-node.js';
 import { countReadsOf } from '../helpers/read-count.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 
 const guards = guardsFor(softwareRecipe).map((guard): Guard => ({ ...guard, wired: true }));
 const node = 'demo';
@@ -141,5 +143,36 @@ describe('the pre-read of the guard values', () => {
     expect(read.values).toEqual(allOn);
     expect(read.state).toMatchObject({ proof: guardRecordWords.unproved });
     expect(await offIn(deps, source)).toBe(false);
+  });
+});
+
+describe('the one owner of the guard decision', () => {
+  const config = withGuardsOff(sampleConfig(), [OFF_GUARD]);
+
+  it('gives a direct call the off value only with its proof, and its deps give the same value to each site', async () => {
+    const proved = await guardReadOf(guardedNode(), GUARDED_HOME, config, 'when-off');
+    expect(proved.state).toMatchObject({ values: { [OFF_GUARD]: guardValues.off }, proof: null });
+    expect(await guardOn(proved.deps, OFF_GUARD, GUARDED_HOME)).toBe(false);
+    const unproved = await guardReadOf(guardedNode({}, { listed: OTHER_NODE_ID }), GUARDED_HOME, config, 'when-off');
+    expect(unproved.state).toMatchObject({ values: { [OFF_GUARD]: guardValues.on }, proof: guardRecordWords.unproved });
+    expect(await guardOn(unproved.deps, OFF_GUARD, GUARDED_HOME)).toBe(true);
+  });
+
+  it('keeps every guard on with the store facts and names the reason when the read of the command line is of another home', async () => {
+    const deps = guardedNode();
+    const other = await guardSourceFor(deps, GUARDED_HOME, recipes, commands.status).read();
+    expect(other.values).toMatchObject({ [OFF_GUARD]: guardValues.off });
+    const read = await guardReadOf(withGuards(deps, guardSourceOf({ ...other, home: OTHER_HOME })), GUARDED_HOME, config, 'always');
+    expect(read.state).toMatchObject({ values: { [OFF_GUARD]: guardValues.on }, record: true, proof: guardRecordWords.otherHome });
+    expect(await guardOn(read.deps, OFF_GUARD, GUARDED_HOME)).toBe(true);
+  });
+
+  it('keeps every guard on when the read of the command line found no off value and the config of the command has one', async () => {
+    const deps = guardedNode();
+    const state = await readGuardState(deps, GUARDED_HOME, sampleConfig(), 'when-off');
+    const own = withGuards(deps, guardSourceOf({ home: GUARDED_HOME, values: state.values, state }));
+    const read = await guardReadOf(own, GUARDED_HOME, config, 'always');
+    expect(read.state).toMatchObject({ values: { [OFF_GUARD]: guardValues.on }, record: true, recordCount: 1, proof: null });
+    expect(await guardOn(read.deps, OFF_GUARD, GUARDED_HOME)).toBe(true);
   });
 });
