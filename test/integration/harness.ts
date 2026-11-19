@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { scaled } from './load.js';
 
 export const DIST = join(__dirname, '..', '..', 'dist', 'factory.js');
@@ -131,6 +131,19 @@ const removeRoot = async (root: string): Promise<void> => {
 export const removeOpenSandboxes = async (): Promise<void> => {
   await Promise.all([...openRoots].map(removeRoot));
 };
+
+/**
+ * True for a path below a folder `.git`. The entry `.git` itself is not below it, so a new work copy still shows.
+ * A bare repo (a folder such as `web.git`) is not left out, so do not take the tree of a folder that holds one.
+ */
+const isInsideGit = (path: string): boolean => path.split(sep).slice(0, -1).includes('.git');
+
+/**
+ * Every path below a folder, as relative paths, without the paths below a folder `.git`. Git changes its own files at any
+ * time (a background maintenance task makes and removes `objects/maintenance.lock`), so a tree with them is not stable.
+ */
+export const treeOf = async (folder: string): Promise<string[]> =>
+  (await readdir(folder, { recursive: true })).filter((path) => !isInsideGit(path)).sort();
 
 /** A throw-away folder tree with its own HOME and git identity. The real HOME is never used. */
 export const makeSandbox = async (): Promise<Sandbox> => {

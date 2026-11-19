@@ -4,7 +4,7 @@ import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink, w
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
-import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, PREFIX_RECORD_NOTICE, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, PREFIX_RECORD_NOTICE, tmuxSocketOf, treeOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
 import { loadNote, scaled } from './load.js';
 
@@ -172,9 +172,6 @@ const initNode = async ({ hookSettings = true }: { hookSettings?: boolean } = {}
   if (!hookSettings) await rm(join(box.node, 'coordinator', '.claude'), { recursive: true, force: true });
   return [join(box.node, 'web'), join(box.node, 'api')];
 };
-
-/** Every path below a folder, as relative paths. */
-const treeOf = async (folder: string): Promise<string[]> => (await readdir(folder, { recursive: true })).sort();
 
 describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', () => {
   it('prints the warning about an instruction file above the root on stderr, and still exits 0', async () => {

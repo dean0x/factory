@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, unlink, writeFi
 import { join, resolve, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
-import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, tmuxSocketOf, treeOf, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
 import { loadNote, scaled } from './load.js';
 
@@ -91,9 +91,6 @@ const outOf = async (name: string): Promise<string> => (await readFile(join(outD
 /** The panes of the workers window, as `<pane id> <worker mark>` lines. A pane with no mark has an empty mark. */
 const workerPanes = async (): Promise<string[]> =>
   (await tmux(['list-panes', '-t', '=demo:workers', '-F', '#{pane_id} #{@worker}'])).stdout.split('\n').filter((line) => line !== '');
-
-/** Every path below a folder, as relative paths. */
-const treeOf = async (folder: string): Promise<string[]> => (await readdir(folder, { recursive: true })).sort();
 
 /**
  * One line for a path and one for each entry below it: the relative path, the mode with its type bits, the time of the last
@@ -306,12 +303,13 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
   });
 
   it('exits 2 for a project that the config does not list and makes nothing', async () => {
-    await startedNode();
+    const clone = await startedNode();
     const before = await treeOf(box.node);
     const result = await workerNew('alpha', '--project', 'nope', '--yes');
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('is not listed');
     expect(await treeOf(box.node)).toEqual(before);
+    expect((await box.git(clone, ['rev-parse', '--verify', '--quiet', 'refs/heads/worker/alpha'])).code).not.toBe(0);
     expect(await workerPanes()).toHaveLength(1);
   });
 
@@ -332,13 +330,14 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
   });
 
   it('exits 2 with no terminal window and no yes flag, and writes nothing', async () => {
-    await startedNode();
+    const clone = await startedNode();
     const before = await treeOf(box.node);
     const result = await workerNew('alpha', '--project', 'web');
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('This changes the settings of Claude Code in ');
     expect(result.stderr).toContain('factory worker new');
     expect(await treeOf(box.node)).toEqual(before);
+    expect((await box.git(clone, ['rev-parse', '--verify', '--quiet', 'refs/heads/worker/alpha'])).code).not.toBe(0);
     expect(await workerPanes()).toHaveLength(1);
   });
 
