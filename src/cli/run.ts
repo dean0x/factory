@@ -60,10 +60,11 @@ const runHookRoute = async (words: readonly string[], deps: Deps, sink: Sink, re
 
 /**
  * The guard source of a command row. A row with the home flag finds its node home, so its pre-read uses that flag in the order of
- * the command. Every other row, for example `init`, has every guard on. The name only fills a remedy line that the pre-read never shows.
+ * the command. `init` reads the node of its home flag in the same order: a new folder is no node yet, so every guard is on there.
+ * Every other row has every guard on. The name only fills a remedy line that the pre-read never shows.
  */
 const guardSourceOfRow = (deps: Deps, command: Command, given: Given, registry: RecipeRegistry): GuardSource => {
-  if (command.options[flags.home] !== foundHomeOption) return allGuardsOn;
+  if (command.options[flags.home] !== foundHomeOption && command.name !== commands.init) return allGuardsOn;
   const name: CommandName = Object.values(commands).find((known) => known === command.name) ?? commands.help;
   return guardSourceFor(deps, given.string(flags.home), registry, name);
 };

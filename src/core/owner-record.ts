@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
+import { guardOn } from '../guards/effective.js';
 import {
   boardIds,
   boardLimits,
@@ -9,6 +10,7 @@ import {
   commandText,
   env,
   files,
+  guardIds,
   ownerDecisions,
   ownerRecords,
   places,
@@ -289,12 +291,17 @@ export interface DelegationReport {
  * value is `delegated` and the newest delegation record for the node id, the real path of the folder and the point is
  * `delegated`. Every other case gives `owner`: a local `delegated` with no matching record, a newer record with the mode
  * `owner`, a record for another folder, a record of another kind, and a store that cannot be used. The store is read only
- * when a local value asks for a delegation.
+ * when a local value asks for a delegation. With the guard of approval delegation off, a local `delegated` value counts with no
+ * record, and the store is not read.
  */
 export const delegationReport = async (deps: Deps, root: string, config: FactoryConfig): Promise<DelegationReport> => {
   const points = config.entry.approvalPoints;
   const asked = points.filter((point) => config.core.approval[point.id] === DELEGATED_MODE);
   if (asked.length === 0) return { modes: ownerModes(points), active: [], unmatched: [] };
+  if (!(await guardOn(deps, guardIds.approvalDelegation, root))) {
+    const modes = Object.fromEntries(points.map((point) => [point.id, asked.includes(point) ? DELEGATED_MODE : OWNER_MODE]));
+    return { modes, active: [], unmatched: [] };
+  }
   const records = await delegationsOf(deps, root, config.core.node.id);
   const backed = asked.filter((point) => records.get(point.id)?.mode === DELEGATED_MODE);
   return {

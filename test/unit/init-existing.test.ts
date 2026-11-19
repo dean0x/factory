@@ -12,7 +12,7 @@ import { locateHome } from '../../src/core/home.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { commands, env, stateGuard, stateKeys, stateLock, values } from '../../src/names.js';
+import { commands, env, guardIds, stateGuard, stateKeys, stateLock, values } from '../../src/names.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { inspectState } from '../../src/state/load.js';
@@ -36,6 +36,7 @@ import { acceptSetupText } from '../helpers/setup-acceptance.js';
 import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { countReadsOf } from '../helpers/read-count.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 
 const ROOT = '/w/node';
@@ -525,6 +526,21 @@ describe('init: the mode of the local file on a registered root', () => {
     expect(deps.modes.get(LOCAL)).toBe(0o644);
     expect(deps.atomicWrites).toEqual([]);
     expect(snapshot(deps)).toBe(before);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('init: the guard of approval delegation on a registered root in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.approvalDelegation))('sets a delegation with the yes flag only while the guard is off, with the guard %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const { deps } = existing({ origin });
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), off));
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, off, deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', ROOT, '--yes', '--approval', 'merge=delegated'], deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 2 : 0);
+    expect(sink.errors.join('').includes('--yes cannot set the approval point merge to delegated')).toBe(on);
+    expect(recordsOf(deps)).toEqual([]);
+    if (!on) expect(sink.out.join('')).toContain('Approval points: merge delegated, release owner.');
   });
 });
 

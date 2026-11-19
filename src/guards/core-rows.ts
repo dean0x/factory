@@ -61,7 +61,7 @@ const approvalDelegationRows: readonly GuardRow[] = [
     name: `The ${owner} sees a delegation that no approval record backs`,
     applies: 'Scan of the folder',
     harm: false,
-    sites: at('src/commands/root-content.ts', 'delegationFindings'),
+    sites: [...at('src/commands/root-content.ts', 'delegationFindings'), ...at('src/core/owner-record.ts', 'delegationReport')],
   }),
 ];
 

@@ -68,8 +68,13 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '',
   '## Approval points',
   '',
-  '- A step that needs an approval is an approval point. A point waits for the {{owner}}, unless the {{owner}} delegated it.',
-  '- A delegation counts only for work that the {{owner}} approved and assigned. A session never sets a delegation.',
+  {
+    guards: [guardIds.approvalDelegation],
+    lines: [
+      '- A step that needs an approval is an approval point. A point waits for the {{owner}}, unless the {{owner}} delegated it.',
+      '- A delegation counts only for work that the {{owner}} approved and assigned. A session never sets a delegation.',
+    ],
+  },
   ...approval,
   `- After a push, run \`${prWatchCommand} <number> ${flagText(prFlags.head)} <full SHA>\` as a background task. The first line of its output is the verdict. Exit 0 is not an approval.`,
   {

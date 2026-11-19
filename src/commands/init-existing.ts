@@ -19,6 +19,7 @@ import { entryProblemOf, markerProblemOf, reasonOf, rootRefusalOf } from '../cor
 import { recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { readGuardState } from '../core/guard-records.js';
+import { guardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { err, ok } from '../core/result.js';
 import {
@@ -28,6 +29,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   localFileModes,
   maxFileBytes,
   places,
@@ -275,7 +277,8 @@ const askRegistration = async (asking: Deps, options: InitOptions, home: string)
 /**
  * The approval points of a registered folder. A flag sets one point. In a terminal window, the owner is asked for each
  * other point, and the current mode is the default answer. A moved folder or a folder with another node id sets no point:
- * its delegations end, so a flag is a usage error there.
+ * its delegations end, so a flag is a usage error there. With the guard of approval delegation off, a
+ * delegation needs no record, so the flag counts there too.
  */
 const approvalsOf = async (
   deps: Deps,
@@ -283,23 +286,29 @@ const approvalsOf = async (
   checked: Checked,
 ): Promise<CliResult<ApprovalChoice>> => {
   const { config, points, standing } = checked;
+  const home = checked.root.layout.home;
   const current = { modes: config.core.approval, set: [] };
   if (standing.registration !== 'registered') {
-    return options.approval.length === 0
-      ? ok(current)
-      : usageError(
-          `${flagText(flags.approval)}: the points are set in a second run, after the ${places.folder} is registered`,
-          `Run "${commandText(commands.init)}" again without ${flagText(flags.approval)}, then once more with it.`,
-        );
+    if (options.approval.length === 0) return ok(current);
+    if (await guardOn(deps, guardIds.approvalDelegation, home)) {
+      return usageError(
+        `${flagText(flags.approval)}: the points are set in a second run, after the ${places.folder} is registered`,
+        `Run "${commandText(commands.init)}" again without ${flagText(flags.approval)}, then once more with it.`,
+      );
+    }
   }
-  const flagged = approvalsFromFlags(deps, options.yes, points, options.approval, config.core.approval);
+  const flagged = await approvalsFromFlags(deps, home, options.yes, points, options.approval, config.core.approval);
   return flagged.ok ? askApprovals(deps, options.yes, points, flagged.value) : flagged;
 };
 
-/** The warning for a folder that is new to the list: each delegation of the local file ends. */
-const delegationWarnings = (checked: Checked): readonly string[] => {
+/**
+ * The warning for a folder that is new to the list: each delegation of the local file ends. With the guard of approval delegation
+ * off, a delegation needs no record, so none ends and no warning comes.
+ */
+const delegationWarnings = async (deps: Deps, checked: Checked): Promise<readonly string[]> => {
   const asked = checked.points.filter((point) => checked.config.core.approval[point.id] === DELEGATED_MODE);
-  return checked.standing.registration === 'registered' || asked.length === 0
+  return checked.standing.registration === 'registered' || asked.length === 0 ||
+    !(await guardOn(deps, guardIds.approvalDelegation, checked.root.layout.home))
     ? []
     : [
         `A record of a delegation names the real path of the ${places.folder} and the ${roles.node} id, so each delegation ends. ` +
@@ -709,7 +718,7 @@ export const runExisting = async (
     ...writtenNames(plan.value, checked.value.repair, applied.value.text, applied.value.guarded),
     ...hook.value.written,
   ];
-  const warnings = [...checked.value.warnings, ...delegationWarnings(checked.value), ...applied.value.warnings, ...hook.value.warnings];
+  const warnings = [...checked.value.warnings, ...(await delegationWarnings(deps, checked.value)), ...applied.value.warnings, ...hook.value.warnings];
   const headline = received
     ? `Registered the ${roles.node} "${id}" in ${home}.`
     : `The ${roles.node} "${id}" in ${home} is registered.`;

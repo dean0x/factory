@@ -248,7 +248,7 @@ A guard groups checks and role rules that keep one thing safe. `factory guard li
 
 The local key `guards` accepts `on` or `off`. The shared key `shared_guards` accepts `on` only; a shared `on` keeps that guard on. A missing key means on. `init` writes no guard values. A local off takes effect only with the matching record of the owner that `factory guard set` writes.
 
-This version can set `settings-check`, `settings-write`, `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. Every other guard stays on. The guard `merge-quality` holds the checked head SHA, green CI there and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
+This version can set `approval-delegation`, `settings-check`, `settings-write`, `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. Every other guard stays on. The guard `merge-quality` holds the checked head SHA, green CI there and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
 
 For example, run `factory guard set resume-routines off` in your terminal window outside factory and Claude Code sessions. The command lists the guards and asks for consent. `factory guard set resume-routines on` puts the rule back. Both input and output must be terminals. The change takes effect at the next start. `guard set` and `guard confirm` accept no `--json` output.
 

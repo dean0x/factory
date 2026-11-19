@@ -612,7 +612,7 @@ const checkOptions = async (
   const recipe = parseRecipe(options.recipe, registry);
   if (!recipe.ok) return recipe;
   // Every check of the approval flag comes before the first clone and before any write.
-  const approvals = approvalsFromFlags(deps, options.yes, recipe.value.approvalPoints, options.approval);
+  const approvals = await approvalsFromFlags(deps, home, options.yes, recipe.value.approvalPoints, options.approval);
   if (!approvals.ok) return approvals;
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
   if (!outside.ok) return outside;

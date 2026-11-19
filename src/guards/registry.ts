@@ -24,11 +24,13 @@ const machineKeys = [
 
 /** The guards of the core, in the order of the list. A recipe adds its own guards to them. */
 const coreGuards: readonly GuardDefinition[] = [
-  guardOf(
-    guardIds.approvalDelegation,
-    'Approval delegation',
-    `A step that needs an approval waits for the ${owner}, unless the ${owner} delegated it with an approval record.`,
-    [approvalKey],
+  wiredGuard(
+    guardOf(
+      guardIds.approvalDelegation,
+      'Approval delegation',
+      `A step that needs an approval waits for the ${owner}, unless the ${owner} delegated it with an approval record.`,
+      [approvalKey],
+    ),
   ),
   guardOf(
     guardIds.boardEdits,
