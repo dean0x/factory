@@ -1408,14 +1408,16 @@ export const watchRun = {
 export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionStart' } as const;
 
 /**
- * The words that mark the folder trust question of Claude Code on the screen of a worker pane. Claude Code asks it for each folder of
- * the launch (the work copy, or a folder of `--add-dir`) that the user did not trust, and an interactive session holds back every hook
- * until the answer, so the `launchConfirm.event` line of a resume can not come. Only a resume that the line does not confirm reads the
- * screen, once. `pattern` matches a screen when one line holds both the word "trust" and the word "folder", in any case. The public
- * title of the question in VS Code is "Trust this folder in Claude Code?"; the terminal text is not documented, so the two words are a
- * guess until a live check. The pane check also requires that the line belongs to a dialog with choices. A match changes the
- * message and the remedy of `worker resume` and `restart` (exit 3 in both cases), and it changes the
- * exit code of `reboot` from 1 to 3 when each worker that did not start again matches.
+ * Claude Code asks about each folder the owner has not trusted: the work copy or a folder of `--add-dir`.
+ * The session holds back every hook until the owner answers, so no `launchConfirm.event` line comes.
+ * Only a resume with no confirmation reads the screen, once. The check needs a dialog with choices.
+ * `pattern` matches both whole words "trust" and "folder", in any case, on a choice line or the line directly above the choices.
+ * The terminal text has no public specification, so the two words are a guess until a live check confirms them.
+ * `capture-pane -p` has no `-J`, so a pane narrower than about 29 columns can split the words across rows and keep the usual result.
+ * A match keeps the reason from the last check and gives the owner the trust remedy.
+ * It changes the error for `worker resume` and `restart` and the worker warning for `start` and `reboot`.
+ * A false match changes the remedy but not the exit code for `worker resume`, `restart` (both 3) or `start` (0).
+ * For `reboot`, a false match can change exit code 1 to 3 if every worker that did not start again matches.
  */
 export const trustQuestion = { pattern: /^(?=.*\btrust\b)(?=.*\bfolder\b)/im } as const;
 
