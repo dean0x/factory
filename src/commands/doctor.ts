@@ -17,7 +17,7 @@ import { fileTransport } from '../comms/transport.js';
 import { inspectConfig, localFileAccess, readNodeIdentity, wideModeNote } from '../config/load.js';
 import { folderKey } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
-import type { Deps } from '../core/deps.js';
+import { withGuards, type Deps } from '../core/deps.js';
 import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { guardStorePathOf, readGuardState, type GuardReadState } from '../core/guard-records.js';
 import { locateHomeFolder } from '../core/home.js';
@@ -37,7 +37,7 @@ import {
   tmuxVersionOf,
   toolNames,
 } from '../core/tools.js';
-import { allOn } from '../guards/effective.js';
+import { allOn, guardSourceOf } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
@@ -967,9 +967,11 @@ interface CheckRun {
 const skippedProxyCheck = (): CheckResult =>
   notChecked(checkIds.proxy, `a check of the ${places.folder} failed, so no health check went to a proxy`);
 
-const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CheckRun> => {
-  const config = await inspectConfig(deps, home, registry);
-  const guards = config.kind === 'valid' ? await readGuardState(deps, home, config.value, 'always') : null;
+const runChecks = async (base: Deps, home: string, registry: RecipeRegistry): Promise<CheckRun> => {
+  const config = await inspectConfig(base, home, registry);
+  const guards = config.kind === 'valid' ? await readGuardState(base, home, config.value, 'always') : null;
+  // Every check acts on the guard values that the report shows: one read gives both. A config that does not load keeps every guard on.
+  const deps = withGuards(base, guardSourceOf({ home, values: guards?.values ?? allOn }));
   const state = await inspectState(deps, home);
   const rootScan = await scanRoot(deps, home, config.kind === 'valid' ? config.value : null);
   const [

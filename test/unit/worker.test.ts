@@ -12,7 +12,7 @@ import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
-import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, withStoreReadFault } from '../helpers/guarded-node.js';
 import {
   createFakeDeps,
   exited,
@@ -1110,6 +1110,19 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings
     expect(code, sink.errors.join('')).toBe(on ? 2 : 0);
     expect(made.deps.files.has(SETTINGS_FILE)).toBe(!on);
     expect(made.deps.prompts).toEqual([]);
+  });
+
+  it('acts on the guard values of its launch checks, with no other read of the guard store that could fail', async () => {
+    const off = [guardIds.settingsWrite];
+    const made = make({
+      origin,
+      config: withGuardsOff(sampleConfig(), off),
+      seed: { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+    });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME], withStoreReadFault(made.deps, 2), sink);
+    expect(code, sink.errors.join('')).toBe(0);
+    expect(made.deps.files.has(SETTINGS_FILE)).toBe(true);
   });
 });
 

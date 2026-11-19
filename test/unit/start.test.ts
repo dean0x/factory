@@ -13,7 +13,9 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { activeMachine, commands, env, files, guardIds, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
+import {
+  activeMachine, commands, env, files, guardIds, guardStartWords, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles,
+} from '../../src/names.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { allOn } from '../../src/guards/effective.js';
@@ -37,7 +39,7 @@ import {
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
-import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, withStoreReadFault } from '../helpers/guarded-node.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
@@ -1032,6 +1034,21 @@ describe.each(FOLDER_ORIGINS)('start in %s: the line about the hook of the delet
     const sink = captureSink();
     expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(0);
     expect(deps.warned.filter((line) => line.includes('The delete guard of .factory is off'))).toHaveLength(on ? 1 : 0);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: one guard decision for the summary and the root checks', (_folder, origin) => {
+  it.each([
+    ['every read of the guard store passes', 0, 0, true],
+    ['the first read of the guard store fails', 1, 4, false],
+  ])('acts on one read of the guard values, and shows the off guard only when that read holds it: %s', async (_name, faulted, code, shown) => {
+    const off = [guardIds.settingsCheck];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config });
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], withStoreReadFault(deps, faulted), sink), sink.errors.join('')).toBe(code);
+    expect(sink.out.join('').includes(`${guardStartWords.prefix} ${guardStartWords.off(1)}`)).toBe(shown);
   });
 });
 

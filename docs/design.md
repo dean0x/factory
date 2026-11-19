@@ -1383,7 +1383,7 @@ Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and i
 
 A missing key means `on`. New nodes and existing nodes with no guard keys keep every guard on. `init` writes no guard value. Config splits and upgrade rewrites keep guard values. Related config keys keep their own meaning; a related key is not a guard key.
 
-A local `off` takes effect only with a matching record of the owner for that node id and real factory folder. A missing or different record keeps the guard on. A move of the folder ends its guard records. A guard that this version cannot set always stays on, even with a local `off` and a record.
+A local `off` takes effect only with a matching record of the owner for that node id and real factory folder. The folder path of the record must be the same, letter case included. A missing or different record keeps the guard on. A record whose folder path differs only in letter case also keeps the guard on: set the value again with `factory guard set`. A move of the folder ends its guard records. A local `off` also needs a config that loads in full and an entry of the factory list with the node id of the config. Else every guard stays on. A guard that this version cannot set always stays on, even with a local `off` and a record. A command uses one read of the guard values for its output and for each of its steps.
 
 **Text guards.** This version can set five guards:
 
