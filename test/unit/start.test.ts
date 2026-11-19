@@ -1039,6 +1039,19 @@ describe.each(FOLDER_ORIGINS)('start in %s: the line about the hook of the delet
   });
 });
 
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of the Claude Code settings check', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.settingsCheck))('stops for a settings file that sets a program variable only while the guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { FACTORY_ANYTHING: '1' } }));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('coordinator/.claude/settings.json')).toBe(on);
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('start in %s: one guard decision for the summary and the root checks', (_folder, origin) => {
   it.each([
     ['every read of the guard store passes', 0, 0, true],
