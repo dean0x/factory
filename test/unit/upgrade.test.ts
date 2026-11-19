@@ -5482,6 +5482,26 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     expect(snapshot(deps)).toEqual(before);
   });
 
+  // The fake reads the text at the path of the link, as a read through a link does.
+  describe.each(FOLDER_ORIGINS)('with the guard of the settings write in %s', (_folder, origin) => {
+    it.each([true, false])('stops at a settings file that is a link, also with the guard off, because the safe write stays on (guard on: %s)', async (on) => {
+      const links: Record<string, string> = {};
+      const { deps } = await olderFactory({ links });
+      const off = on ? [] : [guardIds.settingsWrite];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (!on) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify({ [guardIds.settingsWrite]: 'off' })}\n`);
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      links[copySettings('beta')] = '/outside/settings.json';
+      const sink = captureSink();
+      const code = await runCli(['upgrade', '--yes', '--home', HOME], deps, sink);
+      const err = sink.errors.join('');
+      expect(code, err).toBe(4);
+      expect(err.includes(`the settings file ${copySettings('beta')} is a link`)).toBe(on);
+      expect(err.includes(`cannot write ${copySettings('beta')}: it is a link`)).toBe(!on);
+      expect(deps.files.has('/outside/settings.json')).toBe(false);
+    });
+  });
+
   it('stops with exit 1 for a settings file that is not a JSON object, before any write', async () => {
     const { deps } = await olderFactory();
     deps.seed(copySettings('beta'), '["not", "an", "object"]\n');

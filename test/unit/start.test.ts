@@ -1052,6 +1052,48 @@ describe.each(FOLDER_ORIGINS)('start in %s: the guard of the Claude Code setting
   });
 });
 
+describe.each(FOLDER_ORIGINS)('start in %s: the path checks of the guard of the Claude Code settings write', (_folder, origin) => {
+  const CHANGED = JSON.stringify({ model: 'opus', statusLine: { type: 'command', command: 'my-line' } });
+
+  /** A started node with the guard of the settings write on, or off with the matching record. */
+  const node = (on: boolean, setup: Setup = {}) => {
+    const off = on ? [] : [guardIds.settingsWrite];
+    const config = withGuardsOff(sampleConfig(), off);
+    const made = make({ origin, config, ...setup });
+    made.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, made.deps.now()));
+    return made;
+  };
+
+  const startOf = async (deps: Parameters<typeof runCli>[1]) => {
+    const sink = captureSink();
+    const code = await runCli([commands.start, '--yes', '--home', HOME], deps, sink);
+    return { code, err: sink.errors.join('') };
+  };
+
+  it.each([true, false])('stops at a settings file in the user folder of Claude Code only while the guard is on (guard on: %s)', async (on) => {
+    const { deps } = node(on, { hookSettings: false, env: { [env.userHome]: COORDINATOR } });
+    const result = await startOf(deps);
+    expect(result.code, result.err).toBe(on ? 4 : 0);
+    expect(result.err.includes('settings folder of Claude Code')).toBe(on);
+    expect(deps.files.has(SETTINGS_FILE)).toBe(!on);
+  });
+
+  it.each([true, false])('stops when the settings file changed after the change was shown only while the guard is on (guard on: %s)', async (on) => {
+    const { deps } = node(on, { hookSettings: '{"model":"opus"}' });
+    const changing: Parameters<typeof runCli>[1] = {
+      ...deps,
+      warn: (text) => {
+        if (text.includes(SETTINGS_FILE)) deps.seed(SETTINGS_FILE, CHANGED);
+        deps.warn(text);
+      },
+    };
+    const result = await startOf(changing);
+    expect(result.code, result.err).toBe(on ? 1 : 0);
+    expect(result.err.includes('changed while the question waited')).toBe(on);
+    expect(deps.files.get(SETTINGS_FILE) === CHANGED).toBe(on);
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('start in %s: one guard decision for the summary and the root checks', (_folder, origin) => {
   it.each([
     ['every read of the guard store passes', 0, 0, true],
