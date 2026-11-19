@@ -89,6 +89,8 @@ export const guardRulesOf = (guards: readonly Guard[], facts: GuardFacts): Guard
       if (shared) source = 'shared';
       else if (matched) source = 'local';
       else if (local === guardValues.off) source = 'noRecord';
+    } else if (guard.wired && facts.local?.[guard.id] !== undefined) {
+      source = 'unread';
     }
     return {
       id: guard.id,

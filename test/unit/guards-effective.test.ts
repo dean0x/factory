@@ -55,6 +55,7 @@ describe('effective guard values', () => {
   it.each([{ loadError: true }, { fault: 'unreadable' }])('fails closed when state cannot load: %j', (fault) => {
     expect(guardRulesOf(guards, { node, root, local, record, ...fault })).toMatchObject({
       values: Object.fromEntries(guards.map(({ id }) => [id, 'on'])),
+      sources: Object.fromEntries(guards.map(({ id }) => [id, 'unread'])),
       loosened: [],
     });
   });

@@ -23,12 +23,12 @@ interface ListedGuard extends Omit<GuardState, 'value'> {
   readonly value: GuardValue | typeof guardListWords.unknown;
 }
 
-/** Registry facts and effective state share one row. A failed config load leaves the value unknown. */
+/** Registry facts and effective state share one row. A failed config load leaves the value unknown and names that fault as the source. */
 const listedGuard = (guard: Guard, state: GuardRules | null): ListedGuard => ({
   ...guard,
   settable: guard.wired,
   value: state === null ? guardListWords.unknown : state.values[guard.id] ?? guardValues.on,
-  source: state?.sources[guard.id] ?? 'missing',
+  source: state === null ? 'notLoaded' : state.sources[guard.id] ?? 'missing',
   since: state?.since[guard.id] ?? null,
 });
 

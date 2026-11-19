@@ -2594,6 +2594,8 @@ export const guardListWords = {
     shared: files.config,
     local: `${files.localConfig} and record`,
     noRecord: `${files.localConfig} with no record`,
+    unread: `${files.localConfig}, records not read`,
+    notLoaded: 'config not loaded',
   },
   moreLine: (count: number): string => `and ${count} more: run with ${flagText(flags.all)} or ${flagText(flags.json)}`,
   countLine: (off: number, total: number, harm: number): string =>
