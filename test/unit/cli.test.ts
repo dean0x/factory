@@ -1,10 +1,11 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { failure } from '../../src/cli/errors.js';
 import { foundHomeOption } from '../../src/cli/home-option.js';
 import type { Deps } from '../../src/core/deps.js';
 import { guardOn } from '../../src/guards/effective.js';
-import { GUARD_STORE, GUARDED_HOME, guardedNode, guardStoreText, OFF_GUARD, OTHER_HOME, PRE_READ_FAULTS } from '../helpers/guarded-node.js';
+import {
+  GUARD_STORE, GUARDED_HOME, guardedNode, guardStoreText, OFF_GUARD, OTHER_HOME, OTHER_NODE_ID, PRE_READ_FAULTS, withFirstConfigReadFault,
+} from '../helpers/guarded-node.js';
 import {
   createStyle,
   detectStyle,
@@ -1379,20 +1380,6 @@ describe('the guard values of a command line', () => {
     ],
   }];
 
-  /** The deps where the first read of the shared file of the node fails: the read of the node id in the registration check. */
-  const withFirstConfigReadFault = (deps: FakeDeps): Deps => {
-    let reads = 0;
-    return {
-      ...deps,
-      fs: {
-        ...deps.fs,
-        readTextLimited: async (path, maxBytes, decode) => {
-          if (path === CONFIG_FILE) reads += 1;
-          return path === CONFIG_FILE && reads === 1 ? failure(`cannot read ${path}: EIO`) : deps.fs.readTextLimited(path, maxBytes, decode);
-        },
-      },
-    };
-  };
   const runProbe = async (argv: readonly string[], deps: Deps) => {
     const sink = captureSink();
     const code = await runCli([...argv], deps, sink, registry);
@@ -1436,7 +1423,7 @@ describe('the guard values of a command line', () => {
       return deps;
     }],
     ['a read fault of the node id, for a list entry with another node id', (deps: FakeDeps): Deps => {
-      registerRoot(deps, GUARDED_HOME, 'another-node');
+      registerRoot(deps, GUARDED_HOME, OTHER_NODE_ID);
       return withFirstConfigReadFault(deps);
     }],
   ])('gives every guard on when the registration check can not read the node id: %s', async (_name, fault) => {

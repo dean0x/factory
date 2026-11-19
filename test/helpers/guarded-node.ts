@@ -116,9 +116,9 @@ export const withFirstConfigReadFault = <T extends Deps>(deps: T, home = GUARDED
     ...deps,
     fs: {
       ...deps.fs,
-      readTextLimited: async (file, maxBytes) => {
+      readTextLimited: async (file, maxBytes, decode) => {
         if (file === path) reads += 1;
-        return file === path && reads === 1 ? failure(`cannot read ${file}: EIO`) : deps.fs.readTextLimited(file, maxBytes);
+        return file === path && reads === 1 ? failure(`cannot read ${file}: EIO`) : deps.fs.readTextLimited(file, maxBytes, decode);
       },
     },
   };
