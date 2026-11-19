@@ -1410,7 +1410,7 @@ The code checks of every other guard and all integrity checks still run.
 
 **Set a guard.** Run `factory guard set ID on|off` to change one guard. Run `factory guard set --all on|off` to change every guard that this version can set. The command counts the guards that it skips. It writes the local values and their records of the owner. It keeps all other guard values and records.
 
-Run the command in a terminal window outside factory and Claude Code sessions. Both input and output must be terminals. For `off`, the command lists the selected guards and their `H` marks, then asks for consent. The default answer is no. The value takes effect at the next start. Neither `guard set` nor `guard confirm` accepts `--json`; `--family` applies to `guard list` only.
+Run the command in a terminal window outside factory and Claude Code sessions. Both input and output must be terminals. For `off`, the command lists the selected guards and their `H` marks, then asks for consent. The default answer is no. A code check follows the new value at the next command. The role text changes at the next `start` or `upgrade`. Neither `guard set` nor `guard confirm` accepts `--json`; `--family` applies to `guard list` only.
 
 **Confirm the prefix.** `factory guard confirm` shows the full owner prefix and asks for consent, with no as the default. It uses the same terminal rules as `guard set`. A yes records the exact prefix for this node and folder. A new `init` records the prefix only in that terminal channel. An existing node with no prefix record can still start, but start prints a notice that names `factory guard confirm`.
 

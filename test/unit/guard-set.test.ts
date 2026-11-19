@@ -98,7 +98,8 @@ describe('guard set writes', () => {
     expect((await state(deps))?.prefix?.hash).toBe(sha256Hex(config.core.owner.prefix));
     expect(deps.atomicWrites.slice(-2)).toEqual([LOCAL, STORE]);
     expect(deps.written.join('')).toContain(`${A} H`);
-    expect(deps.written.join('')).toContain('next start');
+    expect(deps.written.join('')).toContain('A code check follows the new value at the next command.');
+    expect(deps.written.join('')).toContain('The role text changes at the next "factory start" or "factory upgrade".');
     expect(deps.prompts).toHaveLength(1);
   });
 

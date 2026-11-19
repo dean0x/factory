@@ -2467,7 +2467,7 @@ export const guardSetWords = {
   argumentsError: `Use "${commandText(commandLines.guardSet)} ID on|off" or "${commandText(commandLines.guardSet)} ${flagText(flags.all)} on|off". Run "${commandText(commandLines.guardList)}" to see the guards.`,
   badValue: 'The guard value must be on or off.',
   idWithAll: `Do not name a guard with ${flagText(flags.all)}.`,
-  nextStart: 'The guard value takes effect at the next start.',
+  effectTime: `A code check follows the new value at the next command. The role text changes at the next "${commandText(commands.start)}" or "${commandText(commands.upgrade)}".`,
   offQuestion: 'Turn these guards off? [y/N] ',
   declined: 'Nothing changed: the answer was not yes.',
   skipped: (count: number): string => `${count} guards are not settable in this version.`,
