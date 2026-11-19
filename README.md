@@ -6,14 +6,18 @@ A node is a folder with a config file, a layer and an owner. A node on layer 1 o
 
 ## Install
 
-factory is in early access. It is not on the npm registry. Install it from a tag `v0.2.0-ea.N` of this repo. Use the newest tag on the repo page. `<sha>` is the full 40-character commit SHA of the tag. First check with `git ls-remote` that the tag points to `<sha>`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run this pair of commands in a new empty folder:
+factory is in early access. It is not on the npm registry. Install it from a tag `v0.2.0-ea.N` of this repo. Use the newest tag on the repo page. `<sha>` is the full 40-character commit SHA of the tag. First check with `git ls-remote` that the tag points to `<sha>`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run these commands in a new empty folder:
 
 ```sh
-npm pack "git+https://github.com/dean0x/factory.git#<sha>"
+git clone https://github.com/dean0x/factory.git
+cd factory
+git checkout --detach <sha>
+npm ci
+npm pack
 npm install --global ./dean0x-factory-0.2.0.tgz
 ```
 
-The first command builds the program from source at the commit `<sha>`, not at the tag name, and makes a package file. The second command installs that file. The guide has the checks, the update steps and the known limits.
+The commands build the program from source at the commit `<sha>`, not at the tag name, and make a package file. The last command installs that file. The steps work with npm 10 and npm 11. The guide has the checks, the update steps and the known limits.
 
 You need:
 
