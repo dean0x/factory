@@ -53,6 +53,9 @@ const recordDeps: Readonly<Record<string, RowSite>> = {
   writeStdout: nodeSite('createNodeDeps.writeStdout'),
 };
 
+/** The reason of a row site that the proof of an off value reaches when it loads the full config. */
+const proofReason = 'The proof loads the config with every guard on; its local file checks always run.';
+
 const recordExceptions = [
   { path: 'src/core/home.ts', symbol: 'locateHome', reason: 'Finds the registered config home, not the guard store.' },
   { path: 'src/core/home.ts', symbol: 'chosenHome', reason: 'Chooses the config home, not the guard store.' },
@@ -81,6 +84,9 @@ const recordExceptions = [
   { path: 'src/core/clone-url.ts', symbol: 'parseCloneUrl', reason: 'Parses local source config URLs only, not the guard store.' },
   { path: 'src/core/clone-url.ts', symbol: 'checkedPath', reason: 'Checks local source config paths only, not the guard store.' },
   { path: 'src/core/clone-url.ts', symbol: 'reasons', reason: 'Lists source config fault text, not guard values.' },
+  { path: 'src/config/load.ts', symbol: 'localFileAccess', reason: proofReason },
+  { path: 'src/core/root-paths.ts', symbol: 'requireNoLinks', reason: proofReason },
+  { path: 'src/core/access.ts', symbol: 'accessFaultFor', reason: proofReason },
 ];
 
 const software = {

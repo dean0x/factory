@@ -510,7 +510,8 @@ describe('upgrade: effective guard values', () => {
     expect(config.value.core).toMatchObject({ guards, shared_guards: shared });
     const state = await readGuardState(deps, HOME, config.value, 'always');
     expect(state.values).toMatchObject({ 'install-rules': 'off', 'resume-routines': 'on', 'approval-merge': 'on' });
-    const templates = blockTemplatesFor(blockInputOf(config.value, { coordinator: null, worker: null }, config.value.core.approval, state.values));
+    // The migrated config is not on disk when the upgrade reads its guard values, so an off value has no proof yet: every guard is on.
+    const templates = blockTemplatesFor(blockInputOf(config.value, { coordinator: null, worker: null }, config.value.core.approval, allOn));
     expect((await inspectBlocks(deps, HOME, templates)).every((block) => planBlock(block, false).action === 'current')).toBe(true);
   });
 

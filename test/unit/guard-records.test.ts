@@ -7,11 +7,11 @@ import * as lockApi from '../../src/core/file-lock.js';
 import type { GuardRecord } from '../../src/guards/effective.js';
 import { guardOf, wiredGuard } from '../../src/guards/build.js';
 import { guardIds, guardRecords, privateFile } from '../../src/names.js';
-import { sampleConfig } from '../helpers/sample-config.js';
+import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { describe, expect, it } from 'vitest';
 import { userFileLock, userFileLockPath, userStatePathOf } from '../../src/core/private-file.js';
 import { commandLines, env, files, guardRecordWords } from '../../src/names.js';
-import { createFakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot } from '../helpers/fake-deps.js';
 
 const root = '/work/node';
 const userHome = '/users/example';
@@ -33,6 +33,13 @@ const fixture = (options: Parameters<typeof createFakeDeps>[0] = {}) => {
 const config = (local: Readonly<Record<string, 'on' | 'off'>> = { [guard.id]: 'off' }) => {
   const sample = sampleConfig();
   return { ...sample, core: { ...sample.core, guards: local }, entry: { ...sample.entry, guards: [guard, otherGuard] } };
+};
+/** The fixture with the config on disk and the root in the factory list, so that a local off value has its proof. */
+const provedFixture = (options: Parameters<typeof createFakeDeps>[0] = {}) => {
+  const deps = fixture(options);
+  seedConfig(deps, root, config());
+  registerRoot(deps, root, config().core.node.id);
+  return deps;
 };
 
 describe('the guard record channel', () => {
@@ -285,7 +292,7 @@ describe('guard store reads and writes', () => {
   });
 
   it('reports a saved record when only lock removal fails', async () => {
-    const deps = fixture();
+    const deps = provedFixture();
     deps.seed(path, storeText([record()]));
     const stuck = { ...deps, fs: { ...deps.fs, removeFile: async () => failure('cannot remove lock') } };
     expect(await storeApi.recordGuards(stuck, { root, node: 'demo', change }))
@@ -346,7 +353,7 @@ describe('guard store reads and writes', () => {
 
 describe('one guard state read', () => {
   it.each(['on', 'off', 'unwired'] as const)('reads the store only for a wired off in when-off mode: %s', async (value) => {
-    const deps = fixture();
+    const deps = provedFixture();
     let opens = 0;
     deps.seed(path, storeText([record({ [guard.id]: { value: 'off', at } })]));
     const watched = { ...deps, fs: { ...deps.fs, openCheckedCore: async (...args: Parameters<NonNullable<typeof deps.fs.openCheckedCore>>) => {
@@ -375,8 +382,10 @@ describe('one guard state read', () => {
   });
 
   it('uses the real root for records through an alias', async () => {
-    const deps = fixture({ links: { '/alias': root } });
+    const deps = provedFixture({ links: { '/alias': root } });
     deps.seedDir('/alias');
+    // The fake file system resolves a link only for a real path, so the config is also put at the path through the alias.
+    seedConfig(deps, '/alias', config());
     expect(await storeApi.recordGuards(deps, { root: '/alias', node: 'demo', change })).toEqual(ok({ warning: null }));
     expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([record({ [guard.id]: { value: 'off', at } })]));
     expect((await storeApi.readGuardState(deps, '/alias', config(), 'always')).values[guard.id]).toBe('off');

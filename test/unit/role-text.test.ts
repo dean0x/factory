@@ -18,8 +18,8 @@ import {
   type RoleFault,
   type RoleRead,
 } from '../../src/workers/role-text.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
-import { sampleConfig } from '../helpers/sample-config.js';
+import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES } from '../helpers/setup-acceptance.js';
 
 const HOME = '/w/node';
@@ -95,10 +95,13 @@ describe('worker role text with guard values', () => {
 
   it('uses the effective state for the launch role check', async () => {
     const deps = worldOf({ text: 'x'.repeat(FREE + 1) });
+    const guarded = { ...config, core: { ...config.core, guards } };
+    seedConfig(deps, HOME, guarded);
+    registerRoot(deps, HOME, NODE);
     deps.seed(`/state/factory/${files.guardRecords}`, JSON.stringify({ schema: 1, records: [{ node: NODE, root: HOME,
       values: { [guardIds.installRules]: { value: 'off', at: '2030-01-02T03:04:05.678Z' } }, prefix: null,
     }] }));
-    const result = await requireRoleText(deps, { home: HOME, config: { ...config, core: { ...config.core, guards } }, retry: 'factory start' });
+    const result = await requireRoleText(deps, { home: HOME, config: guarded, retry: 'factory start' });
     expect(result).toEqual({ ok: true, value: undefined });
   });
 
