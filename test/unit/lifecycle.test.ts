@@ -1576,6 +1576,16 @@ describe('restart and reboot of a worker whose new pane waits on a folder trust 
     expect(made.tmux.typed()).toEqual([]);
   });
 
+  it('reboot in the coordinator pane exits 3 when each worker that did not start again waits on the question', async () => {
+    const made = await make({ from: 'coordinator', newPaneScreen: TRUST_SCREEN, program: silentBeta });
+    const output = await succeeded(reboot(made));
+    expect(output.json).toMatchObject({ inSession: true, workers: { resumed: ['alpha', 'gamma'], skipped: [], failed: ['beta'] } });
+    expect(output.failed).toBe(true);
+    expect(output.exitCode).toBe(3);
+    expect(made.deps.warned.join('\n')).toContain(trustRemedy(newPaneOf(made, 'beta'), 'beta'));
+    expect(made.tmux.typed()).toEqual([]);
+  });
+
   it('reboot keeps exit 1 when another worker did not start again for another fault', async () => {
     const endsGamma: Program = async (wait) => {
       if (wait.resumeId === SESSION.gamma) {
