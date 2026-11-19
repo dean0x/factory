@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import { runState } from '../../src/commands/state.js';
-import { commandLines, commandText, maxFileBytes, schemaIds, stateGuard } from '../../src/names.js';
+import { commandLines, commands, commandText, dirs, guardIds, maxFileBytes, schemaIds, stateCommands, stateGuard } from '../../src/names.js';
 import { createFakeDeps, exited, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { STATE_GIT, STATE_GIT_WORDS, withoutStateWords } from '../helpers/git-fake.js';
+import { FOLDER_ORIGINS, GUARDED_HOME, guardedNode, guardStatesOf } from '../helpers/guarded-node.js';
+import { captureSink } from '../helpers/sink.js';
 
 const STATE = '/h/node/.factory';
 
@@ -416,5 +419,22 @@ describe('the words of the state command', () => {
       expect(result.error.hint).toBeDefined();
     }
     expect(deps.calls).toEqual([]);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('the state guard command in %s, as git runs it in the state folder', (_folder, origin) => {
+  const STATE_OF_NODE = `${GUARDED_HOME}/${dirs.state}`;
+
+  it.each(guardStatesOf(guardIds.deleteGuard))('stops a commit that removes an item id only while the delete guard counts as on: %s', async (_state, setup, on) => {
+    const deps = guardedNode({ cwd: STATE_OF_NODE, run: gitFor({ head: board(['B-1', 'B-2']), index: board(['B-1']) }) }, { ...setup, origin });
+    const sink = captureSink();
+    const code = await runCli([commands.state, stateCommands.guard], deps, sink);
+    expect(code).toBe(on ? 1 : 0);
+    expect(sink.errors.join('').includes('B-2')).toBe(on);
+  });
+
+  it('keeps the delete guard on for a folder that does not have the name of the state folder', async () => {
+    const deps = guardedNode({ cwd: `${GUARDED_HOME}/other`, run: gitFor({ head: board(['B-1', 'B-2']), index: board(['B-1']) }) }, { off: [guardIds.deleteGuard], origin });
+    expect(await runCli([commands.state, stateCommands.guard], deps, captureSink())).toBe(1);
   });
 });

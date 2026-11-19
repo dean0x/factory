@@ -5,7 +5,8 @@ import { absoluteGitDirOf, GIT_ENTRY, setStateConfig, stateConfigValue, unsetSta
 import { comparable } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
-import { commands, dirs, program, stateCommands, stateGuard } from '../names.js';
+import { guardOn } from '../guards/effective.js';
+import { commands, dirs, guardIds, program, stateCommands, stateGuard } from '../names.js';
 
 /** The node program and the script: the two words that start this program again. */
 const PROGRAM_WORDS = 2;
@@ -460,9 +461,16 @@ export type GuardPlan =
   | { readonly action: 'install'; readonly stops: readonly string[] }
   | { readonly action: 'unsupported'; readonly why: string; readonly remedy: string };
 
-/** The plan of a tool that writes the guard in the state folder `stateDir`. It reads only. A read that fails is an error. */
+/**
+ * The plan of a tool that writes the guard in the state folder `stateDir`. It reads only. A read that fails is an error. While the
+ * delete guard of the node is off, the plan is `current`: no tool writes the hook or warns about it, and the installed hook stays.
+ */
 export const guardPlanOf = async (deps: Deps, stateDir: string): Promise<CliResult<GuardPlan>> => {
   const found = await guardOffOf(deps, stateDir);
+  // Only a hook that is not on asks for the guard value, so the plan of a hook that is on reads no value.
+  if (!found.ok || found.value !== null) {
+    if (!(await guardOn(deps, guardIds.deleteGuard, dirname(stateDir)))) return ok({ action: 'current' });
+  }
   if (!found.ok) return found;
   if (found.value === null) return ok({ action: 'current' });
   const { repair, why, remedy } = found.value;
@@ -501,21 +509,28 @@ export const guardPlanWarnings = (plan: GuardPlan): readonly string[] => {
 
 /**
  * The warning line for a command that only warns about the guard of the state folder `stateDir` (`doctor` and `start`), or null when
- * the guard is on or the folder has no repo. An off guard names its reason and the remedy. A read that fails gives a line too: the
- * guard is then not known to be on, and the command goes on.
+ * the guard is on, the folder has no repo or the delete guard of the node is off. An off guard names its reason and the remedy. A
+ * read that fails gives a line too: the guard is then not known to be on, and the command goes on.
  */
 export const guardWarning = async (deps: Deps, stateDir: string): Promise<string | null> => {
   const found = await guardOffOf(deps, stateDir);
+  if (!found.ok || found.value !== null) {
+    if (!(await guardOn(deps, guardIds.deleteGuard, dirname(stateDir)))) return null;
+  }
   if (!found.ok) return `The delete guard of ${dirs.state} is not checked: ${found.error.message}`;
   return found.value === null ? null : `The delete guard of ${dirs.state} is off: ${found.value.why}. ${found.value.remedy}`;
 };
 
 /**
  * Stop (exit 4) when the guard is off, with the remedy that repairs it: `factory upgrade` where the install repairs the guard, the
- * step by hand where it does not. A tool that commits to the state repo asks this before it writes. It reads only.
+ * step by hand where it does not. A tool that commits to the state repo asks this before it writes. It reads only. While the delete
+ * guard of the node is off, the hook is not needed, and nothing stops.
  */
 export const requireGuardOn = async (deps: Deps, stateDir: string): Promise<CliResult<void>> => {
   const state = await guardStateOf(deps, stateDir);
+  if (!state.ok || !state.value.on) {
+    if (!(await guardOn(deps, guardIds.deleteGuard, dirname(stateDir)))) return ok(undefined);
+  }
   if (!state.ok) return state;
   return state.value.on ? ok(undefined) : safetyRefusal(`the delete guard of ${dirs.state} is off: ${state.value.why}`, state.value.remedy);
 };

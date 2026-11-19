@@ -58,10 +58,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'A clone takes a plain URL and goes only into a missing folder of its own project.',
   ),
   wiredGuard(guardOf(guardIds.contextLimits, 'Context limits', 'A session saves its work before its context is full.', contextKeys)),
-  guardOf(
-    guardIds.deleteGuard,
-    'Delete guard',
-    'No commit in the state folder removes a work item or makes the board unreadable.',
+  wiredGuard(
+    guardOf(
+      guardIds.deleteGuard,
+      'Delete guard',
+      'No commit in the state folder removes a work item or makes the board unreadable.',
+    ),
   ),
   guardOf(
     guardIds.dismiss,

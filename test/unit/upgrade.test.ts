@@ -13,7 +13,7 @@ import { CONFIG_SCHEMA_VERSION, mixConfigValue } from '../../src/config/schema.j
 import { isRecord } from '../../src/migrate/inspect.js';
 import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
-import { boardKeys, commands, env, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
+import { boardKeys, commands, env, guardIds, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -46,6 +46,8 @@ import {
   type RunCall,
   type RunHandler,
 } from '../helpers/fake-deps.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText } from '../helpers/guarded-node.js';
+import { captureSink } from '../helpers/sink.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { readGuardState } from '../../src/core/guard-records.js';
@@ -744,6 +746,20 @@ describe('upgrade: the delete guard of the state repo', () => {
     const again = success(await upgrade(deps));
     expect(again.lines.at(-1)?.text).toBe('Nothing to upgrade.');
     expect(again.json).toMatchObject({ changed: false, stateGuard: 'current' });
+  });
+
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.deleteGuard))('writes the missing hook only while the delete guard counts as on: %s', async (_state, setup, on) => {
+      const { deps } = await unguarded();
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME, '--json'], deps, sink), sink.errors.join('')).toBe(0);
+      expect(JSON.parse(sink.out.join(''))).toMatchObject({ stateGuard: on ? 'install' : 'current' });
+      expect(deps.files.has(HOOK)).toBe(on);
+    });
   });
 
   it('writes the guard after the ready check and before the commit of the state files, and the commit holds no guard path', async () => {

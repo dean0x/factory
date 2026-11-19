@@ -177,7 +177,7 @@ describe('the guards of a recipe', () => {
 
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 

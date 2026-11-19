@@ -1,4 +1,5 @@
 import { withGuards, type Deps } from '../core/deps.js';
+import { guardedHomeOf } from '../commands/state.js';
 import { guardSourceFor } from '../core/guard-source.js';
 import { allGuardsOn } from '../guards/effective.js';
 import type { GuardSource } from '../guards/types.js';
@@ -61,9 +62,14 @@ const runHookRoute = async (words: readonly string[], deps: Deps, sink: Sink, re
 /**
  * The guard source of a command row. A row with the home flag finds its node home, so its pre-read uses that flag in the order of
  * the command. `init` reads the node of its home flag in the same order: a new folder is no node yet, so every guard is on there.
- * Every other row has every guard on. The name only fills a remedy line that the pre-read never shows.
+ * Git runs `state` in the state folder, so its node home is the folder above it, and a folder with another name keeps every guard
+ * on. Every other row has every guard on. The name only fills a remedy line that the pre-read never shows.
  */
 const guardSourceOfRow = (deps: Deps, command: Command, given: Given, registry: RecipeRegistry): GuardSource => {
+  if (command.name === commands.state) {
+    const home = guardedHomeOf(deps.cwd);
+    return home === null ? allGuardsOn : guardSourceFor(deps, home, registry, commands.state);
+  }
   if (command.options[flags.home] !== foundHomeOption && command.name !== commands.init) return allGuardsOn;
   const name: CommandName = Object.values(commands).find((known) => known === command.name) ?? commands.help;
   return guardSourceFor(deps, given.string(flags.home), registry, name);

@@ -378,7 +378,7 @@ const deleteGuardRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/commands/init-state.ts', 'makeStateFolder'),
-      ...at('src/state/guard.ts', 'gitFolderRefusal', 'folderRefusal'),
+      ...at('src/state/guard.ts', 'gitFolderRefusal', 'folderRefusal', 'guardPlanOf'),
     ],
   }),
   codeRow({

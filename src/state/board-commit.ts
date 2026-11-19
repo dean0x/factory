@@ -1,10 +1,11 @@
-import { isAbsolute, join, normalize } from 'node:path';
+import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { commitPaths, GIT_ENTRY, requireStateRepoCommit, stateHeadOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, namedItems, shownPath } from '../core/root-paths.js';
-import { commandText, commands, dirs, files, maxFileBytes, type CommandName } from '../names.js';
+import { guardOn } from '../guards/effective.js';
+import { commandText, commands, dirs, files, guardIds, maxFileBytes, type CommandName } from '../names.js';
 import { readCheckedFile, type NamedPath } from '../workers/registry.js';
 import { requireGuardOn } from './guard.js';
 import { BOARD_RESTORE_COMMAND, boardAtHead } from './head-board.js';
@@ -164,7 +165,7 @@ const updatesOf = (now: BoardTexts, changed: BoardTexts): CliResult<BoardTexts> 
  * read is a normal commit of a repair: the delete guard accepts a repair that keeps every item id of the last board that it can read.
  * `upgrade` calls this check itself, because it holds the state lock already and so can not call `commitBoardChange`.
  */
-export const requireNoLostIds = async (
+const lostIdsCheck = async (
   deps: Deps,
   stateDir: string,
   hasCommit: boolean,
@@ -190,6 +191,18 @@ export const requireNoLostIds = async (
     `this change removes ${many ? 'the item ids' : 'the item id'} ${namedItems(lost.value.map(shownPath))} from ${BOARD}`,
     `Mark ${many ? 'the items' : 'the item'} closed, never remove ${many ? 'them' : 'it'}, ${again}`,
   );
+};
+
+/** `lostIdsCheck`, whose stop counts only while the delete guard of the node is on. A change that the check passes reads no guard value. */
+export const requireNoLostIds = async (
+  deps: Deps,
+  stateDir: string,
+  hasCommit: boolean,
+  newBoard: string | null,
+  command: CommandName,
+): Promise<CliResult<void>> => {
+  const kept = await lostIdsCheck(deps, stateDir, hasCommit, newBoard, command);
+  return kept.ok || (await guardOn(deps, guardIds.deleteGuard, dirname(stateDir))) ? kept : ok(undefined);
 };
 
 /** Write each update. A failed write stops the loop; the value names the paths that were written, so the caller puts them back. */

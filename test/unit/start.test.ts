@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { sha256Hex, renderBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import { collectSetup } from '../../src/commands/init-received.js';
 import { renderStartFiles, type StartOptions } from '../../src/commands/start.js';
 import { runStart } from '../helpers/package-registry.js';
@@ -12,7 +13,7 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { activeMachine, commands, env, files, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
+import { activeMachine, commands, env, files, guardIds, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { allOn } from '../../src/guards/effective.js';
@@ -36,10 +37,12 @@ import {
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 import { chainOf, tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
 
@@ -1017,6 +1020,18 @@ describe('start:the guard summary', () => {
     expect(lines[0]).toContain('1 off; 1 with H');
     expect(lines[0]).toContain('direct proxy relay');
     expectShortOutput(plainText(output));
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the line about the hook of the delete guard', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.deleteGuard))('shows the line only while the delete guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ guard: 'off', origin, config });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(0);
+    expect(deps.warned.filter((line) => line.includes('The delete guard of .factory is off'))).toHaveLength(on ? 1 : 0);
   });
 });
 

@@ -95,6 +95,17 @@ describe('guarded text parts', () => {
   ])('keeps unguarded lines and selects a group with %s', (_label, guards, selected) => {
     expect(linesFor(parts, guards)).toEqual(['# Heading', 'always', ...selected, 'last']);
   });
+
+  it.each<readonly [string, GuardValues, string]>([
+    ['all on', allOn, 'Start. Rule one. Rule two. End.'],
+    ['one guard off', { first: 'off' }, 'Start. Rule two. End.'],
+    ['both guards off', { first: 'off', second: 'off' }, 'Start. End.'],
+  ])('keeps one line of segments and removes only the segments of an off guard with %s', (_label, guards, line) => {
+    const segmented: TextPart = {
+      segments: ['Start.', { guards: ['first'], text: ' Rule one.' }, { guards: ['second'], text: ' Rule two.' }, ' End.'],
+    };
+    expect(linesFor(['# Heading', segmented, 'last'], guards)).toEqual(['# Heading', line, 'last']);
+  });
 });
 
 const textGuardIds = ['approval-merge', 'approval-release', guardIds.resumeRoutines, guardIds.installRules] as const;

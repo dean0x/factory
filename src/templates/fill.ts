@@ -2,13 +2,30 @@ import type { GuardValues } from '../guards/types.js';
 import { capitalize, coordinatorTemplateValues, guardValues, layers, roles, templateValues } from '../names.js';
 import type { BlockInput } from './types.js';
 
-export type TextPart = string | { readonly guards: readonly string[]; readonly lines: readonly string[] };
+/** A piece of one line: plain text, or text that a guard keeps. */
+export type TextSegment = string | { readonly guards: readonly string[]; readonly text: string };
 
-/** Keep an unguarded group, or a group with at least one guard on. An absent value means on. */
+/** A line, a group of lines that a guard keeps, or one line made of segments. */
+export type TextPart =
+  | string
+  | { readonly guards: readonly string[]; readonly lines: readonly string[] }
+  | { readonly segments: readonly TextSegment[] };
+
+/** True for no guards, or for at least one guard on. An absent value means on. */
+const keeps = (guards: readonly string[], values: GuardValues): boolean =>
+  guards.length === 0 || guards.some((id) => values[id] !== guardValues.off);
+
+const segmentText = (segment: TextSegment, values: GuardValues): string => {
+  if (typeof segment === 'string') return segment;
+  return keeps(segment.guards, values) ? segment.text : '';
+};
+
+/** Keep an unguarded group, or a group with at least one guard on. A line of segments keeps each segment by the same rule. */
 export const linesFor = (parts: readonly TextPart[], values: GuardValues): readonly string[] =>
   parts.flatMap((part) => {
     if (typeof part === 'string') return [part];
-    return part.guards.length === 0 || part.guards.some((id) => values[id] !== guardValues.off) ? part.lines : [];
+    if ('segments' in part) return [part.segments.map((segment) => segmentText(segment, values)).join('')];
+    return keeps(part.guards, values) ? part.lines : [];
   });
 
 const PLACEHOLDER = /\{\{([A-Za-z]+)\}\}/g;
