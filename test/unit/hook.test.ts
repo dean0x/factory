@@ -766,6 +766,20 @@ describe('factory hook: the role text of a worker session', () => {
     expect(await ranFor(deps)).toEqual({ code: 0, out: [outputOf(textOf(SETUP))], err: [] });
   });
 
+  describe.each(FOLDER_ORIGINS)('the acceptance of the setup text in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.setupText))('gives the setup text that the owner did not accept only while the guard is off, and else the refusal text: %s', async (_state, setup, on) => {
+      const deps = await makeStart({ accepted: null });
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, NODE_ID, [], origin);
+      seedConfig(deps, HOME, withGuardsOff(sampleConfig(), off));
+      if (setup.record !== false) deps.seed(STORE, guardStoreText(NODE_ID, HOME, off, new Date(NOW)));
+      const offText = outputOf(composeRoleText(workerFileTemplatesFor(sampleConfig(), SETUP, { [guardIds.setupText]: guardValues.off })));
+      expect(await ranFor(deps)).toEqual(
+        on ? { code: 0, out: [refusedOutput], err: [reasonLine(roleText.reasons.notAccepted)] } : { code: 0, out: [offText], err: [] },
+      );
+    });
+  });
+
   describe.each(FOLDER_ORIGINS)('the context limit rules in %s', (_folder, origin) => {
     it.each(guardStatesOf(guardIds.contextLimits))('gives the rules only while the guard counts as on: %s', async (_state, setup, on) => {
       const deps = await makeStart();

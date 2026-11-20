@@ -76,7 +76,8 @@ export const notListedStop = (home: string): SetupStop => ({
 /**
  * Compare a set of files with the newest acceptance for this real folder. The set is read once, and the manifest and the
  * texts come from the same bytes. `received` names the kind of root in the words of the stops: a received root accepts
- * every file that git tracks, and an own root accepts its setup text.
+ * every file that git tracks, and an own root accepts its setup text. While the guard of setup and role text is off, the store
+ * is not read and the set counts as accepted; the read of the files and their rules still apply.
  */
 export const checkSetupSet = async (
   deps: Deps,
@@ -100,6 +101,7 @@ export const checkSetupSet = async (
   if (!read.ok) return unusable(read.error, FIRST_REMEDY);
   const { entries, hash } = read.value.collected.manifest;
   if (entries.length === 0) return { kind: 'empty' };
+  if (!(await guardOn(deps, guardIds.setupText, home))) return { kind: 'accepted', setup: read.value };
   const state = await acceptanceState(deps, { root: home, node, hash });
   if (!state.ok) return unusable(state.error, STORE_REMEDY);
   const accepted = state.value;

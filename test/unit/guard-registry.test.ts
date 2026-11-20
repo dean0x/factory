@@ -101,6 +101,12 @@ const tokenTestReason = 'A pure test of one text, which the hidden error keys an
 const instructionReason = 'A scan or a text of the warning; warnInstructionFiles, instructionWarnings and checkInstructionFiles read the value and skip it while the guard is off.';
 /** The reason of the pure tracked path helpers, which the checks of init of a received folder share. */
 const trackedProblemReason = 'A pure helper that the checks of init of a received folder share; scanRepo reads the value and lists no problem while the guard is off.';
+/** The reasons of the sites of the setup check and of the role text check that get the value from a caller. */
+const setupCheckReason = 'Settles the check of checkSetupSet, which reads the value and counts the set as accepted while the guard is off.';
+const setupStoreReason = 'Reads the store of acceptances; checkSetupSet reads the value and does not read the store while the guard is off.';
+const setupRenderReason = 'Renders the setup texts that settleSetup gives; checkSetupSet reads the value and gives the texts while the guard is off.';
+const roleTextReason = 'A part of the acceptance compare; readRoleText reads the value and does not compare while the guard is off.';
+
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -156,6 +162,23 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'upgrade-block-checks', path: 'src/upgrade/plan.ts', symbol: 'refusalOf', reason: 'Refuses the plans of planBlock, which reads the value and keeps an edited safety block while the guard is off; a newer or broken block stops with every value.' },
   { row: 'upgrade-block-checks', path: 'src/commands/upgrade.ts', symbol: 'runUpgrade', reason: 'Passes the values of its one guard read to planBlock, which reads the value.' },
   { row: 'upgrade-block-checks', path: 'src/blocks/status.ts', symbol: 'isAddedAsNewBlock', reason: 'Never adds the safety block as a new block; only the owner adds it, so no value loosens this part.' },
+  { row: 'setup-accept-at-start', path: 'src/commands/setup-check.ts', symbol: 'settleSetup', reason: setupCheckReason },
+  { row: 'setup-accept-at-start', path: 'src/commands/setup-check.ts', symbol: 'checkRootSetup', reason: 'Finds the set of the root and calls checkSetupSet, which reads the value.' },
+  { row: 'setup-accept-at-start', path: 'src/core/setup-acceptance.ts', symbol: 'acceptanceState', reason: setupStoreReason },
+  { row: 'setup-accept-at-start', path: 'src/core/setup-acceptance.ts', symbol: 'askSetupAcceptance', reason: 'Asks only for a changed set; checkSetupSet reads the value and finds no change while the guard is off.' },
+  { row: 'setup-accept-at-start', path: 'src/commands/start.ts', symbol: 'runStart', reason: 'Calls checkSetupSet, which reads the value.' },
+  { row: 'received-setup-acceptance', path: 'src/commands/init-received.ts', symbol: 'collectSetup', reason: 'Reads the files of the set; checkSetupSet reads the value and counts the set as accepted while the guard is off.' },
+  { row: 'received-setup-acceptance', path: 'src/core/setup-acceptance.ts', symbol: 'acceptSetup', reason: 'Accepts a changed set; checkSetupSet reads the value and finds no change while the guard is off.' },
+  { row: 'accepted-setup-text-only', path: 'src/upgrade/render.ts', symbol: 'renderCoordinatorText', reason: setupRenderReason },
+  { row: 'accepted-setup-text-only', path: 'src/upgrade/render.ts', symbol: 'renderSetupText', reason: setupRenderReason },
+  { row: 'accepted-setup-text-only', path: 'src/templates/index.ts', symbol: 'setupBlock', reason: setupRenderReason },
+  { row: 'accepted-setup-text-only', path: 'src/templates/index.ts', symbol: 'blockTemplatesFor', reason: setupRenderReason },
+  { row: 'role-text-acceptance', path: 'src/workers/role-text.ts', symbol: 'sameAsAccepted', reason: roleTextReason },
+  { row: 'role-text-acceptance', path: 'src/workers/role-text.ts', symbol: 'requireRoleText', reason: 'Calls readRoleText with the values of its caller, and readRoleText reads the value.' },
+  { row: 'role-text-acceptance', path: 'src/core/setup-acceptance.ts', symbol: 'acceptedEntryOf', reason: roleTextReason },
+  { row: 'role-text-acceptance', path: 'src/hooks/hook.ts', symbol: 'roleOutcomeOf', reason: 'Passes the values of its one guard read to readRoleText, which reads the value.' },
+  { row: 'role-delivery-hooks', path: 'src/workers/session-checks.ts', symbol: 'requireRoleDelivery', reason: 'Calls requireOwnHooks, which reads the value, and passes the values of its caller to requireRoleText.' },
+  { row: 'role-delivery-hooks', path: 'src/workers/launch.ts', symbol: 'launchWorker', reason: 'Calls requireRoleDelivery with the values of its one guard read.' },
   { row: 'settings-work-copy', path: 'src/commands/root-content.ts', symbol: 'checkTrackedSettings', reason: workCopyReason },
   { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanSettings', reason: workCopyReason },
   { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanTrackedSettings', reason: workCopyReason },
@@ -273,7 +296,7 @@ describe('the guards of a recipe', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
       guardIds.folderTrust, guardIds.gitSafety, guardIds.permissionMode, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
-      guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.setupText, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 
@@ -948,7 +971,7 @@ describe('the rows of the registry', () => {
       secrets: ['token-keys-hidden', 'credential-strip', 'printable-output'],
       'setup-text': [
         'setup-text-content', 'worker-refusal-text', 'acceptance-store-place', 'acceptance-path-form', 'init-accepts-own-text-once',
-        'received-init-acceptance', 'worker-refusal-role-text', 'work-rules-block',
+        'received-init-acceptance', 'setup-set-file-rules', 'worker-refusal-role-text', 'work-rules-block',
       ],
       spend: ['new-worker-keeps-copy'],
       'work-conduct': [

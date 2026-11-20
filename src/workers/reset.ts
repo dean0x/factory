@@ -5,6 +5,7 @@ import { typeLine } from '../comms/typing.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { guardValuesFor } from '../guards/effective.js';
 import {
   capitalize,
   commandLines,
@@ -158,7 +159,7 @@ const requireFreshSession = async (
   const then = lineFor(commands.restart, record.id);
   const hooks = await requireOwnHooks(deps, { home, folder: record.workCopy, then });
   if (!hooks.ok) return hooks;
-  const older = await requireSettingsOlderThan(deps, { folder: record.workCopy, then, start: start.value });
+  const older = await requireSettingsOlderThan(deps, { home, folder: record.workCopy, then, start: start.value });
   return older.ok ? start : older;
 };
 
@@ -293,7 +294,7 @@ const checkWorker = async (deps: Deps, request: ResetRequest, again: string): Pr
   if (!placed.ok) return placed;
   const start = await requireFreshSession(deps, home, record.value, live.value, again);
   if (!start.ok) return start;
-  const roleTextChecked = await requireRoleText(deps, { home, config, retry: commandText(again) });
+  const roleTextChecked = await requireRoleText(deps, { home, config, guards: await guardValuesFor(deps, home), retry: commandText(again) });
   if (!roleTextChecked.ok) return roleTextChecked;
   const pushed = await requirePushed(deps, request, record.value, again);
   if (!pushed.ok) return pushed;

@@ -389,7 +389,7 @@ for (const origin of origins) {
     }
     it(`start warns once for a missing role block without on guard text in the ${origin} folder`, async () => {
       const base = sampleConfig();
-      const config = { ...base, core: { ...base.core, guards: { 'install-rules': 'off' as const, 'file-link-safety': 'off' as const } } };
+      const config = { ...base, core: { ...base.core, guards: { 'install-rules': 'off' as const, 'file-link-safety': 'off' as const, 'setup-text': 'off' as const } } };
       const { deps } = await make(origin, config);
       must(await recordValues(deps, config));
       const template = templates(config).find((block) => block.name === blockNames.workRules);
@@ -461,6 +461,16 @@ for (const origin of origins) {
         const before = fileSnapshot(deps);
         expectOnlyOnRefusal(await launch(deps, 'worker resume'), on, `--overwrite ${blockNames.coordinator}`);
         expect(fileSnapshot(deps)).toEqual(before);
+        expect(paneStarts(tmux).length > 0).toBe(!on);
+      });
+    }
+    for (const state of guardStates) {
+      it(`worker resume refuses a work copy whose settings lack the role hooks only while the setup text guard counts as on, in the ${origin} folder: ${state}`, async () => {
+        const { deps, tmux, on } = await makeIn(origin, guardIds.setupText, state);
+        const hooks = Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([event]) => event !== 'SessionStart'));
+        deps.seed(`${COPY}/.claude/settings.local.json`, JSON.stringify({ ...ownSettingsEntries, hooks }));
+        const result = await launch(deps, 'worker resume');
+        expect(result.ok ? 0 : exitCodeFor(result.error), result.ok ? '' : result.error.message).toBe(on ? 3 : 0);
         expect(paneStarts(tmux).length > 0).toBe(!on);
       });
     }

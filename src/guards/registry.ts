@@ -177,10 +177,12 @@ const coreGuards: readonly GuardDefinition[] = [
       'No token, key or password goes into a file, a report or any other output.',
     ),
   ),
-  guardOf(
-    guardIds.setupText,
-    'Setup and role text',
-    `Role text comes only from the program, and setup text is used only after the ${owner} accepted it.`,
+  wiredGuard(
+    guardOf(
+      guardIds.setupText,
+      'Setup and role text',
+      `Role text comes only from the program, and setup text is used only after the ${owner} accepted it.`,
+    ),
   ),
   guardOf(
     guardIds.spend,

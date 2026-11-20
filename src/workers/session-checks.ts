@@ -4,10 +4,11 @@ import type { FactoryConfig } from '../config/schema.js';
 import { holdsAnyOwnCommand, hookSettingsPlaceOf, missingDenyRules, missingHookEvents, ownDenyRulesOf } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { guardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { toolNames } from '../core/tools.js';
 import { isRecord } from '../migrate/inspect.js';
-import { claudeSettingKeys, commandLines, commands, commandText, flags, flagText, guardDenyWords, hookNames, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
+import { claudeSettingKeys, commandLines, commands, commandText, flags, flagText, guardDenyWords, guardIds, hookNames, maxFileBytes, paneElapsed, roleText, type HookEvent } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import { readCheckedFile, type NamedPath } from './registry.js';
 import { requireRoleText } from './role-text.js';
@@ -116,6 +117,8 @@ export interface SettingsRequest {
 }
 
 export interface SettingsAgeRequest extends SettingsRequest {
+  /** The node home, the root of the config repo: an absolute path. */
+  readonly home: string;
   /** When the process of the session started, in milliseconds since the epoch (`paneProcessStart`). */
   readonly start: number;
 }
@@ -185,7 +188,8 @@ export const readHookSettings = async (deps: Deps, home: string, folder: string)
 
 /**
  * The hook settings file of the session folder must hold the own command of every hook event of the fixed list (`readHookSettings`).
- * A file that lacks an event is exit 3, and the remedy is `upgrade`, then the command in `then`. A link is exit 4.
+ * A file that lacks an event is exit 3, and the remedy is `upgrade`, then the command in `then`. A link is exit 4. While the guard of
+ * setup and role text is off, a parsed file that lacks events goes on; a link and a file that does not parse stop with every value.
  */
 export const requireOwnHooks = async (deps: Deps, request: SettingsRequest & { readonly home: string }): Promise<CliResult<void>> => {
   const settings = await readHookSettings(deps, request.home, request.folder);
@@ -202,6 +206,7 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest & { r
     if (found.missingDeny.length > 0) deps.warn(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
     return ok(undefined);
   }
+  if (found.state === 'plain' && !(await guardOn(deps, guardIds.setupText, request.home))) return ok(undefined);
   return notReady(
     `the hook settings ${found.file} lack the events: ${missing.join(', ')}`,
     request.remedy ?? `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
@@ -249,9 +254,11 @@ export const requireRoleDelivery = async (deps: Deps, request: RoleDeliveryReque
  * The hook settings file must be older than the process of the session: a session reads its settings once, at its start, so a file
  * that changed since then is not what the session runs with. The check accepts a window of about one second where it passes a
  * file that changed just after the start, because `ps` gives whole seconds. It protects the upgrade of the settings, and it is no
- * security boundary: the line check and the capture of the pane stay as gates. A file that is missing is exit 3.
+ * security boundary: the line check and the capture of the pane stay as gates. A file that is missing is exit 3. While the guard of
+ * setup and role text is off, the age is not checked.
  */
 export const requireSettingsOlderThan = async (deps: Deps, request: SettingsAgeRequest): Promise<CliResult<void>> => {
+  if (!(await guardOn(deps, guardIds.setupText, request.home))) return ok(undefined);
   const { file } = settingsPartsOf(request.folder);
   const info = await deps.fs.statInfo(file.path);
   if (!info.ok) return info;

@@ -5,7 +5,8 @@ import { hookSettingsPlaceOf, ownSettingsEntries } from '../../src/core/claude-s
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { launchArgv } from '../../src/launch/argv.js';
-import { maxFileBytes, resetConfirm, roleText, schemaIds, tmuxNames, type HookEvent, type ResetKind } from '../../src/names.js';
+import { guardSourceOf } from '../../src/guards/effective.js';
+import { guardIds, guardValues, maxFileBytes, resetConfirm, roleText, schemaIds, tmuxNames, type HookEvent, type ResetKind } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { parseReset, resetOutput, resetWorker, type ResetOutcome } from '../../src/workers/reset.js';
@@ -708,6 +709,25 @@ describe('the capture (refusal 18)', () => {
     const world = await make({ screen: 'The steps:\n1. build\n2. test\n\n> \n' });
     valueOf(await world.reset('compact', withProgram(world.deps, world.tmux, atWait(1, writesLine('PreCompact')))));
     expect(world.tmux.typed()).toHaveLength(3);
+  });
+});
+
+describe('the hook settings checks and the guard of setup and role text', () => {
+  /** The world deps with the guard values of one read for the node: the given guard off. */
+  const withOff = (deps: FakeDeps, id: string): FakeDeps => ({ ...deps, guards: guardSourceOf({ home: HOME, values: { [id]: guardValues.off }, state: null }) });
+  const noEvent = Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([name]) => name !== 'PreToolUse'));
+
+  it.each([
+    ['settings that lack a hook event', 'PreToolUse', (world: World) => world.deps.seed(SETTINGS_FILE, JSON.stringify({ hooks: noEvent }))],
+    ['settings that changed after the session started', 'changed after the session started', (world: World) => world.deps.mtimes.set(SETTINGS_FILE, NOW)],
+  ] as const)('stops for %s only while the guard is on', async (_name, refusal, change) => {
+    const on = await make();
+    change(on);
+    expect(textOf(errorOf(await on.reset()))).toContain(refusal);
+    const off = await make();
+    change(off);
+    const result = await off.reset(undefined, withOff(off.deps, guardIds.setupText));
+    expect(result.ok ? '' : textOf(result.error)).not.toContain(refusal);
   });
 });
 

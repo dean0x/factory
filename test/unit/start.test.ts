@@ -1112,6 +1112,32 @@ describe.each(FOLDER_ORIGINS)('start in %s: the guard of the permission mode', (
   });
 });
 
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of setup and role text', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.setupText))('stops for setup text that the owner did not accept only while the guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config, ...(origin === 'received' ? { tracked: ['scripts/run.sh'] } : {}) });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    if (origin === 'own') deps.seed(`${HOME}/setup/coordinator.md`, 'First rules.\n');
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('has not accepted')).toBe(on);
+  });
+});
+
+describe('start: the file rules of the setup set stay on', () => {
+  it('stops for a link at a setup file with the guard of setup and role text off and a matching record', async () => {
+    const off = [guardIds.setupText];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin: 'own', config, links: { [`${HOME}/setup/coordinator.md`]: '/elsewhere/coordinator.md' } });
+    deps.seed('/elsewhere/coordinator.md', 'Other rules.\n');
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink)).toBe(4);
+    expect(sink.errors.join('')).toContain('setup/coordinator.md');
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('start in %s: the path checks of the guard of the Claude Code settings write', (_folder, origin) => {
   const CHANGED = JSON.stringify({ model: 'opus', statusLine: { type: 'command', command: 'my-line' } });
 

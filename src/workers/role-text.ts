@@ -8,9 +8,9 @@ import { guardReadOf } from '../core/guard-source.js';
 import { ok, type Err } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { acceptedEntryOf, entryOfText, type ManifestEntry } from '../core/setup-acceptance.js';
-import { allOn } from '../guards/effective.js';
+import { allOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
-import { blockNames, commands, roleText, setupFileOf, type RoleSizeUnit } from '../names.js';
+import { blockNames, commands, guardIds, roleText, setupFileOf, type RoleSizeUnit } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { plainSetupText, renderableSetupText } from '../state/setup-text.js';
 import { workerFileTemplatesFor } from '../templates/index.js';
@@ -131,13 +131,15 @@ const roleOfSetupText = (raw: string, config: FactoryConfig, guards: GuardValues
  *
  * A store of acceptances that cannot be used is an error and never a text. A fault of any check is a `refused` value with
  * no text of the file, no path and no message of an error. The call reads only the variables of the session that find the
- * store of the acceptances, and it never reads the rendered worker file.
+ * store of the acceptances, and it never reads the rendered worker file. While the guard of setup and role text is off, the
+ * acceptance is not read and not compared; every other check runs.
  */
 export const readRoleText = async (
   deps: Deps,
   input: { readonly home: string; readonly config: FactoryConfig; readonly guards?: GuardValues },
 ): Promise<CliResult<RoleRead>> => {
   const { home, config, guards = allOn } = input;
+  const checked = isGuardOn(guards, guardIds.setupText);
   const packageTemplates = workerFileTemplatesFor(config, null, guards);
   if (!packageTemplates.some((template) => template.name === blockNames.worker)) return refused({ kind: 'configNotUsable' });
   const packageText = composeRoleText(packageTemplates);
@@ -160,6 +162,7 @@ export const readRoleText = async (
     case 'link':
       return refused({ kind: 'link' });
     case 'absent': {
+      if (!checked) return withinCap(packageText, free);
       const accepted = await acceptedOf();
       if (!accepted.ok) return accepted;
       return accepted.value === null ? withinCap(packageText, free) : refused({ kind: 'notAccepted' });
@@ -175,9 +178,11 @@ export const readRoleText = async (
       return refused({ kind: 'notUtf8' });
     case 'opened': {
       if (found.text === null) return refused({ kind: 'readFailed' });
-      const accepted = await acceptedOf();
-      if (!accepted.ok) return accepted;
-      if (!sameAsAccepted(accepted.value, entryOfText(path, found.text))) return refused({ kind: 'notAccepted' });
+      if (checked) {
+        const accepted = await acceptedOf();
+        if (!accepted.ok) return accepted;
+        if (!sameAsAccepted(accepted.value, entryOfText(path, found.text))) return refused({ kind: 'notAccepted' });
+      }
       return roleOfSetupText(found.text, config, guards, free);
     }
     default: {

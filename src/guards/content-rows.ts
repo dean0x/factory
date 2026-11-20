@@ -213,7 +213,7 @@ const setupTextRows: readonly GuardRow[] = [
     applies: `${commands.start}, ${commands.upgrade} and doctor`,
     harm: true,
     sites: [
-      ...at('src/commands/setup-check.ts', 'settleSetup', 'checkRootSetup'),
+      ...at('src/commands/setup-check.ts', 'checkSetupSet', 'settleSetup', 'checkRootSetup'),
       ...at('src/core/setup-acceptance.ts', 'acceptanceState', 'askSetupAcceptance'),
       ...at('src/commands/start.ts', 'runStart'),
     ],
@@ -293,13 +293,13 @@ const setupTextRows: readonly GuardRow[] = [
       ...at('src/core/setup-acceptance.ts', 'acceptSetup'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'setup-set-file-rules',
     guard: guardIds.setupText,
-    name: `The files of a setup hold no link, and a received ${folder} must be a work tree with a capped and link-free list of tracked files`,
+    name: `The files of a setup hold no link, and a received ${folder} must be a work tree with a capped and link-free list of tracked files; its link stops are the shared link rule, its work tree stop follows folder trust, and a list past its cap is not complete`,
     applies: 'Hash of the setup files',
     harm: true,
-    sites: at('src/commands/setup-check.ts', 'checkSetupSet', 'ownSetOf', 'trackedSetOfRoot'),
+    sites: at('src/commands/setup-check.ts', 'ownSetOf', 'trackedSetOfRoot'),
   }),
   codeRow({
     id: 'accepted-setup-text-only',
