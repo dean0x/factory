@@ -505,7 +505,7 @@ const paneSafetyRows: readonly GuardRow[] = [
   alwaysOnRow({
     id: 'resume-owned-session',
     guard: guardIds.paneSafety,
-    name: 'A resume uses only a session line that carries the own mark and that no other pointer holds, and never a guess',
+    name: `A resume uses only a session line that carries the own mark and that no other pointer and no live pane of the ${worker} holds, and never a guess`,
     applies: `${commandLines.workerResume}, ${commands.restart}, ${commands.reboot} and the recovery at ${commands.start}`,
     harm: true,
     sites: [
