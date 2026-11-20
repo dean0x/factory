@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import { selfReset } from '../../src/commands/self.js';
 import { hookSettingsPlaceOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
@@ -15,9 +16,11 @@ import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { summonWorker } from '../../src/workers/slot.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { FOLDER_ORIGINS, guardStatesOf, seedGuardedHome } from '../helpers/guarded-node.js';
 import { seedAcceptedSetup, seedUnacceptedSetup, SETUP_WORKER } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
@@ -202,6 +205,13 @@ const valueOf = <T>(result: CliResult<T>): T => {
 
 const codeOf = (error: CliError): number => exitCodeOf[error.kind];
 const textOf = (error: CliError): string => `${error.message} ${error.hint ?? ''}`;
+
+/** The keys of a reset that typed its line into the pane of the worker: a clear of the input line, the line, then Enter. */
+const keysOf = (text: string) => [
+  { pane: PANE, literal: false, text: 'C-u' },
+  { pane: PANE, literal: true, text },
+  { pane: PANE, literal: false, text: 'Enter' },
+];
 
 /** No key reached any pane: no send-keys call ran, and the fake tmux typed nothing. */
 const expectNothingTyped = (world: World): void => {
@@ -730,14 +740,14 @@ describe('the hook settings checks and the guard of setup and role text', () => 
   it.each([
     ['settings that lack a hook event', 'PreToolUse', (world: World) => world.deps.seed(SETTINGS_FILE, JSON.stringify({ hooks: noEvent }))],
     ['settings that changed after the session started', 'changed after the session started', (world: World) => world.deps.mtimes.set(SETTINGS_FILE, NOW)],
-  ] as const)('stops for %s only while the guard is on', async (_name, refusal, change) => {
+  ] as const)('stops for %s only while the guard is on, and else types the line', async (_name, refusal, change) => {
     const on = await make();
     change(on);
     expect(textOf(errorOf(await on.reset()))).toContain(refusal);
     const off = await make();
     change(off);
-    const result = await off.reset(undefined, withOff(off.deps, guardIds.setupText));
-    expect(result.ok ? '' : textOf(result.error)).not.toContain(refusal);
+    valueOf(await off.reset('compact', withProgram(withOff(off.deps, guardIds.setupText), off.tmux, atWait(1, writesLine('PreCompact')))));
+    expect(off.tmux.typed()).toEqual(keysOf('/compact'));
   });
 });
 
@@ -796,6 +806,19 @@ describe('the guard of the pane safety', () => {
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker reset in %s: the guard of the pane safety through the command', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.paneSafety))('exits 3 and types no key for a pane in a mode of tmux only while the guard counts as on, and else types the line, with the guard %s', async (_state, setup, on) => {
+    const world = await make({ tmux: { panesInMode: [PANE] } });
+    seedGuardedHome(world.deps, HOME, { ...setup, origin });
+    const sink = captureSink();
+    const deps = withProgram(world.deps, world.tmux, atWait(1, writesLine('PreCompact')));
+    const code = await runCli(['worker', 'reset', WORKER, '--compact', '--home', HOME], deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 3 : 0);
+    expect(sink.errors.join('').includes(`the pane ${PANE} is in a mode of tmux`)).toBe(on);
+    expect(world.tmux.typed()).toEqual(on ? [] : keysOf('/compact'));
+  });
+});
+
 describe('the order of the checks', () => {
   /** The failing checks one by one, from the first to the last: each repair shows the next refusal. */
   it('with every check broken, the refusals come in the order of the steps, and the keys come last', async () => {
@@ -838,11 +861,7 @@ describe('the order of the checks', () => {
 
 describe('the keys of a reset that passed every check', () => {
   const typedLine = (world: World, text: string): void => {
-    expect(world.tmux.typed()).toEqual([
-      { pane: PANE, literal: false, text: 'C-u' },
-      { pane: PANE, literal: true, text },
-      { pane: PANE, literal: false, text: 'Enter' },
-    ]);
+    expect(world.tmux.typed()).toEqual(keysOf(text));
   };
 
   it('types /clear into the pane of the worker, and nothing else', async () => {

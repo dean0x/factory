@@ -44,13 +44,21 @@ export const guardStoreText = (node: string, root: string, off: readonly string[
   return JSON.stringify({ schema: guardRecords.schema, records: [{ node, root, prefix: null, values }] });
 };
 
-export const guardedNode = (options: FakeOptions = {}, setup: GuardedSetup = {}): FakeDeps => {
-  const deps = createFakeDeps({ cwd: '/w', ...options, env: { [env.stateHome]: '/state', ...options.env } });
+/**
+ * Seed the node at `home` as the setup says: its two config files with each guard of `off` set off, its entry in the factory list
+ * and, unless `record` is false, the owner record in the guard store. The environment of the deps must name the state folder `/state`.
+ */
+export const seedGuardedHome = (deps: FakeDeps, home: string, setup: GuardedSetup = {}): void => {
   const sample = setup.config ?? sampleConfig();
   const off = setup.off ?? [OFF_GUARD];
-  seedConfig(deps, GUARDED_HOME, withGuardsOff(sample, off));
-  registerRoot(deps, GUARDED_HOME, setup.listed ?? sample.core.node.id, [], setup.origin);
-  if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(sample.core.node.id, GUARDED_HOME, off, deps.now()));
+  seedConfig(deps, home, withGuardsOff(sample, off));
+  registerRoot(deps, home, setup.listed ?? sample.core.node.id, [], setup.origin);
+  if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(sample.core.node.id, home, off, deps.now()));
+};
+
+export const guardedNode = (options: FakeOptions = {}, setup: GuardedSetup = {}): FakeDeps => {
+  const deps = createFakeDeps({ cwd: '/w', ...options, env: { [env.stateHome]: '/state', ...options.env } });
+  seedGuardedHome(deps, GUARDED_HOME, setup);
   return deps;
 };
 

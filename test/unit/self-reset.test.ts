@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseSelfReset, selfReset, selfResetOutput, type SelfResetOutcome } from '../../src/commands/self.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import { hookSettingsPlaceOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { guardSourceOf } from '../../src/guards/effective.js';
 import { launchArgv } from '../../src/launch/argv.js';
@@ -9,8 +10,10 @@ import { guardIds, guardValues, maxFileBytes, schemaIds, type HookEvent } from '
 import { layoutOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
+import { FOLDER_ORIGINS, guardStatesOf, seedGuardedHome } from '../helpers/guarded-node.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 import { COORDINATOR_PANE, HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
@@ -407,6 +410,18 @@ describe('the guard of the pane safety', () => {
     expect(codeOf(error)).toBe(3);
     expect(error.message).toContain('changed');
     expectNothingTyped(world);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('self reset in %s: the guard of the pane safety through the command', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.paneSafety))('exits 3 and types no key for a pane in a mode of tmux only while the guard counts as on, and else types the line, with the guard %s', async (_state, setup, on) => {
+    const world = await make({ tmux: { panesInMode: [COORDINATOR_PANE] } });
+    seedGuardedHome(world.deps, HOME, { ...setup, origin });
+    const sink = captureSink();
+    const code = await runCli(['self', 'reset', '--home', HOME], world.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 3 : 0);
+    expect(sink.errors.join('').includes(`the pane ${COORDINATOR_PANE} is in a mode of tmux`)).toBe(on);
+    expect(world.tmux.typed()).toEqual(on ? [] : COMPACT_KEYS);
   });
 });
 
