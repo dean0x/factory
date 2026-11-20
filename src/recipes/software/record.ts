@@ -48,7 +48,7 @@ const checkMergedPr = async (deps: Deps, input: RecordCheckInput): Promise<CliRe
 
 /**
  * The record check of the software recipe: a PR that is merged into the default branch, from the branch of the worker or of a former
- * worker. The setup check before the PR read, the merged state and the base branch follow the guard of the push and PR rules. The
+ * worker. The merged state and the base branch follow the guard of the push and PR rules. The
  * item, the project, the PR, its repo and its head branch are checked with every value, because a wrong one would close another item.
  */
 export const softwareRecordCheck: RecordCheck = {
@@ -56,9 +56,7 @@ export const softwareRecordCheck: RecordCheck = {
   point: softwareApprovalPoints[0].id,
   guard: {
     id: softwareGuardIds.prRules,
-    offLine:
-      `The guard ${softwareGuardIds.prRules} is off, so this record did not check the setup before the PR read, ` +
-      'the merged state of the PR or its base branch.',
+    offLine: `The guard ${softwareGuardIds.prRules} is off, so this record did not check the merged state of the PR or its base branch.`,
   },
   summary: 'record a merged PR',
   refHelp:

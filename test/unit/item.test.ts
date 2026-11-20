@@ -793,13 +793,13 @@ describe.each(FOLDER_ORIGINS)('item record: the guard pr-rules in %s', (_folder,
     expect(itemIn(world.repo, 'B-1').stage).toBe(on ? 'review' : 'merged');
   });
 
-  it.each(guardStatesOf(softwareGuardIds.prRules))('checks the setup before the PR read only while the guard counts as on, and the write still needs the closed state: %s', async (_state, setup, on) => {
+  it.each(guardStatesOf(softwareGuardIds.prRules))('stops before the PR read when the setup has no closed state: %s', async (_state, setup) => {
     const { closed: _closed, ...noClosed } = sampleBoard();
     const world = await guardedWorld(setup, answering(goodPr()), sampleConfigWithBoard(noClosed));
     const result = await recordLine(world);
     expect(result.code, result.err).toBe(2);
     expect(result.err).toContain('the setup names no closed state');
-    expect(world.gh.calls).toHaveLength(on ? 0 : 1);
+    expect(world.gh.calls).toHaveLength(0);
     expectUntouched(world.repo, MERGE_BOARD);
   });
 

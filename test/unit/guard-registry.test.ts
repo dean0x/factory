@@ -268,7 +268,6 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'decision-proof', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Passes the values of the node to recheckRequest, which reads the value.' },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'linkedApprovalsOf', reason: recordApprovalReason },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'approvalVerdict', reason: recordApprovalReason },
-  { row: 'record-check-gate', path: 'src/commands/item.ts', symbol: 'recordChecked', reason: 'Reads the value of the guard that the record check of the recipe names, and skips the setup check before the PR read while it is off.' },
 ];
 
 const software = {
@@ -1076,7 +1075,7 @@ describe('the rows of the registry', () => {
       ],
       'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],
-      'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-item-target', 'record-default-branch', 'record-same-pr', 'record-worker-branch'],
+      'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-check-gate', 'record-item-target', 'record-default-branch', 'record-same-pr', 'record-worker-branch'],
       'root-scan': ['root-scan-clean', 'ignore-lists', 'ignored-check-fails-closed', 'received-tracked-links'],
       'safety-block': ['role-block-render', 'safety-block-newer', 'safety-block-insert'],
       secrets: ['token-keys-hidden', 'credential-strip', 'printable-output'],

@@ -144,8 +144,7 @@ export interface RecordGuard {
  * - `parseHead` checks the head form. A bad head on the command line is a usage error (exit 2).
  *   In the link reader, a bad stored head is a failure (exit 1).
  * - `check` reads the proof and gives a `CheckedRecord`, or a failure (exit 1) for every fault and every mismatch.
- * - `guard` is the guard whose off value skips the setup check of the core before the proof is read, and the checks of the recipe
- *   that read it. Absent: every check always runs.
+ * - `guard` names the checks that the recipe skips when its guard is off. The core reports them after a successful write.
  */
 export interface RecordCheck {
   readonly stage: string;

@@ -289,13 +289,13 @@ const prRuleRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/recipes/software/pr-watch.ts', 'loop', 'eventOf'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'record-check-gate',
     guard: softwareGuardIds.prRules,
     name: `A merge record checks the setup before it reads the pull request, so a setup with no closed state stops before the network. The record is no proof of the ${owner}.`,
     applies: commandLines.itemRecord,
     harm: false,
-    sites: [...at('src/commands/item.ts', 'recordChecked'), ...at('src/recipes/software/record.ts', 'softwareRecordCheck')],
+    sites: at('src/board/edit.ts', 'checkRecordSetup'),
   }),
   alwaysOnRow({
     id: 'record-item-target',
