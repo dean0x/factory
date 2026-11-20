@@ -8,7 +8,7 @@ import { recipes } from '../../src/recipes/index.js';
 import { workerSectionLines } from '../../src/recipes/software/roles/coordinator.js';
 import { softwareGuardIds } from '../../src/recipes/software/guards.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
-import { guardOf, wiredGuard } from '../../src/guards/build.js';
+import { fixedGuard, guardOf, wiredGuard } from '../../src/guards/build.js';
 import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
 import type { Guard, GuardRow, GuardValues, RowSite } from '../../src/guards/types.js';
 import { allOn, guardRulesOf } from '../../src/guards/effective.js';
@@ -153,6 +153,12 @@ const duplicatesOf = (ids: readonly string[]): string[] => ids.filter((id, index
 
 const rowsOf = (guard: Guard): GuardRow[] => software.rows.filter((row) => row.guard === guard.id);
 
+/** The name of the guard id in the source: the key of the core id map, or of the id map of the software recipe. */
+const idNameOf = (id: string): string => {
+  const core = Object.entries(guardIds).find(([, value]) => value === id);
+  return core === undefined ? `softwareGuardIds.${Object.entries(softwareGuardIds).find(([, value]) => value === id)?.[0] ?? id}` : `guardIds.${core[0]}`;
+};
+
 /** Expand the approval map to the recipe points, the limits wildcard to all named keys, and [] to array index 0. */
 const relatedPathsOf = (path: string): readonly (readonly (string | number)[])[] => {
   if (path === `${keys.root.approval}.<point>`) {
@@ -242,13 +248,9 @@ describe('the guards of a recipe', () => {
 
   it('reads the value of a wired guard in each listed site of each of its code rows, or names the reason of a site that does not', () => {
     const codeRows = software.rows.filter((row) =>
-      row.kind === guardKinds.code && software.guards.some((guard) => guard.id === row.guard && guard.wired));
+      row.kind === guardKinds.code && !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && guard.wired));
     const paths = [...new Set(codeRows.flatMap((row) => row.sites.map((site) => site.path)))];
     const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
-    const idNameOf = (id: string): string => {
-      const core = Object.entries(guardIds).find(([, value]) => value === id);
-      return core === undefined ? `softwareGuardIds.${Object.entries(softwareGuardIds).find(([, value]) => value === id)?.[0] ?? id}` : `guardIds.${core[0]}`;
-    };
     expect(codeRows.length).toBeGreaterThan(0);
     const unread = codeRows.flatMap((row) => {
       const texts = sourceScan.declarationTextsOf(sources, row.sites);
@@ -260,6 +262,65 @@ describe('the guards of a recipe', () => {
     expect(unreadSiteExceptions.filter((site) => site.reason.trim() === '')).toEqual([]);
     expect(unread.filter((site) => !excepted.includes(site))).toEqual([]);
     expect(excepted.filter((site) => !unread.includes(site))).toEqual([]);
+  });
+
+  it('makes clone rules and hook runtime fixed guards: no key, never wired, no harm mark and only rows that are always on', () => {
+    const fixed = software.guards.filter((guard) => guard.fixed);
+    expect(idsOf(fixed)).toEqual([guardIds.cloneRules, guardIds.hookRuntime]);
+    for (const guard of fixed) {
+      expect(guard, guard.id).toMatchObject({ key: null, wired: false, harm: false });
+      expect(rowsOf(guard).length, guard.id).toBeGreaterThan(0);
+      expect(rowsOf(guard).filter((row) => !row.alwaysOn).map((row) => row.id), guard.id).toEqual([]);
+    }
+  });
+
+  it('never wires a fixed guard, also when its definition is marked wired', () => {
+    const definition = guardOf('test-guard', 'Test guard', 'Test work stays safe.');
+    expect(fixedGuard(definition)).toEqual({ ...definition, fixed: true, wired: false });
+    expect(guardsFor({ ...publishRecipe, guards: [wiredGuard(fixedGuard(definition))] }).at(-1)).toMatchObject({
+      id: 'test-guard', fixed: true, wired: false, key: null,
+    });
+  });
+
+  it('gives each guard that is not fixed at least one row that its value changes', () => {
+    expect(software.guards.filter((guard) => !guard.fixed && rowsOf(guard).every((row) => row.alwaysOn)).map((guard) => guard.id)).toEqual([]);
+  });
+
+  it('pins the harm mark of every guard, so that a change of a mark is a reviewed change', () => {
+    expect(Object.fromEntries(software.guards.map((guard) => [guard.id, guard.harm]))).toEqual({
+      'approval-delegation': true,
+      'board-edits': true,
+      'settings-check': true,
+      'settings-write': true,
+      'clone-rules': false,
+      'context-limits': false,
+      'delete-guard': true,
+      dismiss: true,
+      'file-link-safety': true,
+      'folder-trust': true,
+      'git-safety': true,
+      'hook-runtime': false,
+      'launch-commands': true,
+      'machine-limits': true,
+      'task-files': true,
+      'session-checks': true,
+      'owner-go': true,
+      'pane-safety': true,
+      'permission-mode': true,
+      proxy: true,
+      'resume-routines': true,
+      'root-scan': true,
+      'safety-block': true,
+      secrets: true,
+      'setup-text': true,
+      spend: true,
+      'work-conduct': true,
+      'install-rules': true,
+      'approval-merge': true,
+      'approval-release': true,
+      'merge-quality': true,
+      'pr-rules': true,
+    });
   });
 
   it('marks a guard as wired without a change to its definition', () => {
@@ -300,9 +361,9 @@ describe('the guards of a recipe', () => {
     expect(retiredGuardIds).toEqual([]);
   });
 
-  it('gives each guard the key below the guards key, a missing key that means on, and no other value yet', () => {
+  it('gives each guard that is not fixed the key below the guards key, a missing key that means on, and no other value yet', () => {
     for (const guard of software.guards) {
-      expect(guard.key).toBe(`${guardKeys.local}.${guard.id}`);
+      expect(guard.key).toBe(guard.fixed ? null : `${guardKeys.local}.${guard.id}`);
       expect(guard.whenMissing).toBe(guardValues.on);
       expect(guard.newNode).toBe(guardValues.on);
     }
@@ -338,10 +399,10 @@ describe('the guards of a recipe', () => {
     }
   });
 
-  it('marks a guard with the harm mark when one of its rows has it, and lists the kinds and the row ids of its rows', () => {
+  it('marks a guard with the harm mark when one of the rows that its value changes has it, and lists the kinds and the row ids of its rows', () => {
     for (const guard of software.guards) {
       const rows = rowsOf(guard);
-      expect(guard.harm, guard.id).toBe(rows.some((row) => row.harm));
+      expect(guard.harm, guard.id).toBe(!guard.fixed && rows.some((row) => row.harm && !row.alwaysOn));
       expect(guard.rows, guard.id).toEqual(idsOf(rows));
       const kinds = Object.values(guardKinds).filter((kind) => rows.some((row) => row.kind === kind));
       expect(guard.kinds, guard.id).toEqual(kinds);
@@ -405,7 +466,7 @@ describe('the rows of the registry', () => {
     const tag = /\[[A-D](?:-B)?\d+|\b[A-Z]{1,2}-\d+\b|\b(?:AC|TP|PR)[- ]?\d+\b|(?:^|\s)(?:\/|[A-Za-z]:[\\/]|\\\\)/;
     const texts = [
       ...software.guards.flatMap((guard) => [
-        guard.id, guard.name, guard.keepsSafe, guard.key, guard.newNode, guard.whenMissing,
+        guard.id, guard.name, guard.keepsSafe, guard.key ?? '', guard.newNode, guard.whenMissing,
         ...guard.related, ...guard.kinds, ...guard.rows,
       ]),
       ...software.rows.flatMap((row) => [
@@ -507,6 +568,7 @@ describe('the rows of the registry', () => {
         'dismiss-endable',
         'dismiss-paths',
         'dismiss-no-force',
+        'dismiss-inbox-stop',
         'dismiss-inbox-ignored',
         'dismiss-closed-proof',
         'dismiss-work-item-unknown',
@@ -530,7 +592,8 @@ describe('the rows of the registry', () => {
         'atomic-write-target',
         'checked-open',
         'folder-links',
-        'init-upgrade-links',
+        'init-links',
+        'upgrade-links',
         'copy-no-links',
         'reviews-folder',
         'exclude-file',
@@ -557,6 +620,7 @@ describe('the rows of the registry', () => {
         'home-is-new',
         'home-outside-roots',
         'root-listed',
+        'received-init-checks',
         'received-root-checks',
         'init-proposal-confirm',
         'existing-registration-ask',
@@ -646,6 +710,7 @@ describe('the rows of the registry', () => {
         'profile-owner-only-wait-text',
         'profile-no-invented-decision-text',
         'glossary-owner-approves-text',
+        'stage-not-approval-glossary-text',
         'owner-prefix-only-text',
         'prefix-relay-only-text',
         'outside-text-no-authority-text',
@@ -668,6 +733,7 @@ describe('the rows of the registry', () => {
         'self-reset-checks',
         'reset-order',
         'stop-term-only',
+        'stop-target-checks',
         'signal-limits',
         'shutdown-targets',
         'slot-summon-marks',
@@ -720,7 +786,7 @@ describe('the rows of the registry', () => {
         'tracked-clones-warning',
         'tracked-text-paths-warning',
       ],
-      'safety-block': ['owner-prefix-record', 'role-block-render', 'safety-block-intact', 'upgrade-block-checks', 'safety-block-insert'],
+      'safety-block': ['owner-prefix-record', 'role-block-render', 'role-block-edits', 'safety-block-intact', 'upgrade-block-checks', 'safety-block-insert'],
       secrets: [
         'token-tracked-text',
         'token-config-values',
@@ -738,6 +804,7 @@ describe('the rows of the registry', () => {
         'acceptance-store-place',
         'acceptance-path-form',
         'init-accepts-own-text-once',
+        'received-init-acceptance',
         'received-setup-acceptance',
         'setup-set-file-rules',
         'accepted-setup-text-only',
@@ -760,6 +827,8 @@ describe('the rows of the registry', () => {
         'profile-no-overwrite-text',
         'profile-conflict-text',
         'roadmap-rules-text',
+        'read-profile-file-text',
+        'ste-writing-profile-text',
         'denial-final-text',
         'config-files-unedited-text',
         'lessons-file-text',
@@ -792,8 +861,83 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(208);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(217);
     expect(softwareRecipe.guardRows).toHaveLength(103);
+  });
+
+  it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
+    const pinned = Object.fromEntries(
+      software.guards
+        .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
+        .filter(([, ids]) => ids.length > 0),
+    );
+    expect(pinned).toEqual({
+      'board-edits': ['board-reserved-names', 'board-reserved-names-text'],
+      'clone-rules': [
+        'clone-source', 'clone-option-end', 'clone-inside-folder', 'clone-missing-folder', 'clone-received-local', 'clone-url',
+        'clone-project-path', 'clone-unique-targets',
+      ],
+      dismiss: [
+        'dismiss-dry-run', 'dismiss-paths', 'dismiss-no-force', 'dismiss-inbox-stop', 'dismiss-work-item-unknown', 'dismiss-ask-owner',
+        'dismiss-dry-run-text', 'dismiss-ask-owner-text', 'dismiss-copy-reviews-text', 'dismiss-review-results-text',
+      ],
+      'file-link-safety': [
+        'user-folder-never', 'settings-write-no-link', 'settings-write-inside-folder', 'private-file-mode', 'local-file-mode', 'safe-write',
+        'atomic-write-target', 'checked-open', 'init-links', 'copy-no-links', 'reviews-folder', 'worker-record', 'init-existing-plain',
+        'init-race', 'init-rollback', 'clone-undo', 'state-target-kept', 'init-existing-writes', 'init-temp-leftovers', 'upgrade-backups',
+        'upgrade-keeps-repo', 'migration-keeps-edits',
+      ],
+      'folder-trust': [
+        'registration-check', 'home-env-conflict', 'unregistered-upgrade', 'origin-received', 'home-is-new', 'home-outside-roots',
+        'received-init-checks', 'init-proposal-confirm', 'existing-registration-ask',
+      ],
+      'git-safety': ['state-git-hooks-off', 'commit-named-paths', 'root-repo-init'],
+      'hook-runtime': ['hook-never-fails', 'hook-silent-outside', 'hook-session-identity', 'statusline-command', 'statusline-identity'],
+      'launch-commands': [
+        'launch-values', 'launch-fixed-argv', 'launch-env-clean', 'worker-launch-bounds', 'child-no-shell', 'agent-claude-only',
+        'tmux-quoting', 'run-shell-limits',
+      ],
+      'machine-limits': ['lock-bounds', 'lock-place'],
+      'task-files': ['child-address-form', 'child-files-untrusted', 'report-listed-fields'],
+      'session-checks': [
+        'owner-channel', 'decide-channel', 'setup-ask-channel', 'received-init-outside-session', 'existing-init-outside-session',
+        'decide-channel-text',
+      ],
+      'owner-go': [
+        'decide-prompt', 'answered-row-not-proof', 'settle-relay-rules', 'owner-row-under-lock', 'decision-record-escape',
+        'approval-store-place', 'profile-owner-only-wait-text', 'profile-no-invented-decision-text', 'glossary-owner-approves-text',
+        'stage-not-approval-glossary-text', 'answered-row-not-proof-text', 'settle-relay-text',
+      ],
+      'pane-safety': ['pane-list-fails-closed', 'stop-term-only', 'signal-limits'],
+      'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
+      proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],
+      'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-default-branch'],
+      'root-scan': ['root-scan-clean', 'ignore-lists', 'ignored-check-fails-closed'],
+      'safety-block': ['role-block-render', 'safety-block-insert'],
+      secrets: ['token-keys-hidden', 'credential-strip', 'printable-output'],
+      'setup-text': [
+        'setup-text-content', 'worker-refusal-text', 'acceptance-store-place', 'acceptance-path-form', 'init-accepts-own-text-once',
+        'received-init-acceptance', 'worker-refusal-role-text', 'work-rules-block',
+      ],
+      spend: ['new-worker-keeps-copy'],
+      'work-conduct': [
+        'profile-strength-text', 'profile-no-overwrite-text', 'profile-conflict-text', 'roadmap-rules-text', 'read-profile-file-text',
+        'ste-writing-profile-text',
+      ],
+    });
+  });
+
+  it('reads no value of its own guard at any site of a code row that is always on, so the check runs with every guard off', () => {
+    const rows = software.rows.filter((row) => row.alwaysOn && row.kind === guardKinds.code);
+    const paths = [...new Set(rows.flatMap((row) => row.sites.map((site) => site.path)))];
+    const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
+    expect(rows.length).toBeGreaterThan(0);
+    const reads = rows.flatMap((row) => {
+      const texts = sourceScan.declarationTextsOf(sources, row.sites);
+      return row.sites.filter((_site, index) => texts[index] === null || texts[index]?.includes(idNameOf(row.guard)) === true)
+        .map((site) => `${row.id} ${site.path} ${site.symbol}`);
+    });
+    expect(reads).toEqual([]);
   });
 
   it('gives every guard at least one row', () => {
@@ -807,13 +951,14 @@ describe('the rows of the registry', () => {
   });
 
   it.each([
-    { id: 'owner-prefix-record', symbols: ['requireConfirmedPrefix'] },
-    { id: 'role-block-render', symbols: ['requireRoleBlocks', 'conflictingRoleGuard'] },
-  ])('lists the launch check $id under the safety block guard with its called sites', ({ id, symbols }) => {
+    { id: 'owner-prefix-record', symbols: ['requireConfirmedPrefix'], alwaysOn: false },
+    { id: 'role-block-render', symbols: ['requireRoleBlocks'], alwaysOn: true },
+    { id: 'role-block-edits', symbols: ['conflictingRoleGuard'], alwaysOn: false },
+  ])('lists the launch check $id under the safety block guard with its called sites', ({ id, symbols, alwaysOn }) => {
     const path = 'src/commands/launch-checks.ts';
     const source = readFileSync(join(REPO, path), 'utf8');
     const row = software.rows.find((candidate) => candidate.id === id);
-    expect(row).toMatchObject({ guard: guardIds.safetyBlock, kind: guardKinds.code, harm: true });
+    expect(row).toMatchObject({ guard: guardIds.safetyBlock, kind: guardKinds.code, harm: true, alwaysOn });
     expect(row?.sites).toEqual(symbols.map((symbol) => ({ path, symbol })));
     for (const symbol of symbols) {
       expect(sourceScan.callsOf(source, symbol).length, symbol).toBeGreaterThan(0);
@@ -947,30 +1092,35 @@ describe('the rows of the registry', () => {
  * of that text. The piece must be in the text of each of its sites, so a row never cites a line that holds another rule.
  */
 describe('the text rows of the registry', () => {
-  const layer1 = blockTemplatesFor(blockInput(1));
-  const layer2 = blockTemplatesFor(blockInput(2));
   const bodyOf = (blocks: readonly { readonly name: string; readonly body: string }[], name: string): string =>
     blocks.find((block) => block.name === name)?.body ?? '';
-  const coordinatorText = bodyOf(layer1, blockNames.coordinator);
-  const delegatedBlocks = blockTemplatesFor(blockInput(1, { modes: { ...softwareOwnerModes, merge: 'delegated' } }));
-  const delegatedCoordinatorText = bodyOf(delegatedBlocks, blockNames.coordinator);
-  const safetyText = bodyOf(layer1, blockNames.safety);
   const profileText = `${fileTemplates.profileReadme}\n${fileTemplates.profileIndex}`;
   const glossaryText = glossary.map((word) => word.text).join('\n');
-  const TEXT_OF_PATH: Readonly<Record<string, string>> = {
-    'src/recipes/software/roles/coordinator.ts': `${coordinatorText}\n${delegatedCoordinatorText}`,
-    'src/recipes/software/roles/worker.ts': bodyOf(layer1, blockNames.worker),
-    'src/recipes/software/roles/manager.ts': bodyOf(layer2, blockNames.manager),
-    'src/templates/safety.ts': safetyText,
-    'src/templates/work-rules.ts': bodyOf(layer1, blockNames.workRules),
-    'src/templates/decision-profile.ts': profileText,
-    'src/templates/roadmaps.ts': fileTemplates.roadmapsReadme,
-    'src/recipes/software/words.ts': `${coordinatorText}\n${safetyText}`,
-    'src/recipes/software/approval.ts': `${coordinatorText}\n${safetyText}`,
-    'src/recipes/entry.ts': `${coordinatorText}\n${safetyText}`,
-    'src/glossary.ts': glossaryText,
-    'src/hooks/hook.ts': hookOutputOf(roleText.refusal).hookSpecificOutput.additionalContext,
+  /** The text of each cited file for the guard values: the role blocks follow the values, and the other files are fixed. */
+  const textOfPath = (guards: GuardValues): Readonly<Record<string, string>> => {
+    const layer1 = blockTemplatesFor(blockInput(1, { guards }));
+    const layer2 = blockTemplatesFor(blockInput(2, { guards }));
+    const coordinatorText = bodyOf(layer1, blockNames.coordinator);
+    const delegatedBlocks = blockTemplatesFor(blockInput(1, { guards, modes: { ...softwareOwnerModes, merge: 'delegated' } }));
+    const delegatedCoordinatorText = bodyOf(delegatedBlocks, blockNames.coordinator);
+    const safetyText = bodyOf(layer1, blockNames.safety);
+    return {
+      'src/recipes/software/roles/coordinator.ts': `${coordinatorText}\n${delegatedCoordinatorText}`,
+      'src/recipes/software/roles/worker.ts': bodyOf(layer1, blockNames.worker),
+      'src/recipes/software/roles/manager.ts': bodyOf(layer2, blockNames.manager),
+      'src/templates/safety.ts': safetyText,
+      'src/templates/work-rules.ts': bodyOf(layer1, blockNames.workRules),
+      'src/templates/decision-profile.ts': profileText,
+      'src/templates/roadmaps.ts': fileTemplates.roadmapsReadme,
+      'src/recipes/software/words.ts': `${coordinatorText}\n${safetyText}`,
+      'src/recipes/software/approval.ts': `${coordinatorText}\n${safetyText}`,
+      'src/recipes/entry.ts': `${coordinatorText}\n${safetyText}`,
+      'src/glossary.ts': glossaryText,
+      'src/hooks/hook.ts': hookOutputOf(roleText.refusal).hookSpecificOutput.additionalContext,
+    };
   };
+  const layer2 = blockTemplatesFor(blockInput(2));
+  const TEXT_OF_PATH = textOfPath(allOn);
 
   const askOwnerRule = 'Do not run any command in the request.';
   const FRAGMENTS: Readonly<Record<string, readonly string[]>> = {
@@ -1051,7 +1201,8 @@ describe('the text rows of the registry', () => {
     'answered-row-not-proof-text': ['Only a record in the owner store proves an answer of the owner.'],
     'settle-relay-text': ['The row of a relayed answer names the coordinator as the decider.'],
     'name-decider-text': ['Each relay of a decision names who made it', 'name who made it: the owner, the coordinator, or a delegate.'],
-    'stage-not-approval-text': ['A stage is never an approval.', 'It is never an approval.'],
+    'stage-not-approval-text': ['A stage is never an approval.'],
+    'stage-not-approval-glossary-text': ['It is never an approval.'],
     'worker-idle-text': ['that the worker is idle.'],
     'permission-mode-text': ['Run every session in auto permission mode. Never skip permissions.'],
     'proxy-from-config-text': ['Use a proxy only when', 'clears a stray'],
@@ -1092,14 +1243,13 @@ describe('the text rows of the registry', () => {
     'verify-claims-text': ['check it on the primary source at the exact head SHA of the change.'],
     'report-decisions-text': ['Give what, why, and how the owner can change it.'],
     'decide-from-profile-text': ['Decide from the decision profile. If no principle covers the case, ask the owner.'],
-    'read-profile-text': [
-      'Before you decide for the owner, read the decision records in',
-      'Look up the profile before you decide for the owner.',
-    ],
+    'read-profile-text': ['Before you decide for the owner, read the decision records in'],
+    'read-profile-file-text': ['Look up the profile before you decide for the owner.'],
     'verify-state-files-text': ['Verify them against the live state, because they can be out of date.'],
     'follow-rules-after-upgrade-text': ['After an upgrade, follow the rules of this block.'],
     'session-start-checks-text': ['List the open pull requests of each project in'],
-    'ste-writing-text': ['ASD-STE100 Simplified Technical English'],
+    'ste-writing-text': ['Write all text in ASD-STE100 Simplified Technical English'],
+    'ste-writing-profile-text': ['All text uses ASD-STE100 Simplified Technical English.'],
     'worker-no-direct-ask-text': ['Never ask the owner directly.'],
     'questions-to-coordinator-text': ['Send each question to the coordinator with `SendMessage`.'],
     'keep-unblocked-work-text': ['Keep work that does not depend on the answer.'],
@@ -1112,7 +1262,9 @@ describe('the text rows of the registry', () => {
   };
 
   const textRows = software.rows.filter((row) => row.kind === guardKinds.text);
-  const wiredRows = textRows.filter((row) => software.guards.some((guard) => guard.id === row.guard && guard.wired));
+  const wiredRows = textRows.filter((row) => !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && guard.wired));
+  const fixedRows = textRows.filter((row) => row.alwaysOn);
+  const allOff: GuardValues = Object.fromEntries(software.guards.map((guard) => [guard.id, guardValues.off]));
   const wiredTextsOf = (guards: GuardValues): Readonly<Record<string, readonly string[]>> => {
     const blocks = blockTemplatesFor(blockInput(1, { guards }));
     const coordinator = bodyOf(blocks, blockNames.coordinator);
@@ -1149,6 +1301,17 @@ describe('the text rows of the registry', () => {
     }
     for (const piece of pieces) {
       expect(row.sites.some((site) => (on[site.path] ?? []).some((text) => text.includes(piece))), `${row.id}: ${piece}`).toBe(true);
+    }
+  });
+
+  it.each(fixedRows)('keeps the fixed text $id in the text of each of its sites with every guard off', (row) => {
+    const off = textOfPath(allOff);
+    const pieces = FRAGMENTS[row.id] ?? [];
+    expect(pieces.length, row.id).toBeGreaterThan(0);
+    for (const site of row.sites) {
+      const text = off[site.path];
+      expect(text, `${row.id}: ${site.path}`).toBeDefined();
+      expect(pieces.some((piece) => text?.includes(piece) === true), `${row.id}: ${site.path}`).toBe(true);
     }
   });
 

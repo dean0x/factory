@@ -1,5 +1,5 @@
 import { commandLines, commands, flags, flagText, guardIds, places, requestWords, roles } from '../names.js';
-import { at, codeRow, textRow } from './build.js';
+import { alwaysOnRow, at, codeRow, textRow } from './build.js';
 import { contentGuardRows } from './content-rows.js';
 import { sessionGuardRows } from './session-rows.js';
 import type { GuardRow } from './types.js';
@@ -82,7 +82,7 @@ const boardEditRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/board/edit.ts', 'changeItemIn', 'unassignIn'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'board-reserved-names',
     guard: guardIds.boardEdits,
     name: 'A field of the board cannot take a name that an item, a queue row or a decision already uses',
@@ -283,7 +283,7 @@ const settingsWriteRows: readonly GuardRow[] = [
 ];
 
 const cloneRuleRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'clone-source',
     guard: guardIds.cloneRules,
     name: 'A project URL is absolute with no parent part, and a local source is not a remote',
@@ -291,7 +291,7 @@ const cloneRuleRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/clone-url.ts', 'checkedPath', 'checkLocalSource'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'clone-option-end',
     guard: guardIds.cloneRules,
     name: 'A clone puts the end-of-options mark before the URL and the path',
@@ -299,7 +299,7 @@ const cloneRuleRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/git.ts', 'gitClone'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'clone-inside-folder',
     guard: guardIds.cloneRules,
     name: `A clone stays inside the ${folder}, also when a link leads out of it`,
@@ -307,7 +307,7 @@ const cloneRuleRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-clone.ts', 'requireInsideRoot'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'clone-missing-folder',
     guard: guardIds.cloneRules,
     name: 'A clone goes only into a missing folder, and a duplicate folder is refused',
@@ -315,7 +315,7 @@ const cloneRuleRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-clone.ts', 'isPresentClone', 'planProjects'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'clone-received-local',
     guard: guardIds.cloneRules,
     name: 'A received folder never clones a project from a file or a local URL',
@@ -380,7 +380,7 @@ const deleteGuardRows: readonly GuardRow[] = [
 ];
 
 const dismissRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'dismiss-dry-run',
     guard: guardIds.dismiss,
     name: 'A dismiss without a yes only lists the files that it would delete',
@@ -404,7 +404,7 @@ const dismissRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/workers/dismiss.ts', 'requireEndable'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'dismiss-paths',
     guard: guardIds.dismiss,
     name: 'A dismiss touches only a work copy below the work copies folder, with no link, and a clone outside the work copy',
@@ -412,7 +412,7 @@ const dismissRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/workers/dismiss.ts', 'requireBelowWorkCopies', 'linkedFolderOf', 'requireOwnGitDir', 'planDismiss'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'dismiss-no-force',
     guard: guardIds.dismiss,
     name: 'A dismiss never forces the removal of a work tree, and it keeps the branch',
@@ -424,13 +424,21 @@ const dismissRows: readonly GuardRow[] = [
       ...at('src/commands/dismiss.ts', 'dismissOne'),
     ],
   }),
+  alwaysOnRow({
+    id: 'dismiss-inbox-stop',
+    guard: guardIds.dismiss,
+    name: 'A dismiss stops on a link or a fault in the inbox folder',
+    applies: 'Dismiss',
+    harm: true,
+    sites: at('src/workers/dismiss.ts', 'inboxFilesIn'),
+  }),
   codeRow({
     id: 'dismiss-inbox-ignored',
     guard: guardIds.dismiss,
-    name: 'A dismiss stops on a link or a fault in the inbox folder, and it lists the ignored files that it deletes',
+    name: 'A dismiss lists the ignored files that it deletes',
     applies: 'Dismiss',
     harm: true,
-    sites: at('src/workers/dismiss.ts', 'ignoredIn', 'inboxFilesIn'),
+    sites: at('src/workers/dismiss.ts', 'ignoredIn'),
   }),
   codeRow({
     id: 'dismiss-closed-proof',
@@ -440,7 +448,7 @@ const dismissRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/dismiss.ts', 'closedWorkOf', 'closedChecks', 'dismissClosed'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'dismiss-work-item-unknown',
     guard: guardIds.dismiss,
     name: 'A work item that cannot be read is unknown and never free of work, and display data is never proof',
@@ -448,7 +456,7 @@ const dismissRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/board/work-items.ts', 'boardWorkItems'), ...at('src/workers/status.ts', 'activityOf', 'isStalledAt')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'dismiss-ask-owner',
     guard: guardIds.dismiss,
     name: `The ${coordinator} can ask the ${owner} to free a ${worker} that is ready, but the ${requestWords.request} frees nothing`,
@@ -463,7 +471,7 @@ const dismissRows: readonly GuardRow[] = [
 ];
 
 const fileLinkSafetyRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'user-folder-never',
     guard: guardIds.fileLinkSafety,
     name: 'No command reads, writes or lists a path in the user folder of Claude Code',
@@ -477,7 +485,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
       ...at('src/commands/root-content.ts', 'inUserFolder'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'settings-write-no-link',
     guard: guardIds.fileLinkSafety,
     name: 'The session folder, its settings folder and its settings file must have the correct kind and must not be links',
@@ -485,7 +493,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/claude-settings.ts', 'checkParts', 'readTarget'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'settings-write-inside-folder',
     guard: guardIds.fileLinkSafety,
     name: 'The real path of the settings file stays inside the session folder',
@@ -493,7 +501,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/claude-settings.ts', 'requireInsideSession', 'readTarget'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'private-file-mode',
     guard: guardIds.fileLinkSafety,
     name: 'A private folder has mode 0700 and a private file has mode 0600, and a file of another user is refused',
@@ -501,7 +509,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/core/private-file.ts', 'ownInfo', 'preparePrivateFolder'), ...at('src/core/access.ts', 'accessFaultFor')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'local-file-mode',
     guard: guardIds.fileLinkSafety,
     name: 'The local config is no link, belongs to the user, has no write bit for others and is written with mode 0600',
@@ -516,7 +524,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
       ...at('src/commands/doctor.ts', 'checkLocalFile'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'safe-write',
     guard: guardIds.fileLinkSafety,
     name: `A write takes a plain file name and follows no link. A create never replaces a file. A hold write makes no folder again after a dismiss removes the ${worker} folder.`,
@@ -527,7 +535,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
       ...at('src/workers/hold.ts', 'writeHold'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'atomic-write-target',
     guard: guardIds.fileLinkSafety,
     name: 'An atomic write refuses a link at the last part and a target outside the given folder',
@@ -535,7 +543,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/node-deps.ts', 'checkedTarget'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'checked-open',
     guard: guardIds.fileLinkSafety,
     name: 'A read of a private or child file opens it without a link and checks its kind, user, mode and size on the handle',
@@ -551,15 +559,23 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/root-paths.ts', 'requireNoLinks', 'requireNoTrackedLinks'),
   }),
-  codeRow({
-    id: 'init-upgrade-links',
+  alwaysOnRow({
+    id: 'init-links',
     guard: guardIds.fileLinkSafety,
-    name: `A link in the ${folder} stops init and upgrade before any write`,
-    applies: 'Init and upgrade',
+    name: `A link in the ${folder} stops init before any write`,
+    applies: 'Init',
     harm: true,
-    sites: [...at('src/commands/init.ts', 'checkOptions'), ...at('src/commands/upgrade.ts', 'runUpgrade')],
+    sites: at('src/commands/init.ts', 'checkOptions'),
   }),
   codeRow({
+    id: 'upgrade-links',
+    guard: guardIds.fileLinkSafety,
+    name: `A link in the ${folder} stops an upgrade before any write`,
+    applies: 'Upgrade',
+    harm: true,
+    sites: at('src/commands/upgrade.ts', 'runUpgrade'),
+  }),
+  alwaysOnRow({
     id: 'copy-no-links',
     guard: guardIds.fileLinkSafety,
     name: 'A copy of a tree refuses links inside it and never replaces a file',
@@ -567,7 +583,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/node-deps.ts', 'copyEntry'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'reviews-folder',
     guard: guardIds.fileLinkSafety,
     name: 'The reviews folder is no link, belongs to the user, has no write bit for others and has mode 0700',
@@ -583,7 +599,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/workers/exclude.ts', 'readCurrent'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'worker-record',
     guard: guardIds.fileLinkSafety,
     name: `A record of a ${worker} is valid only when its work copy and branch match the derived path`,
@@ -591,7 +607,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/workers/registry.ts', 'mismatch', 'requireRecord', 'folderExists', 'removeWorkerRecord'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'init-existing-plain',
     guard: guardIds.fileLinkSafety,
     name: 'The marker file must be a plain file, and the state repo must be ready before init repairs a folder',
@@ -599,7 +615,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-existing.ts', 'repairOf'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'init-race',
     guard: guardIds.fileLinkSafety,
     name: 'Init checks absent and unchanged targets and links again before it writes',
@@ -607,7 +623,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init.ts', 'applyInit'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'init-rollback',
     guard: guardIds.fileLinkSafety,
     name: 'A rollback of init undoes only what init made, and it never removes a git folder that was there before',
@@ -615,7 +631,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init.ts', 'applyInit'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'clone-undo',
     guard: guardIds.fileLinkSafety,
     name: 'The undo of a clone removes only what the run made',
@@ -623,7 +639,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-clone.ts', 'undoClones'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'state-target-kept',
     guard: guardIds.fileLinkSafety,
     name: 'A target that another program made during the run is never replaced',
@@ -631,7 +647,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/commands/init-state.ts', 'makeStateFolder'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'init-existing-writes',
     guard: guardIds.fileLinkSafety,
     name: 'The writes of init for an existing folder have undo steps, take the state lock and set tight modes first',
@@ -639,7 +655,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-existing.ts', 'tightModes', 'applyWrites', 'applyExisting'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'init-temp-leftovers',
     guard: guardIds.fileLinkSafety,
     name: 'Init warns about temp folders that an earlier run left',
@@ -647,7 +663,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/commands/init-home.ts', 'leftoverTempFolders'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'upgrade-backups',
     guard: guardIds.fileLinkSafety,
     name: 'An upgrade keeps a backup of the config, the local config and the state before it changes them, and an abort restores them',
@@ -666,7 +682,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
       ...at('src/upgrade/apply.ts', 'writeAll', 'localFileText'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'upgrade-keeps-repo',
     guard: guardIds.fileLinkSafety,
     name: `An upgrade never removes an existing git folder of the ${folder}`,
@@ -674,7 +690,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/upgrade/plan.ts', 'planRoot'), ...at('src/upgrade/apply.ts', 'makeRootRepo')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'migration-keeps-edits',
     guard: guardIds.fileLinkSafety,
     name: 'A migration replaces a file only when it holds the exact old text, and it refuses projects and child links that it cannot move',
@@ -696,7 +712,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
 ];
 
 const folderTrustRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'registration-check',
     guard: guardIds.folderTrust,
     name: `A config counts only when the ${places.list} lists its folder, the ${node} id matches and the marker is valid`,
@@ -704,7 +720,7 @@ const folderTrustRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/core/home.ts', 'rootRefusalOf', 'rootProblemOf'), ...at('src/commands/start.ts', 'runStart')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'home-env-conflict',
     guard: guardIds.folderTrust,
     name: `A command stops when the environment and the current folder name two different listed ${folder}s`,
@@ -712,7 +728,7 @@ const folderTrustRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/home.ts', 'envHome'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'unregistered-upgrade',
     guard: guardIds.folderTrust,
     name: `An upgrade of an unregistered folder of the first schema needs the ${flagText(flags.home)} flag`,
@@ -720,7 +736,7 @@ const folderTrustRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/home.ts', 'locateHome'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'origin-received',
     guard: guardIds.folderTrust,
     name: 'Only an exact own origin counts as own; received is the safe default, and an origin never goes back to own',
@@ -728,7 +744,7 @@ const folderTrustRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/home-index.ts', 'originOf', 'settleOrigin', 'originOfHome'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'home-is-new',
     guard: guardIds.folderTrust,
     name: 'Init refuses a folder that holds a config, a local config or a state folder, and a folder that is not a folder',
@@ -736,7 +752,7 @@ const folderTrustRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-home.ts', 'checkHomeIsNew'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'home-outside-roots',
     guard: guardIds.folderTrust,
     name: 'Init allows no nesting of folders, and an index that cannot be read stops it',
@@ -752,18 +768,23 @@ const folderTrustRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/commands/root-content.ts', 'scanRepo'),
   }),
+  alwaysOnRow({
+    id: 'received-init-checks',
+    guard: guardIds.folderTrust,
+    name: 'Init of a received folder passes the checks for links, tracked files, clone paths, file sizes, the shared config and the ignore rules before any write',
+    applies: 'Init of a received folder and init of an existing folder',
+    harm: true,
+    sites: at('src/commands/init-received.ts', 'requireNoTrackedProblems', 'requireNoStateFolder', 'checkIgnoreRules', 'checkReceivedRoot'),
+  }),
   codeRow({
     id: 'received-root-checks',
     guard: guardIds.folderTrust,
-    name: 'A received folder passes the checks for links, tracked files, clone paths, file sizes, the shared config and the ignore rules',
-    applies: 'Init of a received folder, init of an existing folder and start',
+    name: 'A received folder is a work tree whose list of tracked files stays within its cap and holds no link before its setup text is checked',
+    applies: commands.upgrade,
     harm: true,
-    sites: [
-      ...at('src/commands/init-received.ts', 'requireNoTrackedProblems', 'requireNoStateFolder', 'checkIgnoreRules', 'checkReceivedRoot'),
-      ...at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
-    ],
+    sites: at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'init-proposal-confirm',
     guard: guardIds.folderTrust,
     name: 'Init waits for a yes to its proposal, and it exits with a usage error when no terminal window can ask',
@@ -771,7 +792,7 @@ const folderTrustRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/commands/init-home.ts', 'confirmProposal'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'existing-registration-ask',
     guard: guardIds.folderTrust,
     name: 'Init of an existing folder asks before it registers the folder, and the default answer is no',
@@ -806,7 +827,7 @@ const gitSafetyRows: readonly GuardRow[] = [
       ...at('src/commands/init-existing.ts', 'checkExisting'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'state-git-hooks-off',
     guard: guardIds.gitSafety,
     name: 'Git runs in the state folder with the hooks of the folder off, no file system monitor and no signing',
@@ -814,7 +835,7 @@ const gitSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/git.ts', 'NO_HOOKS', 'stateGit'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'commit-named-paths',
     guard: guardIds.gitSafety,
     name: 'A commit needs a list of paths, and it never adds the whole tree',
@@ -838,7 +859,7 @@ const gitSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/git.ts', 'requireStateRepoReady'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'root-repo-init',
     guard: guardIds.gitSafety,
     name: `Init of the git folder of the ${folder} refuses an existing git folder and stages files by name`,
@@ -849,7 +870,7 @@ const gitSafetyRows: readonly GuardRow[] = [
 ];
 
 const hookRuntimeRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'hook-never-fails',
     guard: guardIds.hookRuntime,
     name: 'The hook route ends every run with exit 0, so a hook never fails the session that runs it',
@@ -857,7 +878,7 @@ const hookRuntimeRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/cli/run.ts', 'runHookRoute'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'hook-silent-outside',
     guard: guardIds.hookRuntime,
     name: `A hook reads and writes nothing when the session has no ${folder}`,
@@ -865,7 +886,7 @@ const hookRuntimeRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/hooks/hook.ts', 'hasFactoryHome', 'runHook'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'hook-session-identity',
     guard: guardIds.hookRuntime,
     name: `A hook acts only when the folder passes the registration check and the marker names the ${node} or a registered ${worker}`,
@@ -873,7 +894,7 @@ const hookRuntimeRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/hooks/hook.ts', 'sessionIdentityOf'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'statusline-command',
     guard: guardIds.hookRuntime,
     name: `The command of the ${owner} for the status line runs only when it is set, with a time limit and its own process group`,
@@ -881,7 +902,7 @@ const hookRuntimeRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/hooks/statusline.ts', 'ownerOutputOf', 'runStatusline'), ...at('src/config/schema.ts', 'localSessionSchema')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'statusline-identity',
     guard: guardIds.hookRuntime,
     name: 'The status line shows a value only for a session that passes the identity check, and a percent is between 0 and 100',
@@ -892,7 +913,7 @@ const hookRuntimeRows: readonly GuardRow[] = [
 ];
 
 const launchCommandRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'launch-values',
     guard: guardIds.launchCommands,
     name: 'A launch takes an absolute folder, a path that is not empty, a listed effort, a safe model name, one plain word for the agent and a UUID to resume',
@@ -900,7 +921,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/launch/argv.ts', 'checkSession'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'launch-fixed-argv',
     guard: guardIds.launchCommands,
     name: 'The command line of a launch is built from fixed parts, so no input word becomes a flag',
@@ -908,7 +929,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/launch/argv.ts', 'startArgv'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'launch-env-clean',
     guard: guardIds.launchCommands,
     name: 'A launch clears every variable of Claude Code that the parent set, apart from the settings that it keeps',
@@ -924,7 +945,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/launch/argv.ts', 'launchArgv'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'worker-launch-bounds',
     guard: guardIds.launchCommands,
     name: `The id of a ${worker} is a slug, and the only added folder is its inbox`,
@@ -940,7 +961,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/workers/launch.ts', 'requireWorkCopy'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'child-no-shell',
     guard: guardIds.launchCommands,
     name: 'A child program runs with a list of arguments and never through a shell',
@@ -948,7 +969,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/node-deps.ts', 'runPlain', 'runInGroup', 'runAttachedProgram'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'agent-claude-only',
     guard: guardIds.launchCommands,
     name: 'The agent of a session must be Claude Code',
@@ -956,7 +977,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/config/schema.ts', 'sharedSessionSchema'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'tmux-quoting',
     guard: guardIds.launchCommands,
     name: 'A word for tmux escapes the semicolon, and a pane target takes an id only',
@@ -964,7 +985,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/launch/tmux.ts', 'literalWord', 'paneTarget'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'run-shell-limits',
     guard: guardIds.launchCommands,
     name: 'The text of a background shell for a summon timer is not empty, has at most 1024 characters and holds no control character',

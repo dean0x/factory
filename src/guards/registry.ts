@@ -1,6 +1,6 @@
 import { guardIds, guardKeys, guardKinds, keys, places, roles } from '../names.js';
 import type { RecipeEntry } from '../recipes/entry.js';
-import { guardOf, wiredGuard } from './build.js';
+import { fixedGuard, guardOf, wiredGuard } from './build.js';
 import { coreGuardRows } from './core-rows.js';
 import type { Guard, GuardDefinition, GuardRow, RowSite } from './types.js';
 
@@ -52,10 +52,12 @@ const coreGuards: readonly GuardDefinition[] = [
       `A write of the hook settings needs the consent of the ${owner}.`,
     ),
   ),
-  guardOf(
-    guardIds.cloneRules,
-    'Clone and project rules',
-    'A clone takes a plain URL and goes only into a missing folder of its own project.',
+  fixedGuard(
+    guardOf(
+      guardIds.cloneRules,
+      'Clone and project rules',
+      'A clone takes a plain URL and goes only into a missing folder of its own project.',
+    ),
   ),
   wiredGuard(guardOf(guardIds.contextLimits, 'Context limits', 'A session saves its work before its context is full.', contextKeys)),
   wiredGuard(
@@ -85,11 +87,13 @@ const coreGuards: readonly GuardDefinition[] = [
     'Git safety',
     'Git runs in the state folder without its hooks, and a commit takes only the paths that it names.',
   ),
-  guardOf(
-    guardIds.hookRuntime,
-    'Hook runtime',
-    'A hook acts only for a session that it can identify, and the status line stays within its limits.',
-    [statuslineKey],
+  fixedGuard(
+    guardOf(
+      guardIds.hookRuntime,
+      'Hook runtime',
+      'A hook acts only for a session that it can identify, and the status line stays within its limits.',
+      [statuslineKey],
+    ),
   ),
   guardOf(
     guardIds.launchCommands,
@@ -213,17 +217,21 @@ export const guardRowsFor = (recipe: Pick<RecipeEntry, 'guardRows'>): readonly G
 
 /**
  * The guards for a recipe: the guards of the core, then the guards of the recipe. Each one has the harm mark, the kinds and the
- * row ids that its rows give, so the list states each fact once.
+ * row ids that its rows give, so the list states each fact once. The harm mark comes from the rows that the value changes: a
+ * guard with no such row has it, because its harm is not known, but a fixed guard has none, because it is never off. A fixed
+ * guard has no key and is never wired.
  */
 export const guardsFor = (recipe: Pick<RecipeEntry, 'guards' | 'guardRows'>): readonly Guard[] => {
   const rows = guardRowsFor(recipe);
   return [...coreGuards, ...recipe.guards].map((definition) => {
     const own = rows.filter((row) => row.guard === definition.id);
+    const settable = own.filter((row) => !row.alwaysOn);
     return {
       ...definition,
-      harm: own.length === 0 || own.some((row) => row.harm),
+      wired: definition.wired && !definition.fixed,
+      harm: !definition.fixed && (settable.length === 0 || settable.some((row) => row.harm)),
       kinds: Object.values(guardKinds).filter((kind) => own.some((row) => row.kind === kind)),
-      key: keyOf(definition.id),
+      key: definition.fixed ? null : keyOf(definition.id),
       rows: own.map((row) => row.id),
     };
   });

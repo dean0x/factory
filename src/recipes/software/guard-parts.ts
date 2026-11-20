@@ -15,6 +15,5 @@ export const WORKER_FILE = 'src/recipes/software/roles/worker.ts';
 export const MANAGER_FILE = 'src/recipes/software/roles/manager.ts';
 export const SAFETY_FILE = 'src/templates/safety.ts';
 export const WORK_RULES_FILE = 'src/templates/work-rules.ts';
-export const PROFILE_FILE = 'src/templates/decision-profile.ts';
 export const WORDS_FILE = 'src/recipes/software/words.ts';
 export const CONFIG_FILE = 'src/recipes/software/config.ts';

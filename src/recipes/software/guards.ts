@@ -1,4 +1,4 @@
-import { at, codeRow, guardOf, textRow, wiredGuard } from '../../guards/build.js';
+import { alwaysOnRow, at, fixedTextRow, guardOf, textRow, wiredGuard } from '../../guards/build.js';
 import type { GuardDefinition, GuardRow } from '../../guards/types.js';
 import { commandLines, guardIds, keys, requestWords, roles } from '../../names.js';
 import { softwareApprovalPoints } from './approval.js';
@@ -125,7 +125,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
     harm: false,
     sites: at(COORDINATOR_FILE, 'coordinatorLines'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'board-reserved-names-text',
     guard: guardIds.boardEdits,
     name: 'No field takes a name that the program reserves',
@@ -135,7 +135,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
   }),
 
   // Clone and project rules that the config parser of the recipe applies.
-  codeRow({
+  alwaysOnRow({
     id: 'clone-url',
     guard: guardIds.cloneRules,
     name: 'A clone URL has a safe form: a short text with no control character, no credential, no helper program and a listed scheme',
@@ -147,7 +147,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
       ...at(CONFIG_FILE, 'cloneUrlSchema'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'clone-project-path',
     guard: guardIds.cloneRules,
     name: 'A project folder is one plain name, not reserved and not the folder itself, and it stays inside the folder',
@@ -160,7 +160,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
       ...at(CONFIG_FILE, 'projectPathSchema'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'clone-unique-targets',
     guard: guardIds.cloneRules,
     name: 'Two projects cannot share a repo or a folder',
@@ -198,7 +198,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
   }),
 
   // Dismiss.
-  textRow({
+  fixedTextRow({
     id: 'dismiss-dry-run-text',
     guard: guardIds.dismiss,
     name: 'The dry run of a dismiss comes first and lists the files that the free deletes',
@@ -230,7 +230,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
     harm: true,
     sites: at(COORDINATOR_FILE, 'workerSectionLines'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'dismiss-ask-owner-text',
     guard: guardIds.dismiss,
     name: `After a denied free, the ${coordinator} or ${manager} asks the ${owner} to free the ${worker} and never runs the command of the ${requestWords.request}`,
@@ -238,7 +238,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
     harm: true,
     sites: at(COORDINATOR_FILE, 'workerSectionLines'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'dismiss-copy-reviews-text',
     guard: guardIds.dismiss,
     name: `The review files of a ${worker} are copied from its inbox to the reviews folder before a dismiss`,
@@ -246,7 +246,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
     harm: true,
     sites: at(COORDINATOR_FILE, 'workerSectionLines'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'dismiss-review-results-text',
     guard: guardIds.dismiss,
     name: `A ${worker} puts each review result in a named inbox file, because a dismiss deletes the inbox`,

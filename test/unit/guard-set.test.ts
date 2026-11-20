@@ -41,6 +41,8 @@ const state = async (deps: ReturnType<typeof fixture>) => {
 describe('guard set arguments', () => {
   it.each([
     [['set', 'unknown-guard', 'off'], 'Unknown guard "unknown-guard"'],
+    [['set', guardIds.cloneRules, 'off'], `Unknown guard "${guardIds.cloneRules}"`],
+    [['set', guardIds.hookRuntime, 'on'], `Unknown guard "${guardIds.hookRuntime}"`],
     [['set', softwareGuardIds.mergeQuality, 'off'], 'not settable in this version'],
     [['set', guardIds.sessionChecks, 'off'], 'not settable in this version'],
     [['set', A, 'off', '--all'], '--all'],
@@ -56,7 +58,8 @@ describe('guard set arguments', () => {
     const result = await run(deps, words);
     expect(result.code).toBe(2);
     expect(result.err).toContain(message);
-    if (words[1] === 'unknown-guard' || words[1] === softwareGuardIds.mergeQuality) expect(result.err).toContain('factory guard list');
+    const listed: readonly string[] = ['unknown-guard', guardIds.cloneRules, guardIds.hookRuntime, softwareGuardIds.mergeQuality];
+    if (listed.includes(words[1] ?? '')) expect(result.err).toContain('factory guard list');
     expect(seen).toEqual([]);
   });
 });
@@ -103,7 +106,7 @@ describe('guard set writes', () => {
     expect(deps.prompts).toHaveLength(1);
   });
 
-  it.each(['on', 'off'] as const)('sets only wired guards to %s with all and reports the excluded count', async (value) => {
+  it.each(['on', 'off'] as const)('sets only wired guards to %s with all, skips the fixed guards and reports the excluded count', async (value) => {
     const deps = fixture();
     const result = await run(deps, ['set', '--all', value]);
     expect(result.code).toBe(0);
@@ -112,7 +115,9 @@ describe('guard set writes', () => {
     expect(stored.ok ? Object.keys(stored.value[0]?.values ?? {}).sort() : []).toEqual(wired.map((guard) => guard.id).sort());
     const display = deps.written.join('');
     if (value === 'off') for (const guard of wired) expect(display).toContain(`${guard.id}${guard.harm ? ' H' : ''}`);
-    expect(`${display}${result.out}`).toContain(`${guardsFor(recipes[0]).length - wired.length} guards are not settable`);
+    for (const id of [guardIds.cloneRules, guardIds.hookRuntime]) expect(`${display}${result.out}${deps.files.get(LOCAL) ?? ''}`).not.toContain(id);
+    const settable = guardsFor(recipes[0]).filter((guard) => !guard.fixed);
+    expect(`${display}${result.out}`).toContain(`${settable.length - wired.length} guards are not settable`);
     expect(deps.prompts).toHaveLength(value === 'off' ? 1 : 0);
   });
 

@@ -430,13 +430,13 @@ const olderLayoutPaths = (raw: unknown): readonly (readonly string[])[] => {
   ];
 };
 
-/** Check guard ids against the entry without a call into any guard value rule. */
+/** Check guard ids against the entry without a call into any guard value rule. A fixed guard has no key, so its id is unknown here. */
 const guardIdIssues = (
   values: GuardValues,
   known: readonly Guard[],
   key: typeof guardKeys.local | typeof guardKeys.shared,
 ): readonly z.core.$ZodIssue[] => {
-  const ids = new Set(known.map((guard) => guard.id));
+  const ids = new Set(known.filter((guard) => !guard.fixed).map((guard) => guard.id));
   return Object.keys(values)
     .filter((id) => !ids.has(id) || retiredGuardIds.includes(id))
     .map((id) => customIssue([key, id], guardSetWords.unknownId(id)));

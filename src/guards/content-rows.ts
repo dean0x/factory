@@ -1,12 +1,12 @@
 import { commandLines, commands, guardIds, places, roles } from '../names.js';
-import { at, codeRow, textRow } from './build.js';
+import { alwaysOnRow, at, codeRow, fixedTextRow, textRow } from './build.js';
 import type { GuardRow } from './types.js';
 
 const { coordinator, owner, worker } = roles;
 const folder = places.folder;
 
 const rootScanRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'root-scan-clean',
     guard: guardIds.rootScan,
     name: `A scan of the ${folder} that finds a fault stops ${commands.start}, so no session starts on a ${folder} with secrets, links or unsafe settings`,
@@ -21,11 +21,11 @@ const rootScanRows: readonly GuardRow[] = [
     id: 'local-files-ignored',
     guard: guardIds.rootScan,
     name: 'Git must ignore the local config and the state folder, so approval records and state are never committed or pushed',
-    applies: `Scan of the ${folder}, received init, ${commands.start} and doctor`,
+    applies: `Scan of the ${folder}, ${commands.start} and doctor`,
     harm: true,
-    sites: [...at('src/commands/root-content.ts', 'scanIgnoreRules'), ...at('src/commands/init-received.ts', 'checkIgnoreRules')],
+    sites: at('src/commands/root-content.ts', 'scanIgnoreRules'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'ignore-lists',
     guard: guardIds.rootScan,
     name: `The shared list of the ${folder} names only the files that may be shared, and the state repo ignores runtime files, locks, backup copies, ${worker} folders, inboxes, event files and reviews`,
@@ -36,7 +36,7 @@ const rootScanRows: readonly GuardRow[] = [
       ...at('src/state/gitignore.ts', 'rootGitignoreOf', 'stateGitignoreOf'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'ignored-check-fails-closed',
     guard: guardIds.rootScan,
     name: 'A doubt in the check for an ignored path counts as not ignored, so a private file never counts as ignored',
@@ -48,12 +48,11 @@ const rootScanRows: readonly GuardRow[] = [
     id: 'local-files-not-tracked',
     guard: guardIds.rootScan,
     name: `A scan stops when git tracks the local config, the state folder, the folder of the ${coordinator} or a clone folder, so personal values and clones do not go out with a push`,
-    applies: `${commands.init}, ${commands.start}, ${commands.upgrade} and doctor`,
+    applies: `${commands.start}, ${commands.upgrade} and doctor`,
     harm: true,
     sites: [
       ...at('src/commands/root-content.ts', 'scanRepo'),
       ...at('src/core/root-paths.ts', 'trackedProblems', 'describeTrackedProblems'),
-      ...at('src/commands/init-received.ts', 'requireNoTrackedProblems'),
       ...at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
     ],
   }),
@@ -100,13 +99,21 @@ const safetyBlockRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/launch-checks.ts', 'requireConfirmedPrefix'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'role-block-render',
     guard: guardIds.safetyBlock,
-    name: 'A launch checks edited role blocks for each on H guard and renders intact current blocks for the guard values',
+    name: 'A launch renders the intact current role blocks again for the guard values, so the text of each guard that is on stays',
     applies: `${commands.start}, ${commands.reboot}, ${commands.restart}, ${commandLines.workerNew} and ${commandLines.workerResume}`,
     harm: true,
-    sites: at('src/commands/launch-checks.ts', 'requireRoleBlocks', 'conflictingRoleGuard'),
+    sites: at('src/commands/launch-checks.ts', 'requireRoleBlocks'),
+  }),
+  codeRow({
+    id: 'role-block-edits',
+    guard: guardIds.safetyBlock,
+    name: 'A launch stops when an edited or missing role block lacks the text of an on H guard',
+    applies: `${commands.start}, ${commands.reboot}, ${commands.restart}, ${commandLines.workerNew} and ${commandLines.workerResume}`,
+    harm: true,
+    sites: at('src/commands/launch-checks.ts', 'conflictingRoleGuard'),
   }),
   codeRow({
     id: 'safety-block-intact',
@@ -132,7 +139,7 @@ const safetyBlockRows: readonly GuardRow[] = [
       ...at('src/blocks/status.ts', 'isAddedAsNewBlock'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'safety-block-insert',
     guard: guardIds.safetyBlock,
     name: 'The instruction file must be a plain file that does not hold the block yet, so a block is never doubled or broken',
@@ -159,7 +166,7 @@ const secretRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/safety/secrets.ts', 'findTokenPaths', 'looksLikeTokenAt'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'token-keys-hidden',
     guard: guardIds.secrets,
     name: 'An error hides the value of a key that looks like a token, and no value of the environment enters an output',
@@ -171,7 +178,7 @@ const secretRows: readonly GuardRow[] = [
       ...at('src/comms/report-schema.ts', 'parseReport'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'credential-strip',
     guard: guardIds.secrets,
     name: 'User info is removed from every URL in an origin record and in git output, so no credential is printed or written to a file',
@@ -179,7 +186,7 @@ const secretRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/core/clone-url.ts', 'withoutSecret', 'classifyOrigin'), ...at('src/core/git.ts', 'withoutUserinfo')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'printable-output',
     guard: guardIds.secrets,
     name: 'Control and hidden characters in outside text are removed before the program prints it, so the text cannot mislead the terminal',
@@ -222,7 +229,7 @@ const setupTextRows: readonly GuardRow[] = [
       ...at('src/hooks/hook.ts', 'roleOutcomeOf'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'setup-text-content',
     guard: guardIds.setupText,
     name: 'A setup or role text is a plain text file with no link, no control or hidden character and no block mark, and it stays within its size limit; a role text over the limit is refused and never cut',
@@ -234,7 +241,7 @@ const setupTextRows: readonly GuardRow[] = [
       ...at('src/commands/init-received.ts', 'collectSetup'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'worker-refusal-text',
     guard: guardIds.setupText,
     name: `A ${worker} session gets a short refusal text when the hook input or the role text fails, so it does no work without its rules`,
@@ -242,7 +249,7 @@ const setupTextRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/hooks/hook.ts', 'startOfWorker', 'startWithBadInput', 'refusedWith'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'acceptance-store-place',
     guard: guardIds.setupText,
     name: `The store of setup acceptance sits outside the ${folder}, so no ${worker} can edit the acceptance record`,
@@ -250,7 +257,7 @@ const setupTextRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/setup-acceptance.ts', 'storePathOf'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'acceptance-path-form',
     guard: guardIds.setupText,
     name: 'An acceptance names only plain relative paths, so a record never names a file outside the setup folder',
@@ -258,7 +265,7 @@ const setupTextRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/setup-acceptance.ts', 'relativePath'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'init-accepts-own-text-once',
     guard: guardIds.setupText,
     name: `${commands.init} accepts only the two setup files and only the text that it wrote itself, never a later change`,
@@ -266,14 +273,22 @@ const setupTextRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/core/setup-acceptance.ts', 'recordSetupAcceptance'), ...at('src/commands/init.ts', 'ownTextAcceptance')],
   }),
+  alwaysOnRow({
+    id: 'received-init-acceptance',
+    guard: guardIds.setupText,
+    name: `${commands.init} of a received ${folder} asks the ${owner} to accept each tracked setup file in a terminal window; the flag that answers every question never accepts`,
+    applies: `${commands.init} of a received folder and of an existing folder`,
+    harm: true,
+    sites: at('src/commands/init-received.ts', 'decideAcceptance'),
+  }),
   codeRow({
     id: 'received-setup-acceptance',
     guard: guardIds.setupText,
-    name: `The ${owner} accepts each tracked setup file of a received ${folder} in a terminal window; the flag that answers every question never accepts`,
-    applies: `${commands.init} of a received folder and ${commands.start}`,
+    name: `A received ${folder} uses its tracked setup files only after the ${owner} accepted them in a terminal window`,
+    applies: `${commands.start}, ${commands.upgrade} and doctor`,
     harm: true,
     sites: [
-      ...at('src/commands/init-received.ts', 'decideAcceptance', 'collectSetup'),
+      ...at('src/commands/init-received.ts', 'collectSetup'),
       ...at('src/core/setup-acceptance.ts', 'acceptSetup'),
     ],
   }),
@@ -307,7 +322,7 @@ const setupTextRows: readonly GuardRow[] = [
       ...at('src/workers/launch.ts', 'launchWorker'),
     ],
   }),
-  textRow({
+  fixedTextRow({
     id: 'worker-refusal-role-text',
     guard: guardIds.setupText,
     name: `The refusal text tells a ${worker} to do no work and tell the ${coordinator} when its role text does not arrive`,
@@ -315,7 +330,7 @@ const setupTextRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/hooks/hook.ts', 'refusedWith'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'work-rules-block',
     guard: guardIds.setupText,
     name: `The work rules block is rendered only for a ${coordinator}, after the safety block and before the setup block`,
@@ -342,7 +357,7 @@ const spendRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/worker.ts', 'planNew', 'requireFolder'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'new-worker-keeps-copy',
     guard: guardIds.spend,
     name: `A failed make of a ${worker} keeps the work copy, so no work is lost by an undo`,
@@ -361,7 +376,7 @@ const workConductRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/commands/doctor.ts', 'checkLessons', 'lessonEntries'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'profile-strength-text',
     guard: guardIds.workConduct,
     name: `The decision profile says when the ${coordinator} decides from a principle and when it asks the ${owner}, by the strength of the principle`,
@@ -369,7 +384,7 @@ const workConductRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/templates/decision-profile.ts', 'PROFILE_README_LINES', 'PROFILE_INDEX_LINES'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'profile-no-overwrite-text',
     guard: guardIds.workConduct,
     name: 'A decision that contradicts a principle goes to the open questions, and the principle is not overwritten',
@@ -377,7 +392,7 @@ const workConductRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/templates/decision-profile.ts', 'PROFILE_README_LINES'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'profile-conflict-text',
     guard: guardIds.workConduct,
     name: `Two principles that conflict, or an open question, go to the ${owner}`,
@@ -385,13 +400,29 @@ const workConductRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/templates/decision-profile.ts', 'PROFILE_README_LINES'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'roadmap-rules-text',
     guard: guardIds.workConduct,
     name: 'A roadmap has one file for each track, real dates only, exit criteria that a primary source can check, and at most about 150 lines',
     applies: 'Each track',
     harm: false,
     sites: at('src/templates/roadmaps.ts', 'ROADMAPS_README_LINES'),
+  }),
+  fixedTextRow({
+    id: 'read-profile-file-text',
+    guard: guardIds.workConduct,
+    name: `The decision profile says that it is read before a decision for the ${owner}`,
+    applies: 'Rules of the decision profile',
+    harm: false,
+    sites: at('src/templates/decision-profile.ts', 'PROFILE_README_LINES'),
+  }),
+  fixedTextRow({
+    id: 'ste-writing-profile-text',
+    guard: guardIds.workConduct,
+    name: 'The decision profile says that all its text is written in simplified technical English',
+    applies: 'Rules of the decision profile',
+    harm: false,
+    sites: at('src/templates/decision-profile.ts', 'PROFILE_README_LINES'),
   }),
 ];
 

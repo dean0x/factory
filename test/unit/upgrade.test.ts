@@ -232,9 +232,9 @@ const stateAt = (target: number, migrations: readonly Migration[]): UpgradeFile 
 describe('upgrade: guard config finishers', () => {
   const localRaw = () => ({ schema: 1, ...localOf(sampleConfig()) });
 
-  it('keeps all guard values through both config finishers', () => {
+  it('keeps the value of every guard with a key through both config finishers', () => {
     const sample = sampleConfig();
-    const ids = guardsFor(sample.entry).map((guard) => guard.id);
+    const ids = guardsFor(sample.entry).filter((guard) => !guard.fixed).map((guard) => guard.id);
     const raw = {
       schema: 2,
       ...sample.core,

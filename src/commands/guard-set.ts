@@ -54,7 +54,7 @@ const parseGuardSet = (options: GuardSetOptions, registry: RecipeRegistry): CliR
   const id = options.all ? null : options.words[0] ?? '';
   if (id !== null) {
     const guard = registry.flatMap(guardsFor).find((item) => item.id === id);
-    if (guard === undefined) return usageError(guardSetWords.unknownId(displayLineCore(id)));
+    if (guard === undefined || guard.fixed) return usageError(guardSetWords.unknownId(displayLineCore(id)));
     if (!guard.wired) return usageError(guardSetWords.notSettable(id));
   }
   const value = options.words.at(-1);
@@ -148,7 +148,7 @@ export const runGuardSet = async (deps: Deps, options: GuardSetOptions, registry
   const loaded = await loadGuardConfig(deps, options.home, registry);
   if (!loaded.ok) return loaded;
   const { id, value } = parsed.value;
-  const allGuards = guardsFor(loaded.value.config.entry);
+  const allGuards = guardsFor(loaded.value.config.entry).filter((guard) => !guard.fixed);
   const guards = allGuards.filter((guard) => guard.wired && (id === null || guard.id === id));
   if (id !== null && guards.length === 0) return usageError(guardSetWords.unknownId(displayLineCore(id)));
   const excluded = id === null ? allGuards.length - guards.length : null;

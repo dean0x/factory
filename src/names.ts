@@ -2592,7 +2592,8 @@ export const maxGuardListLines = 17;
 
 /**
  * The words of `guard list`: the titles of the columns, the value of a guard that the list can not read, the words of the
- * place of a value, the line that tells how many lines the view leaves out, and the line that counts the guards that are off.
+ * place of a value, the word for a guard or row that no value changes, the line that tells how many lines the view leaves out,
+ * and the line that counts the guards that are off.
  */
 export const guardListWords = {
   summary: 'Show the guards and what each one keeps safe.',
@@ -2605,6 +2606,7 @@ export const guardListWords = {
   familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
   unknown: 'unknown',
   notSettable: 'not settable in this version',
+  fixed: 'fixed',
   sources: {
     missing: 'no key',
     shared: files.config,
