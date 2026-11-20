@@ -14,6 +14,7 @@ import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
 import {
   FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, withStoreReadFault,
+  type GuardedSetup,
 } from '../helpers/guarded-node.js';
 import {
   createFakeDeps,
@@ -1081,17 +1082,15 @@ describe('worker new: the settings that the clone tracks stop the command before
   });
 });
 
-describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings check in %s', (_title, origin) => {
-  const PROGRAM_VARIABLE = '{"env":{"FACTORY_ANYTHING":"1"}}\n';
+const PROGRAM_VARIABLE = '{"env":{"FACTORY_ANYTHING":"1"}}\n';
+const settingsCheckSetup = ({ off = [], record }: GuardedSetup): Pick<Setup, 'config' | 'seed'> => ({
+  config: withGuardsOff(sampleConfig(), off),
+  seed: record === false ? {} : { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+});
 
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings check in %s', (_title, origin) => {
   it.each(guardStatesOf(guardIds.settingsCheck))('stops a tracked settings file that sets a program variable only while the guard is on, with the guard %s', async (_state, setup, on) => {
-    const off = setup.off ?? [];
-    const made = make({
-      origin,
-      config: withGuardsOff(sampleConfig(), off),
-      head: [{ path: '.claude/settings.json', text: PROGRAM_VARIABLE }],
-      seed: setup.record === false ? {} : { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
-    });
+    const made = make({ ...settingsCheckSetup(setup), origin, head: [{ path: '.claude/settings.json', text: PROGRAM_VARIABLE }] });
     const sink = captureSink();
     const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
     expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
@@ -1758,6 +1757,18 @@ describe('worker resume: the root checks and the session come first', () => {
     expect(error.hint).toContain('"factory worker stop alpha"');
     expect(made.events).not.toContain('tmux split-window');
     expect(killed(made)).toEqual([]);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('worker resume: the guard of the Claude Code settings check in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.settingsCheck))('refuses settings with a program variable only while the guard counts as on, with the guard %s', async (_state, setup, on) => {
+    const made = await withWorkers({ ...settingsCheckSetup(setup), origin });
+    made.deps.seed(`${COPY}/.claude/settings.json`, PROGRAM_VARIABLE);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'resume', 'alpha', '--home', HOME], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    if (on) expect(sink.errors.join('')).toContain('work-copies/web/alpha/.claude/settings.json');
+    expect(made.tmux.commands().filter((command) => /^(split-window|new-window|new-session)\b/.test(command))).toHaveLength(on ? 0 : 1);
   });
 });
 
