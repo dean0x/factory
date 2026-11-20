@@ -1,4 +1,4 @@
-import { isMap, isSeq, parseDocument, Scalar, type Document } from 'yaml';
+import { isMap, isNode, isScalar, isSeq, parseDocument, Scalar, type Document, type Pair, type YAMLMap } from 'yaml';
 import { err, ok, type Result } from '../core/result.js';
 import type { GuardValues } from '../guards/types.js';
 import { files, guardKeys, keys } from '../names.js';
@@ -86,9 +86,73 @@ export const setGuardText = (text: string, values: GuardValues): Result<string, 
   return ok(configDocumentText(doc));
 };
 
+type Span = readonly [start: number, end: number];
+
+const pairWith = (map: YAMLMap, id: string): Pair | undefined =>
+  map.items.find((pair) => isScalar(pair.key) && pair.key.value === id);
+
+/** The source span of a pair, from the start of its key to the end of its value. A pair with no source place gives undefined. */
+const pairSpan = (pair: Pair): Span | undefined => {
+  if (!isNode(pair.key) || !pair.key.range) return undefined;
+  const valueEnd = isNode(pair.value) && pair.value.range ? pair.value.range[1] : pair.key.range[1];
+  return [pair.key.range[0], valueEnd];
+};
+
 /**
- * Remove the named ids from the guard map under `key`. Each other key, comment and blank line stays, and a map that the removal
- * leaves empty goes with its key. A text that holds none of the ids comes back unchanged.
+ * The whole lines of a span, with the line break at the end. A span that does not start a line gives undefined, so that a line that
+ * holds more than the span is never removed.
+ */
+const linesOf = (text: string, [from, to]: Span): Span | undefined => {
+  const start = text.lastIndexOf('\n', from - 1) + 1;
+  if (text.slice(start, from).trim() !== '') return undefined;
+  const lineEnd = text.indexOf('\n', Math.max(to - 1, from));
+  return [start, lineEnd < 0 ? text.length : lineEnd + 1];
+};
+
+const withoutSpans = (text: string, spans: readonly Span[]): string =>
+  [...spans].sort((a, b) => b[0] - a[0]).reduce((rest, [start, end]) => rest.slice(0, start) + rest.slice(end), text);
+
+/**
+ * The source edit of a removal: the lines of each removed pair of a block map, the new text of a flow map that keeps the source of
+ * each other pair, or the lines of the whole key when the map is left empty. Every other byte of the text stays. A map or a pair
+ * whose source place is not clear, and a flow map with a comment in it, give undefined.
+ */
+const sourceEdit = (text: string, doc: Document, key: string, map: YAMLMap, found: readonly string[]): string | undefined => {
+  const kept = map.items.filter((pair) => !found.some((id) => isScalar(pair.key) && pair.key.value === id));
+  if (kept.length === 0) {
+    const parent = isMap(doc.contents) ? pairWith(doc.contents, key) : undefined;
+    const span = parent === undefined ? undefined : pairSpan(parent);
+    const lines = span === undefined ? undefined : linesOf(text, span);
+    return lines === undefined ? undefined : withoutSpans(text, [lines]);
+  }
+  if (map.flow) {
+    if (!map.range || text.slice(map.range[0], map.range[1]).includes('#')) return undefined;
+    const pairs = kept.map(pairSpan).flatMap((span) => (span === undefined ? [] : [text.slice(span[0], span[1])]));
+    if (pairs.length !== kept.length) return undefined;
+    return `${text.slice(0, map.range[0])}{ ${pairs.join(', ')} }${text.slice(map.range[1])}`;
+  }
+  const removed = found.flatMap((id) => {
+    const pair = pairWith(map, id);
+    const span = pair === undefined ? undefined : pairSpan(pair);
+    const lines = span === undefined ? undefined : linesOf(text, span);
+    return lines === undefined ? [] : [lines];
+  });
+  return removed.length === found.length ? withoutSpans(text, removed) : undefined;
+};
+
+/** A source edit counts only when its text parses and the map under `key` holds none of the removed ids. */
+const removalHolds = (edited: string, key: string, found: readonly string[]): boolean => {
+  const parsed = parseConfigDocument(edited);
+  if (!parsed.ok) return false;
+  const after = parsed.value.get(key, true);
+  return after === undefined || (isMap(after) && found.every((id) => !after.has(id)));
+};
+
+/**
+ * Remove the named ids from the guard map under `key`. A map that the removal leaves empty goes with its key. The edit is on the
+ * source text, so each other line stays byte for byte, with its comments and their spaces. When the source place is not clear, the
+ * library writes the document again: the keys, comments and blank lines stay, and a comment at the end of a line gets one space.
+ * A text that holds none of the ids comes back unchanged.
  */
 export const removeGuardKeysText = (text: string, key: string, ids: readonly string[]): Result<string, string> => {
   const parsed = parseConfigDocument(text);
@@ -98,6 +162,8 @@ export const removeGuardKeysText = (text: string, key: string, ids: readonly str
   if (!isMap(current)) return ok(text);
   const found = ids.filter((id) => current.has(id));
   if (found.length === 0) return ok(text);
+  const edited = sourceEdit(text, doc, key, current, found);
+  if (edited !== undefined && removalHolds(edited, key, found)) return ok(edited);
   for (const id of found) current.delete(id);
   if (current.items.length === 0) doc.delete(key);
   return ok(configDocumentText(doc));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseYamlText } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
-import { addChildText, removeChildText, setApprovalText, setGuardText } from '../../src/config/edit.js';
+import { addChildText, removeChildText, removeGuardKeysText, setApprovalText, setGuardText } from '../../src/config/edit.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
@@ -195,6 +195,54 @@ describe('set the guard values in the config text', () => {
     const result = setGuardText('private-value: [1\n', { 'install-rules': 'on' });
     expect(result).toMatchObject({ ok: false });
     if (!result.ok) expect(result.error).not.toContain('private-value');
+  });
+});
+
+describe('remove the keys of fixed guards from the config text', () => {
+  const FIXED = ['clone-rules', 'hook-runtime'] as const;
+  const removedKeys = (text: string): string => {
+    const result = removeGuardKeysText(text, 'shared_guards', FIXED);
+    if (!result.ok) throw new Error(result.error);
+    return result.value;
+  };
+  const lines = [
+    '# shared node',
+    'schema: 1    # four spaces',
+    'node:',
+    '  id: demo  # two spaces',
+    '  name: "Demo"      # six spaces',
+    '',
+    'shared_guards:',
+    '  # keep this note',
+    '  install-rules: on # one space',
+    '  clone-rules: on    # a fixed guard',
+    '  secrets: on\t# a tab',
+    '  hook-runtime: on',
+    '',
+    'limits:',
+    '  context_max_pct: 40        # eight spaces',
+  ];
+
+  it('removes only the lines of the fixed keys and keeps every other line byte for byte, with the spaces of its comment', () => {
+    const original = `${lines.join('\n')}\n`;
+    const expected = `${lines.filter((line) => !FIXED.some((id) => line.trimStart().startsWith(`${id}:`))).join('\n')}\n`;
+    expect(removedKeys(original)).toBe(expected);
+  });
+
+  it('removes the key with its map when the map is left empty, and keeps every other line byte for byte', () => {
+    const original = 'schema: 1    # four spaces\nshared_guards:\n  clone-rules: on  # two spaces\n  hook-runtime: on\nlimits:\n  context_max_pct: 40      # six spaces\n';
+    expect(removedKeys(original)).toBe('schema: 1    # four spaces\nlimits:\n  context_max_pct: 40      # six spaces\n');
+  });
+
+  it('changes only the line of a flow map and keeps the other pairs as written', () => {
+    const original = 'schema: 1    # four spaces\nshared_guards: {clone-rules: on, install-rules: on}\nlimits: {}  # two spaces\n';
+    expect(removedKeys(original)).toBe('schema: 1    # four spaces\nshared_guards: { install-rules: on }\nlimits: {}  # two spaces\n');
+  });
+
+  it('gives back a text with none of the ids unchanged, and refuses a text that does not parse', () => {
+    const original = 'schema: 1    # four spaces\nshared_guards:\n  install-rules: on  # two spaces\n';
+    expect(removeGuardKeysText(original, 'shared_guards', FIXED)).toEqual({ ok: true, value: original });
+    expect(removeGuardKeysText('shared_guards: [1\n', 'shared_guards', FIXED)).toMatchObject({ ok: false });
   });
 });
 

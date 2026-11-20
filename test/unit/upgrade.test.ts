@@ -552,8 +552,9 @@ describe('upgrade: effective guard values', () => {
 
     it.each(cases)('removes the key from %s with one notice, keeps the other values and comments, and leaves nothing to upgrade', async (_name, path, line, notice) => {
       const { deps } = await makeNode();
-      const comments = text(deps, path).split('\n').filter((entry) => entry.trimStart().startsWith('#'));
-      deps.seed(path, `${text(deps, path)}\n${line}\n`);
+      const before = text(deps, path);
+      const comments = before.split('\n').filter((entry) => entry.trimStart().startsWith('#'));
+      deps.seed(path, `${before}\n${line}\n`);
       const output = success(await upgrade(deps));
       expect(lineTexts(output).filter((entry) => entry === notice)).toHaveLength(1);
       expect(notice).toBe(path === LOCAL
@@ -562,6 +563,8 @@ describe('upgrade: effective guard values', () => {
       expect(text(deps, path)).not.toContain(id);
       expect(text(deps, path)).toContain('install-rules');
       if (path === CONFIG) for (const comment of comments) expect(text(deps, path)).toContain(comment);
+      // The tracked shared file changes only on the line of the key: every other line stays byte for byte.
+      if (path === CONFIG) expect(text(deps, path)).toBe(`${before}\nshared_guards: { install-rules: on }\n`);
       expect(lineTexts(success(await upgrade(deps)))).toContain('Nothing to upgrade.');
     });
 
