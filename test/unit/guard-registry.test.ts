@@ -249,6 +249,7 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'yes-in-session', path: 'src/core/claude-settings.ts', symbol: 'yesRefused', reason: 'The negation of yesCounts, which reads the value.' },
   { row: 'yes-in-session', path: 'src/core/claude-settings.ts', symbol: 'askConsent', reason: 'Passes the values that ensureHookSettings reads with consentGuards to yesCounts, which reads the value.' },
   { row: 'dismiss-yes-in-session', path: 'src/commands/dismiss.ts', symbol: 'dismissOne', reason: 'Calls requireOutsideSession, which reads the value.' },
+  { row: 'dismiss-yes-in-session', path: 'src/commands/dismiss.ts', symbol: 'requireOutsideSession', reason: 'Reads the values of the node and gives them to freeStopsInSession, which reads the value.' },
   { row: 'coordinator-caller', path: 'src/commands/item.ts', symbol: 'unassign', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/workers/watch.ts', symbol: 'requireWatchCaller', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/workers/reset.ts', symbol: 'resetWorker', reason: coordinatorCallerReason },

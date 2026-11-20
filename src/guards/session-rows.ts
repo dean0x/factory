@@ -188,7 +188,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     name: `In a session, the flag that answers every question gives no consent to remove the work copy of a ${worker}`,
     applies: commands.dismiss,
     harm: true,
-    sites: at('src/commands/dismiss.ts', 'requireOutsideSession', 'dismissOne'),
+    sites: at('src/commands/dismiss.ts', 'requireOutsideSession', 'freeStopsInSession', 'dismissOne'),
   }),
   codeRow({
     id: 'dismiss-idle-pick',
@@ -196,7 +196,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     name: `A session or a script cannot remove idle ${worker}s: the pick needs a terminal window outside a session`,
     applies: `${commands.dismiss} of idle ${worker}s`,
     harm: true,
-    sites: at('src/commands/dismiss.ts', 'dismissIdle'),
+    sites: at('src/commands/dismiss.ts', 'dismissIdle', 'freeStopsInSession'),
   }),
   alwaysOnRow({
     id: 'dismiss-idle-pick-list',

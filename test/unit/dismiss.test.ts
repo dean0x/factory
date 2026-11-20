@@ -2459,9 +2459,16 @@ describe('the guards of dismiss', () => {
   const SESSION_OFF: GuardedSetup = { off: [guardIds.sessionChecks] };
   /** The board of alpha: its one item is closed, so the idle list holds alpha. */
   const seedClosedItem = (made: Made): void => made.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'done', lane: 'alpha' })]));
+  /**
+   * The three states of the session-checks guard on a node whose local file also sets the dismiss guard off. A free in a session
+   * with no closed item needs both guards off, so only the state with the matching record lets it go.
+   */
+  const sessionStatesWithDismissOff = guardStatesOf(guardIds.sessionChecks).map(
+    ([state, setup, on]) => [state, { ...setup, off: [...(setup.off ?? []), guardIds.dismiss] }, on] as const,
+  );
 
   describe.each(FOLDER_ORIGINS)('the session-checks guard in %s', (_folder, origin) => {
-    it.each(guardStatesOf(guardIds.sessionChecks))('dismiss ID --yes in a factory session frees the worker only while the guard counts as off: %s', async (_state, setup, on) => {
+    it.each(sessionStatesWithDismissOff)('dismiss ID --yes in a factory session frees the worker only while the guard counts as off, with the dismiss guard off: %s', async (_state, setup, on) => {
       const made = await guardedMake(setup, origin, IN_SESSION);
       const result = await runOn(made, ['alpha', '--yes']);
       expect(result.code, result.err).toBe(on ? 4 : 0);
@@ -2469,13 +2476,30 @@ describe('the guards of dismiss', () => {
       expect(result.err.includes('gives no consent inside a factory session')).toBe(on);
     });
 
-    it.each(guardStatesOf(guardIds.sessionChecks))('dismiss --idle in a factory session asks for the pick and frees the pick only while the guard counts as off: %s', async (_state, setup, on) => {
+    it.each(sessionStatesWithDismissOff)('dismiss --idle in a factory session asks for the pick and frees the pick only while the guard counts as off, with the dismiss guard off: %s', async (_state, setup, on) => {
       const made = await guardedMake(setup, origin, { ...IN_SESSION, config: sampleConfigWithBoard(), terminal: { answer: 'alpha' } });
       seedClosedItem(made);
       const result = await runOn(made, ['--idle']);
       expect(result.code, result.err).toBe(on ? 4 : 0);
       expect(made.deps.prompts).toHaveLength(on ? 0 : 1);
       expect(await isFreed(made)).toBe(!on);
+    });
+
+    it('dismiss ID --yes in a factory session still stops with exit 4 while the dismiss guard is on, so a free there keeps the closed item as proof', async () => {
+      const made = await guardedMake(SESSION_OFF, origin, IN_SESSION);
+      const result = await runOn(made, ['alpha', '--yes']);
+      expect(result.code, result.err).toBe(4);
+      expect(result.err).toContain('gives no consent inside a factory session');
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('dismiss --idle in a factory session still stops the pick with exit 4 while the dismiss guard is on, and asks nothing', async () => {
+      const made = await guardedMake(SESSION_OFF, origin, { ...IN_SESSION, config: sampleConfigWithBoard(), terminal: { answer: 'alpha' } });
+      seedClosedItem(made);
+      const result = await runOn(made, ['--idle']);
+      expect(result.code, result.err).toBe(4);
+      expect(made.deps.prompts).toHaveLength(0);
+      await expectNothingChanged(made, ['alpha']);
     });
 
     it.each(guardStatesOf(guardIds.sessionChecks))('dismiss --idle with no terminal window takes the pick of a script only while the guard counts as off: %s', async (_state, setup, on) => {
@@ -2488,9 +2512,12 @@ describe('the guards of dismiss', () => {
     });
   });
 
+  /** Both guards that keep a free out of a session are off, with the matching record. */
+  const SESSION_AND_DISMISS_OFF: GuardedSetup = { off: [guardIds.sessionChecks, guardIds.dismiss] };
+
   describe.each(FOLDER_ORIGINS)('the session-checks guard in %s, with the guard off and a matching record', (_folder, origin) => {
     it('dismiss --idle still frees only a worker of the idle list: a pick that is not listed frees nothing', async () => {
-      const made = await guardedMake(SESSION_OFF, origin, { ...IN_SESSION, config: sampleConfigWithBoard(), terminal: { answer: 'alpha zeta' } });
+      const made = await guardedMake(SESSION_AND_DISMISS_OFF, origin, { ...IN_SESSION, config: sampleConfigWithBoard(), terminal: { answer: 'alpha zeta' } });
       seedClosedItem(made);
       const result = await runOn(made, ['--idle']);
       expect(result.code, result.out).toBe(1);
@@ -2499,7 +2526,7 @@ describe('the guards of dismiss', () => {
     });
 
     it('dismiss --idle still reads and checks each pick again after the answer: a worker that turns busy while the owner types is not freed', async () => {
-      const made = await guardedMake(SESSION_OFF, origin, {
+      const made = await guardedMake(SESSION_AND_DISMISS_OFF, origin, {
         ...IN_SESSION,
         config: sampleConfigWithBoard(),
         terminal: { answer: 'alpha' },

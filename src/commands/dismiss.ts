@@ -14,7 +14,7 @@ import { inFactorySession } from '../core/factory-session.js';
 import type { IgnoredList } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { shellWord } from '../core/shell-word.js';
-import { allOn, guardOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
+import { allOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import type { PaneRow } from '../launch/tmux.js';
 import {
@@ -96,11 +96,19 @@ const checkWords = (options: DismissOptions): CliResult<void> => {
 };
 
 /**
+ * True when a free with no closed item as proof stops inside a factory session. The session-checks guard keeps the session stop,
+ * and the dismiss guard keeps the rule that a free in a session needs a closed item. So the free goes on only with both guards off.
+ */
+const freeStopsInSession = (guards: GuardValues): boolean =>
+  isGuardOn(guards, guardIds.sessionChecks) || isGuardOn(guards, guardIds.dismiss);
+
+/**
  * The yes flag gives no consent inside a factory session: the stop comes before the first read of the worker. It follows the
- * session-checks guard of the node at `home`. With no node home (the search for the factory folder failed), the stop stays.
+ * session-checks and dismiss guards of the node at `home`. With no node home (the search for the factory folder failed), the stop
+ * stays.
  */
 const requireOutsideSession = async (deps: Deps, home: string | null, again: string): Promise<CliResult<void>> =>
-  inFactorySession(deps) && (home === null || (await guardOn(deps, guardIds.sessionChecks, home)))
+  inFactorySession(deps) && (home === null || freeStopsInSession(await guardValuesFor(deps, home)))
     ? safetyRefusal(
         `${flagText(flags.yes)} gives no consent inside a ${places.session}, so ${commands.dismiss} frees nothing`,
         `Run "${commandText(again)}" in a terminal window outside a ${places.session}.`,
@@ -975,8 +983,8 @@ const pickAndFree = async (
  * `dismiss --idle`: lists the idle workers that have no open work, with their state, whether their work is pushed and the count of the
  * ignored files that their free deletes, and changes nothing. Inside a factory session the pick step stops (exit 4). With no terminal
  * window the list is all. In a terminal window the owner types the ids to dismiss: every id is checked before the first change, and
- * then each picked worker is freed as `dismiss ID --yes` frees it. While the session-checks guard is off, the pick step runs also in
- * a session and with no terminal window.
+ * then each picked worker is freed as `dismiss ID --yes` frees it. While the session-checks guard is off, the pick step runs also
+ * with no terminal window, and with the dismiss guard off too, also in a session.
  */
 const dismissIdle = async (deps: Deps, options: DismissOptions, registry: RecipeRegistry, workItems: WorkItemPort): Promise<CliResult<CommandOutput>> => {
   const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
@@ -1013,10 +1021,12 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
     ignoredMore: ignored.get(entry.id)?.reachedCap ?? false,
   }));
   const json = { ...base, freed: false, workers: listed, picked: [] };
-  // The stop in a session and the list with no terminal window keep a session and a script from the pick. While the session-checks
-  // guard is off, the pick reads its answer from the standard input, and the checks of each pick in `pickAndFree` run as before.
+  // The stop in a session and the list with no terminal window keep a session and a script from the pick. The stop in a session
+  // goes away only with the dismiss guard off too, because a free in a session needs a closed item while that guard is on. While
+  // the session-checks guard is off, the pick reads its answer from the standard input, and the checks of each pick in
+  // `pickAndFree` run as before.
   const ownerChannel = isGuardOn(guards, guardIds.sessionChecks);
-  if (ownerChannel && inFactorySession(deps)) {
+  if (inFactorySession(deps) && freeStopsInSession(guards)) {
     return ok({
       lines: [
         ...table,
