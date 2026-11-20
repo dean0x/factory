@@ -91,7 +91,7 @@ export interface RootScan {
   readonly setupFinding: RootFinding | null;
   /** The mode of each approval point and the active delegations, or null when the config is not valid. */
   readonly delegations: DelegationReport | null;
-  /** False when the guard of the settings check is off: then only the check for a skip of the permission prompts ran. */
+  /** False when the guard of the settings check is off. The scan stops and the permission mode check still apply. */
   readonly settingsChecked: boolean;
 }
 
@@ -713,7 +713,7 @@ const unreadFindings = (unread: readonly string[]): readonly RootFinding[] =>
  * same judgment as the scan of the root, with the same stops for a link and for a file that can not be read. `home` is the
  * factory folder that the shown paths are relative to, and `presence` names the place for the warning that a settings file is
  * there. The settings file that the program writes itself gives no warning. A file that turns off every hook is a failure here
- * and not in the scan of the root. The check only reads. With the settings check off, a scan that cannot finish gives no stop.
+ * and not in the scan of the root. The check only reads. A scan that cannot finish always stops the launch.
  */
 export const checkFolderSettings = async (
   deps: Deps,
@@ -722,10 +722,9 @@ export const checkFolderSettings = async (
   presence: string,
 ): Promise<readonly RootFinding[]> => {
   const guards = await guardValuesFor(deps, home);
-  const checked = isGuardOn(guards, guardIds.settingsCheck);
   const found = await settingsOfFolder(deps, home, userClaudeFolderOf(deps), { path: folder, presence, requiresHooks: true });
   const judged = await judgeSources(deps, home, found.sources, guards);
-  return withoutRepeats([...(checked ? found.findings : []), ...judged.findings, ...(checked ? unreadFindings(judged.unread) : [])]);
+  return withoutRepeats([...found.findings, ...judged.findings, ...unreadFindings(judged.unread)]);
 };
 
 /** What the settings files of a commit give: the findings, and the text of the settings file that the program writes to. */
@@ -758,14 +757,13 @@ export const checkTrackedSettings = async (
 ): Promise<CliResult<TrackedSettings>> => {
   const id = checkIds.permissionMode;
   const guards = await guardValuesFor(deps, home);
-  const checked = isGuardOn(guards, guardIds.settingsCheck);
   const settingsFolder = join(folder.path, dirs.claude);
   const shown = shownPath(homeRelative(home, settingsFolder));
   const own = await headEntriesAt(deps, clone, dirs.claude);
   if (!own.ok) return own;
   const entry = own.value.find((candidate) => candidate.path === dirs.claude);
   if (entry === undefined) return ok({ findings: [], localText: null });
-  if (entry.mode === LINK_MODE) return ok({ findings: checked ? linkStop(id, shown).findings : [], localText: null });
+  if (entry.mode === LINK_MODE) return ok({ findings: linkStop(id, shown).findings, localText: null });
   if (entry.kind !== 'tree') {
     const notFolder = finding(
       id,
@@ -773,12 +771,12 @@ export const checkTrackedSettings = async (
       `${shown} is not a folder, so ${program} can not write its settings file there`,
       `Make ${shown} a folder in the repo of the project, or remove it from the repo.`,
     );
-    return ok({ findings: checked ? [notFolder] : [], localText: null });
+    return ok({ findings: [notFolder], localText: null });
   }
   const children = await headEntriesAt(deps, clone, `${dirs.claude}/`);
   if (!children.ok) return children;
   const settings = children.value.filter((child) => isSettingsName(basename(child.path))).sort((a, b) => a.path.localeCompare(b.path));
-  const findings: RootFinding[] = checked && settings.length > MAX_SETTINGS_FILES ? [tooManySettings(id, shown)] : [];
+  const findings: RootFinding[] = settings.length > MAX_SETTINGS_FILES ? [tooManySettings(id, shown)] : [];
   const unread: string[] = [];
   let localText: string | null = null;
   for (const child of settings.slice(0, MAX_SETTINGS_FILES)) {
@@ -794,7 +792,7 @@ export const checkTrackedSettings = async (
     findings.push(...await judgeSettings(deps, { absolute, display, presence: folder.presence, requiresHooks: true }, text, deny?.ok === true ? deny.value.rules : [], guards));
     if (name === localSettingsFile) localText = text;
   }
-  return ok({ findings: withoutRepeats([...findings, ...(checked ? unreadFindings(unread) : [])]), localText });
+  return ok({ findings: withoutRepeats([...findings, ...unreadFindings(unread)]), localText });
 };
 
 /**
@@ -810,7 +808,6 @@ export const scanSettings = async (
   tracked: readonly string[],
 ): Promise<readonly RootFinding[]> => {
   const guards = await guardValuesFor(deps, home);
-  const checked = isGuardOn(guards, guardIds.settingsCheck);
   const userFolder = userClaudeFolderOf(deps);
   const folders = [
     { path: home, presence: null, requiresHooks: false },
@@ -821,7 +818,7 @@ export const scanSettings = async (
   const findings: RootFinding[] = [];
   for (const folder of folders) {
     const found = await settingsOfFolder(deps, home, userFolder, folder);
-    if (checked) findings.push(...found.findings);
+    findings.push(...found.findings);
     for (const source of found.sources) sources.set(source.absolute, source);
   }
   const unreadTracked: string[] = [];
@@ -837,7 +834,7 @@ export const scanSettings = async (
     else if (kind.value === 'file') sources.set(absolute, { absolute, display: path, presence: null, requiresHooks: false });
   }
   const judged = await judgeSources(deps, home, sources.values(), guards);
-  const unread = checked ? unreadFindings([...unreadTracked, ...judged.unread]) : [];
+  const unread = unreadFindings([...unreadTracked, ...judged.unread]);
   return withoutRepeats([...findings, ...judged.findings, ...unread]);
 };
 
@@ -925,7 +922,7 @@ const OK_TEXT: Readonly<Record<string, string>> = {
   [checkIds.permissionMode]: 'no settings file skips the permission checks, runs a command, or sets the proxy or the credential of the session',
 };
 
-/** The ok text of the permission check when its guard is off: only the check for a skip of the permission prompts ran. */
+/** The ok text of the permission check when the settings check is off. */
 const PERMISSION_ONLY_TEXT = guardDoctorWords.partlyChecked(
   'no settings file skips the permission checks',
   'the commands, the proxy and the credential in the settings are',

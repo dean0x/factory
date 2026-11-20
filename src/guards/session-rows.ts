@@ -500,6 +500,17 @@ const permissionModeRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/safety/settings.ts', 'skipsOf', 'analyzeSettings'), ...at('src/commands/root-content.ts', 'judgeSettings')],
   }),
+  codeRow({
+    id: 'settings-check-fails-closed',
+    guard: guardIds.permissionMode,
+    name: 'A settings scan that cannot read all its files stops the command',
+    applies: `Doctor, ${commands.start} and the launch of a ${worker}`,
+    harm: true,
+    sites: at(
+      'src/commands/root-content.ts',
+      'settingsOfFolder', 'judgeSources', 'unreadFindings', 'scanSettings', 'checkFolderSettings', 'checkTrackedSettings', 'requireNoFailures',
+    ),
+  }),
   textRow({
     id: 'permission-mode-text',
     guard: guardIds.permissionMode,

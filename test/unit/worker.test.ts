@@ -2199,6 +2199,54 @@ describe.each(['own', 'received'] as const)('worker resume: linked folders, %s r
   });
 });
 
+const unreadSettingsCases = [
+  ['a linked settings file', [{ path: '.claude/settings.json', mode: LINK_MODE, text: '/elsewhere/settings.json' }], 'settings.json (a link)'],
+  ['a linked .claude folder', [{ path: '.claude', mode: LINK_MODE, text: '/elsewhere' }], '.claude is a link, so factory does not use it'],
+  ['a file over 1 MiB', [{ path: '.claude/settings.json', text: '{}'.padEnd(maxFileBytes + 1) }], 'settings.json (cannot be read)'],
+  ['more than 64 settings files', [
+    ...Array.from({ length: 64 }, (_, i) => ({ path: `.claude/settings-${String(i).padStart(2, '0')}.json`, text: '{}' })),
+    { path: '.claude/settings.json', text: '{}' },
+  ], 'holds more than 64 settings files'],
+] as const satisfies readonly (readonly [string, readonly HeadEntry[], string])[];
+
+describe.each(FOLDER_ORIGINS)('worker launch in %s with the settings check off', (_title, origin) => {
+  const off = [guardIds.settingsCheck];
+  const config = withGuardsOff(sampleConfig(), off);
+  const seed = { [GUARD_STORE]: guardStoreText(config.core.node.id, HOME, off, new Date('2026-11-01T00:00:00.000Z')) };
+  const expectRefusal = async (made: Made, args: readonly string[], message: string) => {
+    const sink = captureSink();
+    const code = await runCli(['worker', ...args, '--home', HOME, '--yes'], made.deps, sink);
+    expect(sink.errors.join('')).toContain(message);
+    expect(code).toBe(4);
+    expect(made.tmux.commands().filter((command) => /^(split-window|new-window|new-session)\b/.test(command))).toEqual([]);
+  };
+
+  it.each([
+    ...unreadSettingsCases,
+    ['a .claude file', [{ path: '.claude', text: 'not a folder' }], '.claude is not a folder, so factory can not write its settings file there'] as const,
+  ])('refuses %s in the next work copy before checkout', async (_name, head, message) => {
+    const made = make({ origin, config, seed, head });
+    await expectRefusal(made, ['new', 'alpha', '--project', 'web'], message);
+    expect(made.deps.dirs.has(COPY)).toBe(false);
+  });
+
+  describe.each([['the root', HOME], ['the current work copy', COPY]] as const)('in %s', (_place, folder) => {
+    it.each(unreadSettingsCases)('refuses %s', async (_name, entries, message) => {
+      const links: Record<string, string> = {};
+      const files: Record<string, string> = { ...seed, '/elsewhere/settings.json': '{}' };
+      for (const entry of entries) {
+        const path = `${folder}/${entry.path}`;
+        if ('mode' in entry) links[path] = entry.text;
+        // The fake directory list needs a file entry for the link.
+        if (entry.path !== '.claude') files[path] = 'mode' in entry ? '{}' : entry.text;
+      }
+      const setup = { origin, config, seed: files, links };
+      if (folder === COPY) await expectRefusal(await withWorkers(setup), ['resume', 'alpha'], message);
+      else await expectRefusal(make(setup), ['new', 'alpha', '--project', 'web'], message);
+    });
+  });
+});
+
 describe('worker resume: the code of a refused role text after the root checks', () => {
   const SETUP_FILE = layoutOf(HOME).setupWorkerFile;
 

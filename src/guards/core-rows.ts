@@ -238,21 +238,9 @@ const settingsCheckRows: readonly GuardRow[] = [
     sites: at('src/commands/root-content.ts', 'judgeSettings'),
   }),
   codeRow({
-    id: 'settings-check-fails-closed',
-    guard: guardIds.settingsCheck,
-    name: 'A settings check that cannot finish fails, and it never reads the settings of the user',
-    applies: 'Start, doctor and scan of the folder',
-    harm: true,
-    sites: [
-      ...at('src/commands/root-content.ts', 'inUserFolder', 'tooManySettings', 'settingsOfFolder', 'requireNoFailures'),
-      ...at('src/commands/root-content.ts', 'scanSettings', 'checkFolderSettings', 'checkTrackedSettings'),
-      ...at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
-    ],
-  }),
-  codeRow({
     id: 'settings-work-copy',
     guard: guardIds.settingsCheck,
-    name: 'The settings that a project tracks are checked before the work copy of a session exists',
+    name: 'The contents of tracked settings files are checked before the work copy of a session exists',
     applies: `${commandLines.workerNew}, ${commandLines.workerResume} and scan of the folder`,
     harm: true,
     sites: [
@@ -486,12 +474,13 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
       ...at('src/core/home.ts', 'chosenHome', 'locateHome'),
       ...at('src/core/private-file.ts', 'userStatePathOf'),
       ...at('src/core/claude-settings.ts', 'requireOutsideUserFolder', 'readTarget', 'requireHookConsent'),
+      ...at('src/commands/root-content.ts', 'inUserFolder'),
     ],
   }),
   codeRow({
     id: 'settings-write-no-link',
     guard: guardIds.fileLinkSafety,
-    name: 'The session folder, its .claude folder and its settings file must have the correct kind and must not be links',
+    name: 'The session folder, its settings folder and its settings file must have the correct kind and must not be links',
     applies: 'Every read and write of the hook settings',
     harm: true,
     sites: at('src/core/claude-settings.ts', 'checkParts', 'readTarget'),

@@ -91,8 +91,8 @@ const recordExceptions = [
 
 /** The reason of a pure helper of the settings check: `judgeSettings` reads the value and drops its findings when the guard is off. */
 const analyzerReason = 'A pure analysis of one settings text; judgeSettings reads the value and keeps only the permission stop when the guard is off.';
-/** The reason of a part of the folder scan: each caller of the scan reads the value and drops these findings when the guard is off. */
-const scanPartReason = 'A part of the folder scan; scanSettings, checkFolderSettings and checkTrackedSettings read the value and drop its findings when the guard is off.';
+/** The reason for the work copy sites that pass the guard value to the check of the file contents. */
+const workCopyReason = 'Reaches judgeSettings, which uses the guard value for optional checks of the file contents.';
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -120,11 +120,6 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'delete-hook-warning', path: 'src/state/guard.ts', symbol: 'guardPlanWarnings', reason: 'A pure text of the plan of guardPlanOf, which reads the value and gives no warning when the guard is off.' },
   { row: 'no-lost-item-ids', path: 'src/commands/upgrade.ts', symbol: 'runUpgrade', reason: 'Reaches requireNoLostIds through lockedBoardText, and requireNoLostIds reads the value.' },
   { row: 'no-lost-item-ids', path: 'src/state/item-ids.ts', symbol: 'lostItemIds', reason: 'A pure comparison of two board texts; requireNoLostIds reads the value.' },
-  { row: 'settings-check-fails-closed', path: 'src/commands/root-content.ts', symbol: 'inUserFolder', reason: 'Keeps every read out of the user folder of Claude Code; with the guard off the scan still never reads there, which loosens nothing.' },
-  { row: 'settings-check-fails-closed', path: 'src/commands/root-content.ts', symbol: 'tooManySettings', reason: scanPartReason },
-  { row: 'settings-check-fails-closed', path: 'src/commands/root-content.ts', symbol: 'settingsOfFolder', reason: scanPartReason },
-  { row: 'settings-check-fails-closed', path: 'src/commands/root-content.ts', symbol: 'requireNoFailures', reason: 'The stop over a list of findings, shared with a row of the folder scan guard; the settings findings in the list come only from callers that read the value.' },
-  { row: 'settings-check-fails-closed', path: 'src/commands/setup-check.ts', symbol: 'trackedSetOfRoot', reason: 'Its tracked link stop and its cap stop are shared with rows of the setup text, folder trust and folder scan guards, which this version cannot set, so they stay on.' },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'envPrefixIn', reason: analyzerReason },
   { row: 'settings-env-traffic', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
@@ -136,8 +131,9 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'settings-default-mode', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
   { row: 'settings-mcp-approval', path: 'src/safety/settings.ts', symbol: 'approvesMcp', reason: analyzerReason },
   { row: 'settings-cross-session', path: 'src/safety/settings.ts', symbol: 'heldCrossSession', reason: analyzerReason },
-  { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanSettings', reason: 'Calls checkFolderSettings, which reads the value and drops its findings when the guard is off.' },
-  { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanTrackedSettings', reason: 'Calls checkTrackedSettings, which reads the value and drops its findings when the guard is off.' },
+  { row: 'settings-work-copy', path: 'src/commands/root-content.ts', symbol: 'checkTrackedSettings', reason: workCopyReason },
+  { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanSettings', reason: workCopyReason },
+  { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanTrackedSettings', reason: workCopyReason },
   { row: 'settings-write-consent', path: 'src/commands/init-hook.ts', symbol: 'checkHookConsent', reason: consentCallerReason },
   { row: 'settings-write-consent', path: 'src/commands/start.ts', symbol: 'settleHook', reason: consentCallerReason },
   { row: 'settings-write-consent', path: 'src/upgrade/hook-settings.ts', symbol: 'applyHookSettings', reason: consentCallerReason },
@@ -477,7 +473,6 @@ describe('the rows of the registry', () => {
         'settings-mcp-approval',
         'settings-cross-session',
         'settings-other-warnings',
-        'settings-check-fails-closed',
         'settings-work-copy',
       ],
       'settings-write': [
@@ -678,7 +673,7 @@ describe('the rows of the registry', () => {
         'resume-owned-session',
         'worker-idle-text',
       ],
-      'permission-mode': ['auto-permission-mode', 'no-permission-skip-setting', 'permission-mode-text'],
+      'permission-mode': ['auto-permission-mode', 'no-permission-skip-setting', 'settings-check-fails-closed', 'permission-mode-text'],
       proxy: [
         'proxy-from-config',
         'proxy-url-form',
