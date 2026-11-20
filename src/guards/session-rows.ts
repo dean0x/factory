@@ -10,11 +10,11 @@ const machineLimitRows: readonly GuardRow[] = [
     id: 'machine-warnings',
     guard: guardIds.machineLimits,
     name: 'A new session shows a warning when free memory, free disk space or the load of the processor is past its limit; it never stops the session',
-    applies: `${commandLines.workerNew} and the machine report`,
+    applies: commandLines.workerNew,
     harm: true,
     sites: [
-      ...at('src/workers/machine.ts', 'gatherMachine', 'machineWarnings'),
       ...at('src/commands/worker.ts', 'makeWorker'),
+      ...at('src/workers/machine.ts', 'gatherMachine', 'machineWarnings'),
       ...at('src/config/schema.ts', 'limitsSchema'),
     ],
   }),

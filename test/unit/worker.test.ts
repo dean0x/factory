@@ -1334,6 +1334,18 @@ describe('worker new: the machine warning', () => {
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the machine limits in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.machineLimits))('reads the machine and warns for a failed limit only while the guard counts as on, and starts the worker, with the guard %s', async (_state, setup, on) => {
+    const made = make({ ...settingsCheckSetup(setup), origin, machine: { memory: 'System-wide memory free percentage: 5%\n' } });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(0);
+    expect(made.deps.warned.includes('machine memory: 5% free, at least 20% needed')).toBe(on);
+    expect(made.events.includes('machine memory_pressure')).toBe(on);
+    expect(made.events).toContain('tmux split-window');
+  });
+});
+
 describe('worker new: a failure after the work copy exists', () => {
   it('keeps the copy and the record when the pane does not start, and names the steps that remove the worker by hand', async () => {
     const made = make({ tmux: { failing: 'split-window' } });

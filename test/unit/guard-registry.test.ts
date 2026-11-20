@@ -107,6 +107,9 @@ const setupStoreReason = 'Reads the store of acceptances; checkSetupSet reads th
 const setupRenderReason = 'Renders the setup texts that settleSetup gives; checkSetupSet reads the value and gives the texts while the guard is off.';
 const roleTextReason = 'A part of the acceptance compare; readRoleText reads the value and does not compare while the guard is off.';
 
+/** The reason of the machine facts, which the machine report and the board also show: only the warning of a new worker follows the guard. */
+const machineReason = 'Reads or words the facts of the machine for the warning, the machine report and the board; makeWorker reads the value and reads no fact while the guard is off.';
+
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -192,6 +195,9 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'local-files-not-tracked', path: 'src/core/root-paths.ts', symbol: 'describeTrackedProblems', reason: trackedProblemReason },
   { row: 'folder-links', path: 'src/core/root-paths.ts', symbol: 'requireNoLinks', reason: 'The shared link rule reads no value; checkNodeBlocks and checkSetupText read it and pass it, and every other caller keeps the default, which refuses a link.' },
   { row: 'hold-file-removal', path: 'src/workers/hold.ts', symbol: 'writeHold', reason: 'Calls clearHold for the word none, and clearHold reads the value.' },
+  { row: 'machine-warnings', path: 'src/workers/machine.ts', symbol: 'gatherMachine', reason: machineReason },
+  { row: 'machine-warnings', path: 'src/workers/machine.ts', symbol: 'machineWarnings', reason: machineReason },
+  { row: 'machine-warnings', path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'The bounds of the limit values in the config parse, which reads no guard value; makeWorker reads the value.' },
 ];
 
 const software = {
@@ -295,7 +301,7 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.permissionMode, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.permissionMode, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
       guardIds.setupText, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });

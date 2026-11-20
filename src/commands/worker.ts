@@ -14,6 +14,7 @@ import {
   type HookConsentRequest,
 } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
+import { isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { addWorkTree, branchExists, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
@@ -29,6 +30,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   hookSessions,
   lastSeen,
   maxEchoChars,
@@ -303,7 +305,7 @@ const gitKeptHint = (error: CliError, plan: NewWorkerPlan): CliError =>
  *    source check read);
  * 4. the exclude entry of the clone for the settings file of the work copy;
  * 5. the settings file of the work copy, with the question for the consent when a terminal window can ask;
- * 6. the warning about the machine, which never stops the command;
+ * 6. the warning about the machine, which never stops the command, while the guard of the machine limits is on;
  * 7. the launch, which checks the settings files of the work copy and the delivery of the role text before it starts the pane: a
  *    work copy with no own hook (a no to the question) is refused there, and the work copy, the branch and the record stay.
  * A failure after step 1 keeps what exists and names the steps that remove the worker by hand.
@@ -336,7 +338,9 @@ const makeWorker = async (
   if (hook.value.kind === 'declined') {
     deps.warn(declinedHookText(hook.value, commandLines.workerNew, hookSessions.workCopy));
   }
-  for (const line of machineWarnings(await gatherMachine(deps, home, config.core.limits))) deps.warn(line);
+  if (isGuardOn(guards, guardIds.machineLimits)) {
+    for (const line of machineWarnings(await gatherMachine(deps, home, config.core.limits))) deps.warn(line);
+  }
   const launched = await launchWorker(deps, { home, config, guards, workerId: id, workCopy, retry: resumeLine(id) });
   if (!launched.ok) return { ...launched, error: keptCopy(launched.error, plan, home, false) };
   return ok(launched.value);

@@ -108,11 +108,13 @@ const coreGuards: readonly GuardDefinition[] = [
       'A session starts with a fixed command line, a clean environment and quoted values.',
     ),
   ),
-  guardOf(
-    guardIds.machineLimits,
-    'Machine limits',
-    'Sessions warn before they use up memory, disk or processor time, and heavy runs take turns.',
-    machineKeys,
+  wiredGuard(
+    guardOf(
+      guardIds.machineLimits,
+      'Machine limits',
+      'Sessions warn before they use up memory, disk or processor time, and heavy runs take turns.',
+      machineKeys,
+    ),
   ),
   guardOf(
     guardIds.taskFiles,
