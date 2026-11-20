@@ -8,6 +8,7 @@ import { runStatus, type StatusOptions } from '../../src/commands/status.js';
 import { runWorkerList } from '../../src/commands/worker-list.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
+import { allOn } from '../../src/guards/effective.js';
 import type { PaneRow } from '../../src/launch/tmux.js';
 import { files, maxDisplayWidth, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
@@ -81,6 +82,7 @@ describe('status: the builder', () => {
     now: NOW,
     idleAfterMinutes: 120,
     limits: sampleConfig().core.limits,
+    guards: allOn,
     ...change,
   });
 

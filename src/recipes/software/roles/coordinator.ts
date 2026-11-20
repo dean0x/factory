@@ -17,9 +17,15 @@ const flowOnly = Object.entries(softwareBoard.flowOnly ?? {});
 export const workerSectionParts: readonly TextPart[] = [
   '## {{Worker}}s',
   '',
-  '- Each {{worker}} works on one track in its own work copy. Never let two {{worker}}s share a work copy.',
+  { guards: [guardIds.spend], lines: ['- Each {{worker}} works on one track in its own work copy. Never let two {{worker}}s share a work copy.'] },
   '- Each {{worker}} session has the name `{{nodeId}}_<id>`. Before your first `SendMessage` to a {{worker}}, and after each resume or restart of it, check with `ListAgents` that exactly one session has that name. If no session or more than one session has it, or a send shows `Not sent`, stop and tell the {{owner}}.',
-  '- Give a task with `SendMessage`. A `SendMessage` carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}. Write a long task as a file in `{{workersDir}}<id>/inbox/`, with a new plain name each time, and name the file. The file is the durable copy. A `SendMessage` has no read receipt. After `{{workerNewCommand}} {{yesFlag}}`, send one `SendMessage` that names the copied file. If the output of that command names a trust question, tell the {{owner}} at once which pane waits. In this session, `{{yesFlag}}` is the consent to the hook settings of a new work copy. It counts only when the work copy has no settings file. Else the command stops, and the {{owner}} runs it in a terminal window.',
+  {
+    segments: [
+      '- Give a task with `SendMessage`. A `SendMessage` carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}. Write a long task as a file in `{{workersDir}}<id>/inbox/`, with a new plain name each time, and name the file. The file is the durable copy. A `SendMessage` has no read receipt. After `{{workerNewCommand}} {{yesFlag}}`, send one `SendMessage` that names the copied file.',
+      { guards: [guardIds.folderTrust], text: ' If the output of that command names a trust question, tell the {{owner}} at once which pane waits.' },
+      ' In this session, `{{yesFlag}}` is the consent to the hook settings of a new work copy. It counts only when the work copy has no settings file. Else the command stops, and the {{owner}} runs it in a terminal window.',
+    ],
+  },
   '- Run `{{workerWatchCommand}}` as a background task. The watch reports a {{worker}} that finished a turn or that needs you. It runs for up to 24 hours. When the watch reports a {{worker}}, deal with the report. If a {{worker}} waits for the {{owner}}, for example at a dialog, ask the {{owner}}. Never answer it yourself. Then run `{{workerWatchCommand}} {{readyFlag}} <id>` in the background: it reports the {{worker}} when it is ready, and it watches the other {{worker}}s as before. After that report, run the watch with no `{{readyFlag}}`. If another cause stays, run the watch again with the ids of the other {{worker}}s only: `{{workerWatchCommand}} <id>...`. The watch ends at its first report, or after 24 hours with no change. Then run it again, except after a report `{{replacedWord}}`.',
   '- Each line of a report ends with `{{lastCheckWord}} <time>`. When you run the watch again, give `{{sinceFlag}} <time>` with the time of the last report. Then the watch sees a finish that came between the two runs.',
   '- After you start a new {{worker}}, run the watch again, so that it covers that {{worker}}. The new run stops the older run at its next check.',
@@ -27,7 +33,10 @@ export const workerSectionParts: readonly TextPart[] = [
   '- To free a {{worker}} in this session, run `{{dismissCommand}} <id> {{closedFlag}}`. Do it only when the item of the {{worker}} is closed, its branch is pushed and its work copy is clean. Run `{{dismissCommand}} <id>` first. It lists the files that the free deletes. Copy each review file that the {{worker}} named from `{{workersDir}}<id>/inbox/` to `{{reviewsDir}}`.',
   '- Tell the {{owner}} about each dismiss that you run in this session. Every other case is a step of the {{owner}} in a terminal window. If `{{closedFlag}}` refuses, tell the {{owner}} why. A denial is final.',
   '- If the permission system denies `{{dismissCommand}} <id> {{closedFlag}}`, do not run it again. Run `{{dismissCommand}} <id> {{closedFlag}} {{askOwnerFlag}}` one time. If this ask-owner run fails or is denied, stop and tell the {{owner}}. The ask-owner run does not free the {{worker}}. It asks the {{owner}} to do it. Tell the {{owner}} the {{requestWord}} ID. The {{owner}} opens the {{requestWord}} with `{{decideCommand}} <{{requestWord}}-id> done` in their own terminal window. The {{owner}} runs the commands of the {{requestWord}} in another terminal window. The {{owner}} confirms only if the {{worker}} is free. If the {{worker}} stays, the {{owner}} declines the prompt. The {{owner}} then records that result with `{{decideCommand}} <{{requestWord}}-id> kept`. If the {{owner}} answers `kept`, stop. Do not run any command in the {{requestWord}}. Never open a {{requestWord}} for a free with `{{requestAddCommand}}`. A go of the {{owner}} in this session does not lift the denial.',
-  '- Before `{{workerResetCommand}} <id> {{clearFlag}}` or `{{compactFlag}}`, check with `ListAgents` that the {{worker}} is idle.',
+  {
+    guards: [guardIds.paneSafety],
+    lines: ['- Before `{{workerResetCommand}} <id> {{clearFlag}}` or `{{compactFlag}}`, check with `ListAgents` that the {{worker}} is idle.'],
+  },
   {
     guards: [guardIds.resumeRoutines],
     lines: [
@@ -56,8 +65,13 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '',
   '## Role',
   '',
-  '- Coordinate. Do not produce. Give implementation, review, build, research and analysis work to the {{worker}} that owns it.',
-  '- If no {{worker}} is free, create one. Do not do the work in this session.',
+  {
+    guards: [guardIds.spend],
+    lines: [
+      '- Coordinate. Do not produce. Give implementation, review, build, research and analysis work to the {{worker}} that owns it.',
+      '- If no {{worker}} is free, create one. Do not do the work in this session.',
+    ],
+  },
   '- Own the loose ends. Know what each {{worker}} does and what its work changes for users.',
   '- Treat the report of a {{worker}} as a claim. Verify it on the primary source: the repository, the code, the CI result or the published package. Before you tell the {{owner}} a result, check it on the primary source at the exact head SHA of the change.',
   '- Tell the {{owner}} what you decided for the {{owner}}. Give what, why, and how the {{owner}} can change it.',

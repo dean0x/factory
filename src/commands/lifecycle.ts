@@ -231,7 +231,7 @@ export const runRestart = async (
     return failure(`no session id was checked for the ${roles.worker} ${id}`, `Run "${commandText(again)}" again.`);
   }
   const proxyAnswers = newProxyAnswers();
-  const proxy = await requireProxies(deps, config, [workerProxyWish(config, id, again)], proxyAnswers);
+  const proxy = await requireProxies(deps, config, [workerProxyWish(config, id, again)], proxyAnswers, prepared.value.guards.values);
   if (!proxy.ok) return proxy;
 
   const stopped = await stopWorker(deps, { home, session, workerId: id, panes });
@@ -402,7 +402,7 @@ export const runReboot = async (
       ...(inside ? [] : [sessionProxyWish(config, commands.reboot)]),
       ...[...checked.value.keys()].map((id) => workerProxyWish(config, id, commands.reboot)),
     ];
-    const proxies = await requireProxies(deps, config, wishes, run.answers);
+    const proxies = await requireProxies(deps, config, wishes, run.answers, run.guards);
     if (!proxies.ok) return proxies;
   }
   if (running !== null && inside) {

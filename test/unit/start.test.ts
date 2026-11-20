@@ -14,7 +14,8 @@ import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
 import {
-  activeMachine, commands, env, files, guardIds, guardStartWords, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles,
+  activeMachine, commands, env, files, guardConfigWords, guardIds, guardStartWords, hookNames, schemaIds, stateGuard, stateLock, tmuxNames,
+  trackedFiles,
 } from '../../src/names.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
@@ -38,7 +39,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
+import { DEFAULT_GIT_VERSION, NO_REPO_AT_MOUNT_POINT, withoutStateWords } from '../helpers/git-fake.js';
 import {
   FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, withStoreReadFault,
 } from '../helpers/guarded-node.js';
@@ -48,6 +49,7 @@ import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-accept
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
 import { chainOf, tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { launchWordsOf } from '../helpers/worker-launch-words.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
 
 const HOME = '/w/node';
@@ -126,6 +128,8 @@ interface Setup {
   readonly origin?: 'own' | 'received';
   /** True: the home is the top folder of no git work tree, so git can not list its files. */
   readonly noRepo?: boolean;
+  /** What git prints on stderr for a folder that no work tree holds. Default: the plain line. */
+  readonly noRepoText?: string;
   /** The answer to a question. Default: no answer, so a question fails the command. */
   readonly prompt?: PromptHandler;
   /**
@@ -172,7 +176,7 @@ const gitAnswer = (setup: Setup) => (call: RunCall) => {
       return asked.every((path) => rules === undefined || rules.includes(path)) ? exited(0) : exited(1);
     }
   }
-  return exited(128, '', 'fatal: not a git repository\n');
+  return exited(128, '', setup.noRepoText ?? 'fatal: not a git repository\n');
 };
 
 const withProxy = (onFail: 'stop' | 'direct'): FactoryConfig => {
@@ -521,6 +525,19 @@ describe('start:the delete guard of the state repo', () => {
       .map((call) => withoutStateWords(call.args).slice(2).join(' '))
       .filter((command) => command.includes('core.hooksPath') || command.startsWith('rev-parse --absolute-git-dir'));
     expect(guardReads).toEqual([]);
+  });
+});
+
+describe('start:a key of a fixed guard', () => {
+  it.each([
+    ['the local file', { guards: { [guardIds.cloneRules]: 'off' } }, guardConfigWords.fixedKey(files.localConfig, 'guards', guardIds.cloneRules)],
+    ['the shared file', { shared_guards: { [guardIds.cloneRules]: 'on' } }, guardConfigWords.fixedKey(files.config, 'shared_guards', guardIds.cloneRules)],
+  ] as const)('prints the warning of the key in %s once, and starts the session', async (_file, keys, warning) => {
+    const config = sampleConfig();
+    const { deps, tmux } = make({ config: { ...config, core: { ...config.core, ...keys } } });
+    await succeeded(deps);
+    expect(deps.warned.filter((line) => line === warning)).toHaveLength(1);
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(true);
   });
 });
 
@@ -1068,6 +1085,124 @@ describe.each(FOLDER_ORIGINS)('start in %s: the guard of the Claude Code setting
     const sink = captureSink();
     expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
     expect(sink.errors.join('').includes('coordinator/.claude/settings.json')).toBe(on);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of folder trust', (_folder, origin) => {
+  describe.each([
+    ['git gives the plain line', undefined],
+    ['git stops at a mount point', NO_REPO_AT_MOUNT_POINT],
+  ])('when %s', (_answer, noRepoText) => {
+    it.each(guardStatesOf(guardIds.folderTrust))('warns about an agent instruction file and stops for a received folder that is not the top of a work tree only while the guard counts as on: %s', async (_state, setup, on) => {
+      const off = setup.off ?? [];
+      const config = withGuardsOff(sampleConfig(), off);
+      const { deps } = make({ origin, config, noRepo: true, ...(noRepoText === undefined ? {} : { noRepoText }) });
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+      deps.seed(`${HOME}/${files.claudeMd}`, 'Rules.\n');
+      const sink = captureSink();
+      expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on && origin === 'received' ? 4 : 0);
+      expect(deps.warned.some((line) => line.startsWith('Agent instruction files are in'))).toBe(on);
+      expect(sink.errors.join('')).not.toContain('cannot check the git work tree');
+    });
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the stop of the scan of the folder', (_folder, origin) => {
+  it.each([
+    ['every guard on: a local config that git does not ignore stops', [], true, false, 4],
+    ['the scan guard off: a local config that git does not ignore does not stop', [guardIds.rootScan], true, false, 0],
+    ['the scan guard off with no record: a local config that git does not ignore still stops', [guardIds.rootScan], false, false, 4],
+    ['the scan guard off: a fault of the settings check that is on still stops', [guardIds.rootScan], true, true, 4],
+    ['the scan guard and the settings check off: neither fault stops', [guardIds.rootScan, guardIds.settingsCheck], true, true, 0],
+  ] as const)('%s', async (_name, off, record, settingsFault, code) => {
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps, tmux } = make({ origin, config, ignored: [] });
+    if (record) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    if (settingsFault) deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { FACTORY_ANYTHING: '1' } }));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--home', HOME], deps, sink), sink.errors.join('')).toBe(code);
+    expect(sink.errors.join('').includes('git does not ignore')).toBe(code === 4 && !settingsFault);
+    expect(tmux.calls.some((call) => call.args[0] === 'new-session')).toBe(code === 0);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of secrets and output text', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.secrets))('stops for a token in a tracked file only while the guard counts as on, and never shows the value: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps, tmux } = make({ origin, config, tracked: ['docs/notes.md'] });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    deps.seed(`${HOME}/docs/notes.md`, `key ${FAKE_GITHUB_TOKEN}\n`);
+    // The owner accepted the tracked files of the received folder, so the setup check does not decide the exit code.
+    if (origin === 'received') await acceptTracked(deps, HOME, config.core.node.id, ['docs/notes.md']);
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('docs/notes.md')).toBe(on);
+    expect(tmux.calls.some((call) => call.args[0] === 'new-session')).toBe(!on);
+    expect(JSON.stringify([sink.out, sink.errors, deps.warned])).not.toContain(FAKE_GITHUB_TOKEN);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of the permission mode', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.permissionMode))('stops for a settings file that skips the permissions only while the guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    deps.seed(`${COORDINATOR}/.claude/settings.json`, JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of the proxy', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.proxy))('stops for a named proxy that does not answer only while the guard counts as on, and else starts with that proxy: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(withProxy('stop'), off);
+    const { deps, tmux } = make({ origin, config, fetch: silent });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 1 : 0);
+    expect(deps.fetched).toHaveLength(on ? 1 : 0);
+    const launch = tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
+    expect(launch.includes(`ANTHROPIC_BASE_URL=${PROXY_URL}`)).toBe(!on);
+  });
+
+  it('starts with the named proxy and asks it nothing while the guard is off, also when the config allows a direct launch', async () => {
+    const config = withGuardsOff(withProxy('direct'), [guardIds.proxy]);
+    const { deps, tmux } = make({ origin, config, fetch: silent });
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, [guardIds.proxy], deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--home', HOME], deps, sink), sink.errors.join('')).toBe(0);
+    expect(deps.fetched).toEqual([]);
+    expect(tmux.calls.find((call) => call.args[0] === 'new-session')?.args).toContain(`ANTHROPIC_BASE_URL=${PROXY_URL}`);
+    expect(deps.warned.filter((line) => line.includes('starts without a proxy'))).toEqual([]);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of setup and role text', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.setupText))('stops for setup text that the owner did not accept only while the guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config, ...(origin === 'received' ? { tracked: ['scripts/run.sh'] } : {}) });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    if (origin === 'own') deps.seed(`${HOME}/setup/coordinator.md`, 'First rules.\n');
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('has not accepted')).toBe(on);
+  });
+});
+
+describe('start: the file rules of the setup set stay on', () => {
+  it('stops for a link at a setup file with the guard of setup and role text off and a matching record', async () => {
+    const off = [guardIds.setupText];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin: 'own', config, links: { [`${HOME}/setup/coordinator.md`]: '/elsewhere/coordinator.md' } });
+    deps.seed('/elsewhere/coordinator.md', 'Other rules.\n');
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink)).toBe(4);
+    expect(sink.errors.join('')).toContain('setup/coordinator.md');
   });
 });
 
@@ -1707,6 +1842,27 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       expect(splitsOf(made.deps)).toBe(0);
       expect(workerPanes(made.tmux)).toHaveLength(1);
       if (result.ok) expect(result.value.json).toMatchObject({ started: false, workersWithoutPane: ['alpha', 'gamma'] });
+    });
+
+    describe.each(FOLDER_ORIGINS)('in %s, with the guard of spend', (_folder, origin) => {
+      it.each(guardStatesOf(guardIds.spend))('keeps each worker with no live pane stopped only while the guard counts as on, and else resumes it after its ended pane closes: %s', async (_state, setup, on) => {
+        const off = setup.off ?? [];
+        const config = withGuardsOff(sampleConfig(), off);
+        const ended: PaneFixture = { ...paneOf('alpha', true), command: launchWordsOf(HOME, 'alpha') };
+        const made = await seeded({ origin, config, tmux: { sessions: RUNNING, panes: [ended, paneOf('beta')] } });
+        if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, made.deps.now()));
+        const sink = captureSink();
+        expect(await runCli([commands.start, '--home', HOME, '--json'], made.deps, sink), sink.errors.join('')).toBe(0);
+        const json = JSON.parse(sink.out.join('')) as Record<string, unknown>;
+        expect(splitsOf(made.deps)).toBe(on ? 0 : 2);
+        expect(made.deps.warned.some((line) => line.includes('must stay stopped'))).toBe(on);
+        expect(json['workersWithoutPane']).toEqual(on ? ['alpha', 'gamma'] : undefined);
+        if (!on) {
+          expect(json['workers']).toEqual({ resumed: ['alpha', 'gamma'], skipped: [], failed: [] });
+          expect(resumesOf(made.tmux)).toMatchObject({ alpha: SESSION.alpha, gamma: SESSION.gamma });
+          expect(made.tmux.commands().some((line) => line.startsWith('kill-pane'))).toBe(true);
+        }
+      });
     });
 
     it('counts a pane whose program ended as no live pane', async () => {

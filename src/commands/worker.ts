@@ -14,6 +14,7 @@ import {
   type HookConsentRequest,
 } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
+import { isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { addWorkTree, branchExists, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
@@ -29,6 +30,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   hookSessions,
   lastSeen,
   maxEchoChars,
@@ -303,7 +305,7 @@ const gitKeptHint = (error: CliError, plan: NewWorkerPlan): CliError =>
  *    source check read);
  * 4. the exclude entry of the clone for the settings file of the work copy;
  * 5. the settings file of the work copy, with the question for the consent when a terminal window can ask;
- * 6. the warning about the machine, which never stops the command;
+ * 6. the warning about the machine, which never stops the command, while the guard of the machine limits is on;
  * 7. the launch, which checks the settings files of the work copy and the delivery of the role text before it starts the pane: a
  *    work copy with no own hook (a no to the question) is refused there, and the work copy, the branch and the record stay.
  * A failure after step 1 keeps what exists and names the steps that remove the worker by hand.
@@ -336,7 +338,9 @@ const makeWorker = async (
   if (hook.value.kind === 'declined') {
     deps.warn(declinedHookText(hook.value, commandLines.workerNew, hookSessions.workCopy));
   }
-  for (const line of machineWarnings(await gatherMachine(deps, home, config.core.limits))) deps.warn(line);
+  if (isGuardOn(guards, guardIds.machineLimits)) {
+    for (const line of machineWarnings(await gatherMachine(deps, home, config.core.limits))) deps.warn(line);
+  }
   const launched = await launchWorker(deps, { home, config, guards, workerId: id, workCopy, retry: resumeLine(id) });
   if (!launched.ok) return { ...launched, error: keptCopy(launched.error, plan, home, false) };
   return ok(launched.value);
@@ -494,15 +498,35 @@ type ResumeChoice =
   | { readonly kind: 'resume'; readonly sessionId: string }
   | { readonly kind: 'new'; readonly warning: string };
 
+/** The stop of a resume while a pane of the worker runs (exit 2). `what` names the worker or its session. */
+const runsAlready = (live: readonly BoundPane[], id: string, what: string): CliResult<never> => {
+  const ids = live.map((pane) => pane.paneId);
+  return usageError(
+    `${what} runs already in the ${ids.length === 1 ? 'pane' : 'panes'} ${ids.join(', ')}`,
+    `To end it, run "${commandText(commandLines.workerStop)} ${id}". Then run "${commandText(resumeLine(id))}" again.`,
+  );
+};
+
 /**
  * The session that a resume continues. A program in a worker pane can write the pointer to its own last session, so the pointer
  * counts only when the line belongs to this worker (`readOwnLastSeen`): the session of the coordinator and the session of another
- * worker never pass. Any other state starts a new conversation, with a warning that says that the earlier one is NOT resumed.
+ * worker never pass. A live pane of the worker writes the pointer of the worker, so with a live pane the session is the one of
+ * that pane: a resume of it is a stop (exit 2), because two panes then hold one session. Any other state starts a new
+ * conversation, with a warning that says that the earlier one is NOT resumed.
  */
-const chooseSession = async (deps: Deps, home: string, id: string): Promise<CliResult<ResumeChoice>> => {
+const chooseSession = async (
+  deps: Deps,
+  home: string,
+  id: string,
+  live: readonly BoundPane[],
+): Promise<CliResult<ResumeChoice>> => {
   const seen = await readOwnLastSeen(deps, home, id);
   if (!seen.ok) return seen;
-  if (seen.value.state === 'valid') return ok({ kind: 'resume', sessionId: seen.value.line[lastSeen.keys.sessionId] });
+  if (seen.value.state === 'valid') {
+    const sessionId = seen.value.line[lastSeen.keys.sessionId];
+    if (live.length > 0) return runsAlready(live, id, `the session ${sessionId} of the ${roles.worker} ${id}`);
+    return ok({ kind: 'resume', sessionId });
+  }
   const cause =
     seen.value.why === 'no-line'
       ? 'no valid last-seen line'
@@ -516,14 +540,8 @@ const chooseSession = async (deps: Deps, home: string, id: string): Promise<CliR
 };
 
 /** A pane of the worker whose program runs is a stop of the resume (exit 2): the worker runs already. */
-const requireNoLivePane = (panes: readonly BoundPane[], id: string): CliResult<void> => {
-  const live = panes.map((pane) => pane.paneId);
-  if (live.length === 0) return ok(undefined);
-  return usageError(
-    `the ${roles.worker} ${id} runs already in the ${live.length === 1 ? 'pane' : 'panes'} ${live.join(', ')}`,
-    `To end it, run "${commandText(commandLines.workerStop)} ${id}". Then run "${commandText(resumeLine(id))}" again.`,
-  );
-};
+const requireNoLivePane = (panes: readonly BoundPane[], id: string): CliResult<void> =>
+  panes.length === 0 ? ok(undefined) : runsAlready(panes, id, `the ${roles.worker} ${id}`);
 
 /**
  * `worker resume ID`: starts the program of a stopped worker again, in a new pane, with the earlier conversation when it is
@@ -531,8 +549,9 @@ const requireNoLivePane = (panes: readonly BoundPane[], id: string): CliResult<v
  * 1. the checks of `worker new` (the root, the tools and the tmux session): a failing root check is exit 4 and changes nothing;
  * 2. the record must exist (exit 2). Each pane that carries the mark of the worker is read and bound to the worker
  *    (`readWorkerPanes`): a pane that the launch of the worker did not make is a stop (exit 4), and it is not taken for the
- *    pane of the worker that runs. A pane of the worker that runs is a stop (exit 2);
- * 3. the session to resume. No valid line, or a line that does not belong to the worker, gives no `--resume` and one warning;
+ *    pane of the worker that runs. While pane safety is on, a pane of the worker that runs is a stop (exit 2);
+ * 3. the session to resume. No valid line, or a line that does not belong to the worker, gives no `--resume` and one warning.
+ *    A session to resume while a pane of the worker runs is a stop (exit 2) with every guard value;
  * 4. `resumeWorker` closes the old panes of the worker whose programs ended, by their ids (a pane that a summon left in the slot
  *    goes back first, and the board comes back into the slot), then launches by the same path as `worker new` (it checks the
  *    settings files of the work copy).
@@ -564,9 +583,9 @@ const runResume = async (
     again: resumeLine(id),
   });
   if (!panes.ok) return panes;
-  const running = requireNoLivePane(panes.value.live, id);
+  const running = isGuardOn(prepared.value.guards.values, guardIds.paneSafety) ? requireNoLivePane(panes.value.live, id) : ok(undefined);
   if (!running.ok) return running;
-  const chosen = await chooseSession(deps, home, id);
+  const chosen = await chooseSession(deps, home, id, panes.value.live);
   if (!chosen.ok) return chosen;
 
   const launched = await resumeWorker(deps, {

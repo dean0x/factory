@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { typeLine, type TypedLine } from '../../src/comms/typing.js';
-import { typing } from '../../src/names.js';
+import { guardIds, guardValues, typing } from '../../src/names.js';
 import { createFakeDeps, exited, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
 
@@ -237,6 +237,30 @@ describe('the pane mode check', () => {
   it('reads the mode before the screen, so a pane in a mode with a dialog on it is exit 3 for the mode', async () => {
     const { deps } = setup('Do you want to proceed?\n❯ 1. Yes\n  2. No\n', undefined, true);
     expect(errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN)).message).toContain('mode of tmux');
+  });
+});
+
+describe('the guard of the pane safety', () => {
+  const off = { [guardIds.paneSafety]: guardValues.off };
+  const modeAnswer = (answer: string): Wrap => (handler) => (call) => (call.args.includes('#{pane_in_mode}') ? exited(0, answer) : handler(call));
+
+  it('types into a pane in a mode with a dialog on its screen while the guard is off, and reads no screen', async () => {
+    const { deps, log } = setup('Do you want to proceed?\n❯ 1. Yes\n  2. No\n', undefined, true);
+    expect((await typeLine(deps, PANE, typing.lines.clear, AGAIN, off)).ok).toBe(true);
+    expect(log.commands().some((command) => command.startsWith('capture-pane'))).toBe(false);
+    expect(log.typed()).toEqual([KEY_CLEAR, text('/clear'), KEY_ENTER]);
+  });
+
+  it.each(['2\n', 'copy-mode\n'])('exits 3 for the mode answer %j also while the guard is off', async (answer) => {
+    const { deps, sent } = setup(undefined, modeAnswer(answer));
+    expect(exitCodeOf[errorOf(await typeLine(deps, PANE, typing.lines.clear, AGAIN, off)).kind]).toBe(3);
+    expect(sent()).toEqual([]);
+  });
+
+  it.each(['/exit', 'clear\nrm', '/clear;'])('refuses the line %j that is not a fixed line also while the guard is off', async (line) => {
+    const { deps, sent } = setup();
+    expect(exitCodeOf[errorOf(await typeLine(deps, PANE, notFixed(line), AGAIN, off)).kind]).toBe(1);
+    expect(sent()).toEqual([]);
   });
 });
 

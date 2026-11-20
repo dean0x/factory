@@ -1,10 +1,9 @@
-import { at, codeRow, textRow } from '../../guards/build.js';
+import { alwaysOnRow, at, codeRow, fixedTextRow, textRow } from '../../guards/build.js';
 import type { GuardRow } from '../../guards/types.js';
 import { commandLines, guardIds, roles } from '../../names.js';
 import {
   COORDINATOR_FILE,
   MANAGER_FILE,
-  PROFILE_FILE,
   SAFETY_FILE,
   WORDS_FILE,
   WORKER_FILE,
@@ -123,7 +122,7 @@ const taskFileRows: readonly GuardRow[] = [
 ];
 
 const sessionCheckRows: readonly GuardRow[] = [
-  textRow({
+  fixedTextRow({
     id: 'decide-channel-text',
     guard: guardIds.sessionChecks,
     name: `The answer of the ${owner} to a question comes from a command that refuses to run in a session`,
@@ -215,7 +214,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at(COORDINATOR_FILE, 'coordinatorLines'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'answered-row-not-proof-text',
     guard: guardIds.ownerGo,
     name: `Only the approval record store proves an answer of the ${owner}; a row of the board and a decision record are display copies`,
@@ -223,7 +222,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at(COORDINATOR_FILE, 'coordinatorLines'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'settle-relay-text',
     guard: guardIds.ownerGo,
     name: `A relayed answer names the ${coordinator} as its decider and is never proof of an answer of the ${owner}`,
@@ -243,9 +242,9 @@ const ownerGoRows: readonly GuardRow[] = [
     id: 'stage-not-approval-text',
     guard: guardIds.ownerGo,
     name: `A stage of an item is never an approval; only the ${owner} approves, at an approval point`,
-    applies: `Role text of the ${coordinator} and the word list of the help`,
+    applies: `Role text of the ${coordinator}`,
     harm: false,
-    sites: [...at(COORDINATOR_FILE, 'coordinatorLines'), ...at('src/glossary.ts', 'SENTENCES')],
+    sites: at(COORDINATOR_FILE, 'coordinatorLines'),
   }),
 ];
 
@@ -261,7 +260,7 @@ const paneSafetyRows: readonly GuardRow[] = [
 ];
 
 const prRuleRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'pr-watch-reads-only',
     guard: softwareGuardIds.prRules,
     name: 'The watch over a pull request only reads: it never merges, approves or writes, and a pass is a fact about the checks and no approval',
@@ -277,7 +276,7 @@ const prRuleRows: readonly GuardRow[] = [
     harm: false,
     sites: at(COORDINATOR_FILE, 'coordinatorLines'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'pr-watch-head-moved',
     guard: softwareGuardIds.prRules,
     name: 'The watch ends when the pull request has another head, so a pass never counts for a newer head that nobody checked',
@@ -297,7 +296,7 @@ const prRuleRows: readonly GuardRow[] = [
       ...at('src/recipes/software/record.ts', 'softwareRecordCheck'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'record-default-branch',
     guard: softwareGuardIds.prRules,
     name: 'The base of a merge record is the default branch of the project, else the default branch of the remote, never the current branch',
@@ -585,9 +584,9 @@ const workConductRows: readonly GuardRow[] = [
     id: 'read-profile-text',
     guard: guardIds.workConduct,
     name: `The decision records and the principles are read before a decision for the ${owner}`,
-    applies: `Role text of the ${coordinator} and the decision profile`,
+    applies: `Role text of the ${coordinator}`,
     harm: false,
-    sites: [...at(COORDINATOR_FILE, 'coordinatorLines'), ...at(PROFILE_FILE, 'PROFILE_README_LINES')],
+    sites: at(COORDINATOR_FILE, 'coordinatorLines'),
   }),
   textRow({
     id: 'verify-state-files-text',
@@ -617,9 +616,9 @@ const workConductRows: readonly GuardRow[] = [
     id: 'ste-writing-text',
     guard: guardIds.workConduct,
     name: 'All text is written in simplified technical English',
-    applies: `Role text of the ${coordinator} and the ${worker}, and the decision profile`,
+    applies: `Role text of the ${coordinator} and the ${worker}`,
     harm: false,
-    sites: [...at(COORDINATOR_FILE, 'coordinatorLines'), ...at(WORKER_FILE, 'WORKER_LINES'), ...at(PROFILE_FILE, 'PROFILE_README_LINES')],
+    sites: [...at(COORDINATOR_FILE, 'coordinatorLines'), ...at(WORKER_FILE, 'WORKER_LINES')],
   }),
   textRow({
     id: 'worker-no-direct-ask-text',

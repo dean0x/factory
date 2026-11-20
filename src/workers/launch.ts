@@ -2,18 +2,19 @@ import { basename, dirname, isAbsolute } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { checkFolderSettings, checkTrackedSettings, requireNoFailures, warningLines } from '../commands/root-content.js';
 import { isSlug } from '../config/primitives.js';
-import type { FactoryConfig } from '../config/schema.js';
+import type { FactoryConfig, ProxyConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
 import { ok } from '../core/result.js';
+import { allOn, guardOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import { toolNames } from '../core/tools.js';
 import { workerLaunchArgv } from '../launch/argv.js';
 import { isPaneId, setPaneOptionArgs, splitWorkerPaneArgs, tileWorkersArgs } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
-import { commandLines, commands, commandText, dirs, env, keys, places, roles, tmuxNames, values } from '../names.js';
-import { checkProxyHealth, type ProxyHealth } from '../safety/proxy.js';
+import { commandLines, commands, commandText, dirs, env, guardIds, keys, places, roles, tmuxNames, values } from '../names.js';
+import { checkProxyHealth, parseProxyUrl, proxyLabel, type ProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
 import { confirmLaunch, paneFailure, type PaneFailureRequest } from './confirm.js';
 import { closePane, type BoundPane } from './panes.js';
@@ -70,22 +71,41 @@ export const workerProxyWish = (config: FactoryConfig, workerId: string, retry: 
 };
 
 /**
+ * The health of a named proxy: the answer of the run, else one health call that goes into `answers`. While the guard of the proxy
+ * is off, no call is made and the proxy counts as up, so the session uses the proxy that the config names and never goes direct.
+ */
+const proxyHealthOf = async (
+  deps: Deps,
+  proxy: ProxyConfig,
+  answers: ProxyAnswers | undefined,
+  guards: GuardValues,
+): Promise<ProxyHealth> => {
+  if (!isGuardOn(guards, guardIds.proxy)) {
+    const base = parseProxyUrl(proxy.base_url);
+    if (base.ok) return { up: true, label: proxyLabel(proxy.id, base.value) };
+  }
+  const health = answers?.get(proxy.id) ?? (await checkProxyHealth(deps, proxy));
+  answers?.set(proxy.id, health);
+  return health;
+};
+
+/**
  * The proxy of a session, by the rules of design 4.6: only a proxy that the config names, and only when it answers. With
- * `answers`, a proxy that the run asked before is not asked again.
+ * `answers`, a proxy that the run asked before is not asked again. `guards` are the values of the launch checks.
  */
 export const chooseProxy = async (
   deps: Deps,
   config: FactoryConfig,
   wish: ProxyWish = sessionProxyWish(config),
   answers?: ProxyAnswers,
+  guards: GuardValues = allOn,
 ): Promise<CliResult<ProxyChoice>> => {
   if (wish.id === values.noProxy) return ok({ baseUrl: null, label: null });
   const proxy = config.core.proxies.find((candidate) => candidate.id === wish.id);
   if (proxy === undefined) {
     return failure(`${wish.setting} names a proxy that is not defined in ${keys.root.proxies}`);
   }
-  const health = answers?.get(proxy.id) ?? (await checkProxyHealth(deps, proxy));
-  answers?.set(proxy.id, health);
+  const health = await proxyHealthOf(deps, proxy, answers, guards);
   if (health.up) return ok({ baseUrl: proxy.base_url, label: health.label });
   if (proxy.on_fail === values.onFail[1]) {
     return ok({
@@ -203,7 +223,8 @@ export const requireCleanTrackedSettings = async (
 /**
  * The instruction files that the session of a worker loads besides those of its project: the files in `work-copies/` and in
  * the folder of the project. The files in the work copy itself belong to the project. The files in the factory folder and
- * above it are the warning of the start of the factory. It is a warning only: it never stops a launch.
+ * above it are the warning of the start of the factory. It is a warning only: it never stops a launch. While folder trust is off,
+ * it gives no warning.
  */
 const instructionWarnings = async (
   deps: Deps,
@@ -211,6 +232,7 @@ const instructionWarnings = async (
   workerId: string,
   workCopy: string,
 ): Promise<readonly string[]> => {
+  if (!(await guardOn(deps, guardIds.folderTrust, home))) return [];
   const scan = await scanInstructionFiles(deps, dirname(workCopy), layoutOf(home).workCopiesDir);
   return [
     ...(scan.found.length === 0
@@ -296,7 +318,7 @@ const markPane = async (deps: Deps, request: PaneFailureRequest): Promise<CliRes
  *    for a missing entry), and a role text that passes every check (exit 4 or exit 1). The launch does not wait for the first
  *    session start, so this check is where a launch with no role text fails, before any pane;
  * 3. the instruction files above the work copy (a warning);
- * 4. the proxy of the worker, with its health check;
+ * 4. the proxy of the worker, with its health check while the guard of the proxy is on;
  * 5. the argument list, with auto mode, the resume id when there is one, and the name of the session;
  * 6. the pane, and the worker mark on the pane id;
  * 7. the tile of the workers window, so that the next launch finds room (a failed tile is a warning);
@@ -317,7 +339,7 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   if (!delivery.ok) return delivery;
   for (const line of await instructionWarnings(deps, home, workerId, workCopy)) deps.warn(line);
 
-  const proxy = await chooseProxy(deps, config, workerProxyWish(config, workerId, request.retry), request.proxyAnswers);
+  const proxy = await chooseProxy(deps, config, workerProxyWish(config, workerId, request.retry), request.proxyAnswers, request.guards);
   if (!proxy.ok) return proxy;
   const path = deps.env[env.path];
   const argv = workerLaunchArgv({
@@ -370,7 +392,7 @@ export interface WorkerResumeRequest extends WorkerLaunchRequest {
 export const resumeWorker = async (deps: Deps, request: WorkerResumeRequest): Promise<CliResult<WorkerLaunch>> => {
   const { deadPanes = [], ...launch } = request;
   for (const pane of deadPanes) {
-    const closed = await closeWorkerPane(deps, launch.config.core.node.id, pane.paneId);
+    const closed = await closeWorkerPane(deps, launch.config.core.node.id, pane.paneId, launch.guards);
     if (!closed.ok) return closed;
   }
   return launchWorker(deps, launch);

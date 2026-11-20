@@ -23,7 +23,7 @@ import { boardNode, boardText, itemRecord, type BoardNodeOptions } from '../help
 import { inPane } from '../helpers/coordinator-pane.js';
 import { BOARD_PATH, LAYOUT, LOG_PATH, WAITING_PATH, type BoardRepo } from '../helpers/board-repo.js';
 import { exited, missingProgram, registerRoot, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
-import { HOME, HOOK } from '../helpers/guard-fixture.js';
+import { HOME, HOOK, STATE } from '../helpers/guard-fixture.js';
 import {
   FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff,
 } from '../helpers/guarded-node.js';
@@ -115,6 +115,30 @@ describe.each(FOLDER_ORIGINS)('item add in %s on a board file that lost an item 
     expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
     expect(sink.errors.join('').includes('this change removes the item id B-1')).toBe(on);
     expect(repo.commits).toHaveLength(on ? 0 : 1);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('item add in %s with the guard of git safety', (_folder, origin) => {
+  const CASES = [
+    ['a staged change of the owner', '--untracked-files=all', exited(0, 'M  owner.json\0'), 1, 'has staged changes: owner.json'],
+    ['a git config that names a program', '--show-scope', exited(0, 'local\0filter.lfs.clean\ngit-lfs clean\0'), 4, 'filter.lfs.clean'],
+  ] as const;
+
+  describe.each(CASES)('on a state repo with %s', (_case, word, answer, code, text) => {
+    it.each(guardStatesOf(guardIds.gitSafety))('stops with no commit only while the guard counts as on: %s', async (_state, setup, on) => {
+      const off = setup.off ?? [];
+      const config = withGuardsOff(sampleConfigWithBoard(), off);
+      const repo = await boardNode({ config });
+      registerRoot(repo.deps, HOME, config.core.node.id, [], origin);
+      if (setup.record !== false) repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, repo.deps.now()));
+      const run: FakeDeps['run'] = (command, args, options) =>
+        args[1] === STATE && args.includes(word) ? Promise.resolve(answer) : repo.deps.run(command, args, options);
+      const sink = captureSink();
+      const exit = await runCli(['item', 'add', '--title', 'New', '--field', 'priority=P1', '--home', HOME], { ...repo.deps, run }, sink);
+      expect(exit, sink.errors.join('')).toBe(on ? code : 0);
+      expect(sink.errors.join('').includes(text)).toBe(on);
+      expect(repo.commits).toHaveLength(on ? 0 : 1);
+    });
   });
 });
 

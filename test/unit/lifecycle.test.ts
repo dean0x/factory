@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
@@ -19,7 +20,10 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
-import { GUARD_STORE, guardStoreText, withGuardsOff, withStoreReadFault } from '../helpers/guarded-node.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, withStoreReadFault, type GuardedSetup,
+} from '../helpers/guarded-node.js';
+import { captureSink } from '../helpers/sink.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
 import { ownSettingsWithRules, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -1699,5 +1703,76 @@ describe('restart: the proxy of the worker', () => {
     expect(error.hint).toContain('factory restart alpha');
     expectNothingStopped(made);
     expect(made.deps.fetched).toHaveLength(1);
+  });
+});
+
+describe.each(['own', 'received'] as const)('restart in an %s root: the guard of the proxy', (origin) => {
+  it.each(guardStatesOf(guardIds.proxy))('stops nothing for a proxy that does not answer only while the guard counts as on, and else starts the worker with that proxy: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const made = await make({ origin, config: withGuardsOff(withProxy(), off), fetch: () => failure('no answer') });
+    if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+    const result = await restart(made, 'alpha');
+    expect(result.ok, result.ok ? undefined : result.error.message).toBe(!on);
+    expect(made.deps.fetched).toHaveLength(on ? 1 : 0);
+    expect(made.deps.terminated).toEqual(on ? [] : [PID.alpha]);
+    if (!on) expect(baseUrlsOf(made).alpha).toBe(PROXY_URL);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('reboot in %s: the guard of the proxy', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.proxy))('stops nothing and exits 1 for proxies that do not answer only while the guard counts as on, and else starts each worker with its own proxy: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const made = await make({ origin, config: withGuardsOff(withWorkerProxy(), off), fetch: () => failure('no answer') });
+    if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+    const sink = captureSink();
+    expect(await runCli(['reboot', '--home', HOME], made.deps, sink), sink.errors.join('')).toBe(on ? 1 : 0);
+    expect(made.deps.fetched.length > 0).toBe(on);
+    expect(countOf(made, 'new-session') > 0).toBe(!on);
+    if (on) expectNothingStopped(made);
+    else expect(baseUrlsOf(made)).toEqual({ alpha: PROXY_URL, beta: SECOND_PROXY_URL, gamma: PROXY_URL });
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('shutdown and restart in %s: the guard of the pane safety', (_title, origin) => {
+  const guarded = async (setup: GuardedSetup, change: Setup = {}): Promise<Made> => {
+    const off = setup.off ?? [];
+    const made = await make({ origin, config: withGuardsOff(sampleConfig(), off), ...change });
+    if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+    return made;
+  };
+  const shutdownCode = (made: Made): Promise<number> => runCli(['shutdown', '--home', HOME], made.deps, captureSink());
+
+  it.each(guardStatesOf(guardIds.paneSafety))('ends no session of the same name with another home, also with the guard off and a matching record: %s', async (_state, setup) => {
+    const made = await guarded(setup, { sessions: { [NODE]: OTHER_HOME } });
+    expect(await shutdownCode(made)).toBe(4);
+    expect(countOf(made, 'kill-session')).toBe(0);
+  });
+
+  it.each(guardStatesOf(guardIds.paneSafety))('stops the worker in the pane of the caller only while the guard counts as off: %s', async (_state, setup, on) => {
+    const made = await guarded(setup, { from: 'beta' });
+    expect(await shutdownCode(made)).toBe(on ? 2 : 0);
+    expect(made.deps.terminated.includes(PID.beta)).toBe(!on);
+  });
+
+  it.each(guardStatesOf(guardIds.paneSafety))('checks the case of each worker before the first stop only while the guard counts as on, and the stop of a worker in an unknown case still refuses: %s', async (_state, setup, on) => {
+    const made = await guarded(setup, { workers: { alpha: {}, beta: { event: null }, gamma: {} } });
+    expect(await shutdownCode(made)).toBe(3);
+    expect(made.deps.terminated).toEqual(on ? [] : [PID.alpha]);
+    expect(countOf(made, 'kill-session')).toBe(0);
+  });
+
+  it('refuses a pane that the launch did not make, also with the guard off and a matching record', async () => {
+    const made = await guarded({ off: [guardIds.paneSafety] }, { workers: { alpha: {}, beta: { pane: 'forged' } } });
+    expect(await shutdownCode(made)).toBe(4);
+    expectNothingStopped(made);
+  });
+
+  it('resumes no session that the pointer of another worker holds, also with the guard off and a matching record', async () => {
+    const made = await guarded({ off: [guardIds.paneSafety] });
+    made.deps.seed(workerPathsOf(HOME, 'beta').lastSessionFile, `${SESSION.alpha}\n`);
+    const error = await failed(restart(made, 'alpha'));
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain('the pointer of the worker beta names the same session');
+    expectNothingStopped(made);
   });
 });

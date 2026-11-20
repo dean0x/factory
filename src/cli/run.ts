@@ -1,7 +1,6 @@
 import { withGuards, type Deps } from '../core/deps.js';
-import { guardedHomeOf } from '../commands/state.js';
 import { guardSourceFor } from '../core/guard-source.js';
-import { allGuardsOn } from '../guards/effective.js';
+import { allGuardsOn, guardedHomeOf } from '../guards/effective.js';
 import type { GuardSource } from '../guards/types.js';
 import { hasFactoryHome, hookOutputOf, runHook } from '../hooks/hook.js';
 import { runStatusline } from '../hooks/statusline.js';

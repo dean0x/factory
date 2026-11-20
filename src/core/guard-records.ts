@@ -6,10 +6,12 @@ import { removedByDisplay } from '../cli/output.js';
 import { loadConfig } from '../config/load.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION } from '../config/schema.js';
-import { guardRulesOf, type GuardProxies, type GuardRecord, type GuardRules } from '../guards/effective.js';
+import { guardRulesOf, isSettable, type GuardProxies, type GuardRecord, type GuardRules } from '../guards/effective.js';
 import { guardsFor } from '../guards/registry.js';
 import type { GuardDefinition, GuardNeed, GuardValue, GuardValues } from '../guards/types.js';
-import { commandLines, commandText, env, files, guardRecords, guardRecordWords, guardSetWords, guardValues, privateFile, type CommandText } from '../names.js';
+import {
+  commandLines, commands, commandText, env, files, guardRecords, guardRecordWords, guardSetWords, guardValues, privateFile, type CommandText,
+} from '../names.js';
 import type { RecipeEntry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import { accessFaultCore } from './access.js';
@@ -104,7 +106,8 @@ export const readGuardStore = async (deps: Deps, path: string): Promise<Result<r
   return records.ok ? records : err(guardRecordWords.readFault(path, records.error));
 };
 
-export type GuardStoreChange = (records: readonly GuardRecord[]) => Result<readonly GuardRecord[], string>;
+type GuardStoreResult = Result<readonly GuardRecord[], string>;
+export type GuardStoreChange = (records: readonly GuardRecord[]) => GuardStoreResult | Promise<GuardStoreResult>;
 
 const changedText = (records: readonly GuardRecord[]): Result<string, string> => {
   if (records.length > guardRecords.maxRecords) return err(guardRecordWords.recordCap);
@@ -119,7 +122,7 @@ const writeLockedStore = async (
 ): Promise<Result<void, string>> => {
   const current = await readGuardStore(deps, path);
   if (!current.ok) return current;
-  const next = change(current.value);
+  const next = await change(current.value);
   if (!next.ok) return next;
   const text = changedText(next.value);
   if (!text.ok) return text;
@@ -226,6 +229,63 @@ export const recordGuards = async (
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
 };
 
+/** The records of the node whose root differs from the real root only in letter case. */
+const foldedRecordsOf = (records: readonly GuardRecord[], node: string, root: string): readonly GuardRecord[] => {
+  const key = recordKey(node, root);
+  const folded = resolve(root).toLowerCase();
+  return records.filter((record) =>
+    record.node === node && recordKey(record.node, record.root) !== key && resolve(record.root).toLowerCase() === folded);
+};
+
+/** The one record that a letter case rewrite may change: none when the store has the exact record, or more than one in other letter case. */
+const rewritableOf = (records: readonly GuardRecord[], node: string, root: string): GuardRecord | null => {
+  if (records.some((record) => recordKey(record.node, record.root) === recordKey(node, root))) return null;
+  const [only, ...more] = foldedRecordsOf(records, node, root);
+  return only !== undefined && more.length === 0 && only.root.toLowerCase() === root.toLowerCase() ? only : null;
+};
+
+/**
+ * True when the stored root is itself a folder, not a link, and its real path is the real root. A link at the stored root reaches
+ * the root by another name, so it differs from the root in more than letter case. The entry check does not follow the last link.
+ */
+const namesRootItself = async (deps: Deps, stored: string, root: string): Promise<boolean> => {
+  const entry = await deps.fs.lstatInfo(stored);
+  if (!entry.ok || entry.value?.kind !== 'dir') return false;
+  const real = await deps.fs.realpath(stored);
+  return real.ok && real.value === root;
+};
+
+/**
+ * Write the one record of the node whose root differs from the real root only in letter case again, with the exact real root. It
+ * writes only in the owner channel, only when the stored root is a folder and not a link, and its real path is the real root, so
+ * both name the same folder, and only through the checked store place, its lock and the one store writer. The values and the
+ * prefix of the record stay. The value is null when no record may change: none, more than one, a stored root that is a link or
+ * no folder, or a stored root whose real path is another folder or none.
+ */
+export const recordExactRoot = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<GuardRecordWrite | null>> => {
+  const channel = requireGuardChannel(deps, commands.upgrade);
+  if (!channel.ok) return channel;
+  if (!slug.safeParse(input.node).success) return usageError(guardRecordWords.invalidChange);
+  const place = await guardPlaceOf(deps, input.root);
+  if (!place.ok) return place;
+  if (place.value.path === null) return failure(guardRecordWords.noPlace);
+  const { root, path } = place.value;
+  const read = await readGuardStore(deps, path);
+  if (!read.ok) return failure(read.error);
+  const stored = rewritableOf(read.value, input.node, root);
+  if (stored === null || !(await namesRootItself(deps, stored.root, root))) return ok(null);
+  const written = await changeGuardStore(deps, path, async (records) => {
+    const again = rewritableOf(records, input.node, root);
+    if (again === null || again.root !== stored.root) return err(guardRecordWords.caseMismatch);
+    const current = await guardPlaceOf(deps, input.root);
+    if (!current.ok || current.value.root !== root || current.value.path !== path || !(await namesRootItself(deps, again.root, root))) {
+      return err(guardRecordWords.caseMismatch);
+    }
+    return ok(records.map((record) => (record === again ? { ...record, root } : record)));
+  });
+  return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
+};
+
 /** Hash the exact prefix text. Guard values and all other node records stay unchanged. */
 export const recordPrefix = async (
   deps: Deps, input: RecordPlaceInput & { readonly prefix: string },
@@ -270,7 +330,7 @@ export interface GuardConfig {
 
 /** True when the local file sets a wired guard off: only then can a record of the guard store change a value. */
 export const holdsLocalOff = (config: GuardConfig): boolean =>
-  guardsFor(config.entry).some((guard) => guard.wired && config.core.guards[guard.id] === guardValues.off);
+  guardsFor(config.entry).some((guard) => isSettable(guard) && config.core.guards[guard.id] === guardValues.off);
 
 /** True when the state holds what the store gave: its records or its fault. */
 export const readsStore = (state: GuardReadState): boolean => state.recordCount !== null || state.fault !== null;
@@ -323,12 +383,9 @@ export const readGuardState = async (deps: Deps, home: string, config: GuardConf
   const key = recordKey(node, root);
   const found = read.value.find((record) => recordKey(record.node, record.root) === key);
   const details = { recordCount: read.value.length };
-  if (found === undefined) {
-    // A match after a letter case fold can only stop the launch. It cannot supply a record.
-    const foldedRoot = resolve(root).toLowerCase();
-    if (read.value.some((record) => record.node === node && resolve(record.root).toLowerCase() === foldedRoot)) {
-      return stateOf(root, null, guardRecordWords.caseMismatch, { ...details, remedy: guardRecordWords.caseRemedy });
-    }
+  // A match after a letter case fold can only stop the launch. It cannot supply a record.
+  if (found === undefined && foldedRecordsOf(read.value, node, root).length > 0) {
+    return stateOf(root, null, guardRecordWords.caseMismatch, { ...details, remedy: guardRecordWords.caseRemedy });
   }
   return stateOf(root, found === undefined ? null : { ...found, root }, null, details);
 };

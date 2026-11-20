@@ -1,12 +1,12 @@
 import { exitCodeFor, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, renderError, tableLines, type CommandOutput, type OutLine } from '../cli/output.js';
 import { inspectSharedConfig, loadConfig, readNodeIdentity } from '../config/load.js';
-import type { SharedConfig } from '../config/schema.js';
+import { fixedGuardKeyWarnings, type SharedConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
-import type { GuardRules } from '../guards/effective.js';
+import { isSettable, type GuardRules } from '../guards/effective.js';
 import { guardRowsFor, guardsFor } from '../guards/registry.js';
 import type { Guard, GuardRow, GuardState, GuardValue } from '../guards/types.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
@@ -23,12 +23,22 @@ interface ListedGuard extends Omit<GuardState, 'value'> {
   readonly value: GuardValue | typeof guardListWords.unknown;
 }
 
-/** Registry facts and effective state share one row. A failed config load leaves the value unknown and names that fault as the source. */
+/** A fixed guard has the fixed word as its source in every case, also with a key in a file or a config that does not load. */
+const sourceOf = (guard: Guard, state: GuardRules | null): GuardState['source'] => {
+  if (guard.fixed) return 'fixed';
+  if (state === null) return 'notLoaded';
+  return state.sources[guard.id] ?? 'missing';
+};
+
+/**
+ * Registry facts and effective state share one row. A failed config load leaves the value unknown and names that fault as the
+ * source. A fixed guard is on in every case, because no value changes it.
+ */
 const listedGuard = (guard: Guard, state: GuardRules | null): ListedGuard => ({
   ...guard,
-  settable: guard.wired,
-  value: state === null ? guardListWords.unknown : state.values[guard.id] ?? guardValues.on,
-  source: state === null ? 'notLoaded' : state.sources[guard.id] ?? 'missing',
+  settable: isSettable(guard),
+  value: guard.fixed ? guardValues.on : state === null ? guardListWords.unknown : state.values[guard.id] ?? guardValues.on,
+  source: sourceOf(guard, state),
   since: state?.since[guard.id] ?? null,
 });
 
@@ -36,17 +46,24 @@ const text = (line: string): OutLine => ({ level: 'text', text: line });
 const fail = (line: string): OutLine => ({ level: 'fail', text: line });
 const cleanCells = (cells: readonly string[]): readonly string[] => cells.map((cell) => displayLine(cell));
 
+/** A fixed guard has no key, so its place is the fixed word. A guard that this version can not set has no place either. */
+const placeOf = (guard: ListedGuard): string => {
+  if (guard.fixed) return guardListWords.fixed;
+  return guard.settable ? guardListWords.sources[guard.source] : guardListWords.notSettable;
+};
+
 const guardCells = (guard: ListedGuard): readonly string[] => cleanCells([
   guard.id,
   guard.value,
   guard.newNode,
   guard.harm ? harmMark : '',
-  guard.settable ? guardListWords.sources[guard.source] : guardListWords.notSettable,
+  placeOf(guard),
 ]);
 
+/** The kind of a row that no value changes carries the fixed word, so the family view shows what stays with the guard off. */
 const rowCells = (row: GuardRow): readonly string[] => cleanCells([
   row.id,
-  row.kind,
+  row.alwaysOn ? `${guardListWords.fixed} ${row.kind}` : row.kind,
   row.harm ? harmMark : '',
   row.name,
 ]);
@@ -96,7 +113,7 @@ export const runGuardList = async (
   const off = guards.filter((guard) => guard.value === guardValues.off);
   const countLine = loaded.ok
     ? guardListWords.countLine(off.length, guards.length, off.filter((guard) => guard.harm).length)
-    : guardListWords.unknownCountLine(guards.length);
+    : guardListWords.unknownCountLine(guards.filter((guard) => !guard.fixed).length);
   const table = family === undefined
     ? [...guards].sort(orderOf).map(guardCells)
     : rows.filter((row) => row.guard === family).map(rowCells);
@@ -119,6 +136,7 @@ export const runGuardList = async (
       loosened: state?.loosened ?? [],
     },
     warnings: [
+      ...(loaded.ok ? fixedGuardKeyWarnings(loaded.value) : []),
       ...(state?.fault == null ? [] : [state.fault]),
       ...(!loaded.ok && loaded.error.hint !== undefined ? [loaded.error.hint] : []),
     ],

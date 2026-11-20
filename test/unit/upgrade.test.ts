@@ -13,7 +13,11 @@ import { CONFIG_SCHEMA_VERSION, mixConfigValue } from '../../src/config/schema.j
 import { isRecord } from '../../src/migrate/inspect.js';
 import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
-import { boardKeys, commands, env, guardIds, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
+import {
+  boardKeys, commands, commandText, env, files, guardConfigWords, guardIds, guardRecordWords, hookNames, roleText, setupBlockNames, stateGuard,
+  stateLock,
+} from '../../src/names.js';
+import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -52,7 +56,8 @@ import {
 import { captureSink } from '../helpers/sink.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
-import { readGuardState } from '../../src/core/guard-records.js';
+import { readGuardState, unprovedState } from '../../src/core/guard-records.js';
+import { userFileLockPath } from '../../src/core/private-file.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { loadConfig } from '../helpers/package-registry.js';
@@ -232,9 +237,9 @@ const stateAt = (target: number, migrations: readonly Migration[]): UpgradeFile 
 describe('upgrade: guard config finishers', () => {
   const localRaw = () => ({ schema: 1, ...localOf(sampleConfig()) });
 
-  it('keeps all guard values through both config finishers', () => {
+  it('keeps the value of every guard with a key through both config finishers', () => {
     const sample = sampleConfig();
-    const ids = guardsFor(sample.entry).map((guard) => guard.id);
+    const ids = guardsFor(sample.entry).filter((guard) => !guard.fixed).map((guard) => guard.id);
     const raw = {
       schema: 2,
       ...sample.core,
@@ -537,6 +542,125 @@ describe('upgrade: effective guard values', () => {
     ]);
     expect(parseYamlText(text(deps, LOCAL))).toMatchObject({ ok: true, value: { guards: { 'install-rules': 'off' } } });
     expect(text(deps, LOCAL)).not.toContain('retired-fixture-guard');
+  });
+
+  describe('a key of a fixed guard that the owner wrote by hand', () => {
+    const id = guardIds.cloneRules;
+    const note = '# a note of the owner    # with four spaces';
+    const cases = [
+      ['the local file', LOCAL, `guards: {${id}: off, install-rules: off}`, 'guards: { install-rules: off }',
+        guardConfigWords.droppedFixed(files.localConfig, [`guards.${id}`])],
+      ['the shared file', CONFIG, `shared_guards: {${id}: on, install-rules: on}`, 'shared_guards: { install-rules: on }',
+        guardConfigWords.droppedFixed(files.config, [`shared_guards.${id}`])],
+    ] as const;
+
+    it.each(cases)('removes the key from %s with one notice, changes only the line of the key, and leaves nothing to upgrade', async (_name, path, line, kept, notice) => {
+      const { deps } = await makeNode();
+      const before = `${text(deps, path)}\n${note}\n`;
+      deps.seed(path, `${before}${line}\n`);
+      const output = success(await upgrade(deps));
+      expect(lineTexts(output).filter((entry) => entry === notice)).toHaveLength(1);
+      expect(notice).toBe(path === LOCAL
+        ? `factory.local.yaml: remove guards.${id}, because a fixed guard has no setting.`
+        : `factory.yaml: remove shared_guards.${id}, because a fixed guard has no setting.`);
+      // Every other line, with the comment that the owner wrote by hand, stays byte for byte.
+      expect(text(deps, path)).toBe(`${before}${kept}\n`);
+      expect(lineTexts(success(await upgrade(deps)))).toContain('Nothing to upgrade.');
+    });
+
+    it.each(cases)('names the removal from %s in a dry run and changes no file', async (_name, path, line, _kept, notice) => {
+      const { deps } = await makeNode();
+      deps.seed(path, `${text(deps, path)}\n${line}\n`);
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(lineTexts(output)).toEqual(expect.arrayContaining([notice, 'Dry run: no file was changed.']));
+      expect(snapshot(deps)).toEqual(before);
+    });
+  });
+
+  describe('a guard record whose root differs from the factory folder only in letter case', () => {
+    const FOLDED = '/w/Node';
+    const TERMINAL = { stdinIsTTY: true, stdoutIsTTY: true } as const;
+    /** A volume that ignores letter case: the real path and the entry of the factory folder in any letter case are those of the folder. */
+    const caseBlind = (deps: FakeDeps): Deps => {
+      const exact = (path: string): string => (path.toLowerCase() === HOME ? HOME : path);
+      return { ...deps, fs: { ...deps.fs,
+        realpath: async (path) => deps.fs.realpath(exact(path)),
+        lstatInfo: async (path) => deps.fs.lstatInfo(exact(path)),
+      } };
+    };
+    /** A node whose local file sets install rules off, with the record of that value under the root in other letter case. */
+    const foldedNode = async (): Promise<FakeDeps> => {
+      const { deps } = await makeNode();
+      seedGuards(deps, { 'install-rules': 'off' });
+      deps.seed(STORE, guardStoreText('demo', FOLDED, ['install-rules'], deps.now()));
+      return deps;
+    };
+    const runOf = async (argv: readonly string[], deps: Deps) => {
+      const sink = captureSink();
+      const code = await runCli([...argv], deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+
+    it('writes the record again with the exact root in the owner channel, and its off value counts after that', async () => {
+      const deps = await foldedNode();
+      const result = await runOf(['upgrade', '--home', HOME], { ...caseBlind(deps), ...TERMINAL });
+      expect(result.code, result.err).toBe(0);
+      expect(result.out).toContain(guardRecordWords.caseRewritten);
+      expect(JSON.parse(text(deps, STORE))).toMatchObject({ records: [{ node: 'demo', root: HOME, values: { 'install-rules': { value: 'off' } } }] });
+      const config = await loadConfig(deps, HOME);
+      if (!config.ok) throw new Error(config.error.message);
+      expect((await readGuardState(deps, HOME, config.value, 'always')).values['install-rules']).toBe('off');
+    });
+
+    it.each([
+      ['inside a factory session', [], (deps: Deps): Deps => ({ ...deps, ...TERMINAL, env: { ...deps.env, [env.session]: 'demo' } })],
+      ['inside a Claude Code session', [], (deps: Deps): Deps => ({ ...deps, ...TERMINAL, env: { ...deps.env, [env.claudeCode]: '1' } })],
+      ['with no terminal', [], (deps: Deps): Deps => deps],
+      ['in a dry run', ['--dry-run'], (deps: Deps): Deps => ({ ...deps, ...TERMINAL })],
+    ])('writes no record %s, and keeps the letter case stop with its remedy', async (_name, flags, channel) => {
+      const deps = await foldedNode();
+      const store = text(deps, STORE);
+      const result = await runOf(['upgrade', '--home', HOME, ...flags], channel(caseBlind(deps)));
+      expect(result.code).toBe(4);
+      expect(result.err).toContain(guardRecordWords.caseMismatch);
+      expect(result.err).toContain(guardRecordWords.caseRemedy);
+      expect(guardRecordWords.caseRemedy).toContain(commandText(commands.upgrade));
+      expect(text(deps, STORE)).toBe(store);
+    });
+
+    it('names the cause when the record cannot be written again, and keeps the letter case stop with its remedy', async () => {
+      const deps = await foldedNode();
+      deps.seed(userFileLockPath(STORE), 'other-holder\n');
+      const store = text(deps, STORE);
+      const result = await runOf(['upgrade', '--home', HOME], { ...caseBlind(deps), ...TERMINAL });
+      expect(result.code).toBe(4);
+      expect(result.err).toContain(guardRecordWords.caseMismatch);
+      expect(result.err).toContain(guardRecordWords.lockBusy);
+      expect(result.err).toContain(guardRecordWords.caseRemedy);
+      expect(text(deps, STORE)).toBe(store);
+    });
+
+    it('keeps the record and the stop when the command cannot prove the local values', async () => {
+      const deps = await foldedNode();
+      const store = text(deps, STORE);
+      const guarded = { ...caseBlind(deps), ...TERMINAL, guards: { read: async () => ({
+        home: HOME, values: {}, state: unprovedState(guardRecordWords.unproved),
+      }) } };
+      const error = refusal(await runUpgrade(guarded, { home: HOME, dryRun: false, overwrite: [], yes: true }, currentSpec));
+      expect(error.message).toBe(guardRecordWords.caseMismatch);
+      expect(text(deps, STORE)).toBe(store);
+    });
+
+    it('writes no record when the real path of the stored root is another folder, and keeps the letter case stop', async () => {
+      const deps = await foldedNode();
+      deps.seedDir(FOLDED);
+      const store = text(deps, STORE);
+      const result = await runOf(['upgrade', '--home', HOME], { ...deps, ...TERMINAL });
+      expect(result.code).toBe(4);
+      expect(result.err).toContain(guardRecordWords.caseMismatch);
+      expect(text(deps, STORE)).toBe(store);
+    });
   });
 });
 
@@ -1820,6 +1944,22 @@ describe('upgrade: managed blocks', () => {
     const { deps } = await makeNode();
     editSafety(deps);
     expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).kind).toBe('safety');
+  });
+
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.safetyBlock))('stops for an edited safety block only while the safety block guard counts as on, and else keeps the block: %s', async (_state, setup, on) => {
+      const { deps } = await makeNode();
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      editSafety(deps);
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+      expect(sink.errors.join('').includes('block safety was edited. factory did not change it.')).toBe(on);
+      expect(sink.errors.join('').includes('block safety was edited, so factory keeps it.')).toBe(!on);
+      expect(text(deps, CLAUDE)).toContain('Edited safety line.');
+    });
   });
 
   it('keeps an edited role block with a warning that names the overwrite flag, and goes on', async () => {
@@ -4224,6 +4364,25 @@ describe('upgrade: the link rule', () => {
     expect(error.message).toContain('is a link');
   });
 
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.fileLinkSafety).flatMap(([state, setup]) => [
+      ['the backup folder', state, setup, `${HOME}/.factory/backups`, '.factory/backups'],
+      ['the .gitignore of the state repo', state, setup, `${HOME}/.factory/.gitignore`, '.factory/.gitignore'],
+    ] as const))('stops with exit 4 for a link at %s with every value of the file and link guard, here %s, because a later write check refuses the same link', async (_name, _state, setup, path, shown) => {
+      const links: Record<string, string> = {};
+      const { deps } = await makeNode({ links });
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      links[path] = '/outside/target';
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME], deps, sink)).toBe(4);
+      expect(sink.errors.join('')).toContain(`${shown} is a link, so factory does not use it`);
+      expect([...deps.files.keys()].some((file) => file.includes('/backups/'))).toBe(false);
+    });
+  });
+
   it('does not move a CLAUDE.md that is a link from the top of a root of schema 1', async () => {
     const links: Record<string, string> = {};
     const { handler } = gitHandler();
@@ -4656,6 +4815,34 @@ describe('upgrade: the setup text needs the owner', () => {
       success(await upgrade(asking(tracking(deps, TRACKED), 'y')));
       expect(deps.prompts[0]).toContain(`Changed files:\n  ${FILE}`);
       expect(hashesOf(deps)[0]).not.toBe(before);
+    });
+
+    it.each(guardStatesOf(guardIds.folderTrust))('in a received folder, stops when the root is not the top of a git work tree only while folder trust counts as on: %s', async (_state, setup, on) => {
+      const { deps } = await receivedNode();
+      const off = setup.off ?? [];
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      const noWorkTree: FakeDeps = {
+        ...deps,
+        run: async (command, args, options) =>
+          args[0] === '-C' && args[1] === HOME && args[2] === 'rev-parse' ? exited(128, '', 'fatal: not a git repository\n') : deps.run(command, args, options),
+      };
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME], noWorkTree, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+      expect(sink.errors.join('').includes('not the top folder of a git work tree')).toBe(on);
+    });
+
+    it('keeps the stop for a failed git read when folder trust is off', async () => {
+      const { deps } = await receivedNode();
+      deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: {${guardIds.folderTrust}: off}\n`);
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, [guardIds.folderTrust], deps.now()));
+      const sink = captureSink();
+      const code = await runCli(['upgrade', '--home', HOME], { ...deps,
+        run: (command, args, options) => args[1] === HOME && args.includes('--is-inside-work-tree')
+          ? Promise.resolve(exited(128, '', 'read failed')) : deps.run(command, args, options),
+      }, sink);
+      expect(code).toBe(4);
+      expect(sink.errors.join('')).toContain('cannot list the files');
     });
 
     it('stops with the same remedy when git can not list the files of a root from another machine', async () => {

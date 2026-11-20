@@ -2453,6 +2453,11 @@ export const guardConfigWords = {
   localComment: 'The local value of this guard.',
   sharedComment: 'This guard stays on on every machine.',
   droppedRetired: (ids: readonly string[]): string => `Removed retired guard ids: ${ids.join(', ')}.`,
+  /** The warning for a key of a fixed guard: the load keeps the key and ignores its value. */
+  fixedKey: (file: string, key: string, id: string): string =>
+    `${file}: ${key}.${id}: ${id} is a fixed guard with no setting, so ${program} ignores the value. Run "${commandText(commands.upgrade)}" to remove the key.`,
+  /** The upgrade line for the keys of fixed guards that the rewrite of one file removes. */
+  droppedFixed: (file: string, paths: readonly string[]): string => `${file}: remove ${paths.join(', ')}, because a fixed guard has no setting.`,
 } as const;
 
 /** The guard store has its own schema, keys and bounds, apart from approval records. */
@@ -2525,7 +2530,11 @@ export const guardRecordWords = {
   placeRemedy: `Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,
   duplicate: 'The guard store holds two records for one node and factory folder.',
   caseMismatch: 'The guard record does not name the factory folder in its exact letter case.',
-  caseRemedy: `Run "${commandText(commandLines.guardConfirm)}" to record the prefix again. Run "${commandText(commandLines.guardSet)}" to record the guard values again.`,
+  caseRemedy:
+    `Run "${commandText(commands.upgrade)}" in your terminal window, outside a session, to write the record again with the exact letter case. ` +
+    `To record the prefix and the guard values again instead, run "${commandText(commandLines.guardConfirm)}" and "${commandText(commandLines.guardSet)}".`,
+  caseRewritten: 'Wrote the guard record again with the exact letter case of the factory folder.',
+  caseNotRewritten: (cause: string): string => `The record was not written again: ${cause}`,
   recordCap: `The guard store cannot exceed ${guardRecords.maxRecords} records. Run "${commandText(commands.doctor)}".`,
   byteCap: `The guard store cannot exceed ${guardRecords.maxBytes} bytes. Run "${commandText(commands.doctor)}".`,
   badPrefix: `The ${keys.root.owner}.${keys.owner.prefix} text must not contain a hidden character.`,
@@ -2571,8 +2580,12 @@ export const guardDoctorWords = {
   atCap: 'The guard store is at its record cap.',
   /** The warning for an off value of a guard that this version cannot set. */
   unsettableOff: (id: string): string => `${id} is ${guardListWords.notSettable}; its value stays on`,
+  /** The proxy check with the proxy guard off: a launch sends no health request and always uses the named proxy. */
+  proxyOff: `The guard ${guardIds.proxy} is off, so sessions start with this proxy and no health check.`,
   /** The line of a check that did not run, because its guard is off. */
   notChecked: (id: string): string => `not checked: the guard ${id} is off`,
+  /** The line of a check that did not run, because each of its guards is off. */
+  notCheckedBy: (ids: readonly string[]): string => `not checked: the guards ${ids.join(' and ')} are off`,
   /** The line of a check of which only a part ran, because its guard is off. */
   partlyChecked: (done: string, skipped: string, id: string): string => `${done}; ${skipped} ${guardDoctorWords.notChecked(id)}`,
 } as const;
@@ -2590,9 +2603,13 @@ export const harmMark = 'H';
 /** The default list leaves room for its heading, more line and count line. */
 export const maxGuardListLines = 17;
 
+/** The word for a guard or row that no value changes. It is also the source of a fixed guard in the JSON of `guard list`. */
+const fixedGuardWord = 'fixed';
+
 /**
  * The words of `guard list`: the titles of the columns, the value of a guard that the list can not read, the words of the
- * place of a value, the line that tells how many lines the view leaves out, and the line that counts the guards that are off.
+ * place of a value, the word for a guard or row that no value changes, the line that tells how many lines the view leaves out,
+ * and the line that counts the guards that are off.
  */
 export const guardListWords = {
   summary: 'Show the guards and what each one keeps safe.',
@@ -2605,7 +2622,9 @@ export const guardListWords = {
   familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
   unknown: 'unknown',
   notSettable: 'not settable in this version',
+  fixed: fixedGuardWord,
   sources: {
+    fixed: fixedGuardWord,
     missing: 'no key',
     shared: files.config,
     local: `${files.localConfig} and record`,

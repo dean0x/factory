@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { commandText, commands, dirs, env, instructionFiles, places } from '../names.js';
+import { guardOn } from '../guards/effective.js';
+import { commandText, commands, dirs, env, guardIds, instructionFiles, places } from '../names.js';
 import type { Deps } from './deps.js';
 import { comparable, isSameOrInside, realPathOf } from './paths.js';
 
@@ -140,7 +141,11 @@ export const instructionFileWarnings = (scan: InstructionFileScan): readonly str
     : []),
 ];
 
-/** Print the warning at once, before the command acts. It prints nothing for a clean scan, and it never stops the command. */
+/**
+ * Print the warning at once, before the command acts. It prints nothing for a clean scan or while folder trust is off, and it never
+ * stops the command.
+ */
 export const warnInstructionFiles = async (deps: Deps, root: string): Promise<void> => {
+  if (!(await guardOn(deps, guardIds.folderTrust, root))) return;
   for (const line of instructionFileWarnings(await scanInstructionFiles(deps, root))) deps.warn(line);
 };

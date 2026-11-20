@@ -16,7 +16,7 @@ import { probeChildren } from '../comms/children.js';
 import { fileTransport } from '../comms/transport.js';
 import { inspectConfig, localFileAccess, readNodeIdentity, wideModeNote } from '../config/load.js';
 import { folderKey } from '../config/primitives.js';
-import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
+import { CONFIG_SCHEMA_VERSION, fixedGuardKeyWarnings, type FactoryConfig } from '../config/schema.js';
 import { withGuards, type Deps } from '../core/deps.js';
 import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { guardStorePathOf, type GuardReadState } from '../core/guard-records.js';
@@ -38,7 +38,7 @@ import {
   tmuxVersionOf,
   toolNames,
 } from '../core/tools.js';
-import { allGuardsOn, allOn, guardOn } from '../guards/effective.js';
+import { allGuardsOn, allOn, guardOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
@@ -465,16 +465,20 @@ const describeBlockProblem = (status: BlockStatus, recorded: ReadonlySet<string>
 };
 
 /**
- * A safety block that is edited, missing or malformed fails the check. Any other block problem is a warning.
- * `recorded` holds the names that the node state records. With null, every block counts as recorded.
+ * A safety block that is edited, missing or malformed fails the check while the guard of the safety block is on. Any other block
+ * problem is a warning. `recorded` holds the names that the node state records. With null, every block counts as recorded.
  */
-export const checkBlocks = (statuses: readonly BlockStatus[], recorded: ReadonlySet<string> | null = null): CheckResult => {
+export const checkBlocks = (
+  statuses: readonly BlockStatus[],
+  recorded: ReadonlySet<string> | null = null,
+  guards: GuardValues = allOn,
+): CheckResult => {
   const problems = statuses.flatMap((status) => describeBlockProblem(status, recorded));
   return problems.length === 0
     ? check(checkIds.blocks, 'ok', `${statuses.length} managed blocks are intact`)
     : check(
         checkIds.blocks,
-        statuses.some(isSafetyStop) ? 'fail' : 'warn',
+        statuses.some(isSafetyStop) && isGuardOn(guards, guardIds.safetyBlock) ? 'fail' : 'warn',
         `${problems.map((problem) => problem.text).join('; ')}. ${[...new Set(problems.map((problem) => problem.remedy))].join(' ')}`,
       );
 };
@@ -489,10 +493,12 @@ export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
     : check(checkIds.roles, 'ok', `layer ${layer} has the ${role} role template`);
 };
 
-export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
+/** A config value that looks like a token fails the check. With the guard of secrets off, the check does not run. */
+export const checkSecrets = (state: DocState<FactoryConfig>, guards: GuardValues = allOn): CheckResult => {
   if (state.kind === 'missing' || state.kind === 'unparsable' || state.kind === 'unsafe') {
     return notChecked(checkIds.secrets, `${fileOf(state)} does not parse`);
   }
+  if (!isGuardOn(guards, guardIds.secrets)) return check(checkIds.secrets, 'ok', guardDoctorWords.notChecked(guardIds.secrets));
   const where = `${files.config} or ${files.localConfig}`;
   const paths = findTokenPaths(state.raw);
   return paths.length === 0
@@ -506,9 +512,13 @@ export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
 
 /**
  * An instruction file of an agent in the root or in a folder above it reaches every session of the factory. It is a
- * warning only, never a failure: the file is the choice of the person who owns that folder.
+ * warning only, never a failure: the file is the choice of the person who owns that folder. While folder trust is off, the check
+ * does not run.
  */
 export const checkInstructionFiles = async (deps: Deps, home: string): Promise<CheckResult> => {
+  if (!(await guardOn(deps, guardIds.folderTrust, home))) {
+    return check(checkIds.instructionFiles, 'ok', guardDoctorWords.notChecked(guardIds.folderTrust));
+  }
   const lines = instructionFileWarnings(await scanInstructionFiles(deps, home));
   return lines.length === 0
     ? check(checkIds.instructionFiles, 'ok', `no agent instruction file is in the ${places.folder} or above it`)
@@ -521,7 +531,8 @@ const failedFrom = (id: string, error: CliError): CheckResult =>
 
 /**
  * The blocks come from the config of the node and from the setup texts, so a config that is not valid gives no block
- * list. A link in the paths that the check reads fails the check, and nothing is read through it.
+ * list. A link in the paths that the check reads fails the check, and nothing is read through it. While the guard of file and
+ * link safety is off, a link there does not fail the check; the setup texts keep their own link check.
  */
 export const checkNodeBlocks = async (
   deps: Deps,
@@ -531,7 +542,7 @@ export const checkNodeBlocks = async (
 ): Promise<CheckResult> => {
   if (state.kind !== 'valid') return notChecked(checkIds.blocks, `${files.config} is not valid`);
   const layout = layoutOf(home);
-  const plain = await requireNoRootLinks(deps, layout);
+  const plain = await requireNoRootLinks(deps, layout, { allowLinks: !isGuardOn(guards ?? allOn, guardIds.fileLinkSafety) });
   if (!plain.ok) return failedFrom(checkIds.blocks, plain.error);
   const setup = await readSetupTexts(deps, layout, commands.doctor);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
@@ -540,7 +551,7 @@ export const checkNodeBlocks = async (
   // A node state that is not valid gives no record, and every block then counts as recorded.
   const nodeState = await inspectState(deps, home);
   const recorded = nodeState.kind === 'valid' ? recordedBlockNames(nodeState.raw, pending.renames) : null;
-  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending), recorded);
+  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending), recorded, guards ?? allOn);
 };
 
 /** A rendered file, the setup file that its text comes from, and the names of both for the output. */
@@ -588,10 +599,10 @@ const strayLinesOf = async (deps: Deps, home: string, pair: RenderedPair): Promi
 /**
  * Only the setup folder travels. A line that a person wrote in `coordinator/CLAUDE.md` or in the worker file, outside the
  * managed blocks, stays on this machine, unless the setup file holds it too. This is a warning. It names the count and
- * the file, never the text.
+ * the file, never the text. While the guard of file and link safety is off, a link in the paths of the folder does not fail it.
  */
 export const checkSetupText = async (deps: Deps, home: string): Promise<CheckResult> => {
-  const plain = await requireNoRootLinks(deps, layoutOf(home));
+  const plain = await requireNoRootLinks(deps, layoutOf(home), { allowLinks: !(await guardOn(deps, guardIds.fileLinkSafety, home)) });
   if (!plain.ok) return failedFrom(checkIds.setupText, plain.error);
   const problems: string[] = [];
   const targets: string[] = [];
@@ -692,9 +703,15 @@ const REMOTE_PROXY_FIX = `Use only a proxy that you control, or set ${keys.sessi
 /**
  * One health request for each proxy in use. The home passed the registration check of the lookup, so its config
  * counts as chosen by the user, whatever way the lookup found it. A proxy in use whose host is not loopback is a
- * warning at least: a proxy that answers is never ok then, and a proxy that is down keeps its level.
+ * warning at least: a proxy that answers is never ok then, and a proxy that is down keeps its level. While the proxy
+ * guard is off, a launch sends no health request and uses the named proxy for each `on_fail` value, so a proxy that is
+ * down is a warning that says so.
  */
-export const checkProxies = async (deps: Deps, state: DocState<FactoryConfig>): Promise<readonly CheckResult[]> => {
+export const checkProxies = async (
+  deps: Deps,
+  state: DocState<FactoryConfig>,
+  guards: GuardValues = allOn,
+): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
   const { core } = state.value;
   const inUse = new Set([core.session.proxy, ...Object.values(core.workers).map((worker) => worker.proxy)]);
@@ -712,13 +729,15 @@ export const checkProxies = async (deps: Deps, state: DocState<FactoryConfig>): 
           ? check(id, 'warn', `${health.label} answers. ${REMOTE_PROXY_HOST} ${REMOTE_PROXY_FIX}`)
           : check(id, 'ok', `${health.label} answers`);
       }
+      // The fix of a proxy that is down already names proxy none, so the host note adds no second fix.
+      const fix = `Start the proxy, or set ${keys.session.proxy} to ${values.noProxy} for the session.`;
+      const hostNote = remote ? ` ${REMOTE_PROXY_HOST}` : '';
+      if (!isGuardOn(guards, guardIds.proxy)) return check(id, 'warn', `${health.label} does not answer. ${guardDoctorWords.proxyOff} ${fix}${hostNote}`);
       if (proxy.on_fail === values.onFail[1]) {
         const note = remote ? ` ${REMOTE_PROXY_HOST} ${REMOTE_PROXY_FIX}` : '';
         return check(id, 'warn', `${health.label} does not answer. ${keys.proxy.onFail} is ${proxy.on_fail}: sessions start without it.${note}`);
       }
-      // The fix of a proxy that is down already names proxy none, so the host note adds no second fix.
-      const fix = `Start the proxy, or set ${keys.session.proxy} to ${values.noProxy} for the session.`;
-      return check(id, 'fail', `${health.label} does not answer. ${fix}${remote ? ` ${REMOTE_PROXY_HOST}` : ''}`);
+      return check(id, 'fail', `${health.label} does not answer. ${fix}${hostNote}`);
     }),
   );
 };
@@ -918,8 +937,9 @@ const checkGuards = async (
   if (isRecord(config.raw) && !Object.hasOwn(config.raw, guardKeys.local)) parts.push(guardDoctorWords.noKey);
   for (const guard of state.unmatched) warnings.push(`${guardStartWords.unmatched(guard)}: run "${commandText(commandLines.guardSet)} ${guard} on"`);
   for (const guard of definitions) {
-    if (!guard.wired && config.value.core.guards[guard.id] === 'off') warnings.push(guardDoctorWords.unsettableOff(guard.id));
+    if (!guard.wired && !guard.fixed && config.value.core.guards[guard.id] === 'off') warnings.push(guardDoctorWords.unsettableOff(guard.id));
   }
+  warnings.push(...fixedGuardKeyWarnings(config.value));
   const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
   if (state.recordCount !== null) {
     parts.push(guardDoctorWords.recordCount(state.recordCount));
@@ -1011,7 +1031,7 @@ const runChecks = async (base: Deps, home: string, registry: RecipeRegistry): Pr
     checkIdleCompaction(deps, home, config),
     checkChildren(deps, home, config, registry),
     checkInstructionFiles(deps, home),
-    hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config),
+    hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config, guards?.values),
     checkTools(deps),
     checkAgentVersion(deps, config),
     checkStateRepo(deps, home),
@@ -1038,7 +1058,7 @@ const runChecks = async (base: Deps, home: string, registry: RecipeRegistry): Pr
     checkTracker(config),
     idleCompaction,
     children,
-    checkSecrets(config),
+    checkSecrets(config, guards?.values),
     ...rootCheckResults(rootScan),
     instructionFileCheck,
     checkProxyEnv(deps),

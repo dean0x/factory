@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { durationMinutes, isSlug, slugify } from '../../src/config/primitives.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
-import { CONFIG_SCHEMA_VERSION, localConfigSchema, localOf, mergeConfig, mixConfigValue, sharedOf, splitConfigValue } from '../../src/config/schema.js';
+import {
+  CONFIG_SCHEMA_VERSION, fixedGuardKeyWarnings, localConfigSchema, localOf, mergeConfig, mixConfigValue, sharedOf, splitConfigValue,
+} from '../../src/config/schema.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import { describeIssues } from '../../src/core/zod.js';
-import { boardKeys, boardLimits, files, reservedFieldNames, values } from '../../src/names.js';
+import { boardKeys, boardLimits, files, guardConfigWords, guardIds, reservedFieldNames, values } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { parseProxyUrl } from '../../src/safety/proxy.js';
 import { parseConfig, sharedConfigSchema } from '../helpers/package-registry.js';
@@ -36,7 +38,7 @@ const hosted = (raw: Raw, extra: Raw = {}): void => {
 
 describe('guard config values', () => {
   const guards = guardsFor(recipes[0]);
-  const known = guards.map((guard) => guard.id);
+  const known = guards.filter((guard) => !guard.fixed).map((guard) => guard.id);
 
   it('loads files with no guard keys as empty maps', () => {
     const { shared, local } = sampleFiles();
@@ -48,7 +50,24 @@ describe('guard config values', () => {
     expect(guards.every((guard) => guard.whenMissing === 'on')).toBe(true);
   });
 
-  it.each(['on', 'off'] as const)('accepts local %s for every known guard, also when it is not wired', (value) => {
+  it.each([guardIds.cloneRules, guardIds.hookRuntime, guardIds.launchCommands])('loads a local and a shared key of the fixed guard %s and gives one warning for each key', (id) => {
+    const { shared, local } = sampleFiles();
+    for (const [parsed, file, key] of [
+      [parseConfig(shared, { ...local, guards: { [id]: 'on' } }), files.localConfig, 'guards'],
+      [parseConfig(shared, { ...local, guards: { [id]: 'off' } }), files.localConfig, 'guards'],
+      [parseConfig({ ...shared, shared_guards: { [id]: 'on' } }, local), files.config, 'shared_guards'],
+    ] as const) {
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      expect(fixedGuardKeyWarnings(parsed.data)).toEqual([guardConfigWords.fixedKey(file, key, id)]);
+    }
+    expect(guardConfigWords.fixedKey(files.localConfig, 'guards', id)).toBe(
+      `factory.local.yaml: guards.${id}: ${id} is a fixed guard with no setting, so factory ignores the value. Run "factory upgrade" to remove the key.`,
+    );
+    expect(fixedGuardKeyWarnings(parsedOf(sampleObject()))).toEqual([]);
+  });
+
+  it.each(['on', 'off'] as const)('accepts local %s for every guard that is not fixed, also when it is not wired', (value) => {
     const { shared, local } = sampleFiles();
     const values = Object.fromEntries(known.map((id) => [id, value]));
     const parsed = parseConfig(shared, { ...local, guards: values });
@@ -56,7 +75,7 @@ describe('guard config values', () => {
     expect(guards.some((guard) => !guard.wired)).toBe(true);
   });
 
-  it('accepts shared on for every known guard', () => {
+  it('accepts shared on for every guard that is not fixed', () => {
     const values = Object.fromEntries(known.map((id) => [id, 'on']));
     const parsed = sharedConfigSchema.safeParse({ ...sampleFiles().shared, shared_guards: values });
     expect(parsed.success && parsed.data.core.shared_guards).toEqual(values);

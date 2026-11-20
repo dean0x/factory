@@ -54,15 +54,22 @@ export interface RowFacts {
   readonly sites: readonly RowSite[];
 }
 
-/** A row with its kind: `code` for a check in code, `text` for a rule in the role text. */
+/**
+ * A row with its kind: `code` for a check in code, `text` for a rule in the role text. `alwaysOn` is true for a row that no guard
+ * value changes: a check that always runs (it checks the form of data, writes safely, runs in the config parse or the home
+ * location, or runs only for a folder that is not a node yet), or a text that always stays because its check always runs. Its
+ * sites read no value of its guard.
+ */
 export interface GuardRow extends RowFacts {
   readonly kind: GuardKind;
+  readonly alwaysOn: boolean;
 }
 
 /**
  * A guard as the registry data states it. The harm mark, the kinds, the key and the row ids come from the rows and from the id,
  * so the list never states a fact twice.
- * - `wired` is true only when all sites of the guard can follow its value.
+ * - `wired` is true only when all sites of the guard can follow its value. A fixed guard is never wired.
+ * - `fixed` is true for a guard with no key: every row of it is always on, so no setting changes it.
  * - `newNode` is the value that `init` writes for a new node.
  * - `whenMissing` is the value of a node whose file has no key for the guard.
  * - `related` lists the existing config keys that belong to the guard.
@@ -72,16 +79,20 @@ export interface GuardDefinition {
   readonly name: string;
   readonly keepsSafe: string;
   readonly wired: boolean;
+  readonly fixed: boolean;
   readonly newNode: GuardValue;
   readonly whenMissing: GuardValue;
   readonly related: readonly string[];
 }
 
-/** A guard with the facts that its rows give: the harm mark, the kinds, the key and the ids of its rows. */
+/**
+ * A guard with the facts that its rows give: the harm mark, the kinds, the key and the ids of its rows. The harm mark comes only
+ * from the rows that the value changes. A fixed guard has no key and no harm mark, because it is never off.
+ */
 export interface Guard extends GuardDefinition {
   readonly harm: boolean;
   readonly kinds: readonly GuardKind[];
-  readonly key: string;
+  readonly key: string | null;
   readonly rows: readonly string[];
 }
 

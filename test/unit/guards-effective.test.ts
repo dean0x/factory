@@ -1,11 +1,12 @@
-import { allOn, guardOn, guardRulesOf, guardSourceOf } from '../../src/guards/effective.js';
+import { allOn, guardOn, guardRulesOf, guardSourceOf, isGuardOn } from '../../src/guards/effective.js';
 import { describe, expect, it } from 'vitest';
 import { withGuards, type Deps } from '../../src/core/deps.js';
 import { readGuardState } from '../../src/core/guard-records.js';
 import { guardReadOf, guardSourceFor } from '../../src/core/guard-source.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import type { Guard, GuardSource } from '../../src/guards/types.js';
-import { commands, guardIds, guardRecordWords, guardValues } from '../../src/names.js';
+import { loadConfig } from '../../src/config/load.js';
+import { commands, guardIds, guardRecordWords, guardValues, reservedFieldNames } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { softwareRecipe } from '../helpers/blocks.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
@@ -13,9 +14,9 @@ import {
   GUARD_STORE, GUARDED_HOME, guardedNode, OFF_GUARD, OTHER_HOME, OTHER_NODE_ID, PRE_READ_FAULTS, withFirstConfigReadFault, withGuardsOff,
 } from '../helpers/guarded-node.js';
 import { countReadsOf } from '../helpers/read-count.js';
-import { sampleConfig } from '../helpers/sample-config.js';
+import { sampleBoard, sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 
-const guards = guardsFor(softwareRecipe).map((guard): Guard => ({ ...guard, wired: true }));
+const guards = guardsFor(softwareRecipe).map((guard): Guard => ({ ...guard, wired: true, fixed: false }));
 const node = 'demo';
 const root = '/work/demo';
 const at = '2026-11-17T00:00:00.000Z';
@@ -63,6 +64,16 @@ describe('effective guard values', () => {
   it('keeps unwired guards on even with an off record', () => {
     expect(guardRulesOf(guards.map((guard) => ({ ...guard, wired: false })), { node, root, local, record })).toMatchObject({
       values: Object.fromEntries(guards.map(({ id }) => [id, 'on'])), unmatched: [], loosened: [],
+    });
+  });
+
+  it('keeps a fixed guard on by its fixed mark, also when it is marked wired and has an off value with a matching record', () => {
+    const fixed = guards.map((guard): Guard => ({ ...guard, fixed: true }));
+    expect(guardRulesOf(fixed, { node, root, local, record })).toMatchObject({
+      values: Object.fromEntries(guards.map(({ id }) => [id, 'on'])),
+      sources: Object.fromEntries(guards.map(({ id }) => [id, 'missing'])),
+      unmatched: [],
+      loosened: [],
     });
   });
 
@@ -144,6 +155,50 @@ describe('the pre-read of the guard values', () => {
     expect(read.values).toEqual(allOn);
     expect(read.state).toMatchObject({ proof: guardRecordWords.unproved });
     expect(await offIn(deps, source)).toBe(false);
+  });
+});
+
+describe('a key of a fixed guard that the owner wrote by hand', () => {
+  const sample = sampleConfig();
+  const shared = { ...sample, core: { ...sample.core, shared_guards: { [guardIds.cloneRules]: guardValues.on } } };
+  it.each([
+    ['the local file, with the value off and a matching record', guardedNode({}, { off: [guardIds.cloneRules, OFF_GUARD] })],
+    ['the shared file', guardedNode({}, { config: shared })],
+  ])('keeps the fixed guard on in the full load, the pre-read and the proof, and keeps the off value of another guard: %s', async (_name, deps) => {
+    const loaded = await loadConfig(deps, GUARDED_HOME, recipes);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const read = await guardSourceFor(deps, GUARDED_HOME, recipes, commands.status).read();
+    const state = await readGuardState(deps, GUARDED_HOME, loaded.value, 'always');
+    for (const values of [read.values, state.values]) {
+      expect(isGuardOn(values, guardIds.cloneRules)).toBe(true);
+      expect(isGuardOn(values, OFF_GUARD)).toBe(false);
+    }
+    expect(state.unmatched).toEqual([]);
+  });
+});
+
+describe('the proof of an off value with a check of the config parse', () => {
+  const withField = (name: string) => {
+    const board = sampleBoard();
+    return sampleConfigWithBoard({ ...board, fields: [...(board.fields ?? []), { name, target: 'item', kind: 'token', required: false }] });
+  };
+  const readOf = async (name: string) => {
+    const deps = guardedNode({}, { config: withField(name) });
+    return { loaded: await loadConfig(deps, GUARDED_HOME, recipes), read: await guardSourceFor(deps, GUARDED_HOME, recipes, commands.status).read() };
+  };
+
+  it('gives the off value of a matching record when the board field name is free', async () => {
+    const { loaded, read } = await readOf('effort');
+    expect(loaded.ok).toBe(true);
+    expect(isGuardOn(read.values, OFF_GUARD)).toBe(false);
+  });
+
+  it('keeps every guard on with a matching record when the config holds a reserved board field name', async () => {
+    const { loaded, read } = await readOf(reservedFieldNames[0] ?? '');
+    expect(loaded.ok).toBe(false);
+    expect(guards.filter((guard) => !isGuardOn(read.values, guard.id)).map((guard) => guard.id)).toEqual([]);
+    expect(read.state).toMatchObject({ proof: guardRecordWords.unproved });
   });
 });
 

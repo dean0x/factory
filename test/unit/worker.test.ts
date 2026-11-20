@@ -1098,6 +1098,17 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker new: the link stop of the exclude file in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.fileLinkSafety))('stops with exit 4 for an exclude file that is a link with every value of the file and link guard, here %s, because the write refuses the same link', async (_state, setup) => {
+    const guarded = settingsCheckSetup(setup);
+    const made = make({ ...guarded, origin, links: { [EXCLUDE]: '/elsewhere/exclude' }, seed: { ...guarded.seed, '/elsewhere/exclude': TEMPLATE } });
+    const sink = captureSink();
+    expect(await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink)).toBe(4);
+    expect(sink.errors.join('')).toContain(`cannot use ${EXCLUDE}: it is a link`);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings write in %s', (_title, origin) => {
   it.each(guardStatesOf(guardIds.settingsWrite))('needs a consent for the hook settings with no terminal window only while the guard is on, with the guard %s', async (_state, setup, on) => {
     const off = setup.off ?? [];
@@ -1320,6 +1331,58 @@ describe('worker new: the machine warning', () => {
     ];
     expect(order.every((position) => position >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the machine limits in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.machineLimits))('reads the machine and warns for a failed limit only while the guard counts as on, and starts the worker, with the guard %s', async (_state, setup, on) => {
+    const made = make({ ...settingsCheckSetup(setup), origin, machine: { memory: 'System-wide memory free percentage: 5%\n' } });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(0);
+    expect(made.deps.warned.includes('machine memory: 5% free, at least 20% needed')).toBe(on);
+    expect(made.events.includes('machine memory_pressure')).toBe(on);
+    expect(made.events).toContain('tmux split-window');
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('worker new: the plan checks of a new worker in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.spend))('refuses the id of the node and an id that has a record with exit 2 with every value of the spend guard, here %s', async (_state, setup) => {
+    const made = make({ ...settingsCheckSetup(setup), origin });
+    const runNew = async (id: string): Promise<readonly [number, string]> => {
+      const sink = captureSink();
+      const code = await runCli(['worker', 'new', id, '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
+      return [code, sink.errors.join('')];
+    };
+    expect(await runNew('demo')).toEqual([2, expect.stringContaining('the id of this node')]);
+    expect((await runNew('alpha'))[0]).toBe(0);
+    expect(await runNew('alpha')).toEqual([2, expect.stringContaining('has a record already')]);
+    expect(made.events.filter((event) => event === 'git worktree-add')).toHaveLength(1);
+  });
+});
+
+/** The sample config with a session proxy that stops the launch when it does not answer. */
+const withSessionProxy = (config: FactoryConfig): FactoryConfig => ({
+  ...config,
+  core: {
+    ...config.core,
+    proxies: [{ id: 'local', base_url: PROXY_URL, health: '/health', on_fail: 'stop' }],
+    session: { ...config.core.session, proxy: 'local' },
+  },
+});
+
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the proxy in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.proxy))('stops for a named proxy that does not answer only while the guard counts as on, and else starts the worker with that proxy, with the guard %s', async (_state, setup, on) => {
+    const made = make({
+      ...settingsCheckSetup(setup), config: withSessionProxy(withGuardsOff(sampleConfig(), setup.off ?? [])), origin, fetch: () => failure('no answer'),
+    });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 1 : 0);
+    expect(sink.errors.join('').includes('does not answer')).toBe(on);
+    expect(made.deps.fetched).toHaveLength(on ? 1 : 0);
+    const split = made.tmux.calls.find((call) => call.args[0] === 'split-window')?.args ?? [];
+    expect(split.some((arg) => arg.includes(`ANTHROPIC_BASE_URL=${PROXY_URL}`))).toBe(!on);
   });
 });
 
@@ -1769,6 +1832,36 @@ describe.each(FOLDER_ORIGINS)('worker resume: the guard of the Claude Code setti
     expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
     if (on) expect(sink.errors.join('')).toContain('work-copies/web/alpha/.claude/settings.json');
     expect(made.tmux.commands().filter((command) => /^(split-window|new-window|new-session)\b/.test(command))).toHaveLength(on ? 0 : 1);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('worker resume: the guard of the pane safety in %s', (_title, origin) => {
+  const launches = (made: Made): number => made.tmux.commands().filter((command) => /^(split-window|new-window|new-session)\b/.test(command)).length;
+
+  it.each(guardStatesOf(guardIds.paneSafety))('refuses a worker that runs in a live pane only while the guard counts as on, and else starts a new conversation, with the guard %s', async (_state, setup, on) => {
+    const made = await withWorkers({ ...settingsCheckSetup(setup), origin, tmux: { panes: [alphaPane()] } }, { pointer: null });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'resume', 'alpha', '--home', HOME], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 2 : 0);
+    expect(launches(made)).toBe(on ? 0 : 1);
+  });
+
+  it.each(guardStatesOf(guardIds.paneSafety))('stops a second resume of the session that a live pane of the worker holds with exit 2 and starts nothing, with every value of the guard, here %s', async (_state, setup) => {
+    const made = await withWorkers({ ...settingsCheckSetup(setup), origin, tmux: { panes: [alphaPane()] } });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'resume', 'alpha', '--home', HOME], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(2);
+    expect(sink.errors.join('')).toContain(`runs already in the pane ${ALPHA_PANE}`);
+    expect(launches(made)).toBe(0);
+  });
+
+  it('refuses a pane with the mark of the worker that its launch did not make, also with the guard off and a matching record', async () => {
+    const made = await withWorkers({
+      ...settingsCheckSetup({ off: [guardIds.paneSafety] }), origin, tmux: { panes: [alphaPane({ command: ['claude'] })] },
+    });
+    const sink = captureSink();
+    expect(await runCli(['worker', 'resume', 'alpha', '--home', HOME], made.deps, sink)).toBe(4);
+    expect(launches(made)).toBe(0);
   });
 });
 

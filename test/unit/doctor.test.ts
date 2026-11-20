@@ -39,7 +39,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardDoctorWords, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText, workerRecord } from '../../src/names.js';
+import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardConfigWords, guardDoctorWords, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText, workerRecord } from '../../src/names.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { allOn } from '../../src/guards/effective.js';
@@ -237,6 +237,23 @@ describe('doctor: shared guard state', () => {
     expect(found?.text).toContain('work-conduct is not settable in this version; its value stays on');
     expect(found?.text).not.toContain('wired');
     expect(found?.text).toContain('Own file Edit rules are incomplete.');
+  });
+
+  it.each(['local', 'shared'] as const)('warns for a key of a fixed guard in the %s file and keeps the guard on', async (file) => {
+    const deps = await initialized();
+    const config = sampleConfig();
+    const id = guardIds.cloneRules;
+    writeConfig(deps, { ...config, core: { ...config.core, ...(file === 'local' ? { guards: { [id]: 'off' } } : { shared_guards: { [id]: 'on' } }) } });
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: { [id]: { value: 'off', at: '2030-01-02T03:04:05.678Z' } },
+      prefix: { hash: sha256Hex(config.core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const found = await guardCheck(deps);
+    expect(found?.level).toBe('warn');
+    expect(found?.text).toContain('0 off; 0 with H');
+    expect(found?.text).toContain(file === 'local'
+      ? guardConfigWords.fixedKey(files.localConfig, 'guards', id)
+      : guardConfigWords.fixedKey(files.config, 'shared_guards', id));
+    expect(found?.text).not.toContain('not settable');
   });
 
   it('warns when only the setup acceptance rule is absent', async () => {
@@ -1059,6 +1076,29 @@ describe('doctor: proxies', () => {
     const [result] = await checkProxies(deps, await stateOf(deps, withProxies('direct')));
     expect(result?.level).toBe('warn');
     expect(result?.text).toContain('on_fail is direct');
+  });
+
+  const proxyStates = guardStatesOf(guardIds.proxy).flatMap(([state, setup, on]) =>
+    (['stop', 'direct'] as const).map((onFail) => [state, onFail, setup, on] as const));
+  it.each(proxyStates)('names what a launch does with a proxy that is down while the proxy guard is %s and on_fail is %s', async (_state, onFail, setup, on) => {
+    const deps = await initialized({ git: { committed: [`${HOME}/.factory`] } });
+    deps.seedDir(`${HOME}/.factory/.git`);
+    const off = setup.off ?? [];
+    const proxied = withGuardsOff(withProxies(onFail), off);
+    writeConfig(deps, { ...proxied, recipe: { ...proxied.recipe, projects: [] } });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(proxied.core.node.id, HOME, off, deps.now()));
+    const found = ((await doctor(deps)).json['checks'] as CheckResult[]).find((entry) => entry.id === 'proxy:local');
+    expect(deps.fetched).toEqual(['http://127.0.0.1:8787/v1/health']);
+    if (!on) {
+      expect(found).toMatchObject({ level: 'warn', text: expect.stringContaining(guardDoctorWords.proxyOff) });
+      expect(guardDoctorWords.proxyOff).toBe('The guard proxy is off, so sessions start with this proxy and no health check.');
+    } else if (onFail === 'direct') {
+      expect(found).toMatchObject({ level: 'warn', text: expect.stringContaining('on_fail is direct: sessions start without it.') });
+    } else {
+      expect(found).toMatchObject({ level: 'fail', text: expect.stringContaining('Start the proxy') });
+    }
+    if (on) expect(found?.text).not.toContain(guardDoctorWords.proxyOff);
+    else expect(found?.text).not.toContain('without it');
   });
 
   it('checks a proxy that only a worker uses, and skips a proxy that nothing uses', async () => {

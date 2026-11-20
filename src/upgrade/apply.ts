@@ -7,7 +7,7 @@ import { GIT_ENTRY, initRootRepo } from '../core/git.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
-import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
+import { isTextMigration, runMigrations, runTextMigrations, type TextMigration } from '../migrate/runner.js';
 import {
   commands,
   commandText,
@@ -400,6 +400,16 @@ const checkedText = (text: string, file: UpgradeFile): CliResult<string> => {
   return checked.ok ? ok(text) : checked;
 };
 
+/** The text path of a file: the text steps and then the text step of the finisher edit the text, and the new text is checked. */
+const editedText = (text: string, steps: readonly TextMigration[], file: UpgradeFile): CliResult<string> => {
+  const label = file.spec.file;
+  const migrated = runTextMigrations(text, steps);
+  if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
+  // The text path removes the same values as the finisher of the value path.
+  const finished = file.finishText === undefined ? migrated : file.finishText(migrated.value);
+  return finished.ok ? checkedText(finished.value, file) : failure(`${label}: ${finished.error.message}`);
+};
+
 /**
  * The new text of the config file. When every step can work on the text, the steps edit the text of the owner, so that
  * the comments and the order of the keys stay. Else the steps migrate the value and the file is written from it.
@@ -426,14 +436,14 @@ export const configFileText = async (
   const original = await readIfFile(deps, path);
   if (!original.ok) return original;
   if (original.value === null) return failure(`${label} not found`);
-  const migrated = runTextMigrations(original.value, textSteps);
-  if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
-  return checkedText(migrated.value, file);
+  return editedText(original.value, textSteps, file);
 };
 
 /**
  * The new text of the local file, or null when the file stays. A root of schema 1 gets the local keys of its migrated
  * config. The local file never gets a text that holds a key of the shared file: the parser of the local file refuses it.
+ * When every step can work on the text and the finisher has a text step, the steps edit the text that the plan read after
+ * the checks of the private file, so that a comment of the owner stays. Else the file is written from its migrated value.
  */
 export const localFileText = (config: FilePlan, local: LocalPlan, upgrade: UpgradeSpec): CliResult<string | null> => {
   const file = upgrade.local;
@@ -449,6 +459,10 @@ export const localFileText = (config: FilePlan, local: LocalPlan, upgrade: Upgra
       return text.ok ? ok(text.value) : failure(`${label}: ${text.error.message}`);
     }
     case 'migrate': {
+      const textSteps = local.steps.filter(isTextMigration);
+      if (file.finishText !== undefined && local.text !== null && textSteps.length === local.steps.length) {
+        return editedText(local.text, textSteps, file);
+      }
       const migrated = runMigrations(local.raw, local.steps);
       if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
       const text = file.finish(migrated.value);

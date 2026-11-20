@@ -37,7 +37,7 @@ import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import {
-  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OFF_GUARD, OTHER_NODE_ID, withGuardsOff,
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OFF_GUARD, OTHER_NODE_ID, withGuardsOff, type GuardedSetup,
 } from '../helpers/guarded-node.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 
@@ -555,6 +555,33 @@ describe.each(FOLDER_ORIGINS)('init: the guard of approval delegation on a regis
     expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
     expect(sink.errors.join('').includes('the approval point merge cannot be delegated: an approval record needs a terminal window')).toBe(on);
     expect(recordsOf(deps)).toEqual([]);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('init: the guard of git safety on a registered root in %s', (_title, origin) => {
+  /** Init of the root with the guard in one state, through the command line: the exit code and the error text. */
+  const initWith = async (setup: GuardedSetup, made: Existing, gitFolder = false): Promise<{ readonly code: number; readonly errors: string; readonly deps: FakeDeps }> => {
+    const off = setup.off ?? [];
+    const { deps } = existing({ origin, ...made });
+    if (gitFolder) deps.seedDir(`${STATE}/.git`);
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), off));
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, off, deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', ROOT, '--yes'], deps, sink);
+    return { code, errors: sink.errors.join(''), deps };
+  };
+
+  it.each(guardStatesOf(guardIds.gitSafety))('writes the delete guard into a state repo whose git config names a program only while the guard is off: %s', async (_state, setup, on) => {
+    const { code, errors } = await initWith(setup, { fixture: { configList: { [STATE]: 'local\0filter.lfs.clean\ngit-lfs clean\0' } } }, true);
+    expect(code, errors).toBe(on ? 4 : 0);
+    expect(errors.includes('filter.lfs.clean')).toBe(on);
+  });
+
+  it.each(guardStatesOf(guardIds.gitSafety))('keeps the stop for a state folder with no marker that is not the top of its own work tree with the guard %s, because the folder is no node yet', async (_state, setup) => {
+    const { code, errors, deps } = await initWith(setup, { state: 'no-marker', stateRepo: false });
+    expect(code, errors).toBe(4);
+    expect(errors).toContain('is not the top folder of a git work tree of its own');
+    expect(deps.files.has(MARKER)).toBe(false);
   });
 });
 

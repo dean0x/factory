@@ -1,11 +1,14 @@
 import { failure, notReady, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import type { PaneRow } from '../launch/tmux.js';
 import {
   commandLines,
   commandText,
   env,
+  guardIds,
   roles,
   stopCaseOfState,
   stopFallback,
@@ -136,13 +139,27 @@ const requireAllowedCase = (workerId: string, stopCase: StopCase, allowed: reado
       );
 
 /** Closes panes whose program has ended, by their ids (`closeWorkerPane`). With no pane there is nothing to close. */
-const closeEnded = async (deps: Deps, session: string, paneIds: readonly string[]): Promise<CliResult<StopOutcome>> => {
+const closeEnded = async (
+  deps: Deps,
+  session: string,
+  paneIds: readonly string[],
+  guards: GuardValues,
+): Promise<CliResult<StopOutcome>> => {
   for (const paneId of paneIds) {
-    const closed = await closeWorkerPane(deps, session, paneId);
+    const closed = await closeWorkerPane(deps, session, paneId, guards);
     if (!closed.ok) return closed;
   }
   return ok(paneIds.length === 0 ? { kind: 'no-pane' } : { kind: 'closed-dead', paneIds });
 };
+
+/** The pane of the caller is never the target of a stop (exit 2) while pane safety is on: the stop would end the command with it. */
+const requireOtherCallerPane = (deps: Deps, workerId: string, paneId: string, guards: GuardValues): CliResult<void> =>
+  deps.env[env.tmuxPane] === paneId && isGuardOn(guards, guardIds.paneSafety)
+    ? usageError(
+        `cannot stop the ${roles.worker} ${workerId} from its own pane ${paneId}`,
+        `Run "${stopLine(workerId)}" in another pane or in another terminal window.`,
+      )
+    : ok(undefined);
 
 /**
  * Sends TERM to the process of a pane and waits for its end for at most `stopPoll.attempts` checks. It never sends another signal.
@@ -194,7 +211,7 @@ const endProcess = async (deps: Deps, row: BoundPane, way: StopWay, workerId: st
  *    tmux says that the launch of this worker made it. A pane with the mark that the launch did not make, the coordinator pane
  *    and the board pane included, is a security stop (exit 4), and nothing is sent to it. Two live panes of the worker are a
  *    stop (exit 2);
- * 2. the pane of the caller is never the target (exit 2), and no pane is signalled then;
+ * 2. while pane safety is on, the pane of the caller is never the target (exit 2), and no pane is signalled then;
  * 3. the last-seen line of the worker says if the session is idle or busy. Any state that is not known is exit 3 and names the
  *    pane and the process, and nothing is sent. A case that the request does not allow (`allowed`) is exit 1, and nothing is sent;
  * 4. the pane is read and bound again right before the signal: the pane id and the pid come from this read, and a read that
@@ -207,26 +224,23 @@ const endProcess = async (deps: Deps, row: BoundPane, way: StopWay, workerId: st
 export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliResult<StopOutcome>> => {
   const { home, session, workerId, panes: listed } = request;
   const again = stopWords(workerId);
+  const guards = await guardValuesFor(deps, home);
   const panes = await readWorkerPanes(deps, { home, session, workerId, again, ...(listed === undefined ? {} : { panes: listed }) });
   if (!panes.ok) return panes;
   const { live, dead } = panes.value;
   const single = requireOneLivePane(workerId, live, again);
   if (!single.ok) return single;
   const target = single.value;
-  if (target === null) return closeEnded(deps, session, dead.map((row) => row.paneId));
-  if (deps.env[env.tmuxPane] === target.paneId) {
-    return usageError(
-      `cannot stop the ${roles.worker} ${workerId} from its own pane ${target.paneId}`,
-      `Run "${stopLine(workerId)}" in another pane or in another terminal window.`,
-    );
-  }
+  if (target === null) return closeEnded(deps, session, dead.map((row) => row.paneId), guards);
+  const other = requireOtherCallerPane(deps, workerId, target.paneId, guards);
+  if (!other.ok) return other;
 
   const seen = await readOwnLastSeen(deps, home, workerId);
   if (!seen.ok) return seen;
   const read = await requireBoundPane(deps, { home, paneId: target.paneId, workerId, again });
   if (!read.ok) return read;
   const row = read.value;
-  if (row.dead) return closeEnded(deps, session, [row.paneId]);
+  if (row.dead) return closeEnded(deps, session, [row.paneId], guards);
 
   const known = requireStopCase(workerId, seen.value, row);
   if (!known.ok) return known;
@@ -236,7 +250,7 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const way = wayFor(stopCase);
   const ended = await endProcess(deps, row, way, workerId);
   if (!ended.ok) return ended;
-  const closed = await closeWorkerPane(deps, session, row.paneId);
+  const closed = await closeWorkerPane(deps, session, row.paneId, guards);
   if (!closed.ok) return closed;
   return ok({ kind: 'stopped', paneId: row.paneId, pid: row.pid, way, state: stopCase, pane: closed.value });
 };

@@ -1,4 +1,5 @@
 import { allOn } from '../../../guards/effective.js';
+import { guardIds } from '../../../names.js';
 import { linesFor, type TextPart } from '../../../templates/fill.js';
 import { workerSectionParts } from './coordinator.js';
 
@@ -29,7 +30,10 @@ export const MANAGER_PARTS: readonly TextPart[] = [
   '## Priorities and capacity',
   '',
   '- Keep one list of priorities for all children. Put the work that the {{owner}} asked for first.',
-  '- Watch the capacity of the machine and the usage limits. Tell the {{owner}} early if a limit may run out before important work ends.',
+  {
+    guards: [guardIds.spend],
+    lines: ['- Watch the capacity of the machine and the usage limits. Tell the {{owner}} early if a limit may run out before important work ends.'],
+  },
   '',
   '## {{Owner}} items',
   '',

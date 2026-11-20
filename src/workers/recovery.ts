@@ -7,8 +7,9 @@ import { commands, commandText, lastSeen, roles } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { readOwnCoordinatorSession, readOwnLastSeen } from './last-seen.js';
 import { resumeLine, resumeWorker, type ProxyAnswers } from './launch.js';
-import { listPanes } from './panes.js';
+import { listPanes, type BoundPane } from './panes.js';
 import { listWorkerRecords, type InvalidWorker, type WorkerRecord } from './registry.js';
+import { readWorkerPanes } from './slot.js';
 
 /**
  * The recovery after the tmux server was killed (design 4.11, "After a machine restart"): `start` makes the session again, and
@@ -65,6 +66,11 @@ export interface RecoveryRequest {
   readonly guards?: GuardValues | undefined;
   /** The proxy answers of the run. The caller makes them once, so each proxy is asked once for the whole run. */
   readonly proxyAnswers: ProxyAnswers;
+  /**
+   * A session that runs already, and the ids of the workers that had no live pane there: only these workers resume, each one after
+   * its panes are read again. Absent for a session that this run made, where no pane of a worker runs.
+   */
+  readonly running?: { readonly session: string; readonly ids: readonly string[] };
 }
 
 /** The ids of the workers by what happened. A folder with no valid record is named by its folder name. */
@@ -100,10 +106,26 @@ const failedWarning = (id: string, error: CliError): string =>
 const invalidWarning = (folder: InvalidWorker): string =>
   `The folder ${folder.name} in the folder of the ${roles.worker}s has no valid record: ${folder.reason}. It is NOT resumed.`;
 
+/**
+ * The panes of a worker in a session that runs already whose programs ended, which the launch closes first. Null when a pane of the
+ * worker runs now: that worker is not resumed again.
+ */
+const endedPanesOf = async (deps: Deps, home: string, session: string, id: string): Promise<CliResult<readonly BoundPane[] | null>> => {
+  const panes = await readWorkerPanes(deps, { home, session, workerId: id, again: resumeLine(id) });
+  if (!panes.ok) return panes;
+  return ok(panes.value.live.length > 0 ? null : panes.value.dead);
+};
+
 /** One worker: read its id strictly, then resume it. Every problem is a warning, so the run goes on. */
 const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: WorkerRecord): Promise<WorkerOutcome> => {
-  const { home, config, proxyAnswers } = request;
+  const { home, config, proxyAnswers, running } = request;
   const { id } = record;
+  const ended = running === undefined ? ok([]) : await endedPanesOf(deps, home, running.session, id);
+  if (!ended.ok) {
+    deps.warn(failedWarning(id, ended.error));
+    return 'failed';
+  }
+  if (ended.value === null) return 'skipped';
   const seen = await readOwnLastSeen(deps, home, id);
   if (!seen.ok) {
     deps.warn(skipWarning(home, id, `the last-seen line can not be read: ${seen.error.message}`));
@@ -122,6 +144,7 @@ const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: Worke
     resumeId: seen.value.line[keys.sessionId],
     proxyAnswers,
     guards: request.guards,
+    deadPanes: ended.value,
   });
   if (!launched.ok) {
     deps.warn(failedWarning(id, launched.error));
@@ -132,8 +155,8 @@ const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: Worke
 };
 
 /**
- * Resume each recorded worker with the id of its newest session, one worker at a time. The caller has started the session just
- * now, so no pane of a worker runs, and it has made the checks of the root, the tools and the session. For each worker, in
+ * Resume each selected worker with the id of its newest session, one worker at a time. The caller has checked the root, tools
+ * and session. For each worker, in
  * order of the ids:
  * - the id comes from the pointer and the line of the worker (`readOwnLastSeen`): a pointer that is absent or not valid, a line
  *   of another session, a line with no session marker (an old hook) and a pointer that another worker shares are not owned.
@@ -145,18 +168,20 @@ const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: Worke
  *   whose pane waits on a folder trust question is one of the failed workers, and `waitsOnTrust` names it too.
  * A folder with no valid record is skipped with a warning. The warnings are printed at once. The failure is a list of the workers
  * that can not be read (a workers folder that is a link is a security stop), and nothing has started then.
+ * With `running`, only the workers that it names resume, and a folder with no valid record gets no warning: the caller checked them.
  */
 export const recoverWorkers = async (deps: Deps, request: RecoveryRequest): Promise<CliResult<RecoveryRun>> => {
   const listed = await listWorkerRecords(deps, request.home);
   if (!listed.ok) return listed;
+  const { running } = request;
   const report: Record<Outcome, string[]> = { resumed: [], skipped: [], failed: [] };
   const waitsOnTrust: string[] = [];
-  for (const record of listed.value.workers) {
+  for (const record of listed.value.workers.filter((candidate) => running === undefined || running.ids.includes(candidate.id))) {
     const outcome = await recoverWorker(deps, request, record);
     report[outcome === 'waits' ? 'failed' : outcome].push(record.id);
     if (outcome === 'waits') waitsOnTrust.push(record.id);
   }
-  for (const folder of listed.value.invalid) {
+  for (const folder of running === undefined ? listed.value.invalid : []) {
     deps.warn(invalidWarning(folder));
     report.skipped.push(folder.name);
   }
@@ -180,7 +205,7 @@ export const workersWithoutPane = async (deps: Deps, home: string, session: stri
 
 /**
  * The one warning of a start that finds its session running: it names each worker with no live pane and the command that starts
- * it. `start` never resumes these workers, because a worker that was stopped on purpose must stay stopped.
+ * it. With the spend guard on, a worker that was stopped on purpose stays stopped.
  */
 export const noPaneWarning = (ids: readonly string[]): string =>
   `The session runs already. These ${roles.worker}s have no live pane: ` +

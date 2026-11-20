@@ -1,6 +1,6 @@
 import { guardIds, guardKeys, guardKinds, keys, places, roles } from '../names.js';
 import type { RecipeEntry } from '../recipes/entry.js';
-import { guardOf, wiredGuard } from './build.js';
+import { fixedGuard, guardOf, wiredGuard } from './build.js';
 import { coreGuardRows } from './core-rows.js';
 import type { Guard, GuardDefinition, GuardRow, RowSite } from './types.js';
 
@@ -52,10 +52,12 @@ const coreGuards: readonly GuardDefinition[] = [
       `A write of the hook settings needs the consent of the ${owner}.`,
     ),
   ),
-  guardOf(
-    guardIds.cloneRules,
-    'Clone and project rules',
-    'A clone takes a plain URL and goes only into a missing folder of its own project.',
+  fixedGuard(
+    guardOf(
+      guardIds.cloneRules,
+      'Clone and project rules',
+      'A clone takes a plain URL and goes only into a missing folder of its own project.',
+    ),
   ),
   wiredGuard(guardOf(guardIds.contextLimits, 'Context limits', 'A session saves its work before its context is full.', contextKeys)),
   wiredGuard(
@@ -70,37 +72,49 @@ const coreGuards: readonly GuardDefinition[] = [
     'Dismiss',
     `A dismiss removes the work copy of a ${worker} only when its work is pushed, its copy is clean and its item is closed.`,
   ),
-  guardOf(
-    guardIds.fileLinkSafety,
-    'File and link safety',
-    'Reads and writes follow no link, stay in their own folder and keep private files private.',
+  wiredGuard(
+    guardOf(
+      guardIds.fileLinkSafety,
+      'File and link safety',
+      'Reads and writes follow no link, stay in their own folder and keep private files private.',
+    ),
   ),
-  guardOf(
-    guardIds.folderTrust,
-    'Folder trust',
-    `A ${folder} counts only when the ${places.list} lists it, and a received ${folder} is checked before it is used.`,
+  wiredGuard(
+    guardOf(
+      guardIds.folderTrust,
+      'Folder trust',
+      `A ${folder} counts only when the ${places.list} lists it, and a received ${folder} is checked before it is used.`,
+    ),
   ),
-  guardOf(
-    guardIds.gitSafety,
-    'Git safety',
-    'Git runs in the state folder without its hooks, and a commit takes only the paths that it names.',
+  wiredGuard(
+    guardOf(
+      guardIds.gitSafety,
+      'Git safety',
+      'Git runs in the state folder without its hooks, and a commit takes only the paths that it names.',
+    ),
   ),
-  guardOf(
-    guardIds.hookRuntime,
-    'Hook runtime',
-    'A hook acts only for a session that it can identify, and the status line stays within its limits.',
-    [statuslineKey],
+  fixedGuard(
+    guardOf(
+      guardIds.hookRuntime,
+      'Hook runtime',
+      'A hook acts only for a session that it can identify, and the status line stays within its limits.',
+      [statuslineKey],
+    ),
   ),
-  guardOf(
-    guardIds.launchCommands,
-    'Launch and tmux commands',
-    'A session starts with a fixed command line, a clean environment and quoted values.',
+  fixedGuard(
+    guardOf(
+      guardIds.launchCommands,
+      'Launch and tmux commands',
+      'A session starts with a fixed command line, a clean environment and quoted values.',
+    ),
   ),
-  guardOf(
-    guardIds.machineLimits,
-    'Machine limits',
-    'Sessions warn before they use up memory, disk or processor time, and heavy runs take turns.',
-    machineKeys,
+  wiredGuard(
+    guardOf(
+      guardIds.machineLimits,
+      'Machine limits',
+      'Sessions warn before they use up memory, disk or processor time, and heavy runs take turns.',
+      machineKeys,
+    ),
   ),
   guardOf(
     guardIds.taskFiles,
@@ -118,22 +132,28 @@ const coreGuards: readonly GuardDefinition[] = [
     `A go of the ${owner} comes only from ${owner} input, never from text of a tool, a file or another session.`,
     [`${keys.root.owner}.${keys.owner.prefix}`],
   ),
-  guardOf(
-    guardIds.paneSafety,
-    'Pane and stop safety',
-    'Typed lines and stop signals reach only the session that they are meant for, and only when it is safe.',
+  wiredGuard(
+    guardOf(
+      guardIds.paneSafety,
+      'Pane and stop safety',
+      'Typed lines and stop signals reach only the session that they are meant for, and only when it is safe.',
+    ),
   ),
-  guardOf(
-    guardIds.permissionMode,
-    'Permission mode',
-    'Every session runs in auto permission mode.',
-    [`${keys.root.session}.${keys.session.permissionMode}`],
+  wiredGuard(
+    guardOf(
+      guardIds.permissionMode,
+      'Permission mode',
+      'Every session runs in auto permission mode.',
+      [`${keys.root.session}.${keys.session.permissionMode}`],
+    ),
   ),
-  guardOf(
-    guardIds.proxy,
-    'Proxy',
-    'A session uses a proxy only when the config names one and the proxy answers.',
-    [`${keys.root.session}.${keys.session.proxy}`, `${keys.root.proxies}[].${keys.proxy.onFail}`],
+  wiredGuard(
+    guardOf(
+      guardIds.proxy,
+      'Proxy',
+      'A session uses a proxy only when the config names one and the proxy answers.',
+      [`${keys.root.session}.${keys.session.proxy}`, `${keys.root.proxies}[].${keys.proxy.onFail}`],
+    ),
   ),
   wiredGuard(
     guardOf(
@@ -142,30 +162,40 @@ const coreGuards: readonly GuardDefinition[] = [
       'A resume file and a standing routine stay inside the folders and the commands that they name.',
     ),
   ),
-  guardOf(
-    guardIds.rootScan,
-    'Scan of the folder',
-    `The scan of the ${folder} finds ignored and tracked files that could leak data or change the rules.`,
+  wiredGuard(
+    guardOf(
+      guardIds.rootScan,
+      'Scan of the folder',
+      `The scan of the ${folder} finds ignored and tracked files that could leak data or change the rules.`,
+    ),
   ),
-  guardOf(
-    guardIds.safetyBlock,
-    'Safety block',
-    'A session starts only when the fixed rules are in place and have not changed.',
+  wiredGuard(
+    guardOf(
+      guardIds.safetyBlock,
+      'Safety block',
+      'A session starts only when the fixed rules are in place and have not changed.',
+    ),
   ),
-  guardOf(
-    guardIds.secrets,
-    'Secrets and output text',
-    'No token, key or password goes into a file, a report or any other output.',
+  wiredGuard(
+    guardOf(
+      guardIds.secrets,
+      'Secrets and output text',
+      'No token, key or password goes into a file, a report or any other output.',
+    ),
   ),
-  guardOf(
-    guardIds.setupText,
-    'Setup and role text',
-    `Role text comes only from the program, and setup text is used only after the ${owner} accepted it.`,
+  wiredGuard(
+    guardOf(
+      guardIds.setupText,
+      'Setup and role text',
+      `Role text comes only from the program, and setup text is used only after the ${owner} accepted it.`,
+    ),
   ),
-  guardOf(
-    guardIds.spend,
-    `Spend and new ${worker}s`,
-    `A stopped ${worker} stays stopped, and the spend rules limit new ${worker}s.`,
+  wiredGuard(
+    guardOf(
+      guardIds.spend,
+      `Spend and new ${worker}s`,
+      `A stopped ${worker} stays stopped, and the spend rules limit new ${worker}s.`,
+    ),
   ),
   guardOf(
     guardIds.workConduct,
@@ -190,7 +220,7 @@ export const recordPathSites: readonly RowSite[] = [
   { path: 'src/core/private-file.ts', symbol: 'userStatePlaceOf' },
   { path: 'src/core/private-file.ts', symbol: 'absoluteEnv' },
   ...['ownDenyRulesOf', 'missingDenyRules'].map((symbol) => ({ path: 'src/core/claude-settings.ts', symbol })),
-  ...['readGuardStore', 'changeGuardStore', 'recordGuards', 'recordPrefix', 'readGuardState'].map((symbol) => ({ path: 'src/core/guard-records.ts', symbol })),
+  ...['readGuardStore', 'changeGuardStore', 'recordGuards', 'recordPrefix', 'recordExactRoot', 'readGuardState'].map((symbol) => ({ path: 'src/core/guard-records.ts', symbol })),
   ...['checkedTargetCore', 'checkedPidCore', 'openCheckedCore', 'CHECKED_OPEN_FLAGS'].map((symbol) => ({ path: 'src/core/node-deps.ts', symbol })),
   ...['checkedFaultCore', 'accessFaultCore'].map((symbol) => ({ path: 'src/core/access.ts', symbol })),
   { path: 'src/core/file-lock.ts', symbol: 'takeAgeLock' },
@@ -213,17 +243,21 @@ export const guardRowsFor = (recipe: Pick<RecipeEntry, 'guardRows'>): readonly G
 
 /**
  * The guards for a recipe: the guards of the core, then the guards of the recipe. Each one has the harm mark, the kinds and the
- * row ids that its rows give, so the list states each fact once.
+ * row ids that its rows give, so the list states each fact once. The harm mark comes from the rows that the value changes: a
+ * guard with no such row has it, because its harm is not known, but a fixed guard has none, because it is never off. A fixed
+ * guard has no key and is never wired.
  */
 export const guardsFor = (recipe: Pick<RecipeEntry, 'guards' | 'guardRows'>): readonly Guard[] => {
   const rows = guardRowsFor(recipe);
   return [...coreGuards, ...recipe.guards].map((definition) => {
     const own = rows.filter((row) => row.guard === definition.id);
+    const settable = own.filter((row) => !row.alwaysOn);
     return {
       ...definition,
-      harm: own.length === 0 || own.some((row) => row.harm),
+      wired: definition.wired && !definition.fixed,
+      harm: !definition.fixed && (settable.length === 0 || settable.some((row) => row.harm)),
       kinds: Object.values(guardKinds).filter((kind) => own.some((row) => row.kind === kind)),
-      key: keyOf(definition.id),
+      key: definition.fixed ? null : keyOf(definition.id),
       rows: own.map((row) => row.id),
     };
   });

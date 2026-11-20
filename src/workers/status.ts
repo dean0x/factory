@@ -1,6 +1,8 @@
 import { displayLine } from '../cli/output.js';
+import { isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import type { PaneRow } from '../launch/tmux.js';
-import { keys, lastSeen, roles, statusWords, watchPoll, workerListWords, workerRowKeys, type HookState } from '../names.js';
+import { guardIds, keys, lastSeen, roles, statusWords, watchPoll, workerListWords, workerRowKeys, type HookState } from '../names.js';
 import type { Hold, HoldRead } from './hold.js';
 import { promptStateOf, type LastSeen } from './last-seen.js';
 import type { MachineLimits } from './machine.js';
@@ -69,6 +71,8 @@ export interface StatusInput {
   /** The minutes of `limits.idle_after`. */
   readonly idleAfterMinutes: number;
   readonly limits: MachineLimits;
+  /** The effective guard values of the node, which the caller with the deps reads. */
+  readonly guards: GuardValues;
 }
 
 export interface BuiltStatus {
@@ -77,9 +81,12 @@ export interface BuiltStatus {
   readonly warnings: readonly string[];
 }
 
-/** The mark of a context percent: the max mark above the max limit, the prepare mark from the prepare limit up to it. */
-const markOf = (percent: number | null, limits: MachineLimits): Mark | null => {
-  if (percent === null) return null;
+/**
+ * The mark of a context percent: the max mark above the max limit, the prepare mark from the prepare limit up to it. While the
+ * context limits guard is off, no percent has a mark.
+ */
+const markOf = (percent: number | null, limits: MachineLimits, guards: GuardValues): Mark | null => {
+  if (percent === null || !isGuardOn(guards, guardIds.contextLimits)) return null;
   if (percent > limits[keys.limits.contextMaxPct]) return workerListWords.marks.max;
   return percent >= limits[keys.limits.contextPreparePct] ? workerListWords.marks.prepare : null;
 };
@@ -157,7 +164,7 @@ const entryOf = (
     running,
     state,
     contextPct,
-    mark: markOf(contextPct, input.limits),
+    mark: markOf(contextPct, input.limits, input.guards),
     hold: holdRead?.kind === 'hold' ? holdRead.hold : null,
     activityAt,
     workItem,

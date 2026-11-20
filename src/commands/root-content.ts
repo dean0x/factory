@@ -8,7 +8,7 @@ import {
   headEntriesAt,
   ignoredPathsOf,
   isFileMode,
-  isWorkTreeRoot,
+  workTreeRootOf,
   LINK_MODE,
   trackedFilesOf,
   type TrackedList,
@@ -19,7 +19,7 @@ import { delegationReport, type DelegationReport } from '../core/owner-record.js
 import { comparable, isSameOrInside, isWrittenInside, userClaudeFolderOf } from '../core/paths.js';
 import { describeProjectPathIssue, projectFolderKey, projectPathIssue } from '../core/project-path.js';
 import { ok } from '../core/result.js';
-import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import { guardOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import {
   describeTrackedProblems,
@@ -93,6 +93,12 @@ export interface RootScan {
   readonly delegations: DelegationReport | null;
   /** False when the guard of the settings check is off. The scan stops and the permission mode check still apply. */
   readonly settingsChecked: boolean;
+  /** False when the guard of the permission mode is off: a setting that skips the permission prompts is no failure. */
+  readonly skipsChecked: boolean;
+  /** False when the guard of secrets is off: the scan of the tracked texts gives no token finding. */
+  readonly tokensChecked: boolean;
+  /** The off guard whose checks of the root repo did not run, or null when they ran. */
+  readonly skippedBy: string | null;
 }
 
 export interface RootCheckResult {
@@ -170,6 +176,8 @@ interface RepoScan {
   readonly capped: boolean;
   /** The check of the files that the owner must accept, or null when a stop before it made the check useless. */
   readonly setup: SetupScan | null;
+  /** The off guard whose checks of the root repo did not run, or null when they ran. */
+  readonly skippedBy: string | null;
 }
 
 /** The setup check, and the finding that it gave. */
@@ -180,13 +188,15 @@ interface SetupScan {
 
 /** The tracked paths, null when the folder is not the top of a work tree, or the error when git is there and fails. */
 const listTracked = async (deps: Deps, home: string): Promise<CliResult<TrackedList | null>> => {
-  if (!(await isWorkTreeRoot(deps, home))) return ok(null);
-  return trackedFilesOf(deps, home);
+  const root = await workTreeRootOf(deps, home);
+  if (!root.ok) return root;
+  return root.value ? trackedFilesOf(deps, home) : ok(null);
 };
 
 /**
  * The ignore rules. The local file and the state folder are a stop, also when git can not answer for them: a check that
- * did not finish is no pass. The other folders give one warning, also when git can not answer for them.
+ * did not finish is no pass. The other folders give one warning, also when git can not answer for them. While the guard of
+ * the scan is off, the check does not run.
  */
 const scanIgnoreRules = async (
   deps: Deps,
@@ -194,6 +204,7 @@ const scanIgnoreRules = async (
   tracked: readonly string[],
   projectPaths: readonly string[],
 ): Promise<readonly RootFinding[]> => {
+  if (!(await guardOn(deps, guardIds.rootScan, home))) return [];
   const id = checkIds.rootRepo;
   const probes = ignoreProbesOf(projectPaths);
   const required = [
@@ -256,6 +267,12 @@ const setupScanOf = (check: SetupCheck): SetupScan => ({
       : finding(checkIds.rootRepo, 'fail', check.stop.text, check.stop.remedy),
 });
 
+/** The stop for a link that a received root tracks. It runs with every guard value: no read or write goes through a link. */
+const trackedLinkFinding = async (deps: Deps, home: string, set: readonly string[]): Promise<RootFinding | null> => {
+  const linked = await requireNoTrackedLinks(deps, home, set);
+  return linked.ok ? null : failureFrom(checkIds.rootRepo, linked.error, `Replace the link with a plain file, then ${doctorAgain}.`);
+};
+
 const scanRepo = async (
   deps: Deps,
   home: string,
@@ -268,13 +285,17 @@ const scanRepo = async (
   const listed = await listTracked(deps, home);
   const list = listed.ok ? listed.value : null;
   if (list === null) {
+    // Only a folder that is not the top of a work tree follows folder trust. A git that fails stays a failure.
+    if (listed.ok && !(await guardOn(deps, guardIds.folderTrust, home))) {
+      return { findings: [], tracked: null, capped: false, setup: null, skippedBy: guardIds.folderTrust };
+    }
     const stop = notListedStop(home);
     const unlisted = received
       ? finding(id, 'fail', stop.text, stop.remedy)
       : listed.ok
         ? notChecked(id, `git cannot list the files that git tracks in ${home}`)
         : failureFrom(id, listed.error, GIT_REMEDY);
-    return { findings: [unlisted], tracked: null, capped: false, setup: null };
+    return { findings: [unlisted], tracked: null, capped: false, setup: null, skippedBy: null };
   }
   const tracked = list.paths;
   const findings: RootFinding[] = [];
@@ -287,19 +308,15 @@ const scanRepo = async (
   }
 
   const set = trackedSetOf(tracked);
-  let linkStop = false;
-  if (received && !capStop) {
-    const linked = await requireNoTrackedLinks(deps, home, set);
-    if (!linked.ok) {
-      linkStop = true;
-      findings.push(failureFrom(id, linked.error, `Replace the link with a plain file, then ${doctorAgain}.`));
-    }
-  }
+  const linkStop = received && !capStop ? await trackedLinkFinding(deps, home, set) : null;
+  if (linkStop !== null) findings.push(linkStop);
 
-  const problems = trackedProblems(tracked, projectPaths);
+  // The checks of the tracked paths follow the guard of the scan. The cap and the link stop above run with every value.
+  const checked = await guardOn(deps, guardIds.rootScan, home);
+  const problems = checked ? trackedProblems(tracked, projectPaths) : [];
   const stops = problems.filter((problem) => problem.kind !== 'clone' || received);
   const clones = problems.filter((problem) => problem.kind === 'clone' && !received);
-  const workCopies = trackedUnder(tracked, dirs.workCopies);
+  const workCopies = checked ? trackedUnder(tracked, dirs.workCopies) : [];
   if (stops.length > 0) {
     findings.push(finding(id, 'fail', `the git repo of the ${places.folder} tracks files that must stay on this machine: ${describeTrackedProblems(stops)}`, REMOVE_REMEDY));
   }
@@ -316,7 +333,7 @@ const scanRepo = async (
       ),
     );
   }
-  if (!received) {
+  if (!received && checked) {
     const covered = new Set([...problems.map((problem) => problem.path), ...workCopies]);
     const shared = tracked.filter((path) => !covered.has(path) && (isInstructionPath(path) || isClaudeSettingsPath(path)));
     if (shared.length > 0) {
@@ -333,11 +350,11 @@ const scanRepo = async (
 
   findings.push(...(await scanIgnoreRules(deps, home, tracked, projectPaths)));
   let setup: SetupScan | null = null;
-  if (received && !capStop && !linkStop && stops.length === 0) {
+  if (received && !capStop && linkStop === null && stops.length === 0) {
     setup = setupScanOf(await checkSetupSet(deps, { home, set, node: config?.core.node.id ?? null, received }));
     if (setup.finding !== null) findings.push(setup.finding);
   }
-  return { findings, tracked, capped: list.reachedCap, setup };
+  return { findings, tracked, capped: list.reachedCap, setup, skippedBy: checked ? null : guardIds.rootScan };
 };
 
 // ---- The tracked text files: tokens, file URLs and user folder paths ----
@@ -347,8 +364,10 @@ const named = (paths: readonly string[], one: string, many: string): string =>
 
 /**
  * The scan of the tracked text files (design 4.4). It reads at most `caps.maxCount` files and at most `caps.maxFileBytes`
- * bytes of one file, and it names every file that it did not read: a warning, never a gap in silence. A token is a failure,
- * and the finding names the files and never the value. A `file` URL and a user folder path are a warning.
+ * bytes of one file, and it names every file that it did not read: a warning, never a gap in silence. A token is a failure
+ * while the guard of secrets is on, and the finding names the files and never the value. A scan that finds no token reads no
+ * guard value. A `file` URL, a user folder path and a file that the scan did not read are a warning while the guard of the scan
+ * is on.
  */
 export const scanTrackedTexts = async (
   deps: Deps,
@@ -390,34 +409,38 @@ export const scanTrackedTexts = async (
     if (textHasToken(text.value)) withToken.push(shown);
     if (text.value.toLowerCase().includes(address.scheme) || USER_FOLDER_PATH.test(text.value)) withAddress.push(shown);
   }
+  const tokens = withToken.length > 0 && (await guardOn(deps, guardIds.secrets, home)) ? withToken : [];
+  const warned = (withAddress.length > 0 || unread.length > 0) && (await guardOn(deps, guardIds.rootScan, home));
+  const addresses = warned ? withAddress : [];
+  const skipped = warned ? unread : [];
   return [
-    ...(withToken.length === 0
+    ...(tokens.length === 0
       ? []
       : [
           finding(
             id,
             'fail',
-            `${named(withToken, 'holds', 'hold')} a value that looks like a password or a token`,
+            `${named(tokens, 'holds', 'hold')} a value that looks like a password or a token`,
             `Remove the value from the file, put it in ${files.localConfig}, then ${doctorAgain}.`,
           ),
         ]),
-    ...(withAddress.length === 0
+    ...(addresses.length === 0
       ? []
       : [
           finding(
             id,
             'warn',
-            `${named(withAddress, 'holds', 'hold')} a file URL or a user folder path, which does not work on another machine`,
+            `${named(addresses, 'holds', 'hold')} a file URL or a user folder path, which does not work on another machine`,
             'Use an address that a host serves, or a path inside the folder, or keep it on purpose.',
           ),
         ]),
-    ...(unread.length === 0
+    ...(skipped.length === 0
       ? []
       : [
           finding(
             id,
             'warn',
-            `the scan for tokens did not read ${namedItems(unread)}`,
+            `the scan for tokens did not read ${namedItems(skipped)}`,
             'Check them by hand, or remove them from git with "git rm --cached".',
           ),
         ]),
@@ -581,7 +604,8 @@ const settingsOfFolder = async (
  * failures where the session must keep its hooks (`requiresHooks` is set). The
  * warning that a settings file is there is not given for a file that holds exactly the entries that the program writes
  * (`isOwnSettingsTextAt`); every other finding stays for such a file. With the settings check off, only the failure of a setting
- * that skips the permission prompts stays, because the permission check owns it.
+ * that skips the permission prompts stays, because the guard of the permission mode owns it. With that guard off, a setting that
+ * skips the permission prompts is no failure.
  */
 const judgeSettings = async (
   deps: Deps,
@@ -595,7 +619,9 @@ const judgeSettings = async (
   const facts = analyzeSettings(text);
   const shown = shownPath(source.display);
   const commandNames = facts.runsCommands.join(', ');
-  const skips = facts.skips.length === 0 ? [] : [`skips the permission checks (${facts.skips.join('; ')})`];
+  const skips = facts.skips.length === 0 || !isGuardOn(guards, guardIds.permissionMode)
+    ? []
+    : [`skips the permission checks (${facts.skips.join('; ')})`];
   const reasons = !checked ? skips : [
     ...skips,
     ...(facts.changesFactoryEnv ? [`sets or clears a variable with the prefix ${env.factoryPrefix} in its env values`] : []),
@@ -876,6 +902,7 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
   const projects = await scanProjects(deps, home, config);
   const settings = await scanSettings(deps, home, projectPaths, repo.tracked ?? []);
   const delegations = config === null ? null : await delegationReport(deps, home, config);
+  const guards = await guardValuesFor(deps, home);
   // A received root checked its files in the scan of the repo. An own root accepts its setup text, which is there whether
   // git tracks it or not.
   const setup =
@@ -896,7 +923,10 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
     setup: setup.check,
     setupFinding: setup.finding,
     delegations,
-    settingsChecked: isGuardOn(await guardValuesFor(deps, home), guardIds.settingsCheck),
+    settingsChecked: isGuardOn(guards, guardIds.settingsCheck),
+    skipsChecked: isGuardOn(guards, guardIds.permissionMode),
+    tokensChecked: isGuardOn(guards, guardIds.secrets),
+    skippedBy: repo.skippedBy,
   };
 };
 
@@ -928,6 +958,30 @@ const PERMISSION_ONLY_TEXT = guardDoctorWords.partlyChecked(
   'the commands, the proxy and the credential in the settings are',
   guardIds.settingsCheck,
 );
+/** The ok text of the permission check when the guard of the permission mode is off. */
+const CONTENTS_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  'no settings file runs a command, or sets the proxy or the credential of the session',
+  'the settings that skip the permission checks are',
+  guardIds.permissionMode,
+);
+
+/** The ok texts of the root checks when the guard of the scan is off. */
+const REPO_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  `git lists the files that the ${places.folder} tracks`,
+  'the tracked and the ignored paths are',
+  guardIds.rootScan,
+);
+const FILES_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  'no tracked text file holds a token',
+  'the file URLs, the user folder paths and the files that the scan did not read are',
+  guardIds.rootScan,
+);
+/** The ok text of the root file check when the guard of secrets is off. */
+const ADDRESSES_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  'no tracked text file holds a file URL or a user folder path',
+  'the values like a token are',
+  guardIds.secrets,
+);
 
 const RESULT_ORDER = [checkIds.rootRepo, checkIds.rootFiles, checkIds.projectPaths, checkIds.permissionMode, checkIds.delegations];
 
@@ -939,7 +993,23 @@ const resultOf = (scan: RootScan, id: string): RootCheckResult => {
     return { id, level, text: [modesLine(scan.delegations), ...own.map(sentence)].join('. ') };
   }
   if (own.length > 0) return { id, level, text: own.map(sentence).join(' ') };
-  return { id, level, text: id === checkIds.permissionMode && !scan.settingsChecked ? PERMISSION_ONLY_TEXT : (OK_TEXT[id] ?? '') };
+  return { id, level, text: okTextOf(scan, id) };
+};
+
+/** The text of a check with no finding: it names the part that an off guard did not check. */
+const okTextOf = (scan: RootScan, id: string): string => {
+  if (id === checkIds.permissionMode && !scan.skipsChecked) {
+    return scan.settingsChecked ? CONTENTS_ONLY_TEXT : guardDoctorWords.notCheckedBy([guardIds.permissionMode, guardIds.settingsCheck]);
+  }
+  if (id === checkIds.permissionMode && !scan.settingsChecked) return PERMISSION_ONLY_TEXT;
+  if (id === checkIds.rootFiles && scan.skippedBy === guardIds.folderTrust) return guardDoctorWords.notChecked(scan.skippedBy);
+  if (id === checkIds.rootFiles && !scan.tokensChecked) {
+    return scan.skippedBy === guardIds.rootScan ? guardDoctorWords.notCheckedBy([guardIds.rootScan, guardIds.secrets]) : ADDRESSES_ONLY_TEXT;
+  }
+  if (scan.skippedBy === guardIds.rootScan && id === checkIds.rootRepo) return REPO_ONLY_TEXT;
+  if (scan.skippedBy === guardIds.rootScan && id === checkIds.rootFiles) return FILES_ONLY_TEXT;
+  if (scan.skippedBy !== null && id === checkIds.rootRepo) return guardDoctorWords.notChecked(scan.skippedBy);
+  return OK_TEXT[id] ?? '';
 };
 
 /** One result for each root check, in a fixed order, for `doctor`. */

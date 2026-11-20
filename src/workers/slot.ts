@@ -3,6 +3,8 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
 import { toolNames } from '../core/tools.js';
+import { allOn, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import {
   joinPaneArgs,
   parseSlotList,
@@ -18,7 +20,7 @@ import {
   type SummonMark,
 } from '../launch/tmux.js';
 import { requireSession, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
-import { commandLines, commands, commandText, program, roles, summonLimits, tmuxNames } from '../names.js';
+import { commandLines, commands, commandText, guardIds, program, roles, summonLimits, tmuxNames } from '../names.js';
 import { clearMarkText, closePane, readPanes, requireBoundPane, type BoundPane } from './panes.js';
 
 /**
@@ -361,8 +363,17 @@ export const releaseSlot = async (deps: Deps, session: string, pane: string): Pr
   return restored.ok ? ok(undefined) : restored;
 };
 
-/** Closes a pane of a worker by its id (`closePane`), after `releaseSlot`: a pane is never closed while a summon holds it in the slot. */
-export const closeWorkerPane = async (deps: Deps, session: string, pane: string): Promise<CliResult<'closed' | 'gone'>> => {
+/**
+ * Closes a pane of a worker by its id (`closePane`), after `releaseSlot`: a pane is never closed while a summon holds it in the slot.
+ * `guards` are the values of the caller: while pane safety is off, the pane closes with no release of the slot.
+ */
+export const closeWorkerPane = async (
+  deps: Deps,
+  session: string,
+  pane: string,
+  guards: GuardValues = allOn,
+): Promise<CliResult<'closed' | 'gone'>> => {
+  if (!isGuardOn(guards, guardIds.paneSafety)) return closePane(deps, pane);
   const released = await releaseSlot(deps, session, pane);
   return released.ok ? closePane(deps, pane) : released;
 };

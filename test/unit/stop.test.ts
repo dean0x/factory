@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { stopFallback, stopPoll, stopWay, stopWays, schemaIds, type HookEvent, type StopCase } from '../../src/names.js';
+import { runCli } from '../../src/cli/run.js';
+import { guardSourceOf } from '../../src/guards/effective.js';
+import { guardIds, guardValues, stopFallback, stopPoll, stopWay, stopWays, schemaIds, type HookEvent, type StopCase } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession, type OwnSessionRead } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -10,6 +12,8 @@ import { stopCaseOf, stopWorker, wayFor, type StopOutcome } from '../../src/work
 import { paneListArgs, type PaneRow } from '../../src/launch/tmux.js';
 import { listPanes } from '../../src/workers/panes.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
+import { FOLDER_ORIGINS, guardStatesOf, seedGuardedHome } from '../helpers/guarded-node.js';
+import { captureSink } from '../helpers/sink.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { launchWordsOf } from '../helpers/worker-launch-words.js';
 
@@ -710,6 +714,30 @@ describe('worker stop: a pane that a summon put in the slot of the view window',
     const swapAt = made.events.indexOf('tmux swap-pane');
     expect(made.events.indexOf(`terminate ${PID}`)).toBeLessThan(swapAt);
     expect(swapAt).toBeLessThan(made.events.indexOf('tmux kill-pane'));
+  });
+
+  it('closes the pane with no swap of the board while the guard of the pane safety is off', async () => {
+    const made = make({ summoned: SUMMONED });
+    await seed(made.deps);
+    const off = { ...made.deps, guards: guardSourceOf({ home: HOME, values: { [guardIds.paneSafety]: guardValues.off }, state: null }) };
+    expect(await stopWorker(off, { home: HOME, session: NODE, workerId: 'alpha' })).toMatchObject({ ok: true, value: { kind: 'stopped' } });
+    expect(made.events).not.toContain('tmux swap-pane');
+    expect(paneOf(made, PANE)).toBeUndefined();
+    expect(paneOf(made, BOARD)?.options['@slot_summon']).toBe(SUMMONED.mark);
+  });
+
+  describe.each(FOLDER_ORIGINS)('through the command in %s', (_title, origin) => {
+    it.each(guardStatesOf(guardIds.paneSafety))('stops the worker and closes its pane, and brings the board back only while the guard counts as on, with the guard %s', async (_state, setup, on) => {
+      const made = make({ summoned: SUMMONED, env: { XDG_STATE_HOME: '/state' } });
+      await seed(made.deps);
+      seedGuardedHome(made.deps, HOME, { ...setup, origin });
+      const sink = captureSink();
+      expect(await runCli(['worker', 'stop', 'alpha', '--home', HOME], made.deps, sink), sink.errors.join('')).toBe(0);
+      expect(made.deps.terminated).toEqual([PID]);
+      expect(paneOf(made, PANE)).toBeUndefined();
+      expect(made.events.includes('tmux swap-pane')).toBe(on);
+      expect(paneOf(made, BOARD)?.options['@slot_summon']).toBe(on ? undefined : SUMMONED.mark);
+    });
   });
 
   it('keeps the focus on the coordinator pane when it brings the board back', async () => {

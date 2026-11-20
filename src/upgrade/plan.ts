@@ -9,8 +9,10 @@ import { localFileAccess, requireInit } from '../config/load.js';
 import { mixConfigValue, SPLIT_SCHEMA_VERSION } from '../config/schema.js';
 import { GIT_ENTRY } from '../core/git.js';
 import { requireNoLinks } from '../core/root-paths.js';
+import { allOn, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import { stepsBetween, type FileStep, type RootMove } from '../migrate/files.js';
-import { inspectFile, refuse } from '../migrate/inspect.js';
+import { readFileState, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
 import {
   blockNames,
@@ -21,6 +23,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   helpTopics,
   overwriteCommand,
   places,
@@ -49,6 +52,8 @@ export type FilePlan =
       readonly to: number;
       readonly steps: readonly Migration[];
       readonly raw: unknown;
+      /** The text that the plan read and parsed, after the checks of the file, so that a text step edits the same bytes. */
+      readonly text: string | null;
     };
 
 /**
@@ -83,15 +88,21 @@ const CHANGING: readonly BlockAction[] = ['update', 'render', 'replace', 'add'];
 
 export const isChange = (plan: BlockPlan): boolean => CHANGING.includes(plan.action);
 
+/**
+ * The plan of one versioned file. A current file that holds a value that its finisher removes (a notice of `file.notices`) is
+ * written again: the plan migrates it to its own version with no step.
+ */
 export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Promise<CliResult<FilePlan>> => {
-  const state = await inspectFile(deps, path, file.parse, file.spec);
+  const { state, text } = await readFileState(deps, path, file.parse, file.spec);
   switch (state.kind) {
     case 'valid':
-      return ok({ kind: 'current', version: state.version, raw: state.raw });
+      return ok((file.notices?.(state.raw) ?? []).length === 0
+        ? { kind: 'current', version: state.version, raw: state.raw }
+        : { kind: 'migrate', from: state.version, to: state.version, steps: [], raw: state.raw, text });
     case 'older': {
       const steps = planMigrations(state.version, file.spec.supported, file.migrations);
       if (!steps.ok) return failure(`${file.spec.file}: ${steps.error.message}`);
-      return ok({ kind: 'migrate', from: state.version, to: file.spec.supported, steps: steps.value, raw: state.raw });
+      return ok({ kind: 'migrate', from: state.version, to: file.spec.supported, steps: steps.value, raw: state.raw, text });
     }
     case 'missing':
     case 'unparsable':
@@ -396,10 +407,18 @@ export const planFiles = async (
 };
 
 /**
- * Plan one block. `recorded` says whether the node state records the block. A caller that does not read the state keeps
- * the default, which counts every block as recorded.
+ * True for a block, edited or not, whose version is above the version of its template. No package writes over a newer block. The
+ * version of a block under its old name has its own numbers, so it says nothing about the new block.
  */
-export const planBlock = (status: BlockStatus, overwrite: boolean, recorded = true): BlockPlan => {
+export const isNewerBlock = (status: BlockStatus): boolean =>
+  (status.kind === 'intact' || status.kind === 'edited') && status.block.version > status.template.version && renamedFromOf(status) === undefined;
+
+/**
+ * Plan one block. `recorded` says whether the node state records the block. A caller that does not read the state keeps
+ * the default, which counts every block as recorded. While the guard of the safety block is off in `guards`, an edited safety
+ * block is kept like any other edited block. A newer block is refused with every value.
+ */
+export const planBlock = (status: BlockStatus, overwrite: boolean, recorded = true, guards: GuardValues = allOn): BlockPlan => {
   const { template } = status;
   switch (status.kind) {
     case 'malformed':
@@ -417,8 +436,7 @@ export const planBlock = (status: BlockStatus, overwrite: boolean, recorded = tr
     case 'edited': {
       const from = status.block.version;
       const renamed = renamedFromOf(status) !== undefined;
-      // The version of a block under its old name has its own numbers, so it says nothing about the new block.
-      if (from > template.version && !renamed) {
+      if (isNewerBlock(status)) {
         return {
           template,
           status,
@@ -431,7 +449,7 @@ export const planBlock = (status: BlockStatus, overwrite: boolean, recorded = tr
         // The text of a setup block comes from its setup file, so the setup file is where a person edits it. An edit in
         // the rendered file is put back, and the old text goes to a backup file.
         if (setupBlockNames.includes(template.name)) return { template, status, action: 'replace', from };
-        const kept = template.name === blockNames.safety ? 'refuse-edited' : 'skip-edited';
+        const kept = template.name === blockNames.safety && isGuardOn(guards, guardIds.safetyBlock) ? 'refuse-edited' : 'skip-edited';
         return { template, status, action: overwrite ? 'replace' : kept, from };
       }
       if (from < template.version || renamed) return { template, status, action: 'update', from };
@@ -546,16 +564,20 @@ export const planLines = (
   blocks: readonly BlockPlan[],
   upgrade: UpgradeSpec,
 ): OutLine[] => {
+  const currentLine = (file: UpgradeFile, version: number): OutLine =>
+    ({ level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${version} is current` });
+  // A plan with no step keeps the version: the notice of the finisher names what changes.
   const fileLine = (plan: LocalPlan, file: UpgradeFile): OutLine => {
     switch (plan.kind) {
       case 'current':
-        return { level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${plan.version} is current` };
+        return currentLine(file, plan.version);
       case 'create':
         return {
           level: 'text',
           text: `${file.spec.file}: new file, with mode 600, from the local keys of ${upgrade.config.spec.file}`,
         };
       case 'migrate':
+        if (plan.steps.length === 0) return currentLine(file, plan.to);
         return {
           level: 'text',
           text: `${file.spec.file}: ${file.spec.key} ${plan.from} to ${plan.to} (${plan.steps.length} ${plan.steps.length === 1 ? 'step' : 'steps'})`,

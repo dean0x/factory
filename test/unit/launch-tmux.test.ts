@@ -419,7 +419,7 @@ describe('the tmux call that asks if a pane is in a mode', () => {
   it.each([
     ['0\n', 'none'],
     ['1\n', 'active'],
-    ['2\n', 'active'],
+    ['2\n', 'unknown'],
     ['\n', 'absent'],
     ['', 'absent'],
   ] as const)('reads the answer %j as %s', (text, mode) => {

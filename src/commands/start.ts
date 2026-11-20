@@ -2,11 +2,12 @@ import { resolve } from 'node:path';
 import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
-import type { FactoryConfig } from '../config/schema.js';
+import { fixedGuardKeyWarnings, type FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, noConsentRemedy, ownDenyRulesOf, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
 import type { AttachedEnd, Deps } from '../core/deps.js';
 import type { GuardReadState } from '../core/guard-records.js';
 import { guardReadOf } from '../core/guard-source.js';
+import { isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { guardsFor } from '../guards/registry.js';
 import { readHookSettings } from '../workers/session-checks.js';
@@ -28,6 +29,7 @@ import {
   commandText,
   guardStartWords,
   guardDenyWords,
+  guardIds,
   env,
   flags,
   flagText,
@@ -142,6 +144,7 @@ const planStart = async (
   home: string,
   config: FactoryConfig,
   answers: ProxyAnswers,
+  guards: GuardValues,
 ): Promise<CliResult<StartPlan>> => {
   const { coordinatorDir, stateDir } = layoutOf(home);
   // The slot pane starts this program. A path that is not known gives no pane that works, and a made-up path starts another program.
@@ -149,7 +152,7 @@ const planStart = async (
   if (programFile === undefined) {
     return failure(`${program} does not know the path of its own program, so it cannot start the board pane`);
   }
-  const proxy = await chooseProxy(deps, config, sessionProxyWish(config), answers);
+  const proxy = await chooseProxy(deps, config, sessionProxyWish(config), answers, guards);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
   const projects = await presentProjects(deps, home, recipe.projects);
@@ -205,13 +208,29 @@ const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, a
   return ok(null);
 };
 
+/** A session that runs already, with the values of the launch checks and the proxy answers of the run. */
+interface RunningRequest {
+  readonly home: string;
+  readonly session: string;
+  readonly config: FactoryConfig;
+  readonly guards: GuardValues;
+  readonly proxyAnswers: ProxyAnswers;
+}
+
+/** What `start` did for the workers of a session that runs already: the workers that it named, and the recovery of them, or null. */
+interface RunningCheck {
+  readonly withoutPane: readonly string[];
+  readonly recovery: RecoveryReport | null;
+}
+
 /**
  * What `start` does for a session that runs already: it claims the mark of the active machine when the mark does not name this
- * machine, and then it warns once about the recorded workers that have no live pane. It never resumes a worker, because a worker
- * that was stopped on purpose stays stopped. The value is the workers that the warning names. A fault is a warning, and the exit
- * code stays 0, with the same one exception as `recoverSession`.
+ * machine, and then it warns once about the recorded workers that have no live pane. While the guard of spend is on, it never
+ * resumes a worker, because a worker that was stopped on purpose stays stopped. While it is off, those workers resume as the recovery
+ * resumes them. A fault is a warning, and the exit code stays 0, with the same one exception as `recoverSession`.
  */
-const checkRunningSession = async (deps: Deps, home: string, session: string): Promise<CliResult<readonly string[]>> => {
+const checkRunningSession = async (deps: Deps, run: RunningRequest): Promise<CliResult<RunningCheck>> => {
+  const { home, session } = run;
   if (!(await markNamesThisMachine(deps, home))) {
     const claimed = await claimActiveMachine(deps, home);
     if (!claimed.ok) return claimed;
@@ -219,10 +238,18 @@ const checkRunningSession = async (deps: Deps, home: string, session: string): P
   const missing = await workersWithoutPane(deps, home, session);
   if (!missing.ok) {
     deps.warn(`The ${roles.worker}s are not checked: ${missing.error.message}. ${missing.error.hint ?? ''}`.trimEnd());
-    return ok([]);
+    return ok({ withoutPane: [], recovery: null });
   }
-  if (missing.value.length > 0) deps.warn(noPaneWarning(missing.value));
-  return ok(missing.value);
+  if (missing.value.length === 0) return ok({ withoutPane: [], recovery: null });
+  if (isGuardOn(run.guards, guardIds.spend)) {
+    deps.warn(noPaneWarning(missing.value));
+    return ok({ withoutPane: missing.value, recovery: null });
+  }
+  const { config, guards, proxyAnswers } = run;
+  const recovered = await recoverWorkers(deps, { home, config, guards, proxyAnswers, running: { session, ids: missing.value } });
+  if (recovered.ok) return ok({ withoutPane: [], recovery: recovered.value.report });
+  deps.warn(`The ${roles.worker}s are not resumed: ${recovered.error.message}. ${recovered.error.hint ?? ''}`.trimEnd());
+  return ok({ withoutPane: missing.value, recovery: null });
 };
 
 /** What `startAgain` made: the session, the coordinator that resumes, and the workers that run again. */
@@ -265,7 +292,7 @@ export const startAgain = async (
   answers: ProxyAnswers,
   guards: GuardValues,
 ): Promise<CliResult<RestartedSession>> => {
-  const plan = await planStart(deps, home, config, answers);
+  const plan = await planStart(deps, home, config, answers, guards);
   if (!plan.ok) return plan;
   const started = await startSession(deps, config.core.node.id, plan.value.steps);
   if (!started.ok) return started;
@@ -291,12 +318,14 @@ export const coordinatorResumeLine = (): OutLine =>
       `It must follow the current rules of the ${blockNames.coordinator} block.`,
   );
 
+/** The line that names the workers that run again, or no line. */
+const resumedLines = (recovery: Recovery): readonly OutLine[] =>
+  recovery === null || recovery.resumed.length === 0 ? [] : [text(`Resumed the ${roles.worker}s: ${recovery.resumed.join(', ')}.`)];
+
 /** The lines about the recovery: the coordinator that resumes, and the workers that run again. A start that resumes nothing says nothing. */
 const recoveryLines = (plan: StartPlan, recovery: Recovery): readonly OutLine[] => [
   ...(plan.resumeId === null ? [] : [coordinatorResumeLine()]),
-  ...(recovery === null || recovery.resumed.length === 0
-    ? []
-    : [text(`Resumed the ${roles.worker}s: ${recovery.resumed.join(', ')}.`)]),
+  ...resumedLines(recovery),
 ];
 
 const reachOf = (deps: Deps): Reach => {
@@ -540,6 +569,8 @@ export const runStart = async (
   if (!notes.ok) return notes;
   // One read of the guard values serves the summary, the render and every step of the run that acts on a guard.
   const { deps, state: guards } = await guardReadOf(base, home, loaded.value, 'always');
+  // A key of a fixed guard changes no value, so it is one warning line for each key: the run goes on with the guard on.
+  for (const warning of fixedGuardKeyWarnings(loaded.value)) deps.warn(warning);
 
   // The root checks come before the tool check, the proxy health request and any launch, also in a dry run. A warning is
   // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.
@@ -604,9 +635,9 @@ export const runStart = async (
     const own = await requireOwnSession(deps, id, home);
     if (!own.ok) return own;
   }
-  // A session that runs already starts nothing, so it needs no proxy check and no launch. The run asks each proxy once.
+  // Only a new coordinator needs a launch plan. Worker recovery shares the proxy answers of the run.
   const answers = newProxyAnswers();
-  const plan = exists ? null : await planStart(deps, home, loaded.value, answers);
+  const plan = exists ? null : await planStart(deps, home, loaded.value, answers, guards.values);
   if (plan !== null && !plan.ok) return plan;
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
@@ -625,10 +656,12 @@ export const runStart = async (
   const recoveryResult = planned === null ? ok(null) : await recoverSession(deps, home, loaded.value, answers, guards.values);
   if (!recoveryResult.ok) return recoveryResult;
   const recovery = recoveryResult.value?.report ?? null;
-  // A session that runs already resumes no worker. It claims the mark and names the workers that have no pane.
-  const withoutPaneResult = planned === null ? await checkRunningSession(deps, home, id) : ok<readonly string[]>([]);
-  if (!withoutPaneResult.ok) return withoutPaneResult;
-  const withoutPane = withoutPaneResult.value;
+  // A session that runs already claims the mark and names the workers that have no pane. It resumes them only while spend is off.
+  const runningResult = planned === null
+    ? await checkRunningSession(deps, { home, session: id, config: loaded.value, guards: guards.values, proxyAnswers: answers })
+    : ok<RunningCheck>({ withoutPane: [], recovery: null });
+  if (!runningResult.ok) return runningResult;
+  const { withoutPane, recovery: runningRecovery } = runningResult.value;
   // A session that runs already can hold a coordinator pane that stays after its program ended.
   const ended = planned === null && (await coordinatorEnded(deps, id));
   const attached = await reach(deps, how, id);
@@ -642,6 +675,7 @@ export const runStart = async (
             text(`Started the session ${id} in ${home}. The ${roles.coordinator} runs in the window ${tmuxNames.windowView}.`),
             ...recoveryLines(planned, recovery),
           ]),
+      ...resumedLines(runningRecovery),
       ...(ended ? coordinatorEndedLines(id, home) : []),
       text(arrivalText(how, attached.value, id)),
       ...summary,
@@ -653,6 +687,7 @@ export const runStart = async (
       attached: attached.value,
       proxy: planned?.proxy.label ?? null,
       ...(planned === null ? {} : { coordinatorResumed: planned.resumeId !== null, workers: recovery }),
+      ...(runningRecovery === null ? {} : { workers: runningRecovery }),
       ...(withoutPane.length === 0 ? {} : { workersWithoutPane: withoutPane }),
       ...(ended ? { coordinatorEnded: true } : {}),
     },

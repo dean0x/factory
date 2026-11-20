@@ -1,5 +1,5 @@
 import { commandLines, commands, guardIds, places, requestWords, roles } from '../names.js';
-import { at, codeRow, textRow } from './build.js';
+import { alwaysOnRow, at, codeRow, fixedTextRow, textRow } from './build.js';
 import type { GuardRow } from './types.js';
 
 const { coordinator, node, owner, worker } = roles;
@@ -10,15 +10,15 @@ const machineLimitRows: readonly GuardRow[] = [
     id: 'machine-warnings',
     guard: guardIds.machineLimits,
     name: 'A new session shows a warning when free memory, free disk space or the load of the processor is past its limit; it never stops the session',
-    applies: `${commandLines.workerNew} and the machine report`,
+    applies: commandLines.workerNew,
     harm: true,
     sites: [
-      ...at('src/workers/machine.ts', 'gatherMachine', 'machineWarnings'),
       ...at('src/commands/worker.ts', 'makeWorker'),
+      ...at('src/workers/machine.ts', 'gatherMachine', 'machineWarnings'),
       ...at('src/config/schema.ts', 'limitsSchema'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'lock-bounds',
     guard: guardIds.machineLimits,
     name: 'A heavy run waits at most 90 minutes for its turn and holds the lock at most 3 hours, then the program stops it',
@@ -26,7 +26,7 @@ const machineLimitRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/lock.ts', 'waitForTurn', 'runHeld', 'watchStops', 'freeHeld'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'lock-place',
     guard: guardIds.machineLimits,
     name: 'The lock files sit in a private folder of the user and follow no link, so no other user controls them',
@@ -56,7 +56,7 @@ const taskFileRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/commands/node.ts', 'checkedTask', 'runSend'), ...at('src/comms/deliver.ts', 'holdsHiddenCharacter', 'requireRoom')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'child-address-form',
     guard: guardIds.taskFiles,
     name: 'The address of a child is a file address with an absolute path and no control character, escape or dot part',
@@ -64,7 +64,7 @@ const taskFileRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/comms/address.ts', 'checkFileAddress', 'childTarget'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'child-files-untrusted',
     guard: guardIds.taskFiles,
     name: 'Child config and report reads check links, file ownership, mode, size and schema. No child text enters a result.',
@@ -76,7 +76,7 @@ const taskFileRows: readonly GuardRow[] = [
       ...at('src/comms/config-access.ts', 'configAccessOf'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'report-listed-fields',
     guard: guardIds.taskFiles,
     name: `A report holds only the listed fields and stays within its size, so no private config or authority text of the ${owner} leaves the ${node}`,
@@ -107,7 +107,7 @@ const taskFileRows: readonly GuardRow[] = [
 ];
 
 const sessionCheckRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'owner-channel',
     guard: guardIds.sessionChecks,
     name: `A command that only the ${owner} may run needs a terminal window and no session mark`,
@@ -115,7 +115,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/owner-record.ts', 'requireOwnerChannel', 'putRecord', 'recordDelegation', 'recordScope'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'decide-channel',
     guard: guardIds.sessionChecks,
     name: `The ${commands.decide} command refuses a session, a mark of Claude Code and a missing terminal window, so a session cannot answer for the ${owner}`,
@@ -123,7 +123,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/commands/decide.ts', 'runDecide'), ...at('src/core/owner-record.ts', 'requireDecideChannel')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'setup-ask-channel',
     guard: guardIds.sessionChecks,
     name: 'A change of setup text is accepted only in a terminal window outside a session',
@@ -142,7 +142,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/claude-settings.ts', 'yesCounts', 'yesRefused', 'askConsent'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'received-init-outside-session',
     guard: guardIds.sessionChecks,
     name: `A session cannot accept a received ${folder}`,
@@ -150,7 +150,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-received.ts', 'runReceived'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'existing-init-outside-session',
     guard: guardIds.sessionChecks,
     name: 'A session cannot register an existing folder or change its modes',
@@ -217,7 +217,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/comms/deliver.ts', 'deliverToHome'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'decide-prompt',
     guard: guardIds.ownerGo,
     name: `The ${owner} reads the ${requestWords.request} and answers the question; no flag skips it`,
@@ -236,7 +236,7 @@ const ownerGoRows: readonly GuardRow[] = [
       ...at('src/board/decide.ts', 'recheckRequest', 'requireLogRoom'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'answered-row-not-proof',
     guard: guardIds.ownerGo,
     name: `An answered row of the board is only a candidate; the approval record of the ${owner} is the proof`,
@@ -256,7 +256,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/board/decide.ts', 'requireOpen'), ...at('src/board/local.ts', 'createLocalBoard')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'settle-relay-rules',
     guard: guardIds.ownerGo,
     name: `The decider of a settled ${requestWords.request} is never the ${owner}; a relayed answer names the ${coordinator} and is no proof, and a close writes no key of an answer`,
@@ -291,7 +291,7 @@ const ownerGoRows: readonly GuardRow[] = [
       ...at('src/board/decide.ts', 'linkedApprovalsOf', 'approvalVerdict'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'owner-row-under-lock',
     guard: guardIds.ownerGo,
     name: `The answer of the ${owner} is written under the state lock, and a decision record is never overwritten`,
@@ -299,7 +299,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/board/local.ts', 'createLocalBoard'), ...at('src/core/owner-record.ts', 'putDecision')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'decision-record-escape',
     guard: guardIds.ownerGo,
     name: `A decision record escapes brackets and checks its input, so ${requestWords.request} text cannot inject a link or a tag`,
@@ -307,7 +307,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/board/decision-record.ts', 'checkedInput', 'buildDecisionRecord'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'approval-store-place',
     guard: guardIds.ownerGo,
     name: `The approval record store sits outside the ${folder}, so no ${worker} can write an approval record`,
@@ -315,7 +315,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/owner-record.ts', 'userFilePathOf', 'storePathOf'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'profile-owner-only-wait-text',
     guard: guardIds.ownerGo,
     name: `A decision that needs the authority of the ${owner} waits for the ${owner}, also when the decision profile covers it`,
@@ -323,7 +323,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/templates/decision-profile.ts', 'PROFILE_README_LINES'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'profile-no-invented-decision-text',
     guard: guardIds.ownerGo,
     name: `The decision profile records only what the ${owner} said or what a principle covers, never an invented decision or quote`,
@@ -331,7 +331,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/templates/decision-profile.ts', 'PROFILE_README_LINES'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'glossary-owner-approves-text',
     guard: guardIds.ownerGo,
     name: `The glossary says that only the ${owner} can approve work or answer a decision`,
@@ -339,10 +339,18 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/glossary.ts', 'SENTENCES'),
   }),
+  fixedTextRow({
+    id: 'stage-not-approval-glossary-text',
+    guard: guardIds.ownerGo,
+    name: 'The glossary says that a stage of an item is never an approval',
+    applies: 'The word list of the help',
+    harm: false,
+    sites: at('src/glossary.ts', 'SENTENCES'),
+  }),
 ];
 
 const paneSafetyRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'own-tmux-session',
     guard: guardIds.paneSafety,
     name: 'A command acts only on the tmux session of its own folder; a session of another folder is a security stop',
@@ -354,7 +362,7 @@ const paneSafetyRows: readonly GuardRow[] = [
       ...at('src/commands/layout.ts', 'runLayout'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'pane-list-fails-closed',
     guard: guardIds.paneSafety,
     name: 'One malformed line makes the whole pane list unusable, so no key or stop goes to a wrong pane',
@@ -362,15 +370,15 @@ const paneSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/launch/tmux.ts', 'parsePaneLines', 'parsePaneList'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'pane-mode-fails-closed',
     guard: guardIds.paneSafety,
-    name: 'A pane with an unknown mode is refused, so typed keys never land in a copy mode or a prompt',
+    name: 'A mode answer that tmux never gives is refused as a mode, so typed keys never land in a copy mode or a prompt',
     applies: 'Before typing into a pane',
     harm: true,
-    sites: [...at('src/launch/tmux.ts', 'parsePaneMode'), ...at('src/comms/typing.ts', 'requireNoMode')],
+    sites: at('src/launch/tmux.ts', 'parsePaneMode'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'pane-binding',
     guard: guardIds.paneSafety,
     name: `A pane counts as a pane of a ${worker} only with its mark, its launch command and a second read; the ${coordinator} pane and the board pane never count`,
@@ -380,23 +388,33 @@ const paneSafetyRows: readonly GuardRow[] = [
       ...at('src/workers/panes.ts', 'requireBoundPane'),
       ...at('src/workers/binding.ts', 'startsWorker', 'startsCoordinator'),
       ...at('src/launch/tmux.ts', 'parsePaneBind'),
+      ...at('src/workers/reset.ts', 'requireLivePane', 'requireSamePane'),
+      ...at('src/commands/self.ts', 'requireSamePane'),
     ],
+  }),
+  alwaysOnRow({
+    id: 'typed-line-form',
+    guard: guardIds.paneSafety,
+    name: 'Only fixed lines of printable text go into a pane',
+    applies: `${commandLines.workerReset} and ${commandLines.selfReset}`,
+    harm: true,
+    sites: at('src/comms/typing.ts', 'typeLine', 'lineProblem'),
   }),
   codeRow({
     id: 'typed-line',
     guard: guardIds.paneSafety,
-    name: 'Only fixed lines of printable text go into a pane, and a pane in a mode or with a numbered dialog is refused',
+    name: 'A pane in a mode or with a numbered dialog gets no typed line',
     applies: `${commandLines.workerReset} and ${commandLines.selfReset}`,
     harm: true,
-    sites: at('src/comms/typing.ts', 'typeLine', 'lineProblem', 'requireNoMode', 'showsChoiceList'),
+    sites: at('src/comms/typing.ts', 'requireNoMode', 'requireNoChoiceList'),
   }),
   codeRow({
     id: 'self-reset-checks',
     guard: guardIds.paneSafety,
-    name: `A reset of the ${coordinator} session checks the caller, the hooks, the last seen mark, the resume notes, the pane and the screen before it types keys`,
+    name: `A reset of the ${coordinator} session checks the hooks, the last seen mark and the resume notes before it types keys`,
     applies: commandLines.selfReset,
     harm: true,
-    sites: at('src/commands/self.ts', 'selfReset', 'requireLineWithoutDialog', 'requireResumeNotes', 'requireSamePane', 'requireCoordinatorHooks'),
+    sites: at('src/commands/self.ts', 'selfReset', 'requireLineWithoutDialog', 'requireResumeNotes', 'requireCoordinatorHooks'),
   }),
   codeRow({
     id: 'reset-order',
@@ -405,32 +423,35 @@ const paneSafetyRows: readonly GuardRow[] = [
     applies: `${commandLines.workerReset} and ${commandLines.selfReset}`,
     harm: true,
     sites: [
-      ...at(
-        'src/workers/reset.ts',
-        'checkWorker',
-        'requireLivePane',
-        'requireOutOfView',
-        'requirePushed',
-        'requireResumeNotes',
-        'requireSamePane',
-        'requireIdleSession',
-        'resetWorker',
-      ),
-      ...at('src/workers/session-checks.ts', 'requireRoleDelivery', 'requireLineAfterStart'),
+      ...at('src/workers/reset.ts', 'checkWorker', 'requireOutOfView', 'requirePushed', 'requireResumeNotes', 'requireIdleSession', 'resetWorker'),
+      ...at('src/workers/session-checks.ts', 'requireLineAfterStart'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'stop-term-only',
     guard: guardIds.paneSafety,
-    name: 'A stop sends the TERM signal only and waits for a bounded time; an unknown case sends nothing, the pane of the caller is never the target, and the pane is bound again before the signal',
+    name: 'A stop sends the TERM signal only and waits for a bounded time, and an unknown case or a case that the caller does not allow sends nothing',
     applies: `${commands.dismiss}, ${commands.reboot} and every stop command`,
     harm: true,
-    sites: [
-      ...at('src/workers/stop.ts', 'stopWorker', 'terminatePane', 'endProcess', 'requireStopCase', 'requireAllowedCase'),
-      ...at('src/workers/lifecycle.ts', 'stopWorkers'),
-    ],
+    sites: at('src/workers/stop.ts', 'terminatePane', 'endProcess', 'requireStopCase', 'requireAllowedCase'),
   }),
   codeRow({
+    id: 'stop-target-checks',
+    guard: guardIds.paneSafety,
+    name: 'The pane of the caller is never the target of a stop',
+    applies: `${commands.dismiss}, ${commands.reboot} and every stop command`,
+    harm: true,
+    sites: [...at('src/workers/stop.ts', 'requireOtherCallerPane'), ...at('src/workers/lifecycle.ts', 'checkWorker')],
+  }),
+  alwaysOnRow({
+    id: 'stop-target-bind',
+    guard: guardIds.paneSafety,
+    name: 'The pane is bound again right before the signal, and the signal goes to the process of that read',
+    applies: `${commands.dismiss}, ${commands.reboot} and every stop command`,
+    harm: true,
+    sites: [...at('src/workers/stop.ts', 'stopWorker'), ...at('src/workers/lifecycle.ts', 'stopWorkers')],
+  }),
+  alwaysOnRow({
     id: 'signal-limits',
     guard: guardIds.paneSafety,
     name: 'A signal never goes to process 1 or to the process of the program itself, and it is always TERM',
@@ -441,46 +462,63 @@ const paneSafetyRows: readonly GuardRow[] = [
   codeRow({
     id: 'shutdown-targets',
     guard: guardIds.paneSafety,
-    name: `Every live ${worker} is in a known case before a stop, and a session ends by its exact name`,
+    name: `Every live ${worker} is in a known case before the first stop`,
     applies: `${commands.shutdown}, ${commands.restart} and ${commands.reboot}`,
     harm: true,
-    sites: [...at('src/commands/lifecycle.ts', 'runShutdown'), ...at('src/workers/lifecycle.ts', 'checkTargets')],
+    sites: [...at('src/commands/lifecycle.ts', 'runShutdown'), ...at('src/workers/lifecycle.ts', 'checkTargets', 'checkWorker')],
   }),
-  codeRow({
+  alwaysOnRow({
+    id: 'session-exact-name',
+    guard: guardIds.paneSafety,
+    name: 'A session ends by its exact name, so no session with a similar name ends',
+    applies: `${commands.shutdown}, ${commands.restart} and ${commands.reboot}`,
+    harm: true,
+    sites: at('src/launch/tmux.ts', 'killSessionArgs'),
+  }),
+  alwaysOnRow({
     id: 'slot-summon-marks',
     guard: guardIds.paneSafety,
-    name: `The board and summon marks must be sane, a pane of a ${worker} is in view only while a summon holds it, and a held pane never closes`,
+    name: `The board and summon marks must be sane, and a pane of a ${worker} is in view only while a summon holds it`,
     applies: 'Summon, layout and close',
     harm: true,
     sites: [
-      ...at('src/workers/slot.ts', 'requireSummoned', 'summonWorker', 'releaseSlot', 'closeWorkerPane', 'slotStateOf'),
+      ...at('src/workers/slot.ts', 'requireSummoned', 'summonWorker', 'releaseSlot', 'slotStateOf'),
       ...at('src/launch/tmux.ts', 'parseSlotList', 'parseSummonMark'),
     ],
   }),
   codeRow({
-    id: 'worker-resume-checks',
+    id: 'held-pane-stays',
     guard: guardIds.paneSafety,
-    name: `A resume needs a pane that is bound to the ${worker} and no live pane, and uses only the last seen session of that ${worker}`,
-    applies: commandLines.workerResume,
+    name: 'A pane that a summon holds in the slot never closes before the board goes back into the slot',
+    applies: `Every stop and ${commandLines.workerResume}`,
     harm: true,
-    sites: at('src/commands/worker.ts', 'runResume', 'requireNoLivePane', 'chooseSession'),
+    sites: at('src/workers/slot.ts', 'closeWorkerPane'),
   }),
   codeRow({
+    id: 'worker-resume-checks',
+    guard: guardIds.paneSafety,
+    name: `A resume starts no second pane while a pane of the ${worker} runs`,
+    applies: commandLines.workerResume,
+    harm: true,
+    sites: at('src/commands/worker.ts', 'runResume', 'requireNoLivePane'),
+  }),
+  alwaysOnRow({
     id: 'resume-owned-session',
     guard: guardIds.paneSafety,
-    name: 'A resume uses only a session line that carries the own mark and that no other pointer holds, and never a guess',
+    name: `A resume uses only a session line that carries the own mark and that no other pointer and no live pane of the ${worker} holds, and never a guess`,
     applies: `${commandLines.workerResume}, ${commands.restart}, ${commands.reboot} and the recovery at ${commands.start}`,
     harm: true,
     sites: [
       ...at('src/workers/lifecycle.ts', 'resumeIdOf'),
       ...at('src/workers/recovery.ts', 'recoverWorker'),
       ...at('src/workers/last-seen.ts', 'readOwnLastSeen', 'otherHolderOf', 'foreignMarkerReason'),
+      ...at('src/commands/worker.ts', 'chooseSession'),
     ],
   }),
 ];
 
 const permissionModeRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'auto-permission-mode',
     guard: guardIds.permissionMode,
     name: 'Every launch passes the auto permission mode, the schema accepts no other mode, and no flag skips the permissions',
@@ -500,7 +538,7 @@ const permissionModeRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/safety/settings.ts', 'skipsOf', 'analyzeSettings'), ...at('src/commands/root-content.ts', 'judgeSettings')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'settings-check-fails-closed',
     guard: guardIds.permissionMode,
     name: 'A settings scan that cannot read all its files stops the command',
@@ -522,7 +560,7 @@ const permissionModeRows: readonly GuardRow[] = [
 ];
 
 const proxyRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'proxy-from-config',
     guard: guardIds.proxy,
     name: 'A launch clears the base URL of the model calls and sets a proxy only from a proxy id that the config defines',
@@ -530,7 +568,7 @@ const proxyRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/launch/argv.ts', 'startArgv', 'stripScript'), ...at('src/workers/launch.ts', 'chooseProxy')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'proxy-url-form',
     guard: guardIds.proxy,
     name: 'A proxy URL is http or https and holds no user info, query or fragment, so no credential reaches output or files',
@@ -545,13 +583,13 @@ const proxyRows: readonly GuardRow[] = [
     applies: `${commands.start}, ${commands.restart}, ${commands.reboot}, ${commandLines.workerNew}, ${commandLines.workerResume} and recovery`,
     harm: true,
     sites: [
-      ...at('src/workers/launch.ts', 'chooseProxy'),
+      ...at('src/workers/launch.ts', 'proxyHealthOf', 'chooseProxy'),
       ...at('src/safety/proxy.ts', 'checkProxyHealth'),
       ...at('src/workers/lifecycle.ts', 'requireProxies'),
       ...at('src/commands/lifecycle.ts', 'runRestart'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'tmux-drops-proxy-env',
     guard: guardIds.proxy,
     name: 'The tmux session drops the proxy variables, so they do not reach every pane',
@@ -559,7 +597,7 @@ const proxyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/launch/tmux.ts', 'startSteps'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'proxy-health-no-redirect',
     guard: guardIds.proxy,
     name: 'The health call of a proxy follows no redirect, so it never reaches another host',
@@ -567,7 +605,7 @@ const proxyRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/core/node-deps.ts', 'createNodeDeps'),
   }),
-  textRow({
+  fixedTextRow({
     id: 'proxy-from-config-text',
     guard: guardIds.proxy,
     name: 'The safety block says that a session uses a proxy only when the local config names one and that the program clears a stray proxy variable before each launch',

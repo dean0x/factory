@@ -307,13 +307,15 @@ describe('guard store reads and writes', () => {
     expect(deps.files.size).toBe(0);
   });
 
-  it.each(['guards', 'prefix'])('checks the channel before file access for %s', async (kind) => {
+  it.each(['guards', 'prefix', 'letter case'])('checks the channel before file access for %s', async (kind) => {
     const deps = fixture({ env: { [env.session]: 'node', [env.stateHome]: stateHome } });
     const blocked = { ...deps, fs: new Proxy(deps.fs, { get: () => { throw new Error('channel must run first'); } }) };
-    const result = kind === 'guards'
-      ? await storeApi.recordGuards(blocked, { root, node: 'demo', change })
-      : await storeApi.recordPrefix(blocked, { root, node: 'demo', prefix: 'prefix' });
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    const writes = {
+      guards: () => storeApi.recordGuards(blocked, { root, node: 'demo', change }),
+      prefix: () => storeApi.recordPrefix(blocked, { root, node: 'demo', prefix: 'prefix' }),
+      'letter case': () => storeApi.recordExactRoot(blocked, { root, node: 'demo' }),
+    } as const;
+    expect(await writes[kind as keyof typeof writes]()).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 
   it('changes only the prefix and hashes its exact text', async () => {
@@ -347,6 +349,81 @@ describe('guard store reads and writes', () => {
     const noCores = { ...deps, fs: { ...deps.fs, openCheckedCore: undefined, writeTextAtomicCore: undefined } };
     expect((await storeApi.readGuardStore(noCores, path)).ok).toBe(false);
     expect((await storeApi.recordPrefix(noCores, { root, node: 'demo', prefix: 'prefix' })).ok).toBe(false);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+});
+
+describe('the letter case rewrite of a record root', () => {
+  const folded = root.toUpperCase();
+  /** A volume that ignores letter case: the real path and the entry of the root in any letter case are those of the root. */
+  const caseBlind = (deps: ReturnType<typeof fixture>) => {
+    const exact = (target: string): string => (target.toLowerCase() === root ? root : target);
+    return { ...deps, fs: { ...deps.fs,
+      realpath: async (target: string) => deps.fs.realpath(exact(target)),
+      lstatInfo: async (target: string) => deps.fs.lstatInfo(exact(target)),
+    } };
+  };
+
+  it('writes the one record of the node with the root in other letter case again with the real root, and keeps its values, its prefix and the other records', async () => {
+    const deps = fixture();
+    const values = { [guard.id]: { value: 'off' as const, at } };
+    const prefix = { hash: sha256Hex('prefix'), at };
+    const other = { ...record(), node: 'other', root: folded };
+    deps.seed(path, storeText([{ ...record(values, prefix), root: folded }, other]));
+    expect(await storeApi.recordExactRoot(caseBlind(deps), { root, node: 'demo' })).toEqual(ok({ warning: null }));
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([record(values, prefix), other]));
+    expect(deps.modes.get(path)).toBe(0o600);
+  });
+
+  it.each(['stored folder', 'current folder', 'record', 'stored link'] as const)('keeps the store when the %s changes before the lock', async (change) => {
+    const deps = fixture();
+    const original = storeText([{ ...record(), root: folded }]);
+    const replacement = storeText([{ ...record(), root: '/elsewhere' }]);
+    deps.seed(path, original);
+    const lock = userFileLockPath(path);
+    const watched = { ...deps, fs: { ...deps.fs,
+      realpath: async (target: string) => {
+        const moved = (change === 'stored folder' && target === folded) || (change === 'current folder' && target === root);
+        if (moved && deps.files.has(lock)) return ok('/elsewhere');
+        return deps.fs.realpath(target === folded ? root : target);
+      },
+      // The stored root becomes a link to the root: its real path stays the root, so only its own entry shows the change.
+      lstatInfo: async (target: string) => {
+        if (change === 'stored link' && target === folded && deps.files.has(lock)) return ok({ kind: 'link' as const });
+        return deps.fs.lstatInfo(target === folded ? root : target);
+      },
+      writeTextExclusive: async (name: string, text: string, mode: number) => {
+        if (name === lock && change === 'record') deps.seed(path, replacement);
+        return deps.fs.writeTextExclusive(name, text, mode);
+      },
+    } };
+    expect((await storeApi.recordExactRoot(watched, { root, node: 'demo' })).ok).toBe(false);
+    expect(deps.files.get(path)).toBe(change === 'record' ? replacement : original);
+    expect(deps.atomicWrites).toEqual([]);
+    expect(deps.files.has(lock)).toBe(false);
+  });
+
+  it('keeps a root that differs in more than letter case', async () => {
+    const deps = fixture();
+    const alias = `${folded}/.`;
+    deps.seed(path, storeText([{ ...record(), root: alias }]));
+    const view = { ...deps, fs: { ...deps.fs, realpath: async (target: string) => deps.fs.realpath(target === alias ? root : target) } };
+    expect(await storeApi.recordExactRoot(view, { root, node: 'demo' })).toEqual(ok(null));
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('keeps a stored root that is a link to the root, also when its real path is the root', async () => {
+    const deps = fixture({ links: { [folded]: root } });
+    deps.seed(path, storeText([{ ...record(), root: folded }]));
+    const view = { ...deps, fs: { ...deps.fs, realpath: async (target: string) => deps.fs.realpath(target === folded ? root : target) } };
+    expect(await storeApi.recordExactRoot(view, { root, node: 'demo' })).toEqual(ok(null));
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('writes nothing when two records of the node differ from the root only in letter case', async () => {
+    const deps = fixture();
+    deps.seed(path, storeText([{ ...record(), root: folded }, { ...record(), root: '/Work/Node' }]));
+    expect(await storeApi.recordExactRoot(caseBlind(deps), { root, node: 'demo' })).toEqual(ok(null));
     expect(deps.atomicWrites).toEqual([]);
   });
 });
