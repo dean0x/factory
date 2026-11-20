@@ -293,20 +293,22 @@ describe('the guards of a recipe', () => {
     }
   });
 
-  it('keeps merge quality separate from approval and on even with a recorded local off value', () => {
-    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { 'merge-quality': guardValues.off } });
+  it('keeps merge quality separate from approval, with its one text row', () => {
+    expect(software.guards.find((guard) => guard.id === 'merge-quality')).toMatchObject({ wired: true, rows: ['merge-head-text'] });
+    expect(software.rows.find((row) => row.id === 'merge-head-text')?.guard).toBe('merge-quality');
+  });
+
+  it('keeps a guard that this version cannot set on even with a recorded local off value', () => {
+    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { 'pr-rules': guardValues.off } });
     const parsed = parseConfig(shared, local, recipes);
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     const state = guardRulesOf(software.guards, {
       node: 'demo', root: '/node', local: parsed.data.core.guards,
-      record: { node: 'demo', root: '/node', values: { 'merge-quality': { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
+      record: { node: 'demo', root: '/node', values: { 'pr-rules': { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
     });
-    expect(state.values['merge-quality']).toBe(guardValues.on);
-    expect(software.guards.find((guard) => guard.id === 'merge-quality')).toMatchObject({
-      wired: false, rows: ['merge-head-text'],
-    });
-    expect(software.rows.find((row) => row.id === 'merge-head-text')?.guard).toBe('merge-quality');
+    expect(state.values['pr-rules']).toBe(guardValues.on);
+    expect(software.guards.find((guard) => guard.id === 'pr-rules')).toMatchObject({ wired: false });
   });
 
   it('sets the harm mark for a recipe guard with no rows', () => {
@@ -328,7 +330,7 @@ describe('the guards of a recipe', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
       guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
-      guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality',
     ]);
   });
 

@@ -1377,7 +1377,7 @@ A guard is one family of code checks and rule texts that keep one thing safe. Ea
 
 **The registry.** The core and the recipe supply one registry for the list. The core supplies the guards that apply to every recipe. The software recipe adds `approval-merge`, `approval-release`, `merge-quality` and `pr-rules`.
 
-`merge-quality` holds three rules: the checked head SHA, green CI at that SHA, and the posted review of a releasable change. It is separate from `approval-merge`. This version knows `merge-quality` but cannot set it, so it stays `on`.
+`merge-quality` holds three rules: the checked head SHA, green CI at that SHA, and the posted review of a releasable change. It is separate from `approval-merge`, and it has its own setting.
 
 Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and its rows. It also has a new-node default, a value for a missing key, and related config keys. Each row has its own id, name, kind, harm mark, place of use and source sites. Integrity checks are not guards. They do not appear in the list and always run.
 
@@ -1399,17 +1399,18 @@ A missing key means `on`. New nodes and existing nodes with no guard keys keep e
 
 A local `off` takes effect only with a matching record of the owner for that node id and real factory folder. The folder path of the record must be the same, letter case included. A missing or different record keeps the guard on. If the same node has only a match in different letter case, every guard stays on. Launch and `upgrade` stop with exit code 4. Run `factory upgrade` in a terminal window, outside a session, to write the record again with the exact letter case. It writes only when the stored path is a folder and not a link, and its real path is the factory folder. When the write fails, the stop names the cause. Else run `factory guard confirm` and `factory guard set` to record the prefix and the guard values again. A move of the folder ends its guard records. A local `off` also needs a proof. The config on disk must load in full with every guard on and have the same node id. The factory list must name the folder with that node id. Else every guard stays on. `upgrade` proves an `off` with the config on disk before its migrations. So a config of an older layout keeps every guard on until the upgrade is done. A guard that this version cannot set always stays on, even with a local `off` and a record. One part of the code makes the guard decision for every command. A command uses one read of the guard values for its output and for each of its steps. A read of another folder keeps every guard on.
 
-**Text guards.** This version can set five guards:
+**Text guards.** This version can set six guards:
 
 | Guard | Effect of `off` |
 |---|---|
 | `approval-merge` | Replace the merge approval text with the off text and the request log command. |
 | `approval-release` | Replace the release approval text with the off text and the request log command. |
+| `merge-quality` | Remove the rule to merge only at the checked head SHA, with green CI there, a posted review and a releasable change. |
 | `context-limits` | Remove the context limit rules from the role text, and show no `PREPARE` or `MAX` mark in the worker table. |
 | `resume-routines` | Remove the resume and routine instructions. |
 | `install-rules` | Remove the rule about installs outside the session folder. |
 
-The off text of an approval point applies in both `owner` and `delegated` mode. The three rules of `merge-quality` stay on when `approval-merge` is off. General approval and record instructions still name the owner go.
+The off text of an approval point applies in both `owner` and `delegated` mode. The three rules of `merge-quality` follow their own guard, so they stay when `approval-merge` is off. General approval and record instructions still name the owner go.
 
 **Code guards.** This version can also set these guards:
 

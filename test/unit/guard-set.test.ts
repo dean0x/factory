@@ -43,7 +43,7 @@ describe('guard set arguments', () => {
     [['set', 'unknown-guard', 'off'], 'Unknown guard "unknown-guard"'],
     [['set', guardIds.cloneRules, 'off'], `Unknown guard "${guardIds.cloneRules}"`],
     [['set', guardIds.hookRuntime, 'on'], `Unknown guard "${guardIds.hookRuntime}"`],
-    [['set', softwareGuardIds.mergeQuality, 'off'], 'not settable in this version'],
+    [['set', softwareGuardIds.prRules, 'off'], 'not settable in this version'],
     [['set', guardIds.sessionChecks, 'off'], 'not settable in this version'],
     [['set', A, 'off', '--all'], '--all'],
     [['set', A, 'bad'], 'on or off'],
@@ -58,7 +58,7 @@ describe('guard set arguments', () => {
     const result = await run(deps, words);
     expect(result.code).toBe(2);
     expect(result.err).toContain(message);
-    const listed: readonly string[] = ['unknown-guard', guardIds.cloneRules, guardIds.hookRuntime, softwareGuardIds.mergeQuality];
+    const listed: readonly string[] = ['unknown-guard', guardIds.cloneRules, guardIds.hookRuntime, softwareGuardIds.prRules];
     if (listed.includes(words[1] ?? '')) expect(result.err).toContain('factory guard list');
     expect(seen).toEqual([]);
   });

@@ -33,10 +33,12 @@ export const softwareGuards: readonly GuardDefinition[] = [
       [`${keys.root.approval}.${releasePoint.id}`],
     ),
   ),
-  guardOf(
-    softwareGuardIds.mergeQuality,
-    'Quality checks before a merge',
-    'A merge uses the checked head SHA, green CI there and a posted review of a releasable change.',
+  wiredGuard(
+    guardOf(
+      softwareGuardIds.mergeQuality,
+      'Quality checks before a merge',
+      'A merge uses the checked head SHA, green CI there and a posted review of a releasable change.',
+    ),
   ),
   guardOf(
     softwareGuardIds.prRules,

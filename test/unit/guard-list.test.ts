@@ -170,20 +170,28 @@ describe('guard list', () => {
     ] });
   });
 
-  it('shows merge quality as on and not settable even with a local off value', async () => {
+  it('shows a guard that this version cannot set as on and not settable even with a local off value', async () => {
     const config = sampleConfig();
-    const deps = make({ ...config, core: { ...config.core, guards: { 'merge-quality': 'off' } } });
+    const deps = make({ ...config, core: { ...config.core, guards: { 'pr-rules': 'off' } } });
     const json = await run(deps, ['--json']);
     expect(json.code).toBe(0);
     const doc: unknown = JSON.parse(json.out);
     expect(doc).toMatchObject({ guards: expect.arrayContaining([
-      expect.objectContaining({ id: 'merge-quality', wired: false, settable: false, value: 'on' }),
+      expect.objectContaining({ id: 'pr-rules', wired: false, settable: false, value: 'on' }),
     ]) });
     const text = await run(deps, ['--all']);
     expect(text.code).toBe(0);
     const lines = linesOf(text.out);
-    const row = lines.find((line) => line.startsWith('merge-quality')) ?? '';
-    expect(rowCells(lines[0] ?? '', row)).toEqual(['merge-quality', 'on', 'on', 'H', 'not settable in this version']);
+    const row = lines.find((line) => line.startsWith('pr-rules')) ?? '';
+    expect(rowCells(lines[0] ?? '', row)).toEqual(['pr-rules', 'on', 'on', 'H', 'not settable in this version']);
+  });
+
+  it.each(['merge-quality'])('shows %s as settable', async (id) => {
+    const json = await run(make(sampleConfig()), ['--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.out)).toMatchObject({ guards: expect.arrayContaining([
+      expect.objectContaining({ id, wired: true, settable: true, value: 'on' }),
+    ]) });
   });
 
   it('shows the effective value, source and time from one guard store read', async () => {
@@ -200,7 +208,7 @@ describe('guard list', () => {
     expect(counted.count()).toBe(1);
   });
 
-  it.each([{}, { 'merge-quality': 'off' as const }])('reads no guard store without a wired local off value: %j', async (guards) => {
+  it.each([{}, { 'pr-rules': 'off' as const }])('reads no guard store without a wired local off value: %j', async (guards) => {
     const config = sampleConfig();
     const deps = make({ ...config, core: { ...config.core, guards } });
     seedRecord(deps, { [guardIds.installRules]: 'off' });
