@@ -258,8 +258,8 @@ type Settings = Readonly<Record<string, unknown>>;
 
 const NO_SETTINGS: Settings = {};
 
-/** The link, the kind and the existence of the three parts of the path, from the session folder down. With `links` false, a link passes. */
-const checkParts = async (deps: Deps, target: Target, command: CommandText, links: boolean): Promise<CliResult<{ readonly exists: boolean }>> => {
+/** Check the kind of each part from the session folder down. Refuse a link at any of these parts. */
+const checkParts = async (deps: Deps, target: Target, command: CommandText): Promise<CliResult<{ readonly exists: boolean }>> => {
   const parts = [
     { path: target.folder, what: 'the session folder', kind: 'dir', name: 'folder' },
     { path: target.claudeFolder, what: `the ${dirs.claude} folder`, kind: 'dir', name: 'folder' },
@@ -269,10 +269,6 @@ const checkParts = async (deps: Deps, target: Target, command: CommandText, link
   for (const part of parts) {
     const found = await deps.fs.lstat(part.path);
     if (!found.ok) return found;
-    if (found.value === 'link' && !links) {
-      if (part.path === target.file) exists = true;
-      continue;
-    }
     if (found.value === 'link') {
       return safetyRefusal(
         `cannot write ${target.file}: ${part.what} ${part.path} is a link`,
@@ -627,22 +623,19 @@ interface TargetRead {
 /**
  * The checks of the target, then the read of the file. A path in the user settings folder, a link, a real path outside the
  * session folder or a file that is no object stops it. The first check compares the written path of the file and makes no call
- * of the file system, so it comes before any call on the target.
- * With the guard of the settings write off, the link check and the check of the session folder do not run. The check of the user
- * folder of Claude Code runs whatever the value, because the file safety guard, which this version cannot set, shares it.
+ * of the file system, so it comes before any call on the target. These checks apply with every guard value.
  */
 const readTarget = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<TargetRead>> => {
   const target = targetOf(request.folder);
   const written = requireOutsideUserFolder(deps, target, request.command, target.file);
   if (!written.ok) return written;
-  const checked = await guardOn(deps, guardIds.settingsWrite, request.home);
-  const parts = await checkParts(deps, target, request.command, checked);
+  const parts = await checkParts(deps, target, request.command);
   if (!parts.ok) return parts;
-  const real = checked ? await requireInsideSession(deps, target, request.command) : ok(target.file);
+  const real = await requireInsideSession(deps, target, request.command);
   if (!real.ok) return real;
   const resolved = requireOutsideUserFolder(deps, target, request.command, real.value);
   if (!resolved.ok) return resolved;
-  const content = parts.value.exists ? await readSettings(deps, target.file, request.command) : ok(null);
+  const content = parts.value.exists ? await readSettings(deps, real.value, request.command) : ok(null);
   return content.ok ? ok({ target, content: content.value }) : content;
 };
 
@@ -760,8 +753,8 @@ export const ensureHookSettings = async (
  * consent rule and a file that is no JSON object stop the command before the folder exists.
  * The call asks nothing and writes nothing. A session folder written inside the user settings folder stops it before any call
  * of the file system.
- * With the guard of the settings write off, a missing consent does not stop the command, and only the check of the user folder
- * of Claude Code stays of the checks of the path.
+ * With the guard of the settings write off, a missing consent does not stop the command. The path checks and the refusal of
+ * the yes flag inside a factory session still apply.
  */
 export const requireHookConsent = async (
   deps: Deps,
@@ -771,7 +764,6 @@ export const requireHookConsent = async (
   const target = targetOf(request.folder);
   const written = requireOutsideUserFolder(deps, target, request.command, target.file);
   if (!written.ok) return written;
-  const checked = await guardOn(deps, guardIds.settingsWrite, request.home);
   const folder = await deps.fs.lstat(request.folder);
   if (!folder.ok) return folder;
   const planned = folder.value === null ? futureFilePlan(request, checkoutText) : await planChange(deps, request);
@@ -779,6 +771,7 @@ export const requireHookConsent = async (
   const { change, text } = planned.value;
   if (change.lines.length === 0) return ok(undefined);
   const route = consentRoute(deps, request, text !== null);
-  if (route === 'flag' || route === 'ask-terminal' || (route === 'no-terminal' && !checked)) return ok(undefined);
+  if (route === 'flag' || route === 'ask-terminal') return ok(undefined);
+  if (route === 'no-terminal' && !(await guardOn(deps, guardIds.settingsWrite, request.home))) return ok(undefined);
   return usageError(shownChange(target.file, change.lines), noConsentRemedy(deps, request, text !== null));
 };

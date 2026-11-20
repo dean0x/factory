@@ -10,9 +10,8 @@ import { listWorkerRecords, workCopyOf } from '../workers/registry.js';
 /**
  * The step of `upgrade` that brings the hook settings up to date (design 4.6): the settings file of the coordinator folder and of
  * each recorded work copy gets the events that the file lacks. A folder whose settings file holds no own hook command is left as
- * it is, because its owner said no to the hook. The step plans first, with no write, so that a stop of a check comes before the
- * first write of `upgrade`. It applies after the state is written, with the consent rule of `ensureHookSettings`: a terminal yes,
- * or the yes flag outside a factory session.
+ * it is, because its owner said no to the hook. The plan checks the current paths before the first write. After `upgrade` writes
+ * the state, `ensureHookSettings` checks the paths again and applies the consent rule.
  */
 
 /** A session folder whose settings file holds an own hook command. */

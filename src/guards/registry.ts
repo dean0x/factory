@@ -49,7 +49,7 @@ const coreGuards: readonly GuardDefinition[] = [
     guardOf(
       guardIds.settingsWrite,
       'Claude Code settings write',
-      `A write of the hook settings needs the consent of the ${owner} and stays inside the session folder.`,
+      `A write of the hook settings needs the consent of the ${owner}.`,
     ),
   ),
   guardOf(

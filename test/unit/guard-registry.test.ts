@@ -93,10 +93,8 @@ const recordExceptions = [
 const analyzerReason = 'A pure analysis of one settings text; judgeSettings reads the value and keeps only the permission stop when the guard is off.';
 /** The reason of a part of the folder scan: each caller of the scan reads the value and drops these findings when the guard is off. */
 const scanPartReason = 'A part of the folder scan; scanSettings, checkFolderSettings and checkTrackedSettings read the value and drop its findings when the guard is off.';
-/** The reason of a part of the target check of the settings write. */
-const targetPartReason = 'A part of the target check; readTarget and requireHookConsent read the value and skip this call when the guard is off.';
 /** The reason of a command step that writes the hook settings through the one writer. */
-const consentCallerReason = 'Calls requireHookConsent, ensureHookSettings or holdsOwnHook, which read the value.';
+const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
 /**
  * The listed sites of a code row of a wired guard whose own declaration does not name the guard id. Each one has its reason: the
@@ -142,12 +140,8 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanTrackedSettings', reason: 'Calls checkTrackedSettings, which reads the value and drops its findings when the guard is off.' },
   { row: 'settings-write-consent', path: 'src/commands/init-hook.ts', symbol: 'checkHookConsent', reason: consentCallerReason },
   { row: 'settings-write-consent', path: 'src/commands/start.ts', symbol: 'settleHook', reason: consentCallerReason },
-  { row: 'settings-write-consent', path: 'src/upgrade/hook-settings.ts', symbol: 'planHookSettings', reason: consentCallerReason },
   { row: 'settings-write-consent', path: 'src/upgrade/hook-settings.ts', symbol: 'applyHookSettings', reason: consentCallerReason },
   { row: 'settings-write-changed', path: 'src/core/claude-settings.ts', symbol: 'ensureHookSettings', reason: 'Calls askConsent and planAfterConsent, which read the value.' },
-  { row: 'settings-write-no-link', path: 'src/core/claude-settings.ts', symbol: 'checkParts', reason: 'Takes the value of readTarget as an argument and lets a link pass when the guard is off.' },
-  { row: 'settings-write-inside-folder', path: 'src/core/claude-settings.ts', symbol: 'requireInsideSession', reason: targetPartReason },
-  { row: 'settings-write-user-folder', path: 'src/core/claude-settings.ts', symbol: 'requireOutsideUserFolder', reason: 'Its stop is shared with a row of the file and link safety guard, which this version cannot set, so it stays on.' },
 ];
 
 const software = {
@@ -489,9 +483,6 @@ describe('the rows of the registry', () => {
       'settings-write': [
         'settings-write-consent',
         'settings-write-terminal',
-        'settings-write-no-link',
-        'settings-write-inside-folder',
-        'settings-write-user-folder',
         'settings-write-changed',
       ],
       'clone-rules': [
@@ -534,6 +525,8 @@ describe('the rows of the registry', () => {
       ],
       'file-link-safety': [
         'user-folder-never',
+        'settings-write-no-link',
+        'settings-write-inside-folder',
         'private-file-mode',
         'local-file-mode',
         'safe-write',
@@ -802,7 +795,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(209);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(208);
     expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
