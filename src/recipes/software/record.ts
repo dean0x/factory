@@ -7,6 +7,7 @@ import { files, flags, flagText, keys, program, roles } from '../../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
 import { mergedStage } from './board.js';
+import { softwareGuardIds } from './guard-parts.js';
 import { githubRepoOf, mergeCheck, parsePrNumber, readMergedPr, RECORD_COMMAND, RECORD_READER } from './github-pr.js';
 
 /**
@@ -33,6 +34,7 @@ const checkMergedPr = async (deps: Deps, input: RecordCheckInput): Promise<CliRe
     number: number.value,
     base,
     ...(input.branches === undefined ? {} : { heads: input.branches }),
+    ...(input.guards === undefined ? {} : { guards: input.guards }),
   });
   if (!read.ok) return read;
   const { pr } = read.value;
@@ -40,14 +42,24 @@ const checkMergedPr = async (deps: Deps, input: RecordCheckInput): Promise<CliRe
     stage: mergedStage,
     ref: String(pr.number),
     head: pr.prHead,
-    summary: `PR ${pr.number}, merge commit ${pr.mergeCommit}`,
+    summary: pr.mergeCommit === null ? `PR ${pr.number}, no merge commit` : `PR ${pr.number}, merge commit ${pr.mergeCommit}`,
   } as CheckedRecord);
 };
 
-/** The record check of the software recipe: a PR that is merged into the default branch, from the branch of the worker or of a former worker. */
+/**
+ * The record check of the software recipe: a PR that is merged into the default branch, from the branch of the worker or of a former
+ * worker. The setup check before the PR read, the merged state and the base branch follow the guard of the push and PR rules. The
+ * item, the project, the PR, its repo and its head branch are checked with every value, because a wrong one would close another item.
+ */
 export const softwareRecordCheck: RecordCheck = {
   stage: mergedStage,
   point: softwareApprovalPoints[0].id,
+  guard: {
+    id: softwareGuardIds.prRules,
+    offLine:
+      `The guard ${softwareGuardIds.prRules} is off, so this record did not check the setup before the PR read, ` +
+      'the merged state of the PR or its base branch.',
+  },
   summary: 'record a merged PR',
   refHelp:
     `the number of the PR. ${program} reads the PR with ${toolNames.gh} and records the merge only when the PR is merged ` +

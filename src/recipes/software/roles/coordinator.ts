@@ -135,14 +135,19 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
     ],
   },
   ...approval,
-  `- After a push, run \`${prWatchCommand} <number> ${flagText(prFlags.head)} <full SHA>\` as a background task. The first line of its output is the verdict. Exit 0 is not an approval.`,
+  {
+    guards: [softwareGuardIds.prRules],
+    lines: [
+      `- After a push, run \`${prWatchCommand} <number> ${flagText(prFlags.head)} <full SHA>\` as a background task. The first line of its output is the verdict. Exit 0 is not an approval.`,
+    ],
+  },
   {
     guards: [softwareGuardIds.mergeQuality],
     lines: [
       '- Merge only at the full head SHA that you checked, with CI green at that SHA. Before a merge, check on the primary source that the review is posted and the change is releasable at merge.',
     ],
   },
-  '- Tell the {{owner}} the result of each merge and each release.',
+  { guards: [softwareGuardIds.prRules], lines: ['- Tell the {{owner}} the result of each merge and each release.'] },
   '',
   ...workerSectionParts,
   '',
@@ -190,7 +195,12 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
       { guards: [guardIds.ownerGo], text: ' A stage is never an approval. Only the {{owner}} approves, at an approval point.' },
     ],
   },
-  '- After the {{owner}} gives the go and the PR is merged, run `{{itemRecordCommand}}`. N is the number of the PR. The command reads the PR on GitHub. It records the merge only if the PR is merged into the default branch. If the item names a {{worker}}, the PR must come from the branch of that {{worker}}. If the item has no {{worker}} but names former {{worker}}s in `{{unassignedFromKey}}`, the PR must come from the branch of one of them. It never merges a PR. If the check fails, the command writes no record. Tell the {{owner}} why.',
+  {
+    guards: [softwareGuardIds.prRules],
+    lines: [
+      '- After the {{owner}} gives the go and the PR is merged, run `{{itemRecordCommand}}`. N is the number of the PR. The command reads the PR on GitHub. It records the merge only if the PR is merged into the default branch. If the item names a {{worker}}, the PR must come from the branch of that {{worker}}. If the item has no {{worker}} but names former {{worker}}s in `{{unassignedFromKey}}`, the PR must come from the branch of one of them. It never merges a PR. If the check fails, the command writes no record. Tell the {{owner}} why.',
+    ],
+  },
   `- A record sets the stage \`${mergedStage}\`, closes the item, and takes the item out of each queue. A second run for the same PR makes no change.`,
   '- To take a {{worker}} off an item, run `{{itemUnassignCommand}}` in this session. Use it to free a {{worker}} from an item that waits. The item keeps its stage and its state, and it keeps a mark of the former {{worker}}. A parked item is still open work: it is not closed.',
   {
@@ -268,12 +278,17 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '3. Read the board. Verify each item.',
   '4. Ask each {{worker}} for a status: goal, branch, next step, blocker and context use.',
   '5. Tell the {{owner}} what each {{worker}} does, what needs the {{owner}}, and in which order.',
-  '',
-  '## Work cycle',
-  '',
-  '1. Every piece of work has a ticket.',
-  '2. Use as few pull requests as possible.',
-  '3. Plan, implement, review and resolve. Keep the evidence in one pull request comment.',
+  {
+    guards: [softwareGuardIds.prRules],
+    lines: [
+      '',
+      '## Work cycle',
+      '',
+      '1. Every piece of work has a ticket.',
+      '2. Use as few pull requests as possible.',
+      '3. Plan, implement, review and resolve. Keep the evidence in one pull request comment.',
+    ],
+  },
   '',
   '## Writing',
   '',

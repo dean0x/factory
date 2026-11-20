@@ -1,6 +1,7 @@
 import { allOn } from '../../../guards/effective.js';
 import { guardIds } from '../../../names.js';
 import { linesFor, type TextPart } from '../../../templates/fill.js';
+import { softwareGuardIds } from '../guard-parts.js';
 import { workerSectionParts } from './coordinator.js';
 
 export const MANAGER_PARTS: readonly TextPart[] = [
@@ -44,10 +45,11 @@ export const MANAGER_PARTS: readonly TextPart[] = [
   '',
   '- Collect the items that wait for the {{owner}} from all children. Order them by what they unblock.',
   '- Decide only what the decision profile covers. Ask the {{owner}} for the rest.',
-  '',
-  '## Limits',
-  '',
-  '- A {{manager}} does no work at the level of pull requests. Do not review, fix, merge or release a pull request.',
+  { guards: [softwareGuardIds.prRules, guardIds.taskFiles], lines: ['', '## Limits', ''] },
+  {
+    guards: [softwareGuardIds.prRules],
+    lines: ['- A {{manager}} does no work at the level of pull requests. Do not review, fix, merge or release a pull request.'],
+  },
   { guards: [guardIds.taskFiles], lines: ['- Do not change the files of a child. Ask the child.'] },
 ];
 

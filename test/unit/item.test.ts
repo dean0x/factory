@@ -16,6 +16,7 @@ import { recipes } from '../../src/recipes/index.js';
 import type { CheckedRecord, RecipeRegistry, RecordCheck, RecordCheckInput } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { mergeCheck } from '../../src/recipes/software/github-pr.js';
+import { softwareGuardIds } from '../../src/recipes/software/guard-parts.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { branchOf, workCopyOf, writeWorkerRecord } from '../../src/workers/registry.js';
 import { APPROVAL_ID, APPROVAL_LINK, approvalAnswer, approvalRelay, approvalRequest } from '../helpers/approval-go.js';
@@ -28,7 +29,7 @@ import {
   FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, type GuardedSetup,
 } from '../helpers/guarded-node.js';
 import { publishBoard, publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
-import { sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
+import { sampleBoard, sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
 
@@ -752,6 +753,76 @@ describe('item record with the software recipe: the record of a merge', () => {
       head: HEAD_SHA,
       summary: `PR 12, merge commit ${MERGE_SHA}`,
       changed: true,
+    });
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('item record: the guard pr-rules in %s', (_folder, origin) => {
+  const OFF: GuardedSetup = { off: [softwareGuardIds.prRules] };
+
+  /** The merge world on a node whose local file holds each guard of the setup off, with the owner record unless it has none. */
+  const guardedWorld = async (setup: GuardedSetup, answer: RunHandler, config: FactoryConfig = sampleConfigWithBoard()): Promise<MergeWorld> => {
+    const off = setup.off ?? [];
+    const guarded = withGuardsOff(config, off);
+    const world = await mergeWorld({ config: guarded, answer });
+    registerRoot(world.repo.deps, HOME, guarded.core.node.id, [], origin);
+    if (setup.record !== false) world.repo.deps.seed(GUARD_STORE, guardStoreText(guarded.core.node.id, HOME, off, world.repo.deps.now()));
+    return world;
+  };
+
+  /** One run of `item record` as a person types it. */
+  const recordLine = async (world: MergeWorld, id = 'B-1'): Promise<{ readonly code: number; readonly out: string; readonly err: string }> => {
+    const sink = captureSink();
+    const code = await runCli(['item', 'record', id, '--ref', '12', '--home', HOME], world.gh.deps, sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  it.each(guardStatesOf(softwareGuardIds.prRules))('records an open PR with no merge commit only while the guard counts as off: %s', async (_state, setup, on) => {
+    const world = await guardedWorld(setup, answering(goodPr({ state: 'OPEN', mergedAt: null, mergeCommit: null })));
+    const result = await recordLine(world);
+    expect(result.code, result.err).toBe(on ? 1 : 0);
+    expect(itemIn(world.repo, 'B-1')).toMatchObject(on ? { stage: 'review' } : { stage: 'merged', [boardKeys.mergedPrHead]: HEAD_SHA });
+    expect(result.out.includes('Recorded B-1: PR 12, no merge commit')).toBe(!on);
+    expect(result.out.includes(`The guard ${softwareGuardIds.prRules} is off`)).toBe(!on);
+  });
+
+  it.each(guardStatesOf(softwareGuardIds.prRules))('records a PR that merged into another base branch only while the guard counts as off: %s', async (_state, setup, on) => {
+    const world = await guardedWorld(setup, answering(goodPr({ baseRefName: 'release' })));
+    const result = await recordLine(world);
+    expect(result.code, result.err).toBe(on ? 1 : 0);
+    expect(itemIn(world.repo, 'B-1').stage).toBe(on ? 'review' : 'merged');
+  });
+
+  it.each(guardStatesOf(softwareGuardIds.prRules))('checks the setup before the PR read only while the guard counts as on, and the write still needs the closed state: %s', async (_state, setup, on) => {
+    const { closed: _closed, ...noClosed } = sampleBoard();
+    const world = await guardedWorld(setup, answering(goodPr()), sampleConfigWithBoard(noClosed));
+    const result = await recordLine(world);
+    expect(result.code, result.err).toBe(2);
+    expect(result.err).toContain('the setup names no closed state');
+    expect(world.gh.calls).toHaveLength(on ? 0 : 1);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  describe('with the guard off and its owner record', () => {
+    it.each([
+      ['a PR from another repo', { isCrossRepository: true }],
+      ['a url of another repo', { url: 'https://github.com/other/web/pull/12' }],
+      ['another PR number', { number: 13 }],
+      ['a PR from another head branch', { headRefName: 'other-branch' }],
+      ['a merge commit that is not a full sha', { mergeCommit: { oid: 'abc123' } }],
+    ])('still refuses %s with exit 1, because the record must close only the item of the PR', async (_name, change) => {
+      const world = await guardedWorld(OFF, answering(goodPr(change)));
+      const result = await recordLine(world);
+      expect(result.code, result.err).toBe(1);
+      expectUntouched(world.repo, MERGE_BOARD);
+    });
+
+    it('still refuses an item that is not on the board with exit 2 and runs no gh, because the record changes only a known item', async () => {
+      const world = await guardedWorld(OFF, answering(goodPr()));
+      const result = await recordLine(world, 'B-9');
+      expect(result.code, result.err).toBe(2);
+      expect(world.gh.calls).toEqual([]);
+      expectUntouched(world.repo, MERGE_BOARD);
     });
   });
 });

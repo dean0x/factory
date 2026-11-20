@@ -4,8 +4,11 @@ import type { Deps } from '../../core/deps.js';
 import { parseGithubRepo } from '../../core/git.js';
 import { ok } from '../../core/result.js';
 import { toolNames } from '../../core/tools.js';
+import { allOn, isGuardOn } from '../../guards/effective.js';
+import type { GuardValues } from '../../guards/types.js';
 import { commandLines, commandText, flags, flagText, ghTimeoutMs, type CommandText } from '../../names.js';
 import { parseJsonText } from '../../state/load.js';
+import { softwareGuardIds } from './guard-parts.js';
 
 /*
  * The merge check is a guard against a mistake, not a proof. The session that runs it controls PATH and the environment, so it
@@ -50,19 +53,23 @@ declare const mergedBrand: unique symbol;
 /**
  * A PR that passed the merge check. Only `readMergedPr` makes one, so a value of this type proves that the check ran and passed.
  * `prHead` is the head sha of the PR (`headRefOid`), never the merge commit: the merge commit goes to the output and to the commit
- * message only.
+ * message only. `mergeCommit` is null only for a PR with no merge commit, which only a read with the merged state check off accepts.
  */
 export interface MergedPr {
   readonly [mergedBrand]: true;
   readonly number: number;
-  readonly mergeCommit: string;
+  readonly mergeCommit: string | null;
   readonly prHead: string;
 }
 
 /** The result of the read: a merged PR that matches. Every other case is a failure. */
 export type MergedRead = { readonly kind: 'merged'; readonly pr: MergedPr };
 
-/** What the PR must match. `heads` are the head branches that the PR may come from; without them the head branch is not tested. An empty list matches no PR. */
+/**
+ * What the PR must match. `heads` are the head branches that the PR may come from; without them the head branch is not tested. An
+ * empty list matches no PR. `guards` are the values of the node: the merged state and the base branch follow the guard of the push and
+ * PR rules. Absent: every guard on.
+ */
 export interface MergeReadInput {
   /** `owner/name` of the repo, from `githubRepoOf`. */
   readonly repo: string;
@@ -70,6 +77,7 @@ export interface MergeReadInput {
   /** The branch that the PR merged into. */
   readonly base: string;
   readonly heads?: readonly string[];
+  readonly guards?: GuardValues;
 }
 
 /** The command that runs the record check, as the remedy lines show it. */
@@ -160,11 +168,30 @@ export const runPrView = async (deps: Deps, request: PrViewRequest): Promise<PrV
 const isSha = (text: string): boolean => mergeCheck.shaPattern.test(text);
 
 /**
+ * The reason that the PR is not the PR of the record, or null: another number, a url of another repo, or a PR from another repo.
+ * These checks run with every guard value, because another PR or a fork PR would close the item.
+ */
+export const otherPrReason = (pr: z.infer<typeof prSchema>, input: MergeReadInput): string | null => {
+  const expectedUrl = `https://${mergeCheck.host}/${input.repo}/pull/${input.number}`;
+  if (pr.number !== input.number) return 'gh gave another PR';
+  if (pr.url.toLowerCase() !== expectedUrl.toLowerCase()) return 'the PR is not in this repo';
+  return pr.isCrossRepository ? 'the PR comes from another repo' : null;
+};
+
+/**
+ * The reason that the PR comes from a head branch that the caller does not list, or null. Without a list, no branch is tested. This
+ * check runs with every guard value, because the PR of another branch would close the item.
+ */
+export const headBranchReason = (headRefName: string, heads: readonly string[] | undefined): string | null =>
+  heads !== undefined && !heads.includes(headRefName) ? 'the PR comes from another head branch' : null;
+
+/**
  * Read the PR with `gh pr view` and check that it is the merged PR that the caller expects. Each of these is a failure (exit 1)
  * and nothing else passes: `gh` missing, not signed in, a non-zero exit, the time limit, output that is too long or not JSON of
  * the known shape, a state other than merged, no merge time, another number, another base, a PR from another repo, another head
  * branch, a url of another repo, and a sha that is not 40 lowercase hex digits. A PR number that breaks the form is a usage error
- * (exit 2) and `gh` does not run.
+ * (exit 2) and `gh` does not run. While the guard of the push and PR rules is off, the merged state, the merge time and the base
+ * branch are not checked, and a PR with no merge commit passes; every other check runs.
  */
 export const readMergedPr = async (deps: Deps, input: MergeReadInput): Promise<CliResult<MergedRead>> => {
   const number = String(input.number);
@@ -181,16 +208,17 @@ export const readMergedPr = async (deps: Deps, input: MergeReadInput): Promise<C
   const parsed = read.kind === 'parsed' ? prSchema.safeParse(read.value) : null;
   if (parsed === null || !parsed.success) return mismatch(number, 'the answer of gh is not a PR record');
   const pr = parsed.data;
-  const mergeCommit = pr.mergeCommit?.oid ?? '';
+  const checks = isGuardOn(input.guards ?? allOn, softwareGuardIds.prRules);
+  const mergeCommit = pr.mergeCommit?.oid ?? null;
   const head = pr.headRefOid;
-  const expectedUrl = `https://${mergeCheck.host}/${input.repo}/pull/${number}`;
-  if (pr.state !== mergeCheck.mergedState) return mismatch(number, 'the PR is not merged');
-  if ((pr.mergedAt ?? '') === '') return mismatch(number, 'the PR has no merge time');
-  if (pr.number !== input.number) return mismatch(number, 'gh gave another PR');
-  if (pr.url.toLowerCase() !== expectedUrl.toLowerCase()) return mismatch(number, 'the PR is not in this repo');
-  if (pr.isCrossRepository) return mismatch(number, 'the PR comes from another repo');
-  if (pr.baseRefName !== input.base) return mismatch(number, 'the PR merged into another base branch');
-  if (input.heads !== undefined && !input.heads.includes(pr.headRefName)) return mismatch(number, 'the PR comes from another head branch');
-  if (!isSha(mergeCommit) || !isSha(head)) return mismatch(number, 'a commit of the PR is not a full sha');
+  if (checks && pr.state !== mergeCheck.mergedState) return mismatch(number, 'the PR is not merged');
+  if (checks && (pr.mergedAt ?? '') === '') return mismatch(number, 'the PR has no merge time');
+  const other = otherPrReason(pr, input);
+  if (other !== null) return mismatch(number, other);
+  if (checks && pr.baseRefName !== input.base) return mismatch(number, 'the PR merged into another base branch');
+  const branch = headBranchReason(pr.headRefName, input.heads);
+  if (branch !== null) return mismatch(number, branch);
+  const commitOk = mergeCommit === null ? !checks : isSha(mergeCommit);
+  if (!commitOk || !isSha(head)) return mismatch(number, 'a commit of the PR is not a full sha');
   return ok({ kind: 'merged', pr: { number: input.number, mergeCommit, prHead: head } as MergedPr });
 };

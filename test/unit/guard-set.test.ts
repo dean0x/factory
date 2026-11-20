@@ -7,11 +7,12 @@ import { readGuardState, readGuardStore, recordGuards, recordPrefix } from '../.
 import { ok } from '../../src/core/result.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import { env, files, guardIds, guardRecords, guardRecordWords, guardSetWords } from '../../src/names.js';
-import { recipes } from '../../src/recipes/index.js';
+import { recipes, type RecipeRegistry } from '../../src/recipes/index.js';
 import { softwareGuardIds } from '../../src/recipes/software/guard-parts.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeOptions } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
+import { UNWIRED_GUARD, unwiredRegistry } from '../helpers/unwired-guard.js';
 import { parseConfigTexts } from '../../src/config/load.js';
 
 const HOME = '/work/node';
@@ -27,9 +28,9 @@ const fixture = (options: FakeOptions = {}, config = sampleConfig()) => {
   registerRoot(deps, HOME, 'demo');
   return deps;
 };
-const run = async (deps: Deps, words: readonly string[]) => {
+const run = async (deps: Deps, words: readonly string[], registry: RecipeRegistry = recipes) => {
   const sink = captureSink();
-  const code = await runCli(['guard', ...words], deps, sink);
+  const code = await runCli(['guard', ...words], deps, sink, registry);
   return { code, out: sink.out.join(''), err: sink.errors.join('') };
 };
 const state = async (deps: ReturnType<typeof fixture>) => {
@@ -43,7 +44,6 @@ describe('guard set arguments', () => {
     [['set', 'unknown-guard', 'off'], 'Unknown guard "unknown-guard"'],
     [['set', guardIds.cloneRules, 'off'], `Unknown guard "${guardIds.cloneRules}"`],
     [['set', guardIds.hookRuntime, 'on'], `Unknown guard "${guardIds.hookRuntime}"`],
-    [['set', softwareGuardIds.prRules, 'off'], 'not settable in this version'],
     [['set', guardIds.workConduct, 'off'], 'not settable in this version'],
     [['set', A, 'off', '--all'], '--all'],
     [['set', A, 'bad'], 'on or off'],
@@ -58,9 +58,27 @@ describe('guard set arguments', () => {
     const result = await run(deps, words);
     expect(result.code).toBe(2);
     expect(result.err).toContain(message);
-    const listed: readonly string[] = ['unknown-guard', guardIds.cloneRules, guardIds.hookRuntime, softwareGuardIds.prRules];
+    const listed: readonly string[] = ['unknown-guard', guardIds.cloneRules, guardIds.hookRuntime];
     if (listed.includes(words[1] ?? '')) expect(result.err).toContain('factory guard list');
     expect(seen).toEqual([]);
+  });
+
+  it('refuses a guard that this version cannot set with exit 2 and the list command before any file read', async () => {
+    const seen: string[] = [];
+    const deps = withFsWatch(createFakeDeps(), (method) => { seen.push(method); });
+    const result = await run(deps, ['set', UNWIRED_GUARD, 'off'], unwiredRegistry);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain(guardSetWords.notSettable(UNWIRED_GUARD));
+    expect(seen).toEqual([]);
+  });
+
+  it.each([
+    guardIds.boardEdits, guardIds.ownerGo, softwareGuardIds.prRules, softwareGuardIds.mergeQuality, guardIds.dismiss, guardIds.sessionChecks,
+    guardIds.taskFiles,
+  ])('accepts the wired guard %s past the argument check', async (id) => {
+    const result = await run(createFakeDeps(), ['set', id, 'off']);
+    expect(result.code).toBe(4);
+    expect(result.err).not.toContain('not settable');
   });
 });
 

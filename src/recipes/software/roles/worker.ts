@@ -1,6 +1,7 @@
 import { allOn } from '../../../guards/effective.js';
 import { guardIds } from '../../../names.js';
 import { linesFor, type TextPart } from '../../../templates/fill.js';
+import { softwareGuardIds } from '../guard-parts.js';
 
 export const WORKER_PARTS: readonly TextPart[] = [
   '# {{Worker}} instructions',
@@ -88,7 +89,16 @@ export const WORKER_PARTS: readonly TextPart[] = [
       '- Never go past `{{maxPctKey}}` percent.',
     ],
   },
-  '- At the end of each phase, commit and push your work. Write your resume notes to `{{resumeFile}}` in the folder that `{{inboxEnv}}` names. Put the context percent in your report.',
+  {
+    segments: [
+      '-',
+      {
+        guards: [softwareGuardIds.prRules],
+        text: ' At the end of each phase, commit and push your work. Write your resume notes to `{{resumeFile}}` in the folder that `{{inboxEnv}}` names.',
+      },
+      ' Put the context percent in your report.',
+    ],
+  },
   { guards: [guardIds.contextLimits], lines: ['- Do not compact or clear yourself. The {{coordinator}} does it when you are idle.'] },
   '',
   {

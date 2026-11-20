@@ -40,11 +40,13 @@ export const softwareGuards: readonly GuardDefinition[] = [
       'A merge uses the checked head SHA, green CI there and a posted review of a releasable change.',
     ),
   ),
-  guardOf(
-    softwareGuardIds.prRules,
-    'Push and pull request rules',
-    'A push, a pull request and a merge report follow the rules of the project.',
-    [`${keys.root.recipe}.${keys.recipe.projects}[].${keys.project.defaultBranch}`],
+  wiredGuard(
+    guardOf(
+      softwareGuardIds.prRules,
+      'Push and pull request rules',
+      'A push, a pull request and a merge report follow the rules of the project.',
+      [`${keys.root.recipe}.${keys.recipe.projects}[].${keys.project.defaultBranch}`],
+    ),
   ),
 ];
 

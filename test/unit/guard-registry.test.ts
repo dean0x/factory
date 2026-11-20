@@ -20,6 +20,7 @@ import { oldWordsIn } from '../helpers/old-words.js';
 import { jargonIn } from '../helpers/plain-words.js';
 import { publishRecipe } from '../helpers/publish-recipe.js';
 import { sampleObject } from '../helpers/sample-config.js';
+import { UNWIRED_GUARD, unwiredRecipe, unwiredRegistry } from '../helpers/unwired-guard.js';
 import * as sourceScan from '../helpers/source-scan.js';
 import { allSourceFiles, importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
 
@@ -267,6 +268,7 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'decision-proof', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Passes the values of the node to recheckRequest, which reads the value.' },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'linkedApprovalsOf', reason: recordApprovalReason },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'approvalVerdict', reason: recordApprovalReason },
+  { row: 'record-check-gate', path: 'src/commands/item.ts', symbol: 'recordChecked', reason: 'Reads the value of the guard that the record check of the recipe names, and skips the setup check before the PR read while it is off.' },
 ];
 
 const software = {
@@ -342,16 +344,17 @@ describe('the guards of a recipe', () => {
   });
 
   it('keeps a guard that this version cannot set on even with a recorded local off value', () => {
-    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { 'pr-rules': guardValues.off } });
-    const parsed = parseConfig(shared, local, recipes);
+    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { [UNWIRED_GUARD]: guardValues.off } });
+    const parsed = parseConfig(shared, local, unwiredRegistry);
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
-    const state = guardRulesOf(software.guards, {
+    const guards = guardsFor(unwiredRecipe);
+    const state = guardRulesOf(guards, {
       node: 'demo', root: '/node', local: parsed.data.core.guards,
-      record: { node: 'demo', root: '/node', values: { 'pr-rules': { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
+      record: { node: 'demo', root: '/node', values: { [UNWIRED_GUARD]: { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
     });
-    expect(state.values['pr-rules']).toBe(guardValues.on);
-    expect(software.guards.find((guard) => guard.id === 'pr-rules')).toMatchObject({ wired: false });
+    expect(state.values[UNWIRED_GUARD]).toBe(guardValues.on);
+    expect(guards.find((guard) => guard.id === UNWIRED_GUARD)).toMatchObject({ wired: false });
   });
 
   it('sets the harm mark for a recipe guard with no rows', () => {
@@ -373,7 +376,7 @@ describe('the guards of a recipe', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.dismiss, guardIds.fileLinkSafety,
       guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.taskFiles, guardIds.sessionChecks, guardIds.ownerGo, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
-      guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality',
+      guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality', 'pr-rules',
     ]);
   });
 
@@ -901,6 +904,7 @@ describe('the rows of the registry', () => {
         'pr-watch-text',
         'pr-watch-head-moved',
         'record-check-gate',
+        'record-item-target',
         'record-default-branch',
         'record-merged-state',
         'record-same-pr',
@@ -1010,7 +1014,7 @@ describe('the rows of the registry', () => {
 
   it('pins the split between core rows and recipe rows', () => {
     expect(guardRowsFor(publishRecipe)).toHaveLength(234);
-    expect(softwareRecipe.guardRows).toHaveLength(103);
+    expect(softwareRecipe.guardRows).toHaveLength(104);
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
@@ -1072,7 +1076,7 @@ describe('the rows of the registry', () => {
       ],
       'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],
-      'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-default-branch'],
+      'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-item-target', 'record-default-branch', 'record-same-pr', 'record-worker-branch'],
       'root-scan': ['root-scan-clean', 'ignore-lists', 'ignored-check-fails-closed', 'received-tracked-links'],
       'safety-block': ['role-block-render', 'safety-block-newer', 'safety-block-insert'],
       secrets: ['token-keys-hidden', 'credential-strip', 'printable-output'],

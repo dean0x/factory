@@ -122,6 +122,14 @@ export interface RecordCheckInput {
    * matches no work, so a check refuses with it.
    */
   readonly branches: readonly string[] | undefined;
+  /** The guard values of the node, from the full load. The check reads the value of its own guard here. Absent: every guard on. */
+  readonly guards?: GuardValues;
+}
+
+/** The guard that the record checks of a recipe follow, and the line that names the checks that its off value skips. */
+export interface RecordGuard {
+  readonly id: string;
+  readonly offLine: string;
 }
 
 /**
@@ -136,10 +144,13 @@ export interface RecordCheckInput {
  * - `parseHead` checks the head form. A bad head on the command line is a usage error (exit 2).
  *   In the link reader, a bad stored head is a failure (exit 1).
  * - `check` reads the proof and gives a `CheckedRecord`, or a failure (exit 1) for every fault and every mismatch.
+ * - `guard` is the guard whose off value skips the setup check of the core before the proof is read, and the checks of the recipe
+ *   that read it. Absent: every check always runs.
  */
 export interface RecordCheck {
   readonly stage: string;
   readonly point: string;
+  readonly guard?: RecordGuard;
   readonly summary: string;
   readonly refHelp: string;
   readonly parseRef: (text: string) => CliResult<string>;

@@ -384,7 +384,7 @@ const UNAPPROVED_LINE = textLine(
   `The guard ${guardIds.ownerGo} is off, so this record did not check the linked approval ${requestWords.requests} of the item.`,
 );
 
-const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded, guards: GuardValues): CommandOutput => {
+const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded, guards: GuardValues, offLines: readonly OutLine[]): CommandOutput => {
   const id = displayLine(recorded.item.id);
   const summary = displayLine(checked.summary);
   const done = answer(recorded.changed ? `Recorded ${id}: ${summary}` : `${id}: ${summary} already recorded`, {
@@ -397,7 +397,8 @@ const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded, guards: 
     summary: checked.summary,
     changed: recorded.changed,
   });
-  return isGuardOn(guards, guardIds.ownerGo) ? done : { ...done, lines: [...done.lines, UNAPPROVED_LINE] };
+  const lines = [...offLines, ...(isGuardOn(guards, guardIds.ownerGo) ? [] : [UNAPPROVED_LINE])];
+  return lines.length === 0 ? done : { ...done, lines: [...done.lines, ...lines] };
 };
 
 /**
@@ -405,7 +406,9 @@ const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded, guards: 
  * check makes this a usage error (exit 2) with no write. The reference is checked first, so a bad one is a usage error before the item
  * is read and before the check reaches the network. The local checks come next (the item id, the tracker kind, the stage of the check
  * in the recipe, the closed state, the item). The approval check runs before the recipe check and again under the lock.
- * The write also checks the worker again under the lock.
+ * The write also checks the worker again under the lock. While the guard that the record check names is off, the setup check before
+ * the network does not run and the output names the checks that did not run. The write still checks the stage and the closed state,
+ * because it sets them.
  */
 const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction): Promise<CliResult<CommandOutput>> => {
   const { connector, config } = board;
@@ -423,7 +426,8 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   const guards = await guardValuesFor(deps, board.home);
   const local = requireLocalKind(config.core.tracker.kind, commands.item, guards);
   if (!local.ok) return local;
-  const ready = checkRecordSetup({ recipe: config.entry.board, config: config.core.board }, hook.stage);
+  const checksOn = hook.guard === undefined || isGuardOn(guards, hook.guard.id);
+  const ready = checksOn ? checkRecordSetup({ recipe: config.entry.board, config: config.core.board }, hook.stage) : ok(undefined);
   if (!ready.ok) return ready;
   const items = await connector.listItems({ all: true });
   if (!items.ok) return items;
@@ -439,10 +443,11 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   const approval = { point: hook.point, mode: mode ?? roles.owner };
   const approved = await connector.checkApproval(action.id, approval, ref.value);
   if (!approved.ok) return approved;
-  const checked = await hook.check(deps, input.value);
+  const checked = await hook.check(deps, { ...input.value, guards });
   if (!checked.ok) return checked;
   const recorded = await connector.recordChecked(action.id, checked.value, worker.value, approval);
-  return recorded.ok ? ok(recordedAnswer(checked.value, recorded.value, guards)) : recorded;
+  const offLines = checksOn || hook.guard === undefined ? [] : [textLine(hook.guard.offLine)];
+  return recorded.ok ? ok(recordedAnswer(checked.value, recorded.value, guards, offLines)) : recorded;
 };
 
 /**

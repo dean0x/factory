@@ -292,13 +292,20 @@ const prRuleRows: readonly GuardRow[] = [
   codeRow({
     id: 'record-check-gate',
     guard: softwareGuardIds.prRules,
-    name: `A merge record needs the check of the ${roles.recipe}: a known ref, item, project and setup. Only a pass is written. The record is no proof of the ${owner}.`,
+    name: `A merge record checks the setup before it reads the pull request, so a setup with no closed state stops before the network. The record is no proof of the ${owner}.`,
     applies: commandLines.itemRecord,
     harm: false,
+    sites: [...at('src/commands/item.ts', 'recordChecked'), ...at('src/recipes/software/record.ts', 'softwareRecordCheck')],
+  }),
+  alwaysOnRow({
+    id: 'record-item-target',
+    guard: softwareGuardIds.prRules,
+    name: `A merge record needs the check of the ${roles.recipe}, a known ref, item and project, and a setup with the stage and the closed state that it writes. Only a pass is written.`,
+    applies: commandLines.itemRecord,
+    harm: true,
     sites: [
-      ...at('src/commands/item.ts', 'recordChecked'),
-      ...at('src/board/edit.ts', 'checkRecordSetup'),
-      ...at('src/recipes/software/record.ts', 'softwareRecordCheck'),
+      ...at('src/commands/item.ts', 'checkInputOf'),
+      ...at('src/board/edit.ts', 'checkRecordSetup', 'recordCheckedIn'),
     ],
   }),
   alwaysOnRow({
@@ -317,13 +324,13 @@ const prRuleRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/recipes/software/github-pr.ts', 'readMergedPr'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'record-same-pr',
     guard: softwareGuardIds.prRules,
     name: 'A merge record needs the same pull request number and URL in the same repo, so a pull request from a fork is never recorded',
     applies: commandLines.itemRecord,
-    harm: false,
-    sites: at('src/recipes/software/github-pr.ts', 'readMergedPr'),
+    harm: true,
+    sites: at('src/recipes/software/github-pr.ts', 'otherPrReason'),
   }),
   codeRow({
     id: 'record-base-branch',
@@ -333,13 +340,13 @@ const prRuleRows: readonly GuardRow[] = [
     harm: false,
     sites: at('src/recipes/software/github-pr.ts', 'readMergedPr'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'record-worker-branch',
     guard: softwareGuardIds.prRules,
     name: `The head branch of a recorded pull request is the branch of the ${worker} of the item, or of a former ${worker}, so another pull request cannot close the item`,
     applies: commandLines.itemRecord,
-    harm: false,
-    sites: [...at('src/recipes/software/github-pr.ts', 'readMergedPr'), ...at('src/commands/item.ts', 'branchesOf')],
+    harm: true,
+    sites: [...at('src/recipes/software/github-pr.ts', 'headBranchReason'), ...at('src/commands/item.ts', 'branchesOf')],
   }),
   textRow({
     id: 'record-after-merge-text',
