@@ -565,10 +565,10 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
   codeRow({
     id: 'folder-links',
     guard: guardIds.fileLinkSafety,
-    name: `No link is allowed in the paths of the ${folder}, in tracked files, in the setup folder or in the backup files`,
-    applies: 'Init, start, upgrade, doctor and every write',
+    name: `The checks of the blocks and the setup text find no link in the setup folder, the role files or the backup folder of the ${folder}`,
+    applies: 'Doctor',
     harm: true,
-    sites: at('src/core/root-paths.ts', 'requireNoLinks', 'requireNoTrackedLinks'),
+    sites: [...at('src/commands/doctor.ts', 'checkNodeBlocks', 'checkSetupText'), ...at('src/core/root-paths.ts', 'requireNoLinks')],
   }),
   alwaysOnRow({
     id: 'init-links',
@@ -578,7 +578,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init.ts', 'checkOptions'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'upgrade-links',
     guard: guardIds.fileLinkSafety,
     name: `A link in the ${folder} stops an upgrade before any write`,
@@ -602,7 +602,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/state/reviews-folder.ts', 'ensureReviewsFolder'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'exclude-file',
     guard: guardIds.fileLinkSafety,
     name: 'A link in the exclude folder or the exclude file of a work copy is a security stop',
@@ -682,7 +682,7 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/upgrade/apply.ts', 'copyIntoBackup', 'backup', 'restore'), ...at('src/commands/upgrade.ts', 'runUpgrade')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'upgrade-paths',
     guard: guardIds.fileLinkSafety,
     name: 'An upgrade stops at an existing move target or a linked ignore file, writes only plain files and keeps shared keys out of the local config',

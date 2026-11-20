@@ -316,6 +316,23 @@ describe('worker list: the context limits guard', () => {
   });
 });
 
+describe('worker mark: the guard of file and link safety', () => {
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.fileLinkSafety))('removes a hold file that is a link only while the guard counts as off: %s', async (_state, setup, on) => {
+      const off = setup.off ?? [];
+      const hold = workerPathsOf(HOME, 'alpha').holdFile;
+      const made = await make({ config: withGuardsOff(sampleConfig(), off), workers: [{ id: 'alpha' }], links: { [hold]: '/elsewhere/hold' } });
+      registerRoot(made.deps, HOME, NODE, [], origin);
+      if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+      const removed: string[] = [];
+      const deps: FakeDeps = { ...made.deps, fs: { ...made.deps.fs, removeFile: (path) => (removed.push(path), made.deps.fs.removeFile(path)) } };
+      const sink = captureSink();
+      expect(await runCli(['worker', 'mark', 'alpha', 'none', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+      expect(removed).toEqual(on ? [] : [hold]);
+    });
+  });
+});
+
 describe('worker list: the state from the last event', () => {
   it.each([
     ['SessionStart', 'at prompt'],

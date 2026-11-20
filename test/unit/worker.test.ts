@@ -1098,6 +1098,17 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker new: the link stop of the exclude file in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.fileLinkSafety))('stops with exit 4 for an exclude file that is a link with every value of the file and link guard, here %s, because the write refuses the same link', async (_state, setup) => {
+    const guarded = settingsCheckSetup(setup);
+    const made = make({ ...guarded, origin, links: { [EXCLUDE]: '/elsewhere/exclude' }, seed: { ...guarded.seed, '/elsewhere/exclude': TEMPLATE } });
+    const sink = captureSink();
+    expect(await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink)).toBe(4);
+    expect(sink.errors.join('')).toContain(`cannot use ${EXCLUDE}: it is a link`);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings write in %s', (_title, origin) => {
   it.each(guardStatesOf(guardIds.settingsWrite))('needs a consent for the hook settings with no terminal window only while the guard is on, with the guard %s', async (_state, setup, on) => {
     const off = setup.off ?? [];

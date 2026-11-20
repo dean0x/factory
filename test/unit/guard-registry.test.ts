@@ -157,6 +157,8 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'instruction-files-warning', path: 'src/core/instruction-files.ts', symbol: 'instructionFileWarnings', reason: instructionReason },
   { row: 'local-files-not-tracked', path: 'src/core/root-paths.ts', symbol: 'trackedProblems', reason: trackedProblemReason },
   { row: 'local-files-not-tracked', path: 'src/core/root-paths.ts', symbol: 'describeTrackedProblems', reason: trackedProblemReason },
+  { row: 'folder-links', path: 'src/core/root-paths.ts', symbol: 'requireNoLinks', reason: 'The shared link rule reads no value; checkNodeBlocks and checkSetupText read it and pass it, and every other caller keeps the default, which refuses a link.' },
+  { row: 'hold-file-removal', path: 'src/workers/hold.ts', symbol: 'writeHold', reason: 'Calls clearHold for the word none, and clearHold reads the value.' },
 ];
 
 const software = {
@@ -259,8 +261,8 @@ describe('the guards of a recipe', () => {
 
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.folderTrust, guardIds.gitSafety,
-      guardIds.resumeRoutines, guardIds.rootScan, guardIds.secrets, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.resumeRoutines, guardIds.rootScan, guardIds.secrets, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 
@@ -901,9 +903,9 @@ describe('the rows of the registry', () => {
       ],
       'file-link-safety': [
         'user-folder-never', 'settings-write-no-link', 'settings-write-inside-folder', 'private-file-mode', 'local-file-mode', 'safe-write',
-        'atomic-write-target', 'checked-open', 'init-links', 'copy-no-links', 'reviews-folder', 'worker-record', 'init-existing-plain',
-        'init-race', 'init-rollback', 'clone-undo', 'state-target-kept', 'init-existing-writes', 'init-temp-leftovers', 'upgrade-backups',
-        'upgrade-keeps-repo', 'migration-keeps-edits',
+        'atomic-write-target', 'checked-open', 'init-links', 'upgrade-links', 'copy-no-links', 'reviews-folder', 'exclude-file',
+        'worker-record', 'init-existing-plain', 'init-race', 'init-rollback', 'clone-undo', 'state-target-kept', 'init-existing-writes',
+        'init-temp-leftovers', 'upgrade-backups', 'upgrade-paths', 'upgrade-keeps-repo', 'migration-keeps-edits',
       ],
       'folder-trust': [
         'registration-check', 'home-env-conflict', 'unregistered-upgrade', 'origin-received', 'home-is-new', 'home-outside-roots',

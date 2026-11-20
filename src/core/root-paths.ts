@@ -33,10 +33,21 @@ const partsBelow = (root: string, path: string): readonly string[] | null => {
 };
 
 /**
+ * How the link rule treats a link below the factory folder. Only a caller that reads the guard of file and link safety sets
+ * `allowLinks`, while that guard is off. Every other caller keeps the default, which refuses a link. The rule reads no guard value.
+ */
+export interface LinkRule {
+  readonly allowLinks: boolean;
+}
+
+const REFUSE_LINKS: LinkRule = Object.freeze({ allowLinks: false });
+
+/**
  * The link rule. No part of a path below the factory folder may be a link, because a link can lead to a file outside the
  * folder. The folders above the factory folder are the layout of the user, so they may hold links, and a factory folder
  * that is a link itself works. A part that does not exist ends the walk of its path: nothing below it can be a link.
  * The first link, or the first path outside the folder, is a security stop (exit 4) that names the part and the remedy.
+ * With `allowLinks`, a link does not stop the walk; a path outside the folder still stops.
  * The caller checks again before it writes, because a path can change after this check.
  */
 export const requireNoLinks = async (
@@ -44,6 +55,7 @@ export const requireNoLinks = async (
   root: string,
   paths: readonly string[],
   remedy: string = LINK_REMEDY,
+  rule: LinkRule = REFUSE_LINKS,
 ): Promise<CliResult<void>> => {
   for (const path of paths) {
     const parts = partsBelow(root, path);
@@ -56,7 +68,7 @@ export const requireNoLinks = async (
       const kind = await deps.fs.lstat(current);
       if (!kind.ok) return kind;
       if (kind.value === null) break;
-      if (kind.value === 'link') {
+      if (kind.value === 'link' && !rule.allowLinks) {
         return safetyRefusal(`${parts.slice(0, index + 1).join('/')} is a link, so ${program} does not use it`, remedy);
       }
     }
@@ -78,8 +90,8 @@ export const rootGuardPaths = (layout: Layout): readonly string[] => [
 ];
 
 /** Check the link rule for every path that the commands read or write below the factory folder. */
-export const requireNoRootLinks = (deps: Deps, layout: Layout): Promise<CliResult<void>> =>
-  requireNoLinks(deps, layout.home, rootGuardPaths(layout));
+export const requireNoRootLinks = (deps: Deps, layout: Layout, rule: LinkRule = REFUSE_LINKS): Promise<CliResult<void>> =>
+  requireNoLinks(deps, layout.home, rootGuardPaths(layout), LINK_REMEDY, rule);
 
 /**
  * The tracked set of a received root: every path that the root repo tracks, apart from `factory.yaml` and the

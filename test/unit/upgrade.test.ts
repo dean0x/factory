@@ -4285,6 +4285,25 @@ describe('upgrade: the link rule', () => {
     expect(error.message).toContain('is a link');
   });
 
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.fileLinkSafety).flatMap(([state, setup]) => [
+      ['the backup folder', state, setup, `${HOME}/.factory/backups`, '.factory/backups'],
+      ['the .gitignore of the state repo', state, setup, `${HOME}/.factory/.gitignore`, '.factory/.gitignore'],
+    ] as const))('stops with exit 4 for a link at %s with every value of the file and link guard, here %s, because a later write check refuses the same link', async (_name, _state, setup, path, shown) => {
+      const links: Record<string, string> = {};
+      const { deps } = await makeNode({ links });
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      links[path] = '/outside/target';
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME], deps, sink)).toBe(4);
+      expect(sink.errors.join('')).toContain(`${shown} is a link, so factory does not use it`);
+      expect([...deps.files.keys()].some((file) => file.includes('/backups/'))).toBe(false);
+    });
+  });
+
   it('does not move a CLAUDE.md that is a link from the top of a root of schema 1', async () => {
     const links: Record<string, string> = {};
     const { handler } = gitHandler();

@@ -72,10 +72,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'Dismiss',
     `A dismiss removes the work copy of a ${worker} only when its work is pushed, its copy is clean and its item is closed.`,
   ),
-  guardOf(
-    guardIds.fileLinkSafety,
-    'File and link safety',
-    'Reads and writes follow no link, stay in their own folder and keep private files private.',
+  wiredGuard(
+    guardOf(
+      guardIds.fileLinkSafety,
+      'File and link safety',
+      'Reads and writes follow no link, stay in their own folder and keep private files private.',
+    ),
   ),
   wiredGuard(
     guardOf(

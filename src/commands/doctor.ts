@@ -527,7 +527,8 @@ const failedFrom = (id: string, error: CliError): CheckResult =>
 
 /**
  * The blocks come from the config of the node and from the setup texts, so a config that is not valid gives no block
- * list. A link in the paths that the check reads fails the check, and nothing is read through it.
+ * list. A link in the paths that the check reads fails the check, and nothing is read through it. While the guard of file and
+ * link safety is off, a link there does not fail the check; the setup texts keep their own link check.
  */
 export const checkNodeBlocks = async (
   deps: Deps,
@@ -537,7 +538,7 @@ export const checkNodeBlocks = async (
 ): Promise<CheckResult> => {
   if (state.kind !== 'valid') return notChecked(checkIds.blocks, `${files.config} is not valid`);
   const layout = layoutOf(home);
-  const plain = await requireNoRootLinks(deps, layout);
+  const plain = await requireNoRootLinks(deps, layout, { allowLinks: !isGuardOn(guards ?? allOn, guardIds.fileLinkSafety) });
   if (!plain.ok) return failedFrom(checkIds.blocks, plain.error);
   const setup = await readSetupTexts(deps, layout, commands.doctor);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
@@ -594,10 +595,10 @@ const strayLinesOf = async (deps: Deps, home: string, pair: RenderedPair): Promi
 /**
  * Only the setup folder travels. A line that a person wrote in `coordinator/CLAUDE.md` or in the worker file, outside the
  * managed blocks, stays on this machine, unless the setup file holds it too. This is a warning. It names the count and
- * the file, never the text.
+ * the file, never the text. While the guard of file and link safety is off, a link in the paths of the folder does not fail it.
  */
 export const checkSetupText = async (deps: Deps, home: string): Promise<CheckResult> => {
-  const plain = await requireNoRootLinks(deps, layoutOf(home));
+  const plain = await requireNoRootLinks(deps, layoutOf(home), { allowLinks: !(await guardOn(deps, guardIds.fileLinkSafety, home)) });
   if (!plain.ok) return failedFrom(checkIds.setupText, plain.error);
   const problems: string[] = [];
   const targets: string[] = [];
