@@ -75,24 +75,38 @@ export const inspectParsed = <T>(raw: unknown, spec: VersionSpec<T>): DocState<T
 /** Turns the text of a file into a value. The error must not repeat the text: it names a position or a code. */
 export type TextParser = (text: string) => Result<unknown, string>;
 
+/** The state of a file and the text that the state comes from. The text is null when no text was read or parsed. */
+export interface FileRead<T> {
+  readonly state: DocState<T>;
+  readonly text: string | null;
+}
+
 /** Read a file, parse its text, and check its version and its schema. A file over `maxFileBytes` is not read in full. */
+export const readFileState = async <T>(
+  deps: Deps,
+  path: string,
+  parse: TextParser,
+  spec: VersionSpec<T>,
+): Promise<FileRead<T>> => {
+  const kind = await deps.fs.stat(path);
+  if (!kind.ok) return { state: { kind: 'unparsable', message: kind.error.message }, text: null };
+  if (kind.value !== 'file') return { state: { kind: 'missing' }, text: null };
+
+  const text = await deps.fs.readTextLimited(path, maxFileBytes);
+  if (!text.ok) return { state: { kind: 'unparsable', message: text.error.message }, text: null };
+  const raw = parse(text.value);
+  if (!raw.ok) return { state: { kind: 'unparsable', message: raw.error }, text: null };
+
+  return { state: inspectParsed(raw.value, spec), text: text.value };
+};
+
+/** The state of a file, as `readFileState` gives it, with no text. */
 export const inspectFile = async <T>(
   deps: Deps,
   path: string,
   parse: TextParser,
   spec: VersionSpec<T>,
-): Promise<DocState<T>> => {
-  const kind = await deps.fs.stat(path);
-  if (!kind.ok) return { kind: 'unparsable', message: kind.error.message };
-  if (kind.value !== 'file') return { kind: 'missing' };
-
-  const text = await deps.fs.readTextLimited(path, maxFileBytes);
-  if (!text.ok) return { kind: 'unparsable', message: text.error.message };
-  const raw = parse(text.value);
-  if (!raw.ok) return { kind: 'unparsable', message: raw.error };
-
-  return inspectParsed(raw.value, spec);
-};
+): Promise<DocState<T>> => (await readFileState(deps, path, parse, spec)).state;
 
 /** A file that cannot be used as it is. The error says why. */
 export const refuse = (state: Exclude<DocState<unknown>, { kind: 'valid' }>, file: string): Err<CliError> => {

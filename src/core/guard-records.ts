@@ -245,10 +245,22 @@ const rewritableOf = (records: readonly GuardRecord[], node: string, root: strin
 };
 
 /**
+ * True when the stored root is itself a folder, not a link, and its real path is the real root. A link at the stored root reaches
+ * the root by another name, so it differs from the root in more than letter case. The entry check does not follow the last link.
+ */
+const namesRootItself = async (deps: Deps, stored: string, root: string): Promise<boolean> => {
+  const entry = await deps.fs.lstatInfo(stored);
+  if (!entry.ok || entry.value?.kind !== 'dir') return false;
+  const real = await deps.fs.realpath(stored);
+  return real.ok && real.value === root;
+};
+
+/**
  * Write the one record of the node whose root differs from the real root only in letter case again, with the exact real root. It
- * writes only in the owner channel, only when the real path of the stored root is the real root, so both name the same folder,
- * and only through the checked store place, its lock and the one store writer. The values and the prefix of the record stay. The
- * value is null when no record may change: none, more than one, or a stored root whose real path is another folder or none.
+ * writes only in the owner channel, only when the stored root is a folder and not a link, and its real path is the real root, so
+ * both name the same folder, and only through the checked store place, its lock and the one store writer. The values and the
+ * prefix of the record stay. The value is null when no record may change: none, more than one, a stored root that is a link or
+ * no folder, or a stored root whose real path is another folder or none.
  */
 export const recordExactRoot = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<GuardRecordWrite | null>> => {
   const channel = requireGuardChannel(deps, commands.upgrade);
@@ -261,15 +273,12 @@ export const recordExactRoot = async (deps: Deps, input: RecordPlaceInput): Prom
   const read = await readGuardStore(deps, path);
   if (!read.ok) return failure(read.error);
   const stored = rewritableOf(read.value, input.node, root);
-  if (stored === null) return ok(null);
-  const real = await deps.fs.realpath(stored.root);
-  if (!real.ok || real.value !== root) return ok(null);
+  if (stored === null || !(await namesRootItself(deps, stored.root, root))) return ok(null);
   const written = await changeGuardStore(deps, path, async (records) => {
     const again = rewritableOf(records, input.node, root);
     if (again === null || again.root !== stored.root) return err(guardRecordWords.caseMismatch);
     const current = await guardPlaceOf(deps, input.root);
-    const source = await deps.fs.realpath(again.root);
-    if (!current.ok || current.value.root !== root || current.value.path !== path || !source.ok || source.value !== root) {
+    if (!current.ok || current.value.root !== root || current.value.path !== path || !(await namesRootItself(deps, again.root, root))) {
       return err(guardRecordWords.caseMismatch);
     }
     return ok(records.map((record) => (record === again ? { ...record, root } : record)));

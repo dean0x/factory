@@ -12,7 +12,7 @@ import { requireNoLinks } from '../core/root-paths.js';
 import { allOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { stepsBetween, type FileStep, type RootMove } from '../migrate/files.js';
-import { inspectFile, refuse } from '../migrate/inspect.js';
+import { readFileState, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
 import {
   blockNames,
@@ -52,6 +52,8 @@ export type FilePlan =
       readonly to: number;
       readonly steps: readonly Migration[];
       readonly raw: unknown;
+      /** The text that the plan read and parsed, after the checks of the file, so that a text step edits the same bytes. */
+      readonly text: string | null;
     };
 
 /**
@@ -91,16 +93,16 @@ export const isChange = (plan: BlockPlan): boolean => CHANGING.includes(plan.act
  * written again: the plan migrates it to its own version with no step.
  */
 export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Promise<CliResult<FilePlan>> => {
-  const state = await inspectFile(deps, path, file.parse, file.spec);
+  const { state, text } = await readFileState(deps, path, file.parse, file.spec);
   switch (state.kind) {
     case 'valid':
       return ok((file.notices?.(state.raw) ?? []).length === 0
         ? { kind: 'current', version: state.version, raw: state.raw }
-        : { kind: 'migrate', from: state.version, to: state.version, steps: [], raw: state.raw });
+        : { kind: 'migrate', from: state.version, to: state.version, steps: [], raw: state.raw, text });
     case 'older': {
       const steps = planMigrations(state.version, file.spec.supported, file.migrations);
       if (!steps.ok) return failure(`${file.spec.file}: ${steps.error.message}`);
-      return ok({ kind: 'migrate', from: state.version, to: file.spec.supported, steps: steps.value, raw: state.raw });
+      return ok({ kind: 'migrate', from: state.version, to: file.spec.supported, steps: steps.value, raw: state.raw, text });
     }
     case 'missing':
     case 'unparsable':

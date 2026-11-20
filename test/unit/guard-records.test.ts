@@ -355,10 +355,14 @@ describe('guard store reads and writes', () => {
 
 describe('the letter case rewrite of a record root', () => {
   const folded = root.toUpperCase();
-  /** A volume that ignores letter case: the real path of the root in any letter case is the root. */
-  const caseBlind = (deps: ReturnType<typeof fixture>) => ({
-    ...deps, fs: { ...deps.fs, realpath: async (target: string) => deps.fs.realpath(target.toLowerCase() === root ? root : target) },
-  });
+  /** A volume that ignores letter case: the real path and the entry of the root in any letter case are those of the root. */
+  const caseBlind = (deps: ReturnType<typeof fixture>) => {
+    const exact = (target: string): string => (target.toLowerCase() === root ? root : target);
+    return { ...deps, fs: { ...deps.fs,
+      realpath: async (target: string) => deps.fs.realpath(exact(target)),
+      lstatInfo: async (target: string) => deps.fs.lstatInfo(exact(target)),
+    } };
+  };
 
   it('writes the one record of the node with the root in other letter case again with the real root, and keeps its values, its prefix and the other records', async () => {
     const deps = fixture();
@@ -371,7 +375,7 @@ describe('the letter case rewrite of a record root', () => {
     expect(deps.modes.get(path)).toBe(0o600);
   });
 
-  it.each(['stored folder', 'current folder', 'record'] as const)('keeps the store when the %s changes before the lock', async (change) => {
+  it.each(['stored folder', 'current folder', 'record', 'stored link'] as const)('keeps the store when the %s changes before the lock', async (change) => {
     const deps = fixture();
     const original = storeText([{ ...record(), root: folded }]);
     const replacement = storeText([{ ...record(), root: '/elsewhere' }]);
@@ -382,6 +386,11 @@ describe('the letter case rewrite of a record root', () => {
         const moved = (change === 'stored folder' && target === folded) || (change === 'current folder' && target === root);
         if (moved && deps.files.has(lock)) return ok('/elsewhere');
         return deps.fs.realpath(target === folded ? root : target);
+      },
+      // The stored root becomes a link to the root: its real path stays the root, so only its own entry shows the change.
+      lstatInfo: async (target: string) => {
+        if (change === 'stored link' && target === folded && deps.files.has(lock)) return ok({ kind: 'link' as const });
+        return deps.fs.lstatInfo(target === folded ? root : target);
       },
       writeTextExclusive: async (name: string, text: string, mode: number) => {
         if (name === lock && change === 'record') deps.seed(path, replacement);
@@ -399,6 +408,14 @@ describe('the letter case rewrite of a record root', () => {
     const alias = `${folded}/.`;
     deps.seed(path, storeText([{ ...record(), root: alias }]));
     const view = { ...deps, fs: { ...deps.fs, realpath: async (target: string) => deps.fs.realpath(target === alias ? root : target) } };
+    expect(await storeApi.recordExactRoot(view, { root, node: 'demo' })).toEqual(ok(null));
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('keeps a stored root that is a link to the root, also when its real path is the root', async () => {
+    const deps = fixture({ links: { [folded]: root } });
+    deps.seed(path, storeText([{ ...record(), root: folded }]));
+    const view = { ...deps, fs: { ...deps.fs, realpath: async (target: string) => deps.fs.realpath(target === folded ? root : target) } };
     expect(await storeApi.recordExactRoot(view, { root, node: 'demo' })).toEqual(ok(null));
     expect(deps.atomicWrites).toEqual([]);
   });

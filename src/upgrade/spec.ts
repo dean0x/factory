@@ -115,14 +115,24 @@ const fixedIdsOf = (registry: RecipeRegistry): readonly string[] => [
   ...new Set(registry.flatMap((entry) => guardsFor(entry).filter((guard) => guard.fixed).map((guard) => guard.id))),
 ];
 
-/** The local finisher removes only retired ids and the keys of fixed guards. Each other value still goes through the local schema. */
+/** The text step of a finisher: it removes the ids of `drop` from the guard map under `key`, and every other line stays. */
+const keysRemovedText = (key: string, drop: readonly string[]) => (text: string): CliResult<string> => {
+  const edited = removeGuardKeysText(text, key, drop);
+  return edited.ok ? edited : failure(edited.error);
+};
+
+/**
+ * The local finisher removes only retired ids and the keys of fixed guards, on the value and on the text. Each other value still
+ * goes through the local schema.
+ */
 export const localFinisher = (
   retired: readonly string[] = retiredGuardIds,
   fixed: readonly string[] = [],
-): Required<Pick<UpgradeFile, 'finish' | 'notices'>> => {
+): Required<Pick<UpgradeFile, 'finish' | 'notices' | 'finishText'>> => {
   const finish = finisher(localConfigSchema, renderLocalConfig);
   return {
     finish: (raw) => finish(withoutIds(raw, guardKeys.local, [...retired, ...fixed])),
+    finishText: keysRemovedText(guardKeys.local, [...retired, ...fixed]),
     notices: (raw) => {
       const removed = idsIn(raw, guardKeys.local, retired);
       return [
@@ -166,10 +176,7 @@ const sharedFinisher = (registry: RecipeRegistry): Required<Pick<UpgradeFile, 'f
   return {
     finish: (raw) => finish(withoutIds(raw, guardKeys.shared, fixed)),
     notices: (raw) => fixedNotices(raw, files.config, guardKeys.shared, fixed),
-    finishText: (text) => {
-      const edited = removeGuardKeysText(text, guardKeys.shared, fixed);
-      return edited.ok ? edited : failure(edited.error);
-    },
+    finishText: keysRemovedText(guardKeys.shared, fixed),
   };
 };
 

@@ -2534,6 +2534,7 @@ export const guardRecordWords = {
     `Run "${commandText(commands.upgrade)}" in your terminal window, outside a session, to write the record again with the exact letter case. ` +
     `To record the prefix and the guard values again instead, run "${commandText(commandLines.guardConfirm)}" and "${commandText(commandLines.guardSet)}".`,
   caseRewritten: 'Wrote the guard record again with the exact letter case of the factory folder.',
+  caseNotRewritten: (cause: string): string => `The record was not written again: ${cause}`,
   recordCap: `The guard store cannot exceed ${guardRecords.maxRecords} records. Run "${commandText(commands.doctor)}".`,
   byteCap: `The guard store cannot exceed ${guardRecords.maxBytes} bytes. Run "${commandText(commands.doctor)}".`,
   badPrefix: `The ${keys.root.owner}.${keys.owner.prefix} text must not contain a hidden character.`,

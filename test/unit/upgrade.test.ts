@@ -57,6 +57,7 @@ import { captureSink } from '../helpers/sink.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { readGuardState, unprovedState } from '../../src/core/guard-records.js';
+import { userFileLockPath } from '../../src/core/private-file.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { loadConfig } from '../helpers/package-registry.js';
@@ -545,30 +546,29 @@ describe('upgrade: effective guard values', () => {
 
   describe('a key of a fixed guard that the owner wrote by hand', () => {
     const id = guardIds.cloneRules;
+    const note = '# a note of the owner    # with four spaces';
     const cases = [
-      ['the local file', LOCAL, `guards: {${id}: off, install-rules: off}`, guardConfigWords.droppedFixed(files.localConfig, [`guards.${id}`])],
-      ['the shared file', CONFIG, `shared_guards: {${id}: on, install-rules: on}`, guardConfigWords.droppedFixed(files.config, [`shared_guards.${id}`])],
+      ['the local file', LOCAL, `guards: {${id}: off, install-rules: off}`, 'guards: { install-rules: off }',
+        guardConfigWords.droppedFixed(files.localConfig, [`guards.${id}`])],
+      ['the shared file', CONFIG, `shared_guards: {${id}: on, install-rules: on}`, 'shared_guards: { install-rules: on }',
+        guardConfigWords.droppedFixed(files.config, [`shared_guards.${id}`])],
     ] as const;
 
-    it.each(cases)('removes the key from %s with one notice, keeps the other values and comments, and leaves nothing to upgrade', async (_name, path, line, notice) => {
+    it.each(cases)('removes the key from %s with one notice, changes only the line of the key, and leaves nothing to upgrade', async (_name, path, line, kept, notice) => {
       const { deps } = await makeNode();
-      const before = text(deps, path);
-      const comments = before.split('\n').filter((entry) => entry.trimStart().startsWith('#'));
-      deps.seed(path, `${before}\n${line}\n`);
+      const before = `${text(deps, path)}\n${note}\n`;
+      deps.seed(path, `${before}${line}\n`);
       const output = success(await upgrade(deps));
       expect(lineTexts(output).filter((entry) => entry === notice)).toHaveLength(1);
       expect(notice).toBe(path === LOCAL
         ? `factory.local.yaml: remove guards.${id}, because a fixed guard has no setting.`
         : `factory.yaml: remove shared_guards.${id}, because a fixed guard has no setting.`);
-      expect(text(deps, path)).not.toContain(id);
-      expect(text(deps, path)).toContain('install-rules');
-      if (path === CONFIG) for (const comment of comments) expect(text(deps, path)).toContain(comment);
-      // The tracked shared file changes only on the line of the key: every other line stays byte for byte.
-      if (path === CONFIG) expect(text(deps, path)).toBe(`${before}\nshared_guards: { install-rules: on }\n`);
+      // Every other line, with the comment that the owner wrote by hand, stays byte for byte.
+      expect(text(deps, path)).toBe(`${before}${kept}\n`);
       expect(lineTexts(success(await upgrade(deps)))).toContain('Nothing to upgrade.');
     });
 
-    it.each(cases)('names the removal from %s in a dry run and changes no file', async (_name, path, line, notice) => {
+    it.each(cases)('names the removal from %s in a dry run and changes no file', async (_name, path, line, _kept, notice) => {
       const { deps } = await makeNode();
       deps.seed(path, `${text(deps, path)}\n${line}\n`);
       const before = snapshot(deps);
@@ -581,10 +581,14 @@ describe('upgrade: effective guard values', () => {
   describe('a guard record whose root differs from the factory folder only in letter case', () => {
     const FOLDED = '/w/Node';
     const TERMINAL = { stdinIsTTY: true, stdoutIsTTY: true } as const;
-    /** A volume that ignores letter case: the real path of the factory folder in any letter case is the factory folder. */
-    const caseBlind = (deps: FakeDeps): Deps => ({
-      ...deps, fs: { ...deps.fs, realpath: async (path) => deps.fs.realpath(path.toLowerCase() === HOME ? HOME : path) },
-    });
+    /** A volume that ignores letter case: the real path and the entry of the factory folder in any letter case are those of the folder. */
+    const caseBlind = (deps: FakeDeps): Deps => {
+      const exact = (path: string): string => (path.toLowerCase() === HOME ? HOME : path);
+      return { ...deps, fs: { ...deps.fs,
+        realpath: async (path) => deps.fs.realpath(exact(path)),
+        lstatInfo: async (path) => deps.fs.lstatInfo(exact(path)),
+      } };
+    };
     /** A node whose local file sets install rules off, with the record of that value under the root in other letter case. */
     const foldedNode = async (): Promise<FakeDeps> => {
       const { deps } = await makeNode();
@@ -622,6 +626,18 @@ describe('upgrade: effective guard values', () => {
       expect(result.err).toContain(guardRecordWords.caseMismatch);
       expect(result.err).toContain(guardRecordWords.caseRemedy);
       expect(guardRecordWords.caseRemedy).toContain(commandText(commands.upgrade));
+      expect(text(deps, STORE)).toBe(store);
+    });
+
+    it('names the cause when the record cannot be written again, and keeps the letter case stop with its remedy', async () => {
+      const deps = await foldedNode();
+      deps.seed(userFileLockPath(STORE), 'other-holder\n');
+      const store = text(deps, STORE);
+      const result = await runOf(['upgrade', '--home', HOME], { ...caseBlind(deps), ...TERMINAL });
+      expect(result.code).toBe(4);
+      expect(result.err).toContain(guardRecordWords.caseMismatch);
+      expect(result.err).toContain(guardRecordWords.lockBusy);
+      expect(result.err).toContain(guardRecordWords.caseRemedy);
       expect(text(deps, STORE)).toBe(store);
     });
 

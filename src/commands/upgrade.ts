@@ -7,7 +7,7 @@ import {
   renamedFromOf,
   type BlockStatus,
 } from '../blocks/status.js';
-import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import { printable, type CommandOutput, type OutLine } from '../cli/output.js';
 import { ACCEPT_ANSWER, withGuards, type Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
@@ -270,26 +270,35 @@ interface UpgradeGuardRead {
   readonly read: GuardRead;
   /** The lines of a guard record that the run wrote again with the exact letter case of the factory folder, or none. */
   readonly lines: readonly OutLine[];
+  /** The cause of a letter case write that failed, or null when the run wrote the record, had nothing to write, or tried no write. */
+  readonly cause: string | null;
 }
 
 /**
  * The one guard read of the upgrade. When the only record of the node names the factory folder in other letter case, a real run
  * writes it again with the exact root (`recordExactRoot`) and reads the values again, so the off values of the record count. A dry
- * run, a refusal of the owner channel, a stored root of another folder and a failed write keep the read and its stop. The write
- * comes before the prefix gate, because that gate stops the run on the letter case fault.
+ * run, a refusal of the owner channel, a stored root of another folder and a failed write keep the read and its stop. A failed
+ * write also keeps its cause for that stop. The write comes before the prefix gate, because that gate stops the run on the letter
+ * case fault.
  */
 const upgradeGuardRead = async (deps: Deps, home: string, config: FactoryConfig, dryRun: boolean): Promise<UpgradeGuardRead> => {
   const read = await guardReadOf(deps, home, config, 'always');
-  if (dryRun || read.state.proof !== null || read.state.fault !== guardRecordWords.caseMismatch) return { read, lines: [] };
+  if (dryRun || read.state.proof !== null || read.state.fault !== guardRecordWords.caseMismatch) return { read, lines: [], cause: null };
   const rewritten = await recordExactRoot(deps, { root: home, node: config.core.node.id });
-  if (!rewritten.ok || rewritten.value === null) return { read, lines: [] };
+  if (!rewritten.ok) return { read, lines: [], cause: rewritten.error.message };
+  if (rewritten.value === null) return { read, lines: [], cause: null };
   const { warning } = rewritten.value;
   return {
     // Deps with no read of the command line read the store again, with the proof of an off value.
     read: await guardReadOf(withGuards(deps, allGuardsOn), home, config, 'always'),
     lines: [{ level: 'ok', text: guardRecordWords.caseRewritten }, ...(warning === null ? [] : [{ level: 'warn' as const, text: warning }])],
+    cause: null,
   };
 };
+
+/** The stop of the prefix gate, with the cause of a failed letter case write when the run tried one. The kind and the remedy stay. */
+const withWriteCause = (stop: CliError, cause: string | null): CliResult<never> =>
+  err(cause === null ? stop : { ...stop, message: `${stop.message} ${guardRecordWords.caseNotRewritten(cause)}` });
 
 const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };
 
@@ -390,7 +399,7 @@ export const runUpgrade = async (
   if (!blockSet.ok) return blockSet;
   // The same guard read supplies the render and the gate, before acceptance writes or mode changes.
   if (prefix.result === null) return failure(guardConfirmWords.checkIncomplete);
-  if (!prefix.result.ok) return prefix.result;
+  if (!prefix.result.ok) return withWriteCause(prefix.result.error, guardRead.value?.cause ?? null);
   const deps = guardRead.value?.read.deps ?? withGuards(base, allGuardsOn);
   const recordLines = guardRead.value?.lines ?? [];
   const setup = await setupPlan.value.accept();
