@@ -396,7 +396,7 @@ const spendRows: readonly GuardRow[] = [
 ];
 
 const workConductRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'lessons-file-caps',
     guard: guardIds.workConduct,
     name: 'Doctor fails when the lessons file is a link or holds more entries or more bytes than its limits, so standing instructions do not grow without a bound',

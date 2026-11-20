@@ -207,10 +207,12 @@ const coreGuards: readonly GuardDefinition[] = [
       `A stopped ${worker} stays stopped, and the spend rules limit new ${worker}s.`,
     ),
   ),
-  guardOf(
-    guardIds.workConduct,
-    'Work conduct',
-    'Sessions follow the rules of conduct for commands, refusals and reports.',
+  wiredGuard(
+    guardOf(
+      guardIds.workConduct,
+      'Work conduct',
+      'Sessions follow the rules of conduct for commands, refusals and reports.',
+    ),
   ),
   wiredGuard(
     guardOf(

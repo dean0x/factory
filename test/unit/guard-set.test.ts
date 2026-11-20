@@ -44,7 +44,6 @@ describe('guard set arguments', () => {
     [['set', 'unknown-guard', 'off'], 'Unknown guard "unknown-guard"'],
     [['set', guardIds.cloneRules, 'off'], `Unknown guard "${guardIds.cloneRules}"`],
     [['set', guardIds.hookRuntime, 'on'], `Unknown guard "${guardIds.hookRuntime}"`],
-    [['set', guardIds.workConduct, 'off'], 'not settable in this version'],
     [['set', A, 'off', '--all'], '--all'],
     [['set', A, 'bad'], 'on or off'],
     [['set', A, 'off', '--json'], '--json'],
@@ -74,7 +73,7 @@ describe('guard set arguments', () => {
 
   it.each([
     guardIds.boardEdits, guardIds.ownerGo, softwareGuardIds.prRules, softwareGuardIds.mergeQuality, guardIds.dismiss, guardIds.sessionChecks,
-    guardIds.taskFiles,
+    guardIds.taskFiles, guardIds.workConduct,
   ])('accepts the wired guard %s past the argument check', async (id) => {
     const result = await run(createFakeDeps(), ['set', id, 'off']);
     expect(result.code).toBe(4);
@@ -156,7 +155,7 @@ describe('guard set writes', () => {
     expect(deps.prompts).toHaveLength(1);
   });
 
-  it.each(['on', 'off'] as const)('sets only wired guards to %s with all, skips the fixed guards and reports the excluded count', async (value) => {
+  it.each(['on', 'off'] as const)('sets every guard that is not fixed to %s with all, skips the fixed guards and shows no excluded count', async (value) => {
     const deps = fixture();
     const result = await run(deps, ['set', '--all', value]);
     expect(result.code).toBe(0);
@@ -166,9 +165,19 @@ describe('guard set writes', () => {
     const display = deps.written.join('');
     if (value === 'off') for (const guard of wired) expect(display).toContain(`${guard.id}${guard.harm ? ' H' : ''}`);
     for (const id of [guardIds.cloneRules, guardIds.hookRuntime]) expect(`${display}${result.out}${deps.files.get(LOCAL) ?? ''}`).not.toContain(id);
-    const settable = guardsFor(recipes[0]).filter((guard) => !guard.fixed);
-    expect(`${display}${result.out}`).toContain(`${settable.length - wired.length} guards are not settable`);
+    expect(guardsFor(recipes[0]).filter((guard) => !guard.fixed)).toHaveLength(wired.length);
+    expect(`${display}${result.out}`).not.toContain('not settable');
     expect(deps.prompts).toHaveLength(value === 'off' ? 1 : 0);
+  });
+
+  it.each(['on', 'off'] as const)('skips a guard that this version cannot set with all %s and reports the excluded count', async (value) => {
+    const deps = fixture();
+    const result = await run(deps, ['set', '--all', value], unwiredRegistry);
+    expect(result.code).toBe(0);
+    const stored = await readGuardStore(deps, STORE);
+    expect(stored.ok ? Object.keys(stored.value[0]?.values ?? {}) : null).not.toContain(UNWIRED_GUARD);
+    expect(deps.files.get(LOCAL) ?? '').not.toContain(UNWIRED_GUARD);
+    expect(`${deps.written.join('')}${result.out}`).toContain('1 guard is not settable in this version.');
   });
 
   it.each(['', 'no'])('writes nothing when the answer is %j', async (answer) => {

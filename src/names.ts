@@ -2489,7 +2489,7 @@ export const guardSetWords = {
   effectTime: `A code check follows the new value at the next command. The role text changes at the next "${commandText(commands.start)}" or "${commandText(commands.upgrade)}".`,
   offQuestion: 'Turn these guards off? [y/N] ',
   declined: 'Nothing changed: the answer was not yes.',
-  skipped: (count: number): string => `${count} guards are not settable in this version.`,
+  skipped: (count: number): string => `${count} ${count === 1 ? 'guard is' : 'guards are'} not settable in this version.`,
   changedFile: (file: string): string => `${file} changed after its read. Run the guard command again.`,
   unsafeFile: (file: string): string => `${file} must be a plain file of this user, with no group or other write access.`,
   unsafeFileRemedy: `Check the file and its access mode, then run "${commandText(commands.doctor)}".`,

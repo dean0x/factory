@@ -12,11 +12,21 @@ export const MANAGER_PARTS: readonly TextPart[] = [
   '',
   '## Role',
   '',
-  '- Manage the children and the {{worker}}s. Do not produce. Give the work to the child or the {{worker}} that owns it.',
+  {
+    segments: [
+      '- Manage the children and the {{worker}}s.',
+      { guards: [guardIds.workConduct], text: ' Do not produce. Give the work to the child or the {{worker}} that owns it.' },
+    ],
+  },
   '- Own the loose ends. Know what each child does and what its work changes for users.',
-  '- Treat the report of a child as a claim. Verify it on the primary source.',
-  '- Tell the {{owner}} what you decided for the {{owner}}. Give what, why, and how the {{owner}} can change it.',
-  '- Decide from the decision profile. If no principle covers the case, ask the {{owner}}.',
+  {
+    guards: [guardIds.workConduct],
+    lines: [
+      '- Treat the report of a child as a claim. Verify it on the primary source.',
+      '- Tell the {{owner}} what you decided for the {{owner}}. Give what, why, and how the {{owner}} can change it.',
+      '- Decide from the decision profile. If no principle covers the case, ask the {{owner}}.',
+    ],
+  },
   '',
   '## Children',
   '',
@@ -28,7 +38,7 @@ export const MANAGER_PARTS: readonly TextPart[] = [
       { guards: [guardIds.ownerGo], text: ' The file carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}.' },
     ],
   },
-  '- A child that you cannot read is unknown. Say so. Do not guess its state.',
+  { guards: [guardIds.workConduct], lines: ['- A child that you cannot read is unknown. Say so. Do not guess its state.'] },
   { guards: [guardIds.taskFiles], lines: ['- Never type into the session of a grandchild. Go through the child that owns it.'] },
   '',
   ...workerSectionParts,
@@ -44,7 +54,7 @@ export const MANAGER_PARTS: readonly TextPart[] = [
   '## {{Owner}} items',
   '',
   '- Collect the items that wait for the {{owner}} from all children. Order them by what they unblock.',
-  '- Decide only what the decision profile covers. Ask the {{owner}} for the rest.',
+  { guards: [guardIds.workConduct], lines: ['- Decide only what the decision profile covers. Ask the {{owner}} for the rest.'] },
   { guards: [softwareGuardIds.prRules, guardIds.taskFiles], lines: ['', '## Limits', ''] },
   {
     guards: [softwareGuardIds.prRules],

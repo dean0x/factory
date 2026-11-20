@@ -376,7 +376,7 @@ describe('the guards of a recipe', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.dismiss, guardIds.fileLinkSafety,
       guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.taskFiles, guardIds.sessionChecks, guardIds.ownerGo, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
-      guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality', 'pr-rules',
+      guardIds.setupText, guardIds.spend, guardIds.workConduct, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality', 'pr-rules',
     ]);
   });
 
@@ -1086,8 +1086,8 @@ describe('the rows of the registry', () => {
       ],
       spend: ['new-worker-plan', 'new-worker-keeps-copy'],
       'work-conduct': [
-        'profile-strength-text', 'profile-no-overwrite-text', 'profile-conflict-text', 'roadmap-rules-text', 'read-profile-file-text',
-        'ste-writing-profile-text',
+        'lessons-file-caps', 'profile-strength-text', 'profile-no-overwrite-text', 'profile-conflict-text', 'roadmap-rules-text',
+        'read-profile-file-text', 'ste-writing-profile-text',
       ],
     });
   });
