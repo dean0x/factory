@@ -553,7 +553,7 @@ describe('the rows of the registry', () => {
         'clone-project-path',
         'clone-unique-targets',
       ],
-      'context-limits': ['context-limits-text', 'context-no-self-compact'],
+      'context-limits': ['context-marks', 'context-limits-text', 'context-no-self-compact'],
       'delete-guard': [
         'delete-hook',
         'delete-hook-install',
@@ -861,7 +861,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(217);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(218);
     expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
@@ -944,10 +944,13 @@ describe('the rows of the registry', () => {
     expect(software.guards.filter((guard) => guard.rows.length === 0).map((guard) => guard.id)).toEqual([]);
   });
 
-  it('keeps context limits as text rules with no harm mark', () => {
+  it('keeps context limits as the context marks of the worker table and text rules, with no harm mark', () => {
     const guard = software.guards.find((item) => item.id === guardIds.contextLimits);
-    expect(guard?.kinds).toEqual([guardKinds.text]);
+    expect(guard?.kinds).toEqual([guardKinds.code, guardKinds.text]);
     expect(guard?.harm).toBe(false);
+    expect(software.rows.find((row) => row.id === 'context-marks')).toMatchObject({
+      guard: guardIds.contextLimits, kind: guardKinds.code, alwaysOn: false, harm: false, sites: [{ path: 'src/workers/status.ts', symbol: 'markOf' }],
+    });
   });
 
   it.each([

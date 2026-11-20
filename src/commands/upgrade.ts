@@ -26,6 +26,7 @@ import { locateHomeFolder, type NodeIdReader } from '../core/home.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
+import { recordExactRoot } from '../core/guard-records.js';
 import { guardReadOf, type GuardRead } from '../core/guard-source.js';
 import { requireConfirmedPrefix } from './launch-checks.js';
 import { isRecord } from '../migrate/inspect.js';
@@ -43,6 +44,7 @@ import {
   guardConfirmWords,
   guardDoctorWords,
   guardKeys,
+  guardRecordWords,
   homeIndex,
   localFileModes,
   overwriteCommand,
@@ -264,6 +266,31 @@ const lockedBoardText = async (deps: Deps, layout: Layout, plan: BoardQueueKeyPl
   return kept.ok ? ok(text) : kept;
 };
 
+interface UpgradeGuardRead {
+  readonly read: GuardRead;
+  /** The lines of a guard record that the run wrote again with the exact letter case of the factory folder, or none. */
+  readonly lines: readonly OutLine[];
+}
+
+/**
+ * The one guard read of the upgrade. When the only record of the node names the factory folder in other letter case, a real run
+ * writes it again with the exact root (`recordExactRoot`) and reads the values again, so the off values of the record count. A dry
+ * run, a refusal of the owner channel, a stored root of another folder and a failed write keep the read and its stop. The write
+ * comes before the prefix gate, because that gate stops the run on the letter case fault.
+ */
+const upgradeGuardRead = async (deps: Deps, home: string, config: FactoryConfig, dryRun: boolean): Promise<UpgradeGuardRead> => {
+  const read = await guardReadOf(deps, home, config, 'always');
+  if (dryRun || read.state.fault !== guardRecordWords.caseMismatch) return { read, lines: [] };
+  const rewritten = await recordExactRoot(deps, { root: home, node: config.core.node.id });
+  if (!rewritten.ok || rewritten.value === null) return { read, lines: [] };
+  const { warning } = rewritten.value;
+  return {
+    // Deps with no read of the command line read the store again, with the proof of an off value.
+    read: await guardReadOf(withGuards(deps, allGuardsOn), home, config, 'always'),
+    lines: [{ level: 'ok', text: guardRecordWords.caseRewritten }, ...(warning === null ? [] : [{ level: 'warn' as const, text: warning }])],
+  };
+};
+
 const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };
 
 /** The warnings of the setup accept step. */
@@ -346,9 +373,9 @@ export const runUpgrade = async (
   let allOnPackage: readonly BlockTemplate[] | undefined;
   // One read of the guard values serves the approval modes, the render, the prefix gate and every later step of the run. An off
   // value counts only from the config on disk that loads now, never from the config after the migrations.
-  const guardRead: { value: GuardRead | null } = { value: null };
+  const guardRead: { value: UpgradeGuardRead | null } = { value: null };
   const guardReadFor = async (parsed: FactoryConfig): Promise<GuardRead> =>
-    (guardRead.value ??= await guardReadOf(base, home, parsed, 'always'));
+    (guardRead.value ??= await upgradeGuardRead(base, home, parsed, options.dryRun)).read;
   const prefix: { result: CliResult<void> | null } = { result: null };
   const blockSet = await planBlockSet(
     config.value, local.value, upgrade, setupPlan.value.texts,
@@ -364,7 +391,8 @@ export const runUpgrade = async (
   // The same guard read supplies the render and the gate, before acceptance writes or mode changes.
   if (prefix.result === null) return failure(guardConfirmWords.checkIncomplete);
   if (!prefix.result.ok) return prefix.result;
-  const deps = guardRead.value?.deps ?? withGuards(base, allGuardsOn);
+  const deps = guardRead.value?.read.deps ?? withGuards(base, allGuardsOn);
+  const recordLines = guardRead.value?.lines ?? [];
   const setup = await setupPlan.value.accept();
   if (!setup.ok) return setup;
   const modeNotes = await settleLocalMode(deps, home, !options.dryRun);
@@ -419,7 +447,7 @@ export const runUpgrade = async (
     changes.length > 0;
   // The guard is written inside the git folder, so it is no change of the saved state: it needs no backup and no commit.
   const guardChange = guard.value.action === 'install';
-  const changed = stateChanges || hooks.value.length > 0 || guardChange;
+  const changed = stateChanges || hooks.value.length > 0 || guardChange || recordLines.length > 0;
 
   // The new texts come from pure functions. The dry run makes them too, so that it reports what the real run refuses.
   const stateText = stateFileText(state.value, upgrade, changes);
@@ -445,6 +473,7 @@ export const runUpgrade = async (
   const noGuardKey = isRecord(guardRaw) && !Object.hasOwn(guardRaw, guardKeys.local);
   const lines: OutLine[] = [
     ...(options.dryRun && noGuardKey ? [{ level: 'ok' as const, text: guardDoctorWords.noKey }] : []),
+    ...recordLines,
     ...planLines(config.value, local.value, state.value, files, stateGitignore.value, boardKey.value, guard.value, root.value, blocks, upgrade),
     ...resumeLines(changes),
     ...localNotices.map((text): OutLine => ({ level: 'ok', text })),

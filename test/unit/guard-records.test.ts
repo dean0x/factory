@@ -307,13 +307,15 @@ describe('guard store reads and writes', () => {
     expect(deps.files.size).toBe(0);
   });
 
-  it.each(['guards', 'prefix'])('checks the channel before file access for %s', async (kind) => {
+  it.each(['guards', 'prefix', 'letter case'])('checks the channel before file access for %s', async (kind) => {
     const deps = fixture({ env: { [env.session]: 'node', [env.stateHome]: stateHome } });
     const blocked = { ...deps, fs: new Proxy(deps.fs, { get: () => { throw new Error('channel must run first'); } }) };
-    const result = kind === 'guards'
-      ? await storeApi.recordGuards(blocked, { root, node: 'demo', change })
-      : await storeApi.recordPrefix(blocked, { root, node: 'demo', prefix: 'prefix' });
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    const writes = {
+      guards: () => storeApi.recordGuards(blocked, { root, node: 'demo', change }),
+      prefix: () => storeApi.recordPrefix(blocked, { root, node: 'demo', prefix: 'prefix' }),
+      'letter case': () => storeApi.recordExactRoot(blocked, { root, node: 'demo' }),
+    } as const;
+    expect(await writes[kind as keyof typeof writes]()).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 
   it('changes only the prefix and hashes its exact text', async () => {
@@ -347,6 +349,32 @@ describe('guard store reads and writes', () => {
     const noCores = { ...deps, fs: { ...deps.fs, openCheckedCore: undefined, writeTextAtomicCore: undefined } };
     expect((await storeApi.readGuardStore(noCores, path)).ok).toBe(false);
     expect((await storeApi.recordPrefix(noCores, { root, node: 'demo', prefix: 'prefix' })).ok).toBe(false);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+});
+
+describe('the letter case rewrite of a record root', () => {
+  const folded = root.toUpperCase();
+  /** A volume that ignores letter case: the real path of the root in any letter case is the root. */
+  const caseBlind = (deps: ReturnType<typeof fixture>) => ({
+    ...deps, fs: { ...deps.fs, realpath: async (target: string) => deps.fs.realpath(target.toLowerCase() === root ? root : target) },
+  });
+
+  it('writes the one record of the node with the root in other letter case again with the real root, and keeps its values, its prefix and the other records', async () => {
+    const deps = fixture();
+    const values = { [guard.id]: { value: 'off' as const, at } };
+    const prefix = { hash: sha256Hex('prefix'), at };
+    const other = { ...record(), node: 'other', root: folded };
+    deps.seed(path, storeText([{ ...record(values, prefix), root: folded }, other]));
+    expect(await storeApi.recordExactRoot(caseBlind(deps), { root, node: 'demo' })).toEqual(ok({ warning: null }));
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([record(values, prefix), other]));
+    expect(deps.modes.get(path)).toBe(0o600);
+  });
+
+  it('writes nothing when two records of the node differ from the root only in letter case', async () => {
+    const deps = fixture();
+    deps.seed(path, storeText([{ ...record(), root: folded }, { ...record(), root: '/Work/Node' }]));
+    expect(await storeApi.recordExactRoot(caseBlind(deps), { root, node: 'demo' })).toEqual(ok(null));
     expect(deps.atomicWrites).toEqual([]);
   });
 });

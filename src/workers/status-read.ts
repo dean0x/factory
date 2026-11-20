@@ -4,6 +4,7 @@ import { durationMinutes } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { guardValuesFor } from '../guards/effective.js';
 import type { PaneRow } from '../launch/tmux.js';
 import { durationBounds, keys, roles } from '../names.js';
 import { readHold, type HoldRead } from './hold.js';
@@ -107,6 +108,7 @@ export const readStatus = async (deps: Deps, request: StatusRequest): Promise<Cl
     now: deps.now(),
     idleAfterMinutes,
     limits: config.core.limits,
+    guards: await guardValuesFor(deps, home),
   });
   const invalid = records.value.invalid.map(
     (item) => `cannot use the folder ${displayLine(item.name)} of the ${roles.worker}s: ${item.reason}`,

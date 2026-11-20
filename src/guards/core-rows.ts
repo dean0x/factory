@@ -325,6 +325,17 @@ const cloneRuleRows: readonly GuardRow[] = [
   }),
 ];
 
+const contextLimitRows: readonly GuardRow[] = [
+  codeRow({
+    id: 'context-marks',
+    guard: guardIds.contextLimits,
+    name: `The table of the ${worker}s marks a ${worker} at the prepare percent and past the max percent`,
+    applies: `${commandLines.workerList}, ${commands.status} and ${commands.board}`,
+    harm: false,
+    sites: at('src/workers/status.ts', 'markOf'),
+  }),
+];
+
 const deleteGuardRows: readonly GuardRow[] = [
   codeRow({
     id: 'delete-hook',
@@ -1005,6 +1016,7 @@ export const coreGuardRows: readonly GuardRow[] = [
   ...settingsCheckRows,
   ...settingsWriteRows,
   ...cloneRuleRows,
+  ...contextLimitRows,
   ...deleteGuardRows,
   ...dismissRows,
   ...fileLinkSafetyRows,

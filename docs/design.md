@@ -1397,7 +1397,7 @@ Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and i
 
 A missing key means `on`. New nodes and existing nodes with no guard keys keep every guard on. `init` writes no guard value. Config splits and upgrade rewrites keep guard values. Related config keys keep their own meaning; a related key is not a guard key.
 
-A local `off` takes effect only with a matching record of the owner for that node id and real factory folder. The folder path of the record must be the same, letter case included. A missing or different record keeps the guard on. If the same node has only a match in different letter case, every guard stays on. Launch stops with exit code 4. Run `factory guard confirm` to record the prefix again. Run `factory guard set` to record the guard values again. A move of the folder ends its guard records. A local `off` also needs a proof. The config on disk must load in full with every guard on and have the same node id. The factory list must name the folder with that node id. Else every guard stays on. `upgrade` proves an `off` with the config on disk before its migrations. So a config of an older layout keeps every guard on until the upgrade is done. A guard that this version cannot set always stays on, even with a local `off` and a record. One part of the code makes the guard decision for every command. A command uses one read of the guard values for its output and for each of its steps. A read of another folder keeps every guard on.
+A local `off` takes effect only with a matching record of the owner for that node id and real factory folder. The folder path of the record must be the same, letter case included. A missing or different record keeps the guard on. If the same node has only a match in different letter case, every guard stays on. Launch and `upgrade` stop with exit code 4. Run `factory upgrade` in a terminal window, outside a session, to write the record again with the exact letter case. It writes only when the real path of the stored folder is the factory folder. Else run `factory guard confirm` and `factory guard set` to record the prefix and the guard values again. A move of the folder ends its guard records. A local `off` also needs a proof. The config on disk must load in full with every guard on and have the same node id. The factory list must name the folder with that node id. Else every guard stays on. `upgrade` proves an `off` with the config on disk before its migrations. So a config of an older layout keeps every guard on until the upgrade is done. A guard that this version cannot set always stays on, even with a local `off` and a record. One part of the code makes the guard decision for every command. A command uses one read of the guard values for its output and for each of its steps. A read of another folder keeps every guard on.
 
 **Text guards.** This version can set five guards:
 
@@ -1405,7 +1405,7 @@ A local `off` takes effect only with a matching record of the owner for that nod
 |---|---|
 | `approval-merge` | Replace the merge approval text with the off text and the request log command. |
 | `approval-release` | Replace the release approval text with the off text and the request log command. |
-| `context-limits` | Remove the context limit rules from the role text. |
+| `context-limits` | Remove the context limit rules from the role text, and show no `PREPARE` or `MAX` mark in the worker table. |
 | `resume-routines` | Remove the resume and routine instructions. |
 | `install-rules` | Remove the rule about installs outside the session folder. |
 

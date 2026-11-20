@@ -278,6 +278,8 @@ Guards
 - New command `factory guard confirm` shows the full owner prefix and asks for consent to record it for this folder. It uses the same terminal rules as `guard set`. A new `init` records the prefix only in that terminal channel. An existing node with no prefix record can still start, but start prints a notice.
 - Start, reboot, restart, worker new and worker resume stop with exit code 4 for a prefix mismatch or an unreadable guard store. Doctor names the remedy. Start renders intact current role blocks again after a guard change. An edited role block that lacks the text of an on `H` guard stops a launch with exit code 4.
 - After the update, some nodes with earlier guard records need new records before start can continue. Run `factory guard confirm` to record the prefix again. Run `factory guard set` to record the guard values again.
+- A guard record that names the factory folder in other letter case keeps every guard on and stops the launch. `factory upgrade` in a terminal window, outside a session, writes the record again with the exact letter case. It writes only when the real path of the stored folder is the factory folder.
+- With `context-limits` off, `worker list`, `status` and `board` show no `PREPARE` or `MAX` mark.
 - Doctor gives one `guards` check with off counts, each direct proxy, each unmatched local value, the prefix record and the own file rules. Its JSON output gives the record time of each off guard. Start prints one summary line when it has a value or notice to show.
 - `upgrade` adds Edit deny rules for the own config files, owner stores and session settings after consent. Doctor warns when a rule is absent, and start prints a notice without a new question. The root scan accepts the own settings file with these rules.
 

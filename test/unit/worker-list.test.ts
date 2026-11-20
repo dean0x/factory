@@ -5,13 +5,14 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
-import { boardKeys, files, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
+import { boardKeys, files, guardIds, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { readOwnLastSeen, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeHold } from '../../src/workers/hold.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { runWorker } from '../helpers/package-registry.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { sampleConfig, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
@@ -294,6 +295,24 @@ describe('worker list: the mark of the context percent', () => {
     const output = await listed(made);
     expect(rowsOf(output)[0]).toMatchObject({ context: '?', mark: '' });
     expect(jsonOf(output).workers[0]).toMatchObject({ contextPct: null, mark: null });
+  });
+});
+
+describe('worker list: the context limits guard', () => {
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.contextLimits))('shows the prepare and the max mark only while the guard counts as on: %s', async (_state, setup, on) => {
+      const off = setup.off ?? [];
+      const made = await make({
+        config: withGuardsOff(sampleConfig(), off),
+        workers: [{ id: 'alpha', line: { event: 'Stop', percent: 35 } }, { id: 'beta', line: { event: 'Stop', percent: 45 } }],
+      });
+      registerRoot(made.deps, HOME, NODE, [], origin);
+      if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+      const sink = captureSink();
+      expect(await runCli(['worker', 'list', '--home', HOME, '--json'], made.deps, sink), sink.errors.join('')).toBe(0);
+      const workers = (JSON.parse(sink.out.join('')) as { readonly workers: readonly JsonWorker[] }).workers;
+      expect(workers.map((worker) => [worker.contextPct, worker.mark])).toEqual(on ? [[35, 'PREPARE'], [45, 'MAX']] : [[35, null], [45, null]]);
+    });
   });
 });
 

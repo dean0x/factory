@@ -2525,7 +2525,10 @@ export const guardRecordWords = {
   placeRemedy: `Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,
   duplicate: 'The guard store holds two records for one node and factory folder.',
   caseMismatch: 'The guard record does not name the factory folder in its exact letter case.',
-  caseRemedy: `Run "${commandText(commandLines.guardConfirm)}" to record the prefix again. Run "${commandText(commandLines.guardSet)}" to record the guard values again.`,
+  caseRemedy:
+    `Run "${commandText(commands.upgrade)}" in your terminal window, outside a session, to write the record again with the exact letter case. ` +
+    `To record the prefix and the guard values again instead, run "${commandText(commandLines.guardConfirm)}" and "${commandText(commandLines.guardSet)}".`,
+  caseRewritten: 'Wrote the guard record again with the exact letter case of the factory folder.',
   recordCap: `The guard store cannot exceed ${guardRecords.maxRecords} records. Run "${commandText(commands.doctor)}".`,
   byteCap: `The guard store cannot exceed ${guardRecords.maxBytes} bytes. Run "${commandText(commands.doctor)}".`,
   badPrefix: `The ${keys.root.owner}.${keys.owner.prefix} text must not contain a hidden character.`,

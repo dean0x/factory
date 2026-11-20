@@ -9,7 +9,9 @@ import { CONFIG_SCHEMA_VERSION } from '../config/schema.js';
 import { guardRulesOf, type GuardProxies, type GuardRecord, type GuardRules } from '../guards/effective.js';
 import { guardsFor } from '../guards/registry.js';
 import type { GuardDefinition, GuardNeed, GuardValue, GuardValues } from '../guards/types.js';
-import { commandLines, commandText, env, files, guardRecords, guardRecordWords, guardSetWords, guardValues, privateFile, type CommandText } from '../names.js';
+import {
+  commandLines, commands, commandText, env, files, guardRecords, guardRecordWords, guardSetWords, guardValues, privateFile, type CommandText,
+} from '../names.js';
 import type { RecipeEntry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import { accessFaultCore } from './access.js';
@@ -226,6 +228,50 @@ export const recordGuards = async (
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
 };
 
+/** The records of the node whose root differs from the real root only in letter case. */
+const foldedRecordsOf = (records: readonly GuardRecord[], node: string, root: string): readonly GuardRecord[] => {
+  const key = recordKey(node, root);
+  const folded = resolve(root).toLowerCase();
+  return records.filter((record) =>
+    record.node === node && recordKey(record.node, record.root) !== key && resolve(record.root).toLowerCase() === folded);
+};
+
+/** The one record that a letter case rewrite may change: none when the store has the exact record, or more than one in other letter case. */
+const rewritableOf = (records: readonly GuardRecord[], node: string, root: string): GuardRecord | null => {
+  if (records.some((record) => recordKey(record.node, record.root) === recordKey(node, root))) return null;
+  const [only, ...more] = foldedRecordsOf(records, node, root);
+  return only === undefined || more.length > 0 ? null : only;
+};
+
+/**
+ * Write the one record of the node whose root differs from the real root only in letter case again, with the exact real root. It
+ * writes only in the owner channel, only when the real path of the stored root is the real root, so both name the same folder,
+ * and only through the checked store place, its lock and the one store writer. The values and the prefix of the record stay. The
+ * value is null when no record may change: none, more than one, or a stored root whose real path is another folder or none.
+ */
+export const recordExactRoot = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<GuardRecordWrite | null>> => {
+  const channel = requireGuardChannel(deps, commands.upgrade);
+  if (!channel.ok) return channel;
+  if (!slug.safeParse(input.node).success) return usageError(guardRecordWords.invalidChange);
+  const place = await guardPlaceOf(deps, input.root);
+  if (!place.ok) return place;
+  if (place.value.path === null) return failure(guardRecordWords.noPlace);
+  const { root, path } = place.value;
+  const read = await readGuardStore(deps, path);
+  if (!read.ok) return failure(read.error);
+  const stored = rewritableOf(read.value, input.node, root);
+  if (stored === null) return ok(null);
+  const real = await deps.fs.realpath(stored.root);
+  if (!real.ok || real.value !== root) return ok(null);
+  const written = await changeGuardStore(deps, path, (records) => {
+    // The store can change before the lock: the rewrite needs the same record again.
+    const again = rewritableOf(records, input.node, root);
+    if (again === null || again.root !== stored.root) return err(guardRecordWords.caseMismatch);
+    return ok(records.map((record) => (record === again ? { ...record, root } : record)));
+  });
+  return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
+};
+
 /** Hash the exact prefix text. Guard values and all other node records stay unchanged. */
 export const recordPrefix = async (
   deps: Deps, input: RecordPlaceInput & { readonly prefix: string },
@@ -323,12 +369,9 @@ export const readGuardState = async (deps: Deps, home: string, config: GuardConf
   const key = recordKey(node, root);
   const found = read.value.find((record) => recordKey(record.node, record.root) === key);
   const details = { recordCount: read.value.length };
-  if (found === undefined) {
-    // A match after a letter case fold can only stop the launch. It cannot supply a record.
-    const foldedRoot = resolve(root).toLowerCase();
-    if (read.value.some((record) => record.node === node && resolve(record.root).toLowerCase() === foldedRoot)) {
-      return stateOf(root, null, guardRecordWords.caseMismatch, { ...details, remedy: guardRecordWords.caseRemedy });
-    }
+  // A match after a letter case fold can only stop the launch. It cannot supply a record.
+  if (found === undefined && foldedRecordsOf(read.value, node, root).length > 0) {
+    return stateOf(root, null, guardRecordWords.caseMismatch, { ...details, remedy: guardRecordWords.caseRemedy });
   }
   return stateOf(root, found === undefined ? null : { ...found, root }, null, details);
 };

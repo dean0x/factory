@@ -13,7 +13,10 @@ import { CONFIG_SCHEMA_VERSION, mixConfigValue } from '../../src/config/schema.j
 import { isRecord } from '../../src/migrate/inspect.js';
 import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
-import { boardKeys, commands, env, guardIds, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
+import {
+  boardKeys, commands, commandText, env, guardIds, guardRecordWords, hookNames, roleText, setupBlockNames, stateGuard, stateLock,
+} from '../../src/names.js';
+import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -537,6 +540,64 @@ describe('upgrade: effective guard values', () => {
     ]);
     expect(parseYamlText(text(deps, LOCAL))).toMatchObject({ ok: true, value: { guards: { 'install-rules': 'off' } } });
     expect(text(deps, LOCAL)).not.toContain('retired-fixture-guard');
+  });
+
+  describe('a guard record whose root differs from the factory folder only in letter case', () => {
+    const FOLDED = '/w/Node';
+    const TERMINAL = { stdinIsTTY: true, stdoutIsTTY: true } as const;
+    /** A volume that ignores letter case: the real path of the factory folder in any letter case is the factory folder. */
+    const caseBlind = (deps: FakeDeps): Deps => ({
+      ...deps, fs: { ...deps.fs, realpath: async (path) => deps.fs.realpath(path.toLowerCase() === HOME ? HOME : path) },
+    });
+    /** A node whose local file sets install rules off, with the record of that value under the root in other letter case. */
+    const foldedNode = async (): Promise<FakeDeps> => {
+      const { deps } = await makeNode();
+      seedGuards(deps, { 'install-rules': 'off' });
+      deps.seed(STORE, guardStoreText('demo', FOLDED, ['install-rules'], deps.now()));
+      return deps;
+    };
+    const runOf = async (argv: readonly string[], deps: Deps) => {
+      const sink = captureSink();
+      const code = await runCli([...argv], deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+
+    it('writes the record again with the exact root in the owner channel, and its off value counts after that', async () => {
+      const deps = await foldedNode();
+      const result = await runOf(['upgrade', '--home', HOME], { ...caseBlind(deps), ...TERMINAL });
+      expect(result.code, result.err).toBe(0);
+      expect(result.out).toContain(guardRecordWords.caseRewritten);
+      expect(JSON.parse(text(deps, STORE))).toMatchObject({ records: [{ node: 'demo', root: HOME, values: { 'install-rules': { value: 'off' } } }] });
+      const config = await loadConfig(deps, HOME);
+      if (!config.ok) throw new Error(config.error.message);
+      expect((await readGuardState(deps, HOME, config.value, 'always')).values['install-rules']).toBe('off');
+    });
+
+    it.each([
+      ['inside a factory session', [], (deps: Deps): Deps => ({ ...deps, ...TERMINAL, env: { ...deps.env, [env.session]: 'demo' } })],
+      ['inside a Claude Code session', [], (deps: Deps): Deps => ({ ...deps, ...TERMINAL, env: { ...deps.env, [env.claudeCode]: '1' } })],
+      ['with no terminal', [], (deps: Deps): Deps => deps],
+      ['in a dry run', ['--dry-run'], (deps: Deps): Deps => ({ ...deps, ...TERMINAL })],
+    ])('writes no record %s, and keeps the letter case stop with its remedy', async (_name, flags, channel) => {
+      const deps = await foldedNode();
+      const store = text(deps, STORE);
+      const result = await runOf(['upgrade', '--home', HOME, ...flags], channel(caseBlind(deps)));
+      expect(result.code).toBe(4);
+      expect(result.err).toContain(guardRecordWords.caseMismatch);
+      expect(result.err).toContain(guardRecordWords.caseRemedy);
+      expect(guardRecordWords.caseRemedy).toContain(commandText(commands.upgrade));
+      expect(text(deps, STORE)).toBe(store);
+    });
+
+    it('writes no record when the real path of the stored root is another folder, and keeps the letter case stop', async () => {
+      const deps = await foldedNode();
+      deps.seedDir(FOLDED);
+      const store = text(deps, STORE);
+      const result = await runOf(['upgrade', '--home', HOME], { ...deps, ...TERMINAL });
+      expect(result.code).toBe(4);
+      expect(result.err).toContain(guardRecordWords.caseMismatch);
+      expect(text(deps, STORE)).toBe(store);
+    });
   });
 });
 
