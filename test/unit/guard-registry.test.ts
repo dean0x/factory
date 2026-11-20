@@ -260,12 +260,11 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'coordinator-caller', path: 'src/workers/watch.ts', symbol: 'requireWatchCaller', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/workers/reset.ts', symbol: 'resetWorker', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/commands/self.ts', symbol: 'selfReset', reason: 'Calls requireTargetPane, whose caller rule reads the value; the read of the target pane runs with every value.' },
-  { row: 'coordinator-caller', path: 'src/commands/request.ts', symbol: 'requireRelayer', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/commands/request.ts', symbol: 'execute', reason: coordinatorCallerReason },
-  { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'dismissClosed', reason: 'Calls closedChecks or freeUnproved, which call requireCoordinatorCaller, which reads the value.' },
+  { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'freeUnproved', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'dismissAskOwner', reason: coordinatorCallerReason },
   { row: 'item-record-approval', path: 'src/commands/item.ts', symbol: 'recordChecked', reason: 'Calls checkApproval and recordChecked of the board, whose approval check calls recordNeedsApproval, which reads the value.' },
   { row: 'item-record-approval', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Its approval check of a record calls recordNeedsApproval, which reads the value.' },
-  { row: 'decision-proof', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Passes the values of the node to recheckRequest, which reads the value.' },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'linkedApprovalsOf', reason: recordApprovalReason },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'approvalVerdict', reason: recordApprovalReason },
 ];
@@ -832,7 +831,7 @@ describe('the rows of the registry', () => {
         'dismiss-idle-pick',
         'dismiss-idle-pick-list',
         'coordinator-caller',
-        'coordinator-target-pane',
+        'coordinator-decision-caller', 'coordinator-target-pane',
         'decide-channel-text',
         'yes-in-session-text',
       ],
@@ -1012,11 +1011,12 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(234);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(235);
     expect(softwareRecipe.guardRows).toHaveLength(104);
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(168);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
@@ -1062,10 +1062,10 @@ describe('the rows of the registry', () => {
       'session-checks': [
         'owner-channel', 'decide-channel', 'setup-ask-channel', 'init-yes-in-session', 'received-init-outside-session',
         'existing-init-outside-session', 'upgrade-registration-consent', 'overwrite-safety-outside-session', 'dismiss-idle-pick-list',
-        'coordinator-target-pane', 'decide-channel-text',
+        'coordinator-decision-caller', 'coordinator-target-pane', 'decide-channel-text',
       ],
       'owner-go': [
-        'decide-prompt', 'decision-one-answer', 'answered-row-not-proof', 'answered-no-reclose', 'settle-relay-rules', 'linked-relay-scope',
+        'decide-prompt', 'decision-proof', 'decision-one-answer', 'answered-row-not-proof', 'answered-no-reclose', 'settle-relay-rules', 'linked-relay-scope',
         'owner-row-under-lock', 'decision-record-escape', 'approval-store-place', 'profile-owner-only-wait-text', 'profile-no-invented-decision-text', 'glossary-owner-approves-text',
         'stage-not-approval-glossary-text', 'answered-row-not-proof-text', 'settle-relay-text',
       ],
@@ -1303,13 +1303,13 @@ describe('the text rows of the registry', () => {
       'Only you change the board.',
     ],
     'board-flow-stages-text': ['The command refuses'],
-    'board-worker-field-text': ['changes only through'],
+    'board-worker-field-text': ['changes only through', 'now refuses it. Use `factory item unassign'],
     'board-reserved-names-text': ['Never set them in a field.'],
     'board-single-store-text': ['Keep no other copy.'],
     'context-limits-text': ['The context limits are in', 'finish the current step, save a checkpoint and report'],
     'context-no-self-compact': ['Do not compact or clear yourself.'],
     'no-lost-item-ids-text': ['Never remove an item from it.'],
-    'dismiss-dry-run-text': ['It lists the files that the free deletes.'],
+    'dismiss-dry-run-text': ['Run `factory dismiss <id>` first.'],
     'dismiss-pushed-text': ['its branch is pushed and its work copy is clean'],
     'dismiss-closed-proof-text': ['Do it only when the item of the worker is closed'],
     'dismiss-session-text': ['Tell the owner about each dismiss that you run in this session.'],

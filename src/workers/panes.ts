@@ -195,16 +195,14 @@ export const requireCoordinatorPane = async (
  * 2. the coordinator pane, as `requireCoordinatorPane` reads it (exit 3, exit 4);
  * 3. a caller pane that is not that pane is exit 2.
  * `again` is the command that a person runs again after the fix, without the program name (`commandText` adds it). The value is the
- * coordinator pane as this read found it, with its pid. While the session-checks guard is off, the rule does not run, reads no pane
- * and gives null: a step that acts on the coordinator pane reads it with `requireCoordinatorPane`.
+ * coordinator pane as this read found it, with its pid. A decision row that names the coordinator needs this check.
  */
-export const requireCoordinatorCaller = async (
+export const checkCoordinatorCaller = async (
   deps: Deps,
   home: string,
   config: FactoryConfig,
   again: string,
-): Promise<CliResult<CoordinatorPane | null>> => {
-  if (!(await guardOn(deps, guardIds.sessionChecks, home))) return ok(null);
+): Promise<CliResult<CoordinatorPane>> => {
   const nodeId = config.core.node.id;
   const callerPane = deps.env[env.tmuxPane];
   const coordinatorPlace = `the pane of the ${roles.coordinator}`;
@@ -227,6 +225,12 @@ export const requireCoordinatorCaller = async (
   }
   return pane;
 };
+
+/** The optional caller check. A step that records the coordinator as its decider uses the check above instead. */
+export const requireCoordinatorCaller = async (
+  deps: Deps, home: string, config: FactoryConfig, again: string,
+): Promise<CliResult<CoordinatorPane | null>> =>
+  (await guardOn(deps, guardIds.sessionChecks, home)) ? checkCoordinatorCaller(deps, home, config, again) : ok(null);
 
 /**
  * Ends a pane by its id. A pane id is never used again by the same tmux server, so the id names this pane and no other. The value

@@ -187,7 +187,7 @@ describe('guard list', () => {
     expect(rowCells(lines[0] ?? '', row)).toEqual([UNWIRED_GUARD, 'on', 'on', 'H', 'not settable in this version']);
   });
 
-  it.each(['board-edits', 'merge-quality', 'dismiss', 'session-checks', 'owner-go', 'task-files', 'pr-rules'])('shows %s as settable', async (id) => {
+  it.each(['board-edits', 'merge-quality', 'dismiss', 'session-checks', 'owner-go', 'task-files', 'pr-rules', 'work-conduct'])('shows %s as settable', async (id) => {
     const json = await run(make(sampleConfig()), ['--json']);
     expect(json.code).toBe(0);
     expect(JSON.parse(json.out)).toMatchObject({ guards: expect.arrayContaining([

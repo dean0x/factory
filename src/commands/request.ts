@@ -35,7 +35,7 @@ import {
   schemaIds,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { requireCoordinatorCaller } from '../workers/panes.js';
+import { checkCoordinatorCaller, requireCoordinatorCaller } from '../workers/panes.js';
 import { openBoard, recordApprovalMode, type OpenBoard } from './board-open.js';
 import { shown, usageFor } from './board-words.js';
 
@@ -345,7 +345,7 @@ const requireRelayer = async (deps: Deps, board: OpenBoard, id: string): Promise
   const valid = checkRequestId(id);
   if (!valid.ok) return valid;
   const again = `${commandLines.requestClose} ${id} ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT`;
-  const caller = await requireCoordinatorCaller(deps, board.home, board.config, again);
+  const caller = await checkCoordinatorCaller(deps, board.home, board.config, again);
   return caller.ok ? ok(undefined) : caller;
 };
 

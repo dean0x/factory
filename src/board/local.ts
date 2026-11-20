@@ -425,14 +425,14 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
 
   /**
    * The change of an owner answer, under the state lock. It asks nothing and makes no folder. The request is read again and its hash
-   * must be the hash that the owner saw while the owner-go guard is on in `guards`. The new texts are the waiting file without the
+   * must be the hash that the owner saw. The new texts are the waiting file without the
    * request, the log with the row, the profile record and `log.md`. The value is the path of the profile record.
    */
-  const answerChange = (texts: BoardTexts, input: DecisionRecordCall, recordPath: string, guards: GuardValues): CliResult<Applied<string>> => {
+  const answerChange = (texts: BoardTexts, input: DecisionRecordCall, recordPath: string): CliResult<Applied<string>> => {
     const read = decisionDocsOf(texts);
     if (!read.ok) return read;
     const { id, hash } = input.request;
-    const request = recheckRequest(read.value.waiting, read.value.log, id, hash, guards);
+    const request = recheckRequest(read.value.waiting, read.value.log, id, hash);
     if (!request.ok) return request;
     if ((texts.get(recordPath) ?? null) !== null) {
       return failure(
@@ -842,11 +842,10 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       const path = decisionRecordPath({ id: request.id, title: request.title, at: input.at });
       if (!path.ok) return path;
       const written: { current: DecisionWrite | undefined } = { current: undefined };
-      const guards = await nodeGuards();
       const done = await commit(
         [...decisionFiles, path.value, stateRel.profileLog],
         commitMessages.recordDecision(request.id),
-        (texts) => answerChange(texts, input, path.value, guards),
+        (texts) => answerChange(texts, input, path.value),
         async () => {
           const folder = await prepareDecisionsFolder();
           if (!folder.ok) return folder;

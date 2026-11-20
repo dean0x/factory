@@ -237,10 +237,10 @@ const sessionCheckRows: readonly GuardRow[] = [
   codeRow({
     id: 'coordinator-caller',
     guard: guardIds.sessionChecks,
-    name: `A step for the ${coordinator} runs only for a caller that looks like the ${coordinator}; this stops a mistake and is no proof`,
+    name: `A step for the ${coordinator} checks the caller pane to prevent a mistake; the check is no proof`,
     applies:
-      `${commandLines.workerReset}, ${commandLines.selfReset}, ${commandLines.itemUnassign}, ${commandLines.requestClose}, ` +
-      `${commandLines.requestDoc}, ${commandLines.workerWatch} and ${commands.dismiss} ${flagText(flags.closed)}`,
+      `${commandLines.workerReset}, ${commandLines.selfReset}, ${commandLines.itemUnassign}, ` +
+      `${commandLines.requestDoc}, ${commandLines.workerWatch} and ${commands.dismiss} ${flagText(flags.closed)} with no decision row`,
     harm: false,
     sites: [
       ...at('src/workers/panes.ts', 'requireCoordinatorCaller'),
@@ -248,9 +248,17 @@ const sessionCheckRows: readonly GuardRow[] = [
       ...at('src/workers/watch.ts', 'requireWatchCaller'),
       ...at('src/workers/reset.ts', 'resetWorker'),
       ...at('src/commands/self.ts', 'selfReset'),
-      ...at('src/commands/request.ts', 'requireRelayer', 'execute'),
-      ...at('src/commands/dismiss.ts', 'dismissClosed'),
+      ...at('src/commands/request.ts', 'execute'),
+      ...at('src/commands/dismiss.ts', 'freeUnproved', 'dismissAskOwner'),
     ],
+  }),
+  alwaysOnRow({
+    id: 'coordinator-decision-caller',
+    guard: guardIds.sessionChecks,
+    name: `A relay or a free that records the ${coordinator} as its decider needs the ${coordinator} pane`,
+    applies: `${commandLines.requestClose} and ${commands.dismiss} ${flagText(flags.closed)}`,
+    harm: true,
+    sites: at('src/workers/panes.ts', 'checkCoordinatorCaller'),
   }),
   alwaysOnRow({
     id: 'coordinator-target-pane',
@@ -279,13 +287,13 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/decide.ts', 'runDecide', 'answerOf'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'decision-proof',
     guard: guardIds.ownerGo,
     name: `An answer counts only when the ${requestWords.request} is still the text that the ${owner} saw: its hash is checked again under the lock`,
     applies: commands.decide,
     harm: true,
-    sites: [...at('src/board/decide.ts', 'recheckRequest'), ...at('src/board/local.ts', 'createLocalBoard')],
+    sites: at('src/board/decide.ts', 'recheckRequest'),
   }),
   alwaysOnRow({
     id: 'decision-one-answer',
@@ -329,6 +337,7 @@ const ownerGoRows: readonly GuardRow[] = [
     sites: [
       ...at('src/board/edit.ts', 'checkSettlement', 'settleRequestIn'),
       ...at('src/commands/request.ts', 'requireRelayer', 'parseSettlement', 'parseRelay', 'execute'),
+      ...at('src/workers/panes.ts', 'checkCoordinatorCaller'),
       ...at('src/board/decide.ts', 'closedBy'),
     ],
   }),

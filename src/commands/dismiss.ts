@@ -52,7 +52,7 @@ import {
 } from '../workers/dismiss.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import { requireOtherPane } from '../workers/lifecycle.js';
-import { readPanes, requireCoordinatorCaller } from '../workers/panes.js';
+import { checkCoordinatorCaller, readPanes, requireCoordinatorCaller } from '../workers/panes.js';
 import { requireRecord, type WorkerRecord } from '../workers/registry.js';
 import { readStatus } from '../workers/status-read.js';
 import type { WorkerStatus } from '../workers/status.js';
@@ -311,6 +311,10 @@ const readyOf = async (deps: Deps, workItems: WorkItemPort, target: FreeTarget, 
 /** The pushed mark of a worker in the JSON: true, or null when the pushed test did not run. */
 const pushedMark = (inspected: Inspected): true | null => (inspected.checked ? true : null);
 
+/** Give no advice to force a removal when the run did not check the work. */
+const ownerRemovalAdvice = (inspected: Inspected): { readonly removalRemedy?: string } =>
+  inspected.checked ? {} : { removalRemedy: `The ${guardIds.dismiss} guard is off. Check the work copy and its remote branch before you try again.` };
+
 /** `dismiss ID`: the checks, then the dry run, or the free with the yes flag. */
 const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeRegistry, workItems: WorkItemPort): Promise<CliResult<CommandOutput>> => {
   const [id = ''] = options.words;
@@ -358,7 +362,7 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
   }
   const lineSession = await lineSessionOf(deps, home, id);
   if (!lineSession.ok) return lineSession;
-  const freed = await freeWorker(deps, { home, session: facts.session, plan, panes: facts.panes, lineSession: lineSession.value });
+  const freed = await freeWorker(deps, { home, session: facts.session, plan, panes: facts.panes, lineSession: lineSession.value, ...ownerRemovalAdvice(inspected) });
   if (!freed.ok) return freed;
   return ok({
     lines: freedLines(plan, freed.value, ignored.value),
@@ -431,7 +435,7 @@ type ClosedChecks =
   | { readonly kind: 'guard-not-met'; readonly guard: typeof CLOSED_GUARDS.endable; readonly reason: string; readonly stop: CliError }
   | { readonly kind: 'guard-not-met'; readonly guard: typeof CLOSED_GUARDS.proof | typeof CLOSED_GUARDS.unknown; readonly reason: string };
 
-/** Check the caller, the worker and the board before the git checks. */
+/** Check the worker and the board before the git checks. */
 const closedChecks = async (
   deps: Deps,
   options: { readonly words: DismissOptions['words'] },
@@ -441,8 +445,6 @@ const closedChecks = async (
   remedy: string,
 ): Promise<CliResult<ClosedChecks>> => {
   const [id = ''] = options.words;
-  const caller = await requireCoordinatorCaller(deps, home, config, remedy);
-  if (!caller.ok) return caller;
   const record = await requireRecord(deps, home, id, commandText(commands.dismiss));
   if (!record.ok) return record;
   const facts = await factsOf(deps, workItems, home, config, remedy);
@@ -575,6 +577,8 @@ const dismissAskOwner = async (
   const config = loaded.value;
   const local = requireLocalKind(config.core.tracker.kind, commands.dismiss, await guardValuesFor(deps, home));
   if (!local.ok) return stopAsk(local.error);
+  const caller = await requireCoordinatorCaller(deps, home, config, again);
+  if (!caller.ok) return stopAsk(caller.error);
   const checkedAt = deps.now().toISOString();
   const checked = await closedChecks(deps, options, workItems, home, config, again);
   if (!checked.ok) return stopAsk(checked.error);
@@ -673,6 +677,8 @@ const dismissClosed = async (
   const config = loaded.value;
   const guards = await guardValuesFor(deps, home);
   if (!isGuardOn(guards, guardIds.dismiss)) return freeUnproved(deps, workItems, { home, config, id, again }, guards);
+  const decider = await checkCoordinatorCaller(deps, home, config, again);
+  if (!decider.ok) return decider;
   const checked = await closedChecks(deps, options, workItems, home, config, again);
   if (!checked.ok) return checked;
   if (checked.value.kind === 'read-fault') return refuseClosed(checked.value.reason, id);
@@ -897,7 +903,7 @@ const freePicks = async (deps: Deps, facts: Facts, picks: readonly Pick[]): Prom
       stuck.push(plan.id);
       continue;
     }
-    const done = await freeWorker(deps, { home: facts.home, session: facts.session, plan, panes: facts.panes, lineSession });
+    const done = await freeWorker(deps, { home: facts.home, session: facts.session, plan, panes: facts.panes, lineSession, ...ownerRemovalAdvice(inspected) });
     if (!done.ok) {
       const before = freed.length === 0 ? '' : `. Freed before this fault: ${freed.join(', ')}`;
       return err({ ...done.error, message: `${done.error.message}${before}` });
@@ -953,7 +959,8 @@ const pickAndFree = async (
   if (ids.length === 0) return ok({ lines: [text('Nothing picked. Nothing changed.')], json, warnings, failed: false });
   const now = await factsOf(deps, workItems, facts.home, facts.config, IDLE_LINE);
   if (!now.ok) return now;
-  const idleNow = listableOf(now.value.entries);
+  const shownProjects = new Map(workers.map((entry) => [entry.id, entry.project]));
+  const idleNow = listableOf(now.value.entries).filter((entry) => shownProjects.get(entry.id) === entry.project);
   const inspect = inspectorOf(deps, now.value.home, now.value.config, [], undefined, guards);
   const picks: Pick[] = [];
   for (const id of ids) {
@@ -1003,7 +1010,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
   for (const entry of idle) checked.set(entry.id, await inspect({ id: entry.id, project: entry.project }));
   const ignored = await ignoredOf(deps, idle, checked, guards);
   const ignoredCell = (id: string): string => countOf(ignored.get(id) ?? null);
-  const table =
+  const rows =
     idle.length === 0
       ? [text(`No idle ${roles.worker}s.`)]
       : tableLines(
@@ -1012,6 +1019,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
             [entry.id, entry.project, stateText(entry), pushedCell(pushedOf(checked.get(entry.id))), ignoredCell(entry.id)].map((cell) => displayLine(cell)),
           ),
         );
+  const table = idle.length > 0 && !isGuardOn(guards, guardIds.dismiss) ? [...rows, UNCHECKED_LINE] : rows;
   const listed: readonly ListedWorker[] = idle.map((entry) => ({
     id: entry.id,
     project: entry.project,

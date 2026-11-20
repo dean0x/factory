@@ -2131,6 +2131,12 @@ describe('the work-conduct guard in the role text', () => {
     expect(bodyOf(1, 'work-rules', RELATED_OFF)).not.toContain('## Commands');
   });
 
+  it('keeps the merge approval but describes no record check that owner-go turned off', () => {
+    const body = bodyOf(1, 'coordinator', { [guardIds.ownerGo]: guardValues.off });
+    expect(body).toContain('A merge waits for the go of the owner.');
+    expect(body).not.toContain('an open linked request blocks the record');
+  });
+
   it('keeps the facts of the watch and of the state files while the guard is off', () => {
     const coordinator = bodyOf(1, 'coordinator', OFF);
     expect(coordinator).toContain('The watch ends at its first report, or after 24 hours with no change.');

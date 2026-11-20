@@ -2429,6 +2429,8 @@ describe('the guards of dismiss', () => {
       const result = await runOn(made, ['alpha', '--yes']);
       expect(result.code, result.out).toBe(1);
       expect(result.err).toContain('contains modified or untracked files');
+      expect(result.err).not.toContain('--force');
+      expect(result.err).not.toContain('its work is pushed');
       expect(removals(made)).toEqual([`worktree remove -- ${alpha}`]);
       expect(made.git.commands().filter((command) => /^branch -[dD]\b/.test(command))).toEqual([]);
       expect(await recordState(made, 'alpha')).toBe('valid');
@@ -2493,6 +2495,18 @@ describe('the guards of dismiss', () => {
       await expectNothingChanged(made, ['alpha']);
     });
 
+    it('refuses a closed free from a worker pane when the decision row would name the coordinator', async () => {
+      const made = await guardedMake(SESSION_OFF, origin, {
+        ...AS_COORDINATOR, env: { ...AS_COORDINATOR.env, TMUX_PANE: '%99' }, config: sampleConfigWithBoard(),
+      });
+      seedClosedItem(made);
+      const result = await runOn(made, ['alpha', '--closed']);
+      expect(result.code, result.err).toBe(2);
+      expect(result.err).toContain('the caller is in the pane %99');
+      expect(made.deps.files.has(DECISION_LOG)).toBe(false);
+      await expectNothingChanged(made, ['alpha']);
+    });
+
     it('dismiss --idle in a factory session still stops the pick with exit 4 while the dismiss guard is on, and asks nothing', async () => {
       const made = await guardedMake(SESSION_OFF, origin, { ...IN_SESSION, config: sampleConfigWithBoard(), terminal: { answer: 'alpha' } });
       seedClosedItem(made);
@@ -2523,6 +2537,21 @@ describe('the guards of dismiss', () => {
       expect(result.code, result.out).toBe(1);
       expect(result.err).toContain('the worker zeta is not in the list of idle workers');
       await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('keeps a worker that joins the idle list after the owner sees it', async () => {
+      const both = (status: string) => boardText([
+        itemRecord('B-1', { status: 'done', lane: 'alpha' }), itemRecord('B-2', { status, lane: 'beta' }),
+      ]);
+      const made = await guardedMake(SESSION_AND_DISMISS_OFF, origin, {
+        ...IN_SESSION, workers: [{ id: 'alpha' }, { id: 'beta' }], config: sampleConfigWithBoard(), terminal: { answer: 'beta' },
+        atPrompt: (current) => current.deps.seed(BOARD_FILE, both('done')),
+      });
+      made.deps.seed(BOARD_FILE, both('doing'));
+      const result = await runOn(made, ['--idle']);
+      expect(result.code, result.out).toBe(1);
+      expect(result.err).toContain('the worker beta is not in the list');
+      await expectNothingChanged(made, ['alpha', 'beta']);
     });
 
     it('dismiss --idle still reads and checks each pick again after the answer: a worker that turns busy while the owner types is not freed', async () => {

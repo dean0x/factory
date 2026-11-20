@@ -3,8 +3,6 @@ import { wrapText } from '../cli/output.js';
 import type { DecisionRecord } from '../core/owner-record.js';
 import { canonicalRequestText, requestHashOf } from '../core/request-hash.js';
 import { ok, type Err, type Result } from '../core/result.js';
-import { allOn, isGuardOn } from '../guards/effective.js';
-import type { GuardValues } from '../guards/types.js';
 import { isRecord } from '../migrate/inspect.js';
 import {
   approvalLinkLabels,
@@ -24,7 +22,6 @@ import {
   files,
   flags,
   flagText,
-  guardIds,
   maxDisplayWidth,
   maxFileBytes,
   optionKeys,
@@ -575,23 +572,15 @@ const DECIDE_AGAIN = `Run "${commandText(commands.decide)}" again to see the ${r
 
 /**
  * The recheck under the lock: the state is open, the strict read passes again, and the hash is the hash that the owner saw.
- * Any change after the prompt is exit 1, and the request that it gives is the one to record. The match of the hash follows the
- * owner-go guard in `guards`. The open state and the strict read run with every value, so an answered request never gets a second
- * answer.
+ * A changed request is not the one that the owner answered. Leave it open and write no answer.
  */
-export const recheckRequest = (
-  waiting: WaitingDoc,
-  log: DecisionLogDoc,
-  id: string,
-  hash: string,
-  guards: GuardValues = allOn,
-): CliResult<DecideRequest> => {
+export const recheckRequest = (waiting: WaitingDoc, log: DecisionLogDoc, id: string, hash: string): CliResult<DecideRequest> => {
   const state = requestStateOf(waiting, log, id);
   if (!state.ok) return state;
   if (state.value.kind !== 'open') return failure(`${CHANGED}: ${requestWords.request} ${id} is not open now`, DECIDE_AGAIN);
   const request = strictRequestOf(waiting, id);
   if (!request.ok) return request;
-  return request.value.hash === hash || !isGuardOn(guards, guardIds.ownerGo) ? request : failure(CHANGED, DECIDE_AGAIN);
+  return request.value.hash === hash ? request : failure(CHANGED, DECIDE_AGAIN);
 };
 
 const LOG_ROOM_REMEDY = `Do not remove rows from ${files.decisionLog}: the log gives the next D-n and the state of each ${requestWords.request}. "${commandText(commands.doctor)}" shows how full the board files are.`;

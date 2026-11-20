@@ -6,8 +6,6 @@ import { displayLine, printable, type CommandOutput, type OutLine } from '../cli
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { putDecision, readDecisionProof, requireDecideChannel } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
-import { guardValuesFor, isGuardOn } from '../guards/effective.js';
-import type { GuardValues } from '../guards/types.js';
 import {
   boardIds,
   boardLimits,
@@ -18,7 +16,6 @@ import {
   files,
   flags,
   flagText,
-  guardIds,
   places,
   requestWords,
   roles,
@@ -139,23 +136,11 @@ const requireStoredTime = async (deps: Deps, place: DecisionPlace, request: Deci
 
 const textLine = (text: string): OutLine => ({ level: 'text', text });
 
-/** The line of an answer while the owner-go guard is off: the check under the lock did not compare the request with the prompt. */
-const UNMATCHED_LINE = textLine(
-  `The guard ${guardIds.ownerGo} is off, so this run did not check that the ${requestWords.request} is still the text that the prompt showed.`,
-);
-
-/** The lines of an answer that name the check that a guard turned off. */
-const guardOffLines = (guards: GuardValues): readonly OutLine[] => (isGuardOn(guards, guardIds.ownerGo) ? [] : [UNMATCHED_LINE]);
-
-const answerOf = (request: DecideRequest, recorded: DecisionRecorded, offLines: readonly OutLine[]): CommandOutput => {
+const answerOf = (request: DecideRequest, recorded: DecisionRecorded): CommandOutput => {
   const title = displayLine(request.title.trim(), requestWords.maxCellChars);
   const done = recorded.outcome === 'stored' ? 'Recorded' : 'Finished the board copy of';
   return {
-    lines: [
-      textLine(`${done} the answer ${recorded.option} for ${recorded.id}: ${title}`),
-      textLine(`Profile record: ${displayLine(recorded.path)}`),
-      ...offLines,
-    ],
+    lines: [textLine(`${done} the answer ${recorded.option} for ${recorded.id}: ${title}`), textLine(`Profile record: ${displayLine(recorded.path)}`)],
     json: { schema: schemaIds.decide, id: recorded.id, option: recorded.option, outcome: recorded.outcome, record: recorded.path },
     warnings: recorded.warning === null ? [] : [recorded.warning],
     failed: false,
@@ -212,5 +197,5 @@ export const runDecide = async (deps: Deps, options: DecideOptions, registry: Re
     const kept = await requireStoredTime(deps, place, request, option, at);
     return kept.ok ? written : kept;
   });
-  return recorded.ok ? ok(answerOf(request, recorded.value, guardOffLines(await guardValuesFor(deps, home)))) : recorded;
+  return recorded.ok ? ok(answerOf(request, recorded.value)) : recorded;
 };

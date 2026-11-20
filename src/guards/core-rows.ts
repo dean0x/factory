@@ -438,8 +438,8 @@ const dismissRows: readonly GuardRow[] = [
   alwaysOnRow({
     id: 'dismiss-inbox-stop',
     guard: guardIds.dismiss,
-    name: 'A dismiss stops on a link or a fault in the inbox folder',
-    applies: 'Dismiss',
+    name: 'A list of inbox files stops on a link or a read fault, so it lists only files of this inbox',
+    applies: 'Dismiss dry run and closed free',
     harm: true,
     sites: at('src/workers/dismiss.ts', 'inboxFilesIn'),
   }),

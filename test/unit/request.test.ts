@@ -33,9 +33,9 @@ import { layoutOf } from '../../src/state/layout.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
 import { inPane } from '../helpers/coordinator-pane.js';
-import { withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
+import { registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { HOME } from '../helpers/guard-fixture.js';
-import { GUARD_STORE, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
@@ -988,6 +988,21 @@ describe('request close: approval links', () => {
   const close = (repo: BoardRepo, change: Partial<RequestOptions> = {}, pane = '%0') => runRequest(inPane(repo.deps, pane), {
     ...BASE, words: ['close', 'D-1'], relayed: true, decision: 'approve', ...change,
   }, recipes);
+
+  it.each(FOLDER_ORIGINS)('keeps a relay in the coordinator pane with both caller and owner checks off in %s', async (_folder, origin) => {
+    const off = [guardIds.sessionChecks, guardIds.ownerGo];
+    const config = withGuardsOff(sampleConfigWithBoard(), off);
+    const repo = await boardNode({ config, waiting: waitingText([linkedEntry()]) });
+    registerRoot(repo.deps, HOME, config.core.node.id, [], origin);
+    repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, repo.deps.now()));
+    const before = filesOf(repo);
+    const sink = captureSink();
+    const code = await runCli(['request', 'close', 'D-1', '--relayed', '--decision', 'approve', '--home', HOME], inPane(repo.deps, '%1'), sink);
+    expect(code).toBe(2);
+    expect(sink.errors.join('')).toContain('the caller is in the pane %1');
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
 
   it('refuses a linked relay outside the coordinator pane without a write', async () => {
     const repo = await boardNode({ waiting: waitingText([linkedEntry()]) });

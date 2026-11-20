@@ -82,7 +82,9 @@ export const workerSectionParts: readonly TextPart[] = [
     segments: [
       '- To free a {{worker}} in this session, run `{{dismissCommand}} <id> {{closedFlag}}`.',
       { guards: [guardIds.dismiss], text: ' Do it only when the item of the {{worker}} is closed, its branch is pushed and its work copy is clean.' },
-      ' Run `{{dismissCommand}} <id>` first. It lists the files that the free deletes. Copy each review file that the {{worker}} named from `{{workersDir}}<id>/inbox/` to `{{reviewsDir}}`.',
+      ' Run `{{dismissCommand}} <id>` first.',
+      { guards: [guardIds.dismiss], text: ' It lists the files that the free deletes.' },
+      ' Copy each review file that the {{worker}} named from `{{workersDir}}<id>/inbox/` to `{{reviewsDir}}`.',
     ],
   },
   {
@@ -300,10 +302,12 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
     `- If the head changes, check the new head and ask for a new approval on a linked ${requestWords.request}.`,
     '- If the merge fails for another reason, stop and show the {{owner}} the failure.',
     '- After the merge succeeds, run `{{itemRecordCommand}}`.',
-    `- In {{owner}} mode, an open linked ${requestWords.request} blocks the record.`,
-    `- The last settled linked row in log order needs a relayed \`{{approvalGoOption}}\` or a store \`{{approvalGoOption}}\` whose ${requestWords.request} hash matches.`,
-    '- The reference and head must match the values from GitHub.',
-    `- If an approval check fails, the command writes no record and names only the ${requestWords.request} id, if known.`,
+    { guards: [guardIds.ownerGo], lines: [
+      `- In {{owner}} mode, an open linked ${requestWords.request} blocks the record.`,
+      `- The last settled linked row in log order needs a relayed \`{{approvalGoOption}}\` or a store \`{{approvalGoOption}}\` whose ${requestWords.request} hash matches.`,
+      '- The reference and head must match the values from GitHub.',
+      `- If an approval check fails, the command writes no record and names only the ${requestWords.request} id, if known.`,
+    ] },
     '- If the record refuses, show the refusal to the {{owner}} and follow the remedy before you try again.',
   ] : [{
     // The line needs both guards: the merge must be an approval point, and only the owner gives its answer.
@@ -321,7 +325,7 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
       '- Drop each workaround that a new rule replaces. Judge by kind, not by the exact command.',
     ],
   },
-  '- A change of the {{worker}} field to pass the guard of a dismiss is a workaround. `{{itemUpdateCommand}}` now refuses it. Use `{{itemUnassignCommand}}`.',
+  { guards: [guardIds.boardEdits], lines: ['- A change of the {{worker}} field to pass the guard of a dismiss is a workaround. `{{itemUpdateCommand}}` now refuses it. Use `{{itemUnassignCommand}}`.'] },
   ...(relayGo ? [
     `- For an item merged before the upgrade, add a linked ${requestWords.request} with the merged head and get an answer.`,
   ] : []),

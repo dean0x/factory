@@ -956,18 +956,18 @@ describe.each(FOLDER_ORIGINS)('decide with the guard owner-go in %s', (_folder, 
 
   const OFF: GuardedSetup = { off: [guardIds.ownerGo] };
 
-  it.each(guardStatesOf(guardIds.ownerGo))('records the answer to a request that changed after the prompt only while the guard counts as off: %s', async (_state, setup, on) => {
+  it.each(guardStatesOf(guardIds.ownerGo))('leaves a changed request open and records no answer: %s', async (_state, setup) => {
     const repo = await guardedNodeOf(setup);
     const terminal = atTerminal(repo, () => {
       repo.deps.seed(WAITING_PATH, waitingOf(CHANGED_ENTRY));
       return ok('y');
     });
     const result = await decideLine(terminal.deps);
-    expect(result.code, result.err).toBe(on ? 1 : 0);
-    expect(result.err.includes('changed after the prompt')).toBe(on);
-    expect(storedRecords(repo)).toHaveLength(on ? 0 : 1);
-    expect(repo.commits).toHaveLength(on ? 0 : 1);
-    expect(result.out.includes(`The guard ${guardIds.ownerGo} is off`)).toBe(!on);
+    expect(result.code, result.err).toBe(1);
+    expect(result.err).toContain('changed after the prompt');
+    expect(storedRecords(repo)).toHaveLength(0);
+    expect(repo.commits).toHaveLength(0);
+    expect(repo.deps.files.get(WAITING_PATH)).toBe(waitingOf(CHANGED_ENTRY));
   });
 
   it('still refuses an answer with exit 1 while the owner store holds an answer for another text of the request, and asks nothing', async () => {
