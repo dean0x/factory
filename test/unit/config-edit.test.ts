@@ -239,6 +239,11 @@ describe('remove the keys of fixed guards from the config text', () => {
     expect(removedKeys(original)).toBe('schema: 1    # four spaces\nshared_guards: { install-rules: on }\nlimits: {}  # two spaces\n');
   });
 
+  it('keeps a key that follows the removed key on the same line of a flow map', () => {
+    const original = '{\n  schema: 1,\n  shared_guards: {clone-rules: on}, limits: {context_max_pct: 40}\n}\n';
+    expect(parseYamlText(removedKeys(original))).toEqual({ ok: true, value: { schema: 1, limits: { context_max_pct: 40 } } });
+  });
+
   it('gives back a text with none of the ids unchanged, and refuses a text that does not parse', () => {
     const original = 'schema: 1    # four spaces\nshared_guards:\n  install-rules: on  # two spaces\n';
     expect(removeGuardKeysText(original, 'shared_guards', FIXED)).toEqual({ ok: true, value: original });

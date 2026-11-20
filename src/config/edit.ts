@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { isMap, isNode, isScalar, isSeq, parseDocument, Scalar, type Document, type Pair, type YAMLMap } from 'yaml';
 import { err, ok, type Result } from '../core/result.js';
 import type { GuardValues } from '../guards/types.js';
@@ -140,18 +141,28 @@ const sourceEdit = (text: string, doc: Document, key: string, map: YAMLMap, foun
   return removed.length === found.length ? withoutSpans(text, removed) : undefined;
 };
 
-/** A source edit counts only when its text parses and the map under `key` holds none of the removed ids. */
-const removalHolds = (edited: string, key: string, found: readonly string[]): boolean => {
+/** A copy of the document with the ids gone from the map under `key`, and with the key gone when its map is left empty. */
+const withoutIdsDocument = (doc: Document, key: string, found: readonly string[]): Document => {
+  const copy = doc.clone();
+  const map = copy.get(key, true);
+  if (isMap(map)) {
+    for (const id of found) map.delete(id);
+    if (map.items.length === 0) copy.delete(key);
+  }
+  return copy;
+};
+
+/** A source edit counts only when its text parses to the value of the original with only the removed ids gone. */
+const removalHolds = (edited: string, expected: Document): boolean => {
   const parsed = parseConfigDocument(edited);
-  if (!parsed.ok) return false;
-  const after = parsed.value.get(key, true);
-  return after === undefined || (isMap(after) && found.every((id) => !after.has(id)));
+  return parsed.ok && isDeepStrictEqual(parsed.value.toJS(), expected.toJS());
 };
 
 /**
  * Remove the named ids from the guard map under `key`. A map that the removal leaves empty goes with its key. The edit is on the
- * source text, so each other line stays byte for byte, with its comments and their spaces. When the source place is not clear, the
- * library writes the document again: the keys, comments and blank lines stay, and a comment at the end of a line gets one space.
+ * source text, so each other line stays byte for byte, with its comments and their spaces. When the source place is not clear, or
+ * when the source edit changes any other value, the library writes the document again: the keys, comments and blank lines stay,
+ * and a comment at the end of a line gets one space.
  * A text that holds none of the ids comes back unchanged.
  */
 export const removeGuardKeysText = (text: string, key: string, ids: readonly string[]): Result<string, string> => {
@@ -162,11 +173,9 @@ export const removeGuardKeysText = (text: string, key: string, ids: readonly str
   if (!isMap(current)) return ok(text);
   const found = ids.filter((id) => current.has(id));
   if (found.length === 0) return ok(text);
+  const expected = withoutIdsDocument(doc, key, found);
   const edited = sourceEdit(text, doc, key, current, found);
-  if (edited !== undefined && removalHolds(edited, key, found)) return ok(edited);
-  for (const id of found) current.delete(id);
-  if (current.items.length === 0) doc.delete(key);
-  return ok(configDocumentText(doc));
+  return ok(edited !== undefined && removalHolds(edited, expected) ? edited : configDocumentText(expected));
 };
 
 /** Remove the child with this id. The entry goes with its own comments. */
