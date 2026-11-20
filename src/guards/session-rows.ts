@@ -119,10 +119,18 @@ const taskFileRows: readonly GuardRow[] = [
   codeRow({
     id: 'assignment-dot-place',
     guard: guardIds.taskFiles,
-    name: `An assignment file has no part that starts with a dot, except ${assignmentSource.ordersShown} of the ${folder}, and it is never the local config`,
+    name: `An assignment file has no part that starts with a dot, except ${assignmentSource.ordersShown} of the ${folder}`,
     applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
     harm: true,
     sites: [...at('src/workers/assignment.ts', 'placeOf'), ...at('src/core/place-rule.ts', 'dotRuleReason')],
+  }),
+  alwaysOnRow({
+    id: 'assignment-local-config',
+    guard: guardIds.taskFiles,
+    name: `An assignment file is never the local config of the ${folder}, so the ${owner} prefix never reaches another session`,
+    applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
+    harm: true,
+    sites: at('src/core/place-rule.ts', 'localConfigReason'),
   }),
 ];
 

@@ -1137,6 +1137,15 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard task-files in %s', (_title,
     expect(sink.out.join('').includes(`The guard ${guardIds.taskFiles} is off`)).toBe(!on);
   });
 
+  it.each(guardStatesOf(guardIds.taskFiles))('refuses the local config as an assignment with exit 4 with every value of the guard, so the owner prefix never reaches a worker: %s', async (_state, setup) => {
+    const made = guardedMake(setup);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', `${HOME}/factory.local.yaml`], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(4);
+    expect(sink.errors.join('')).toContain('factory.local.yaml holds the settings of one person on one machine');
+    expect(made.deps.files.has(`${INBOX}/assignment.md`)).toBe(false);
+  });
+
   it('still refuses an assignment file outside the folder and the work tree with exit 4 while the guard is off', async () => {
     const made = guardedMake({ off: [guardIds.taskFiles] });
     made.deps.seed('/w/other/task.md', TASK);

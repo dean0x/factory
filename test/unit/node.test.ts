@@ -982,11 +982,12 @@ describe('node send', () => {
       expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
     });
 
-    it.each(guardStatesOf(guardIds.taskFiles))('sends the local config as a task file only while the guard counts as off: %s', async (_state, setup, on) => {
+    it.each(guardStatesOf(guardIds.taskFiles))('refuses the local config as a task file with exit 4 with every value of the guard, so the owner prefix never reaches a child: %s', async (_state, setup) => {
       const deps = guardedSendable(setup, origin);
       const result = await sendLine(deps, LOCAL_PATH);
-      expect(result.code, result.err).toBe(on ? 4 : 0);
-      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+      expect(result.code, result.err).toBe(4);
+      expect(result.err).toContain('factory.local.yaml holds the settings of one person on one machine');
+      expect(inboxFiles(deps)).toEqual([]);
     });
 
     describe('with the guard off and its owner record', () => {

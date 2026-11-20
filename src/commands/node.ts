@@ -484,7 +484,7 @@ const SEND_OFF_LINES: readonly (readonly [string, string])[] = [
   [guardIds.ownerGo, `The guard ${guardIds.ownerGo} is off, so the header of the file does not say that it carries no authority of the ${roles.owner}.`],
   [
     guardIds.taskFiles,
-    `The guard ${guardIds.taskFiles} is off, so this send did not check the task file for hidden characters, a dot part or the local config. ` +
+    `The guard ${guardIds.taskFiles} is off, so this send did not check the task file for hidden characters or a dot part. ` +
       'It did not check that the state repo of the child ignores the inbox.',
   ],
   [guardIds.secrets, `The guard ${guardIds.secrets} is off, so this send did not check the task for text like a token.`],

@@ -94,7 +94,7 @@ const text = (line: string): OutLine => ({ level: 'text', text: line });
 
 /** The line of a copied assignment while the task-files guard is off: the place check of the file did not run. */
 const UNPLACED_LINE = text(
-  `The guard ${guardIds.taskFiles} is off, so the check of the assignment file did not look for a dot part or the local config.`,
+  `The guard ${guardIds.taskFiles} is off, so the check of the assignment file did not look for a dot part.`,
 );
 
 /** The same error with this remedy line. */

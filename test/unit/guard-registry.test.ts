@@ -808,6 +808,7 @@ describe('the rows of the registry', () => {
         'report-file-write',
         'assignment-file-check',
         'assignment-dot-place',
+        'assignment-local-config',
         'task-file-inbox-text',
         'long-task-file-text',
         'session-name-check-text',
@@ -1008,7 +1009,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(233);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(234);
     expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
@@ -1053,6 +1054,7 @@ describe('the rows of the registry', () => {
         'report-listed-fields',
         'report-file-write',
         'assignment-file-check',
+        'assignment-local-config',
       ],
       'session-checks': [
         'owner-channel', 'decide-channel', 'setup-ask-channel', 'init-yes-in-session', 'received-init-outside-session',
