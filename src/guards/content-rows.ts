@@ -319,7 +319,7 @@ const setupTextRows: readonly GuardRow[] = [
     applies: `Launch, reset, ${commandLines.workerNew}, ${commandLines.workerResume}, ${commands.restart} and ${commands.reboot}`,
     harm: true,
     sites: [
-      ...at('src/workers/session-checks.ts', 'requireRoleDelivery', 'requireOwnHooks', 'requireSettingsOlderThan'),
+      ...at('src/workers/session-checks.ts', 'requireRoleDelivery', 'requireWorkerHooks', 'requireSettingsOlderThan'),
       ...at('src/workers/launch.ts', 'launchWorker'),
     ],
   }),

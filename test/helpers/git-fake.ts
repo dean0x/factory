@@ -291,7 +291,7 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       case 'config remote.origin.url':
         return repo?.origin === undefined ? exited(1) : exited(0, `${repo.origin}\n`);
       case 'rev-parse --is-inside-work-tree --show-prefix':
-        return repo === undefined ? exited(128) : exited(0, repo.topLevel === false ? 'true\nsub/\n' : 'true\n\n');
+        return repo === undefined ? exited(128, '', 'fatal: not a git repository (or any of the parent directories): .git\n') : exited(0, repo.topLevel === false ? 'true\nsub/\n' : 'true\n\n');
       case 'rev-parse --show-toplevel': {
         const top = workTreeTopOf(repoAt, dir);
         return top === null ? exited(128) : exited(0, `${top}\n`);

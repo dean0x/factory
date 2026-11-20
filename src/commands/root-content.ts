@@ -8,7 +8,7 @@ import {
   headEntriesAt,
   ignoredPathsOf,
   isFileMode,
-  isWorkTreeRoot,
+  workTreeRootOf,
   LINK_MODE,
   trackedFilesOf,
   type TrackedList,
@@ -188,8 +188,9 @@ interface SetupScan {
 
 /** The tracked paths, null when the folder is not the top of a work tree, or the error when git is there and fails. */
 const listTracked = async (deps: Deps, home: string): Promise<CliResult<TrackedList | null>> => {
-  if (!(await isWorkTreeRoot(deps, home))) return ok(null);
-  return trackedFilesOf(deps, home);
+  const root = await workTreeRootOf(deps, home);
+  if (!root.ok) return root;
+  return root.value ? trackedFilesOf(deps, home) : ok(null);
 };
 
 /**
@@ -1001,6 +1002,7 @@ const okTextOf = (scan: RootScan, id: string): string => {
     return scan.settingsChecked ? CONTENTS_ONLY_TEXT : guardDoctorWords.notCheckedBy([guardIds.permissionMode, guardIds.settingsCheck]);
   }
   if (id === checkIds.permissionMode && !scan.settingsChecked) return PERMISSION_ONLY_TEXT;
+  if (id === checkIds.rootFiles && scan.skippedBy === guardIds.folderTrust) return guardDoctorWords.notChecked(scan.skippedBy);
   if (id === checkIds.rootFiles && !scan.tokensChecked) {
     return scan.skippedBy === guardIds.rootScan ? guardDoctorWords.notCheckedBy([guardIds.rootScan, guardIds.secrets]) : ADDRESSES_ONLY_TEXT;
   }

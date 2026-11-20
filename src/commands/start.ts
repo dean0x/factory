@@ -635,7 +635,7 @@ export const runStart = async (
     const own = await requireOwnSession(deps, id, home);
     if (!own.ok) return own;
   }
-  // A session that runs already starts nothing, so it needs no proxy check and no launch. The run asks each proxy once.
+  // Only a new coordinator needs a launch plan. Worker recovery shares the proxy answers of the run.
   const answers = newProxyAnswers();
   const plan = exists ? null : await planStart(deps, home, loaded.value, answers, guards.values);
   if (plan !== null && !plan.ok) return plan;

@@ -53,18 +53,19 @@ export const isSameHome = async (deps: Deps, stored: string, home: string): Prom
 /**
  * The session must be the session of this factory folder (exit 4). The remedy names `shutdown` in the folder that owns the
  * session. `again` is the command line to run again after the fix: `start` for a caller that names none. While pane safety is off,
- * a session of another folder counts as the session of this folder. A failed read of the home option stops with every value.
+ * a target session may name another folder. A caller must belong to this folder. A failed read stops with every value.
  */
 export const requireOwnSession = async (
   deps: Deps,
   id: string,
   home: string,
   again: string = commandText(commands.start),
+  use: 'caller' | 'target' = 'target',
 ): Promise<CliResult<void>> => {
   const shown = await tmuxStep(deps, showHomeArgs(id));
   if (!shown.ok) return shown;
   if (await isSameHome(deps, shown.value.trim(), home)) return ok(undefined);
-  if (!(await guardOn(deps, guardIds.paneSafety, home))) return ok(undefined);
+  if (use === 'target' && !(await guardOn(deps, guardIds.paneSafety, home))) return ok(undefined);
   return safetyRefusal(
     `a tmux session ${id} belongs to another ${places.folder}`,
     `Run "${commandText(commands.shutdown)}" in the ${places.folder} that owns the session, or end that session by hand. ` +
@@ -77,12 +78,14 @@ export const requireOwnSession = async (
  * The tmux session of the node must run (exit 3, and the remedy names `start`), and it must be the session of this factory folder
  * (exit 4). `again` is the command line to run again after `start`.
  */
-export const requireSession = async (deps: Deps, id: string, home: string, again: string): Promise<CliResult<void>> => {
+export const requireSession = async (
+  deps: Deps, id: string, home: string, again: string, use: 'caller' | 'target' = 'target',
+): Promise<CliResult<void>> => {
   if (!(await sessionExists(deps, id))) {
     return notReady(
       `the tmux session ${id} of this ${roles.node} does not run`,
       `Run "${commandText(commands.start)}" to start it. Then run "${again}" again.`,
     );
   }
-  return requireOwnSession(deps, id, home, again);
+  return requireOwnSession(deps, id, home, again, use);
 };

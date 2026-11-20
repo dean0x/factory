@@ -280,7 +280,7 @@ interface UpgradeGuardRead {
  */
 const upgradeGuardRead = async (deps: Deps, home: string, config: FactoryConfig, dryRun: boolean): Promise<UpgradeGuardRead> => {
   const read = await guardReadOf(deps, home, config, 'always');
-  if (dryRun || read.state.fault !== guardRecordWords.caseMismatch) return { read, lines: [] };
+  if (dryRun || read.state.proof !== null || read.state.fault !== guardRecordWords.caseMismatch) return { read, lines: [] };
   const rewritten = await recordExactRoot(deps, { root: home, node: config.core.node.id });
   if (!rewritten.ok || rewritten.value === null) return { read, lines: [] };
   const { warning } = rewritten.value;

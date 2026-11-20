@@ -371,6 +371,38 @@ describe('the letter case rewrite of a record root', () => {
     expect(deps.modes.get(path)).toBe(0o600);
   });
 
+  it.each(['stored folder', 'current folder', 'record'] as const)('keeps the store when the %s changes before the lock', async (change) => {
+    const deps = fixture();
+    const original = storeText([{ ...record(), root: folded }]);
+    const replacement = storeText([{ ...record(), root: '/elsewhere' }]);
+    deps.seed(path, original);
+    const lock = userFileLockPath(path);
+    const watched = { ...deps, fs: { ...deps.fs,
+      realpath: async (target: string) => {
+        const moved = (change === 'stored folder' && target === folded) || (change === 'current folder' && target === root);
+        if (moved && deps.files.has(lock)) return ok('/elsewhere');
+        return deps.fs.realpath(target === folded ? root : target);
+      },
+      writeTextExclusive: async (name: string, text: string, mode: number) => {
+        if (name === lock && change === 'record') deps.seed(path, replacement);
+        return deps.fs.writeTextExclusive(name, text, mode);
+      },
+    } };
+    expect((await storeApi.recordExactRoot(watched, { root, node: 'demo' })).ok).toBe(false);
+    expect(deps.files.get(path)).toBe(change === 'record' ? replacement : original);
+    expect(deps.atomicWrites).toEqual([]);
+    expect(deps.files.has(lock)).toBe(false);
+  });
+
+  it('keeps a root that differs in more than letter case', async () => {
+    const deps = fixture();
+    const alias = `${folded}/.`;
+    deps.seed(path, storeText([{ ...record(), root: alias }]));
+    const view = { ...deps, fs: { ...deps.fs, realpath: async (target: string) => deps.fs.realpath(target === alias ? root : target) } };
+    expect(await storeApi.recordExactRoot(view, { root, node: 'demo' })).toEqual(ok(null));
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
   it('writes nothing when two records of the node differ from the root only in letter case', async () => {
     const deps = fixture();
     deps.seed(path, storeText([{ ...record(), root: folded }, { ...record(), root: '/Work/Node' }]));

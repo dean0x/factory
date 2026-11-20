@@ -106,7 +106,8 @@ export const readGuardStore = async (deps: Deps, path: string): Promise<Result<r
   return records.ok ? records : err(guardRecordWords.readFault(path, records.error));
 };
 
-export type GuardStoreChange = (records: readonly GuardRecord[]) => Result<readonly GuardRecord[], string>;
+type GuardStoreResult = Result<readonly GuardRecord[], string>;
+export type GuardStoreChange = (records: readonly GuardRecord[]) => GuardStoreResult | Promise<GuardStoreResult>;
 
 const changedText = (records: readonly GuardRecord[]): Result<string, string> => {
   if (records.length > guardRecords.maxRecords) return err(guardRecordWords.recordCap);
@@ -121,7 +122,7 @@ const writeLockedStore = async (
 ): Promise<Result<void, string>> => {
   const current = await readGuardStore(deps, path);
   if (!current.ok) return current;
-  const next = change(current.value);
+  const next = await change(current.value);
   if (!next.ok) return next;
   const text = changedText(next.value);
   if (!text.ok) return text;
@@ -240,7 +241,7 @@ const foldedRecordsOf = (records: readonly GuardRecord[], node: string, root: st
 const rewritableOf = (records: readonly GuardRecord[], node: string, root: string): GuardRecord | null => {
   if (records.some((record) => recordKey(record.node, record.root) === recordKey(node, root))) return null;
   const [only, ...more] = foldedRecordsOf(records, node, root);
-  return only === undefined || more.length > 0 ? null : only;
+  return only !== undefined && more.length === 0 && only.root.toLowerCase() === root.toLowerCase() ? only : null;
 };
 
 /**
@@ -263,10 +264,14 @@ export const recordExactRoot = async (deps: Deps, input: RecordPlaceInput): Prom
   if (stored === null) return ok(null);
   const real = await deps.fs.realpath(stored.root);
   if (!real.ok || real.value !== root) return ok(null);
-  const written = await changeGuardStore(deps, path, (records) => {
-    // The store can change before the lock: the rewrite needs the same record again.
+  const written = await changeGuardStore(deps, path, async (records) => {
     const again = rewritableOf(records, input.node, root);
     if (again === null || again.root !== stored.root) return err(guardRecordWords.caseMismatch);
+    const current = await guardPlaceOf(deps, input.root);
+    const source = await deps.fs.realpath(again.root);
+    if (!current.ok || current.value.root !== root || current.value.path !== path || !source.ok || source.value !== root) {
+      return err(guardRecordWords.caseMismatch);
+    }
     return ok(records.map((record) => (record === again ? { ...record, root } : record)));
   });
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));

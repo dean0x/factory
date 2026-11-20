@@ -33,7 +33,7 @@ import { requireRecord, type WorkerRecord } from './registry.js';
 import {
   paneProcessStart,
   requireLineAfterStart,
-  requireOwnHooks,
+  requireWorkerHooks,
   requireResumeFile,
   requireSettingsOlderThan,
 } from './session-checks.js';
@@ -164,7 +164,7 @@ const requireFreshSession = async (
   const start = await paneProcessStart(deps, pane.pid, again);
   if (!start.ok) return start;
   const then = lineFor(commands.restart, record.id);
-  const hooks = await requireOwnHooks(deps, { home, folder: record.workCopy, then });
+  const hooks = await requireWorkerHooks(deps, { home, folder: record.workCopy, then });
   if (!hooks.ok) return hooks;
   const older = await requireSettingsOlderThan(deps, { home, folder: record.workCopy, then, start: start.value });
   return older.ok ? start : older;

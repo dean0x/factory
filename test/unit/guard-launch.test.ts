@@ -9,7 +9,7 @@ import { ok } from '../../src/core/result.js';
 import { allOn } from '../../src/guards/effective.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import type { GuardValues } from '../../src/guards/types.js';
-import { blockNames, env, files, guardIds, guardValues } from '../../src/names.js';
+import { blockNames, env, files, guardDenyWords, guardIds, guardValues } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { blockInputOf, blockTemplatesFor } from '../../src/templates/index.js';
 import { writeLastSeen } from '../../src/workers/last-seen.js';
@@ -472,6 +472,7 @@ for (const origin of origins) {
         const result = await launch(deps, 'worker resume');
         expect(result.ok ? 0 : exitCodeFor(result.error), result.ok ? '' : result.error.message).toBe(on ? 3 : 0);
         expect(paneStarts(tmux).length > 0).toBe(!on);
+        if (!on) expect(deps.warned).toContain(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
       });
     }
     it(`start keeps unmatched local off values on in the ${origin} folder`, async () => {

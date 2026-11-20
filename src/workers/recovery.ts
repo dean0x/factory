@@ -155,8 +155,8 @@ const recoverWorker = async (deps: Deps, request: RecoveryRequest, record: Worke
 };
 
 /**
- * Resume each recorded worker with the id of its newest session, one worker at a time. The caller has started the session just
- * now, so no pane of a worker runs, and it has made the checks of the root, the tools and the session. For each worker, in
+ * Resume each selected worker with the id of its newest session, one worker at a time. The caller has checked the root, tools
+ * and session. For each worker, in
  * order of the ids:
  * - the id comes from the pointer and the line of the worker (`readOwnLastSeen`): a pointer that is absent or not valid, a line
  *   of another session, a line with no session marker (an old hook) and a pointer that another worker shares are not owned.
@@ -205,7 +205,7 @@ export const workersWithoutPane = async (deps: Deps, home: string, session: stri
 
 /**
  * The one warning of a start that finds its session running: it names each worker with no live pane and the command that starts
- * it. `start` never resumes these workers, because a worker that was stopped on purpose must stay stopped.
+ * it. With the spend guard on, a worker that was stopped on purpose stays stopped.
  */
 export const noPaneWarning = (ids: readonly string[]): string =>
   `The session runs already. These ${roles.worker}s have no live pane: ` +

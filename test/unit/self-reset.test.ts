@@ -393,6 +393,12 @@ describe('the guard of the pane safety', () => {
     expect(off.tmux.typed()).toEqual(COMPACT_KEYS);
   });
 
+  it('requires the caller session to name this folder even when pane safety is off', async () => {
+    const world = await make({ tmux: { sessions: { [NODE]: '/other' } } });
+    expect(codeOf(errorOf(await runOff(world)))).toBe(4);
+    expectNothingTyped(world);
+  });
+
   it('refuses a pane with another pid in the second read also while the guard is off', async () => {
     const world = await make({
       rewriteRead: (nth, stdout) => (nth === 2 ? stdout.replace(`|${COORDINATOR_PID}|`, `|${COORDINATOR_PID + 1}|`) : stdout),

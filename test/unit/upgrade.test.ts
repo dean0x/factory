@@ -56,7 +56,7 @@ import {
 import { captureSink } from '../helpers/sink.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
-import { readGuardState } from '../../src/core/guard-records.js';
+import { readGuardState, unprovedState } from '../../src/core/guard-records.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { loadConfig } from '../helpers/package-registry.js';
@@ -619,6 +619,17 @@ describe('upgrade: effective guard values', () => {
       expect(result.err).toContain(guardRecordWords.caseMismatch);
       expect(result.err).toContain(guardRecordWords.caseRemedy);
       expect(guardRecordWords.caseRemedy).toContain(commandText(commands.upgrade));
+      expect(text(deps, STORE)).toBe(store);
+    });
+
+    it('keeps the record and the stop when the command cannot prove the local values', async () => {
+      const deps = await foldedNode();
+      const store = text(deps, STORE);
+      const guarded = { ...caseBlind(deps), ...TERMINAL, guards: { read: async () => ({
+        home: HOME, values: {}, state: unprovedState(guardRecordWords.unproved),
+      }) } };
+      const error = refusal(await runUpgrade(guarded, { home: HOME, dryRun: false, overwrite: [], yes: true }, currentSpec));
+      expect(error.message).toBe(guardRecordWords.caseMismatch);
       expect(text(deps, STORE)).toBe(store);
     });
 
@@ -4800,6 +4811,19 @@ describe('upgrade: the setup text needs the owner', () => {
       const sink = captureSink();
       expect(await runCli(['upgrade', '--home', HOME], noWorkTree, sink), sink.errors.join('')).toBe(on ? 4 : 0);
       expect(sink.errors.join('').includes('not the top folder of a git work tree')).toBe(on);
+    });
+
+    it('keeps the stop for a failed git read when folder trust is off', async () => {
+      const { deps } = await receivedNode();
+      deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: {${guardIds.folderTrust}: off}\n`);
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, [guardIds.folderTrust], deps.now()));
+      const sink = captureSink();
+      const code = await runCli(['upgrade', '--home', HOME], { ...deps,
+        run: (command, args, options) => args[1] === HOME && args.includes('--is-inside-work-tree')
+          ? Promise.resolve(exited(128, '', 'read failed')) : deps.run(command, args, options),
+      }, sink);
+      expect(code).toBe(4);
+      expect(sink.errors.join('')).toContain('cannot list the files');
     });
 
     it('stops with the same remedy when git can not list the files of a root from another machine', async () => {

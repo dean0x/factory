@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
-import { isWorkTreeRoot, trackedFilesOf } from '../core/git.js';
+import { trackedFilesOf, workTreeRootOf } from '../core/git.js';
 import { err, ok } from '../core/result.js';
 import { guardOn } from '../guards/effective.js';
 import {
@@ -161,8 +161,9 @@ const ownSetOf = async (deps: Deps, home: string): Promise<CliResult<readonly st
  * list always run, because the setup check needs the whole list.
  */
 const trackedSetOfRoot = async (deps: Deps, home: string): Promise<CliResult<readonly string[]>> => {
-  if (!(await isWorkTreeRoot(deps, home))) {
-    if (!(await guardOn(deps, guardIds.folderTrust, home))) return ok([]);
+  const root = await workTreeRootOf(deps, home);
+  if (!root.ok || !root.value) {
+    if (root.ok && !(await guardOn(deps, guardIds.folderTrust, home))) return ok([]);
     const stop = notListedStop(home);
     return safetyRefusal(stop.text, stop.remedy);
   }

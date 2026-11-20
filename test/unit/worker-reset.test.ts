@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { selfReset } from '../../src/commands/self.js';
 import { hookSettingsPlaceOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
@@ -716,6 +717,15 @@ describe('the hook settings checks and the guard of setup and role text', () => 
   /** The world deps with the guard values of one read for the node: the given guard off. */
   const withOff = (deps: FakeDeps, id: string): FakeDeps => ({ ...deps, guards: guardSourceOf({ home: HOME, values: { [id]: guardValues.off }, state: null }) });
   const noEvent = Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([name]) => name !== 'PreToolUse'));
+
+  it('keeps the coordinator hook check independent of the worker role text', async () => {
+    const world = await make();
+    world.deps.seed(hookSettingsPlaceOf(layoutOf(HOME).coordinatorDir).file, JSON.stringify({ hooks: noEvent }));
+    const error = errorOf(await selfReset(withOff(world.deps, guardIds.setupText), { home: HOME, config: sampleConfig() }));
+    expect(codeOf(error)).toBe(3);
+    expect(error.message).toContain('PreToolUse');
+    expectNothingTyped(world);
+  });
 
   it.each([
     ['settings that lack a hook event', 'PreToolUse', (world: World) => world.deps.seed(SETTINGS_FILE, JSON.stringify({ hooks: noEvent }))],

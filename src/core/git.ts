@@ -58,14 +58,23 @@ const gitOutput = async (deps: Deps, dir: string, args: readonly string[]): Prom
 export const configValue = (deps: Deps, dir: string, key: string): Promise<string | null> =>
   gitOutput(deps, dir, ['config', key]);
 
-/** True when `dir` is the top folder of a git work tree. */
-export const isWorkTreeRoot = async (deps: Deps, dir: string): Promise<boolean> => {
+/** Keep a failed read distinct from a folder that git identifies as outside a work tree or below its top. */
+export const workTreeRootOf = async (deps: Deps, dir: string): Promise<CliResult<boolean>> => {
   const result = await deps.run('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree', '--show-prefix'], {
     timeoutMs: GIT_TIMEOUT_MS,
   });
-  if (!result.ok || result.value.exitCode !== 0) return false;
-  const [inside, prefix] = result.value.stdout.split('\n');
-  return inside === 'true' && (prefix ?? '') === '';
+  if (!result.ok) return result;
+  const { exitCode, stdout, stderr } = result.value;
+  if (exitCode === 128 && /^fatal: not a git repository(?: \(or any (?:of the )?parent directories\): \.git)?$/.test(stderr.trim())) return ok(false);
+  const [inside, prefix] = stdout.split('\n');
+  if (exitCode !== 0 || (inside !== 'true' && inside !== 'false')) return failure(`cannot check the git work tree of ${dir}`);
+  return ok(inside === 'true' && (prefix ?? '') === '');
+};
+
+/** True when git identifies `dir` as the top folder of a work tree. */
+export const isWorkTreeRoot = async (deps: Deps, dir: string): Promise<boolean> => {
+  const root = await workTreeRootOf(deps, dir);
+  return root.ok && root.value;
 };
 
 /** The git folder that all checkouts of one repo share, as an absolute path, or null when `dir` is in no repo. */

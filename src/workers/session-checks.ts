@@ -108,6 +108,7 @@ export const requireResumeFile = async (deps: Deps, request: ResumeFileRequest):
 };
 
 export interface SettingsRequest {
+  readonly home: string;
   /** The session folder: the work copy of a worker, or the coordinator folder. */
   readonly folder: string;
   /** The command that starts the session again, without the program name: for example `restart alpha` or `reboot`. */
@@ -117,8 +118,6 @@ export interface SettingsRequest {
 }
 
 export interface SettingsAgeRequest extends SettingsRequest {
-  /** The node home, the root of the config repo: an absolute path. */
-  readonly home: string;
   /** When the process of the session started, in milliseconds since the epoch (`paneProcessStart`). */
   readonly start: number;
 }
@@ -188,10 +187,9 @@ export const readHookSettings = async (deps: Deps, home: string, folder: string)
 
 /**
  * The hook settings file of the session folder must hold the own command of every hook event of the fixed list (`readHookSettings`).
- * A file that lacks an event is exit 3, and the remedy is `upgrade`, then the command in `then`. A link is exit 4. While the guard of
- * setup and role text is off, a parsed file that lacks events goes on; a link and a file that does not parse stop with every value.
+ * A missing required event is exit 3. A link is exit 4. A file that does not parse stops every caller.
  */
-export const requireOwnHooks = async (deps: Deps, request: SettingsRequest & { readonly home: string }): Promise<CliResult<void>> => {
+export const requireOwnHooks = async (deps: Deps, request: SettingsRequest, eventsRequired = true): Promise<CliResult<void>> => {
   const settings = await readHookSettings(deps, request.home, request.folder);
   if (!settings.ok) return settings;
   const found = settings.value;
@@ -202,16 +200,19 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest & { r
     );
   }
   const missing = found.state === 'not-parsed' ? hookNames.events : found.missing;
-  if (found.state === 'plain' && missing.length === 0) {
+  if (found.state === 'plain' && (missing.length === 0 || !eventsRequired)) {
     if (found.missingDeny.length > 0) deps.warn(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
     return ok(undefined);
   }
-  if (found.state === 'plain' && !(await guardOn(deps, guardIds.setupText, request.home))) return ok(undefined);
   return notReady(
     `the hook settings ${found.file} lack the events: ${missing.join(', ')}`,
     request.remedy ?? `Run "${commandText(commands.upgrade)}", then "${commandText(request.then)}".`,
   );
 };
+
+/** Only a worker takes its role text from the hook. The coordinator has its own reset checks. */
+export const requireWorkerHooks = async (deps: Deps, request: SettingsRequest): Promise<CliResult<void>> =>
+  requireOwnHooks(deps, request, await guardOn(deps, guardIds.setupText, request.home));
 
 export interface RoleDeliveryRequest {
   /** The node home, the root of the config repo: an absolute path. */
@@ -245,7 +246,7 @@ export const startOverCommands = (workerId: string, project: string): { readonly
 export const requireRoleDelivery = async (deps: Deps, request: RoleDeliveryRequest): Promise<CliResult<void>> => {
   const { home, config, workerId, workCopy, again } = request;
   const remedy = roleText.hookRemedy({ again: commandText(again), ...startOverCommands(workerId, basename(dirname(workCopy))) });
-  const hooks = await requireOwnHooks(deps, { home, folder: workCopy, then: again, remedy });
+  const hooks = await requireWorkerHooks(deps, { home, folder: workCopy, then: again, remedy });
   if (!hooks.ok) return hooks;
   return requireRoleText(deps, { home, config, guards: request.guards, retry: commandText(again) });
 };

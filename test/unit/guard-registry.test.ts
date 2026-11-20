@@ -188,7 +188,7 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'role-text-acceptance', path: 'src/workers/role-text.ts', symbol: 'requireRoleText', reason: 'Calls readRoleText with the values of its caller, and readRoleText reads the value.' },
   { row: 'role-text-acceptance', path: 'src/core/setup-acceptance.ts', symbol: 'acceptedEntryOf', reason: roleTextReason },
   { row: 'role-text-acceptance', path: 'src/hooks/hook.ts', symbol: 'roleOutcomeOf', reason: 'Passes the values of its one guard read to readRoleText, which reads the value.' },
-  { row: 'role-delivery-hooks', path: 'src/workers/session-checks.ts', symbol: 'requireRoleDelivery', reason: 'Calls requireOwnHooks, which reads the value, and passes the values of its caller to requireRoleText.' },
+  { row: 'role-delivery-hooks', path: 'src/workers/session-checks.ts', symbol: 'requireRoleDelivery', reason: 'Calls requireWorkerHooks, which reads the value, and passes the values of its caller to requireRoleText.' },
   { row: 'role-delivery-hooks', path: 'src/workers/launch.ts', symbol: 'launchWorker', reason: 'Calls requireRoleDelivery with the values of its one guard read.' },
   { row: 'settings-work-copy', path: 'src/commands/root-content.ts', symbol: 'checkTrackedSettings', reason: workCopyReason },
   { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanSettings', reason: workCopyReason },
