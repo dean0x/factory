@@ -91,6 +91,8 @@ const recordExceptions = [
 
 /** The reason of a pure helper of the settings check: `judgeSettings` reads the value and drops its findings when the guard is off. */
 const analyzerReason = 'A pure analysis of one settings text; judgeSettings reads the value and keeps only the permission stop when the guard is off.';
+/** The reason of the pure search for a setting that skips the permissions: `judgeSettings` reads the value of the permission mode. */
+const skipsReason = 'A pure analysis of one settings text; judgeSettings reads the value and gives no failure for a setting that skips the permissions while the guard is off.';
 /** The reason for the work copy sites that pass the guard value to the check of the file contents. */
 const workCopyReason = 'Reaches judgeSettings, which uses the guard value for optional checks of the file contents.';
 /** The reason of the pure token tests, which other rows share: the scan of the tracked texts reads the value. */
@@ -146,6 +148,8 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'settings-default-mode', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
   { row: 'settings-mcp-approval', path: 'src/safety/settings.ts', symbol: 'approvesMcp', reason: analyzerReason },
   { row: 'settings-cross-session', path: 'src/safety/settings.ts', symbol: 'heldCrossSession', reason: analyzerReason },
+  { row: 'no-permission-skip-setting', path: 'src/safety/settings.ts', symbol: 'skipsOf', reason: skipsReason },
+  { row: 'no-permission-skip-setting', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: skipsReason },
   { row: 'settings-work-copy', path: 'src/commands/root-content.ts', symbol: 'checkTrackedSettings', reason: workCopyReason },
   { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanSettings', reason: workCopyReason },
   { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanTrackedSettings', reason: workCopyReason },
@@ -262,7 +266,8 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.resumeRoutines, guardIds.rootScan, guardIds.secrets, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.permissionMode, guardIds.resumeRoutines, guardIds.rootScan, guardIds.secrets, guardIds.installRules,
+      'approval-merge', 'approval-release',
     ]);
   });
 

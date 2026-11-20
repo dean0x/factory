@@ -1100,6 +1100,18 @@ describe.each(FOLDER_ORIGINS)('start in %s: the stop of the scan of the folder',
   });
 });
 
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of the permission mode', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.permissionMode))('stops for a settings file that skips the permissions only while the guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    deps.seed(`${COORDINATOR}/.claude/settings.json`, JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('start in %s: the path checks of the guard of the Claude Code settings write', (_folder, origin) => {
   const CHANGED = JSON.stringify({ model: 'opus', statusLine: { type: 'command', command: 'my-line' } });
 

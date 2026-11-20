@@ -117,11 +117,13 @@ const textGuardIds = [
   guardIds.contextLimits,
   guardIds.deleteGuard,
   guardIds.fileLinkSafety,
+  guardIds.permissionMode,
 ] as const;
 
 /** The start of each rendered line that a guard removes when it is off. */
 const guardedLineStarts: readonly (readonly [string, string])[] = [
   [guardIds.fileLinkSafety, '- Claude Code loads the user rules itself.'],
+  [guardIds.permissionMode, '- Run every session in auto permission mode.'],
   [guardIds.installRules, '- Do not install outside'],
   [guardIds.resumeRoutines, '- To compact this session'],
   ['approval-merge', '- For a delegated merge,'],

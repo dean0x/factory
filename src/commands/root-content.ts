@@ -93,6 +93,8 @@ export interface RootScan {
   readonly delegations: DelegationReport | null;
   /** False when the guard of the settings check is off. The scan stops and the permission mode check still apply. */
   readonly settingsChecked: boolean;
+  /** False when the guard of the permission mode is off: a setting that skips the permission prompts is no failure. */
+  readonly skipsChecked: boolean;
   /** False when the guard of secrets is off: the scan of the tracked texts gives no token finding. */
   readonly tokensChecked: boolean;
   /** The off guard whose checks of the root repo did not run, or null when they ran. */
@@ -601,7 +603,8 @@ const settingsOfFolder = async (
  * failures where the session must keep its hooks (`requiresHooks` is set). The
  * warning that a settings file is there is not given for a file that holds exactly the entries that the program writes
  * (`isOwnSettingsTextAt`); every other finding stays for such a file. With the settings check off, only the failure of a setting
- * that skips the permission prompts stays, because the permission check owns it.
+ * that skips the permission prompts stays, because the guard of the permission mode owns it. With that guard off, a setting that
+ * skips the permission prompts is no failure.
  */
 const judgeSettings = async (
   deps: Deps,
@@ -615,7 +618,9 @@ const judgeSettings = async (
   const facts = analyzeSettings(text);
   const shown = shownPath(source.display);
   const commandNames = facts.runsCommands.join(', ');
-  const skips = facts.skips.length === 0 ? [] : [`skips the permission checks (${facts.skips.join('; ')})`];
+  const skips = facts.skips.length === 0 || !isGuardOn(guards, guardIds.permissionMode)
+    ? []
+    : [`skips the permission checks (${facts.skips.join('; ')})`];
   const reasons = !checked ? skips : [
     ...skips,
     ...(facts.changesFactoryEnv ? [`sets or clears a variable with the prefix ${env.factoryPrefix} in its env values`] : []),
@@ -918,6 +923,7 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
     setupFinding: setup.finding,
     delegations,
     settingsChecked: isGuardOn(guards, guardIds.settingsCheck),
+    skipsChecked: isGuardOn(guards, guardIds.permissionMode),
     tokensChecked: isGuardOn(guards, guardIds.secrets),
     skippedBy: repo.skippedBy,
   };
@@ -950,6 +956,12 @@ const PERMISSION_ONLY_TEXT = guardDoctorWords.partlyChecked(
   'no settings file skips the permission checks',
   'the commands, the proxy and the credential in the settings are',
   guardIds.settingsCheck,
+);
+/** The ok text of the permission check when the guard of the permission mode is off. */
+const CONTENTS_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  'no settings file runs a command, or sets the proxy or the credential of the session',
+  'the settings that skip the permission checks are',
+  guardIds.permissionMode,
 );
 
 /** The ok texts of the root checks when the guard of the scan is off. */
@@ -985,6 +997,9 @@ const resultOf = (scan: RootScan, id: string): RootCheckResult => {
 
 /** The text of a check with no finding: it names the part that an off guard did not check. */
 const okTextOf = (scan: RootScan, id: string): string => {
+  if (id === checkIds.permissionMode && !scan.skipsChecked) {
+    return scan.settingsChecked ? CONTENTS_ONLY_TEXT : guardDoctorWords.notCheckedBy([guardIds.permissionMode, guardIds.settingsCheck]);
+  }
   if (id === checkIds.permissionMode && !scan.settingsChecked) return PERMISSION_ONLY_TEXT;
   if (id === checkIds.rootFiles && !scan.tokensChecked) {
     return scan.skippedBy === guardIds.rootScan ? guardDoctorWords.notCheckedBy([guardIds.rootScan, guardIds.secrets]) : ADDRESSES_ONLY_TEXT;

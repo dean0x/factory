@@ -133,11 +133,13 @@ const coreGuards: readonly GuardDefinition[] = [
     'Pane and stop safety',
     'Typed lines and stop signals reach only the session that they are meant for, and only when it is safe.',
   ),
-  guardOf(
-    guardIds.permissionMode,
-    'Permission mode',
-    'Every session runs in auto permission mode.',
-    [`${keys.root.session}.${keys.session.permissionMode}`],
+  wiredGuard(
+    guardOf(
+      guardIds.permissionMode,
+      'Permission mode',
+      'Every session runs in auto permission mode.',
+      [`${keys.root.session}.${keys.session.permissionMode}`],
+    ),
   ),
   guardOf(
     guardIds.proxy,

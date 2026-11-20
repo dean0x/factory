@@ -13,7 +13,7 @@ export const safetyLines = (approval: readonly string[], recipe: readonly string
   '',
   'These rules are fixed. {{Program}} enforces them in code where it can.',
   '',
-  '- Run every session in auto permission mode. Never skip permissions. {{Program}} has no flag to skip them.',
+  { guards: [guardIds.permissionMode], lines: ['- Run every session in auto permission mode. Never skip permissions. {{Program}} has no flag to skip them.'] },
   '- Use a proxy only when `{{localConfigFile}}` names one. {{Program}} checks the proxy before each launch.',
   '- If the proxy does not answer, the launch stops. The config can set `{{onFailDirect}}` to launch without the proxy.',
   '- {{Program}} clears a stray `{{proxyEnv}}` from the shell before each launch. Only the config sets it.',

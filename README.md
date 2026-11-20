@@ -252,9 +252,9 @@ A guard groups checks and role rules that keep one thing safe. `factory guard li
 
 The local key `guards` accepts `on` or `off`. The shared key `shared_guards` accepts `on` only; a shared `on` keeps that guard on. A missing key means on. `init` writes no guard values. A local off takes effect only with the matching record of the owner that `factory guard set` writes. It also needs a whole config that loads and an entry of the factory list with the node id of that config. The record names the real factory folder with its exact letter case. If the same node has only a match in different letter case, every guard stays on, and the launch and `upgrade` stop. Run `factory upgrade` in a terminal window, outside a session, to write the record again with the exact letter case. It writes only when the real path of the stored folder is the factory folder. Else run `factory guard confirm` and `factory guard set` to record the prefix and the guard values again.
 
-This version can set `approval-delegation`, `settings-check`, `settings-write`, `context-limits`, `delete-guard`, `file-link-safety`, `folder-trust`, `git-safety`, `root-scan`, `secrets`, `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. Every other guard stays on. The guard `merge-quality` holds the checked head SHA, green CI there and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
+This version can set `approval-delegation`, `settings-check`, `settings-write`, `context-limits`, `delete-guard`, `file-link-safety`, `folder-trust`, `git-safety`, `permission-mode`, `root-scan`, `secrets`, `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. Every other guard stays on. The guard `merge-quality` holds the checked head SHA, green CI there and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
 
-With `settings-check` off, factory skips optional checks of the file contents. It still stops if it cannot read all settings files or a file skips the permission prompts.
+With `settings-check` off, factory skips optional checks of the file contents. It still stops if it cannot read all settings files, or, while `permission-mode` is on, if a file skips the permission prompts.
 
 With `settings-write` off, factory shows the hook settings change but does not ask for consent. The file checks and the rules for `--yes` still apply.
 
@@ -263,6 +263,8 @@ With `file-link-safety` off, the block and setup text checks of `doctor` do not 
 With `folder-trust` off, a factory folder that is not the top folder of a git work tree does not stop the scan of the folder, and `upgrade` reads no setup text of such a received folder. The check for agent instruction files gives no warning, and the coordinator text does not have the rule about the trust question of a new worker. The owner still answers each trust question in the pane of the worker. The check of the factory list, the cap of the tracked files and the link check of a received folder still apply.
 
 With `git-safety` off, a commit of factory in `.factory/` can take staged changes and changes of the owner, and a git config there that names a program does not stop it. Git still runs there without its hooks. A git config that git can not list still stops the step.
+
+With `permission-mode` off, a settings file that skips the permission prompts does not stop `doctor`, `start` or the launch of a worker, and the safety block does not have the permission mode rule. Every launch still passes the auto permission mode, and the config accepts no other mode. A settings file that the scan can not read still stops it.
 
 With `root-scan` off, the scan of the folder does not check which paths git tracks or ignores, and it gives no warning about a file URL, a user folder path or a tracked text that it did not read. Each other fault of the scan still stops `start` while its own guard is on. A tracked link of a received folder, a list of tracked files at its cap and a git that fails still stop the scan.
 
