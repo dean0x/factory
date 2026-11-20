@@ -51,24 +51,38 @@ export const readHold = async (deps: Deps, home: string, id: string): Promise<Ho
 };
 
 /**
- * Remove the hold file of a worker. A workers folder or a folder of the worker that is a link is a security stop (exit 4), and
- * nothing is removed. A hold file that is a link is a security stop too, so the change of the file stays visible. A folder or a file
- * that is not there has no hold file already. A folder at the path of the file is a failure. While the guard of file and link
- * safety is off, a link does not stop the removal. The value is read only when a link is found.
+ * The workers folder and the folder of the worker, checked at the time of the removal of the hold file. A link at either one is a
+ * security stop (exit 4) with every guard value, so the removal never acts outside the factory folder. A folder that is not there
+ * gives false: there is no hold file. Any other kind is a failure.
  */
-const clearHold = async (deps: Deps, home: string, id: string): Promise<CliResult<void>> => {
+const requireHoldFolders = async (deps: Deps, home: string, id: string): Promise<CliResult<boolean>> => {
   const paths = workerPathsOf(home, id);
-  const linksStop = (): Promise<boolean> => guardOn(deps, guardIds.fileLinkSafety, home);
   for (const path of [layoutOf(home).workersDir, paths.dir]) {
     const found = await deps.fs.lstat(path);
     if (!found.ok) return found;
-    if (found.value === null) return ok(undefined);
-    if (found.value === 'link' && (await linksStop())) return safetyRefusal(`cannot remove ${paths.holdFile}: ${path} is a link`, LINK_REMEDY);
-    if (found.value !== 'dir' && found.value !== 'link') return failure(`cannot remove ${paths.holdFile}: ${path} is not a folder`);
+    if (found.value === null) return ok(false);
+    if (found.value === 'link') return safetyRefusal(`cannot remove ${paths.holdFile}: ${path} is a link`, LINK_REMEDY);
+    if (found.value !== 'dir') return failure(`cannot remove ${paths.holdFile}: ${path} is not a folder`);
   }
+  return ok(true);
+};
+
+/**
+ * Remove the hold file of a worker, after the folder checks of `requireHoldFolders`. A hold file that is a link is a security stop,
+ * so the change of the file stays visible. A file that is not there has no hold file already. A folder at the path of the file is a
+ * failure. While the guard of file and link safety is off, a link at the hold file does not stop the removal: the removal takes away
+ * the link, never its target. The value is read only when a link is found.
+ */
+const clearHold = async (deps: Deps, home: string, id: string): Promise<CliResult<void>> => {
+  const folders = await requireHoldFolders(deps, home, id);
+  if (!folders.ok) return folders;
+  if (!folders.value) return ok(undefined);
+  const paths = workerPathsOf(home, id);
   const file = await deps.fs.lstat(paths.holdFile);
   if (!file.ok) return file;
-  if (file.value === 'link' && (await linksStop())) return safetyRefusal(`cannot remove ${paths.holdFile}: it is a link`, LINK_REMEDY);
+  if (file.value === 'link' && (await guardOn(deps, guardIds.fileLinkSafety, home))) {
+    return safetyRefusal(`cannot remove ${paths.holdFile}: it is a link`, LINK_REMEDY);
+  }
   if (file.value === 'dir') return failure(`cannot remove ${paths.holdFile}: it is a folder`);
   return file.value === null ? ok(undefined) : deps.fs.removeFile(paths.holdFile);
 };

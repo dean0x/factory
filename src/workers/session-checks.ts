@@ -140,6 +140,8 @@ export type HookSettingsRead =
   | {
       readonly state: 'plain';
       readonly file: string;
+      /** True when the file is not there. */
+      readonly fileAbsent: boolean;
       readonly missing: readonly HookEvent[];
       readonly missingDeny: readonly string[];
       readonly skipped: readonly string[];
@@ -164,7 +166,10 @@ export const readHookSettings = async (deps: Deps, home: string, folder: string)
   if (found.state === 'invalid' && found.cause === 'link') return ok({ state: 'link', file: file.path, reason: found.reason, part: found.part });
   if (found.state === 'invalid') return ok({ state: 'not-parsed', file: file.path });
   if (found.state === 'absent') {
-    return ok({ state: 'plain', file: file.path, missing: hookNames.events, missingDeny: deny.value.rules, skipped: deny.value.skipped, idleCompaction: null, hasOwnHook: false });
+    return ok({
+      state: 'plain', file: file.path, fileAbsent: true, missing: hookNames.events, missingDeny: deny.value.rules, skipped: deny.value.skipped,
+      idleCompaction: null, hasOwnHook: false,
+    });
   }
   const json = parseJsonText(found.text);
   if (!json.ok || !isRecord(json.value)) return ok({ state: 'not-parsed', file: file.path });
@@ -177,6 +182,7 @@ export const readHookSettings = async (deps: Deps, home: string, folder: string)
   return ok({
     state: 'plain',
     file: file.path,
+    fileAbsent: false,
     missing: missingHookEvents(settings),
     missingDeny: missingDenyRules(settings, deny.value.rules),
     skipped: deny.value.skipped,
@@ -187,7 +193,8 @@ export const readHookSettings = async (deps: Deps, home: string, folder: string)
 
 /**
  * The hook settings file of the session folder must hold the own command of every hook event of the fixed list (`readHookSettings`).
- * A missing required event is exit 3. A link is exit 4. A file that does not parse stops every caller.
+ * A missing required event is exit 3. A link is exit 4. A file that does not parse stops every caller. A file that is not there is
+ * exit 3 also when the events are not required: a session with no hook gets no role text and no refusal text.
  */
 export const requireOwnHooks = async (deps: Deps, request: SettingsRequest, eventsRequired = true): Promise<CliResult<void>> => {
   const settings = await readHookSettings(deps, request.home, request.folder);
@@ -200,7 +207,7 @@ export const requireOwnHooks = async (deps: Deps, request: SettingsRequest, even
     );
   }
   const missing = found.state === 'not-parsed' ? hookNames.events : found.missing;
-  if (found.state === 'plain' && (missing.length === 0 || !eventsRequired)) {
+  if (found.state === 'plain' && !found.fileAbsent && (missing.length === 0 || !eventsRequired)) {
     if (found.missingDeny.length > 0) deps.warn(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
     return ok(undefined);
   }

@@ -695,6 +695,7 @@ describe('the rows of the registry', () => {
         'upgrade-paths',
         'upgrade-keeps-repo',
         'migration-keeps-edits',
+        'hold-folder-links',
         'hold-file-removal',
         'user-folder-text',
       ],
@@ -876,7 +877,9 @@ describe('the rows of the registry', () => {
         'tracked-clones-warning',
         'tracked-text-paths-warning',
       ],
-      'safety-block': ['owner-prefix-record', 'role-block-render', 'role-block-edits', 'safety-block-intact', 'upgrade-block-checks', 'safety-block-insert'],
+      'safety-block': [
+        'owner-prefix-record', 'role-block-render', 'role-block-edits', 'safety-block-intact', 'safety-block-newer', 'upgrade-block-checks', 'safety-block-insert',
+      ],
       secrets: [
         'token-tracked-text',
         'token-config-values',
@@ -899,6 +902,7 @@ describe('the rows of the registry', () => {
         'setup-set-file-rules',
         'accepted-setup-text-only',
         'role-delivery-hooks',
+        'role-delivery-hook-file',
         'worker-refusal-role-text',
         'work-rules-block',
         'role-text-source-text',
@@ -951,7 +955,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(222);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(225);
     expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
@@ -975,7 +979,7 @@ describe('the rows of the registry', () => {
         'user-folder-never', 'settings-write-no-link', 'settings-write-inside-folder', 'private-file-mode', 'local-file-mode', 'safe-write',
         'atomic-write-target', 'checked-open', 'init-links', 'upgrade-links', 'copy-no-links', 'reviews-folder', 'exclude-file',
         'worker-record', 'init-existing-plain', 'init-race', 'init-rollback', 'clone-undo', 'state-target-kept', 'init-existing-writes',
-        'init-temp-leftovers', 'upgrade-backups', 'upgrade-paths', 'upgrade-keeps-repo', 'migration-keeps-edits',
+        'init-temp-leftovers', 'upgrade-backups', 'upgrade-paths', 'upgrade-keeps-repo', 'migration-keeps-edits', 'hold-folder-links',
       ],
       'folder-trust': [
         'registration-check', 'home-env-conflict', 'unregistered-upgrade', 'origin-received', 'home-is-new', 'home-outside-roots',
@@ -1006,11 +1010,11 @@ describe('the rows of the registry', () => {
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],
       'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-default-branch'],
       'root-scan': ['root-scan-clean', 'ignore-lists', 'ignored-check-fails-closed', 'received-tracked-links'],
-      'safety-block': ['role-block-render', 'safety-block-insert'],
+      'safety-block': ['role-block-render', 'safety-block-newer', 'safety-block-insert'],
       secrets: ['token-keys-hidden', 'credential-strip', 'printable-output'],
       'setup-text': [
         'setup-text-content', 'worker-refusal-text', 'acceptance-store-place', 'acceptance-path-form', 'init-accepts-own-text-once',
-        'received-init-acceptance', 'setup-set-file-rules', 'worker-refusal-role-text', 'work-rules-block',
+        'received-init-acceptance', 'setup-set-file-rules', 'role-delivery-hook-file', 'worker-refusal-role-text', 'work-rules-block',
       ],
       spend: ['new-worker-plan', 'new-worker-keeps-copy'],
       'work-conduct': [

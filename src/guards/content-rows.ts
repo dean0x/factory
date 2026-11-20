@@ -128,6 +128,14 @@ const safetyBlockRows: readonly GuardRow[] = [
       ...at('src/commands/start.ts', 'runStart'),
     ],
   }),
+  alwaysOnRow({
+    id: 'safety-block-newer',
+    guard: guardIds.safetyBlock,
+    name: 'A launch stops at a safety block of a newer version, edited or not, and never writes over it, because an older package can not check or keep its text',
+    applies: `${commands.start}, ${commands.reboot}, ${commands.restart}, ${commandLines.workerNew} and ${commandLines.workerResume}`,
+    harm: true,
+    sites: [...at('src/commands/launch-checks.ts', 'requireNotNewer'), ...at('src/upgrade/plan.ts', 'isNewerBlock')],
+  }),
   codeRow({
     id: 'upgrade-block-checks',
     guard: guardIds.safetyBlock,
@@ -322,6 +330,14 @@ const setupTextRows: readonly GuardRow[] = [
       ...at('src/workers/session-checks.ts', 'requireRoleDelivery', 'requireWorkerHooks', 'requireSettingsOlderThan'),
       ...at('src/workers/launch.ts', 'launchWorker'),
     ],
+  }),
+  alwaysOnRow({
+    id: 'role-delivery-hook-file',
+    guard: guardIds.setupText,
+    name: `A ${worker} whose work copy has no hook settings file does not start or reset, so it never runs without its role text and its refusal text`,
+    applies: `Launch, reset, ${commandLines.workerResume}, ${commands.restart} and ${commands.reboot}`,
+    harm: true,
+    sites: at('src/workers/session-checks.ts', 'readHookSettings', 'requireOwnHooks'),
   }),
   fixedTextRow({
     id: 'worker-refusal-role-text',

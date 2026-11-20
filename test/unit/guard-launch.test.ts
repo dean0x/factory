@@ -121,6 +121,15 @@ const expectOnlyOnRefusal = (result: CliResult<CommandOutput>, on: boolean, reme
   if (on) expectRefusal(result, remedy);
   else expect(must(result).failed).toBe(false);
 };
+/** Put a safety block of the next version in the coordinator file, with a hash that matches its text or, when edited, not. */
+const seedNewerSafety = (deps: FakeDeps, config: FactoryConfig, edited: boolean): number => {
+  const template = templates(config).find((block) => block.name === blockNames.safety);
+  if (template === undefined) throw new Error('safety block is absent');
+  const newer = must(renderBlock({ ...template, version: template.version + 1, body: 'Newer safety text.\n' }));
+  const path = layoutOf(HOME).claudeMd;
+  deps.seed(path, (deps.files.get(path) ?? '').replace(must(renderBlock(template)), edited ? newer.replace('Newer safety', 'Edited safety') : newer));
+  return template.version + 1;
+};
 const fileSnapshot = (deps: FakeDeps) => [deps.files.get(layoutOf(HOME).claudeMd), deps.files.get(layoutOf(HOME).workerMd)];
 const paneStarts = (tmux: ReturnType<typeof tmuxHandler>['log']) =>
   tmux.calls.filter((call) => call.args[0] === 'new-session' || call.args[0] === 'split-window');
@@ -463,8 +472,29 @@ for (const origin of origins) {
         expect(fileSnapshot(deps)).toEqual(before);
         expect(paneStarts(tmux).length > 0).toBe(!on);
       });
+      for (const edited of [false, true]) {
+        for (const command of ['start', 'worker resume'] as const) {
+          it(`${command} refuses a${edited ? 'n edited' : 'n intact'} safety block of a newer version with every safety block guard value and keeps its bytes, in the ${origin} folder: ${state}`, async () => {
+            const { deps, tmux, config } = await makeIn(origin, guardIds.safetyBlock, state, command !== 'start');
+            const version = seedNewerSafety(deps, config, edited);
+            const before = fileSnapshot(deps);
+            const result = await launch(deps, command);
+            expect(result.ok ? 0 : exitCodeFor(result.error), result.ok ? '' : result.error.message).toBe(1);
+            if (!result.ok) expect(result.error.message).toContain(`has version ${version}`);
+            expect(fileSnapshot(deps)).toEqual(before);
+            expect(paneStarts(tmux)).toEqual([]);
+          });
+        }
+      }
     }
     for (const state of guardStates) {
+      it(`worker resume refuses a work copy with no hook settings file with every setup text guard value, in the ${origin} folder: ${state}`, async () => {
+        const { deps, tmux } = await makeIn(origin, guardIds.setupText, state);
+        deps.files.delete(`${COPY}/.claude/settings.local.json`);
+        const result = await launch(deps, 'worker resume');
+        expect(result.ok ? 0 : exitCodeFor(result.error), result.ok ? '' : result.error.message).toBe(3);
+        expect(paneStarts(tmux)).toEqual([]);
+      });
       it(`worker resume refuses a work copy whose settings lack the role hooks only while the setup text guard counts as on, in the ${origin} folder: ${state}`, async () => {
         const { deps, tmux, on } = await makeIn(origin, guardIds.setupText, state);
         const hooks = Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([event]) => event !== 'SessionStart'));

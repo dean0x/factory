@@ -5,6 +5,8 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { guardReadOf } from '../../src/core/guard-source.js';
+import { guardOn } from '../../src/guards/effective.js';
 import { boardKeys, files, guardIds, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { readOwnLastSeen, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
@@ -12,7 +14,7 @@ import { writeHold } from '../../src/workers/hold.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
-import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, type GuardedSetup } from '../helpers/guarded-node.js';
 import { runWorker } from '../helpers/package-registry.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { sampleConfig, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
@@ -317,18 +319,35 @@ describe('worker list: the context limits guard', () => {
 });
 
 describe('worker mark: the guard of file and link safety', () => {
+  /** A node in one state of the guard, with these links, and the list of each file that a removal takes away. */
+  const linkGuardNode = async (setup: GuardedSetup, origin: string, links: Readonly<Record<string, string>>, workers: readonly WorkerSeed[]) => {
+    const off = setup.off ?? [];
+    const made = await make({ config: withGuardsOff(sampleConfig(), off), workers, links });
+    registerRoot(made.deps, HOME, NODE, [], origin);
+    if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+    const removed: string[] = [];
+    const deps: FakeDeps = { ...made.deps, fs: { ...made.deps.fs, removeFile: (path) => (removed.push(path), made.deps.fs.removeFile(path)) } };
+    return { deps, removed };
+  };
   describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
     it.each(guardStatesOf(guardIds.fileLinkSafety))('removes a hold file that is a link only while the guard counts as off: %s', async (_state, setup, on) => {
-      const off = setup.off ?? [];
       const hold = workerPathsOf(HOME, 'alpha').holdFile;
-      const made = await make({ config: withGuardsOff(sampleConfig(), off), workers: [{ id: 'alpha' }], links: { [hold]: '/elsewhere/hold' } });
-      registerRoot(made.deps, HOME, NODE, [], origin);
-      if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
-      const removed: string[] = [];
-      const deps: FakeDeps = { ...made.deps, fs: { ...made.deps.fs, removeFile: (path) => (removed.push(path), made.deps.fs.removeFile(path)) } };
+      const { deps, removed } = await linkGuardNode(setup, origin, { [hold]: '/elsewhere/hold' }, [{ id: 'alpha' }]);
       const sink = captureSink();
       expect(await runCli(['worker', 'mark', 'alpha', 'none', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
       expect(removed).toEqual(on ? [] : [hold]);
+    });
+    it.each(guardStatesOf(guardIds.fileLinkSafety))('never removes a hold file under a linked folder of the workers or of the worker, with every value: %s', async (_state, setup, on) => {
+      for (const linked of [layoutOf(HOME).workersDir, workerPathsOf(HOME, 'alpha').dir]) {
+        const made = await linkGuardNode(setup, origin, { [linked]: '/elsewhere/folder' }, []);
+        made.deps.seed(workerPathsOf(HOME, 'alpha').holdFile, 'parked\n');
+        const { deps } = await guardReadOf(made.deps, HOME, withGuardsOff(sampleConfig(), setup.off ?? []), 'always');
+        expect(await guardOn(deps, guardIds.fileLinkSafety, HOME)).toBe(on);
+        const result = await writeHold(deps, HOME, 'alpha', 'none');
+        const { removed } = made;
+        expect(result.ok ? 'removed' : result.error.kind, linked).toBe('safety');
+        expect(removed, linked).toEqual([]);
+      }
     });
   });
 });

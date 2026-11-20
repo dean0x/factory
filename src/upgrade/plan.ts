@@ -407,9 +407,16 @@ export const planFiles = async (
 };
 
 /**
+ * True for a block, edited or not, whose version is above the version of its template. No package writes over a newer block. The
+ * version of a block under its old name has its own numbers, so it says nothing about the new block.
+ */
+export const isNewerBlock = (status: BlockStatus): boolean =>
+  (status.kind === 'intact' || status.kind === 'edited') && status.block.version > status.template.version && renamedFromOf(status) === undefined;
+
+/**
  * Plan one block. `recorded` says whether the node state records the block. A caller that does not read the state keeps
  * the default, which counts every block as recorded. While the guard of the safety block is off in `guards`, an edited safety
- * block is kept like any other edited block.
+ * block is kept like any other edited block. A newer block is refused with every value.
  */
 export const planBlock = (status: BlockStatus, overwrite: boolean, recorded = true, guards: GuardValues = allOn): BlockPlan => {
   const { template } = status;
@@ -429,8 +436,7 @@ export const planBlock = (status: BlockStatus, overwrite: boolean, recorded = tr
     case 'edited': {
       const from = status.block.version;
       const renamed = renamedFromOf(status) !== undefined;
-      // The version of a block under its old name has its own numbers, so it says nothing about the new block.
-      if (from > template.version && !renamed) {
+      if (isNewerBlock(status)) {
         return {
           template,
           status,
