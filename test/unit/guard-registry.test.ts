@@ -125,6 +125,9 @@ const localWriteReason = 'Calls a write of the local board, whose first step giv
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
+/** The reason of the checks of the closed path, which the owner request form shares with every guard on. */
+const closedProofReason = 'dismissClosed reads the value and does not call it while the guard is off; the owner request form calls it with every guard on.';
+
 /**
  * The listed sites of a code row of a wired guard whose own declaration does not name the guard id. Each one has its reason: the
  * value is read by its caller or its callee, or the site holds a stop that the guard shares with a guard that this version cannot
@@ -237,6 +240,9 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'shutdown-targets', path: 'src/workers/lifecycle.ts', symbol: 'checkTargets', reason: 'Calls checkWorker for each worker, and checkWorker reads the value.' },
   { row: 'shutdown-targets', path: 'src/commands/lifecycle.ts', symbol: 'runShutdown', reason: 'Calls checkTargets before the first stop, and checkWorker reads the value.' },
   { row: 'worker-resume-checks', path: 'src/commands/worker.ts', symbol: 'requireNoLivePane', reason: 'A pure test of the panes; runResume reads the value and does not call it while the guard is off.' },
+  { row: 'dismiss-pushed', path: 'src/commands/dismiss.ts', symbol: 'dismissOne', reason: 'Passes the values of its one guard read to readyOf and checkPushed, which reads the value; the dry run and the plain removal run with every value.' },
+  { row: 'dismiss-closed-proof', path: 'src/commands/dismiss.ts', symbol: 'closedWorkOf', reason: closedProofReason },
+  { row: 'dismiss-closed-proof', path: 'src/commands/dismiss.ts', symbol: 'closedChecks', reason: closedProofReason },
 ];
 
 const software = {
@@ -341,7 +347,7 @@ describe('the guards of a recipe', () => {
 
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
+      guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.dismiss, guardIds.fileLinkSafety,
       guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
       guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality',
     ]);

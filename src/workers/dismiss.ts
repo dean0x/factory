@@ -25,8 +25,10 @@ import { err, ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { LINK_REMEDY } from '../core/safe-write.js';
 import { shellWord } from '../core/shell-word.js';
+import { allOn, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import type { PaneRow } from '../launch/tmux.js';
-import { commands, commandText, dirs, dismissStopCases, dismissWords, roles, workCopyGit, workerListWords } from '../names.js';
+import { commands, commandText, dirs, dismissStopCases, dismissWords, guardIds, roles, workCopyGit, workerListWords } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { withStateLock } from '../state/state-lock.js';
 import { removeLastSeen } from './last-seen.js';
@@ -211,8 +213,12 @@ export const planDismiss = async (
   });
 };
 
-/** The reason that a worker may not end now, or ok. The caller gives the command that a person runs again. */
-export const requireEndable = (entry: WorkerStatus, again: string): CliResult<void> => {
+/**
+ * The reason that a worker may not end now, or ok. The caller gives the command that a person runs again. While the dismiss guard is
+ * off, a worker may end in any state; the stop of its pane keeps its own rules.
+ */
+export const requireEndable = (entry: WorkerStatus, again: string, guards: GuardValues = allOn): CliResult<void> => {
+  if (!isGuardOn(guards, guardIds.dismiss)) return ok(undefined);
   const { id, workItem, running, state, pane } = entry;
   if (workItem.state === 'known' && workItem.item !== null) {
     return failure(
@@ -289,6 +295,8 @@ export interface PushedCheck {
   /** The one read of HEAD that the test judged, or null when the work copy has no commit. */
   readonly head: string | null;
   readonly reasons: readonly string[];
+  /** False when the dismiss guard is off: the test did not run, so the empty list of reasons says nothing about the work. */
+  readonly checked: boolean;
 }
 
 /**
@@ -301,12 +309,21 @@ export interface PushedCheck {
  * A head that equals one of `acceptedHeads` passes the test of the remote too: the caller names the commits that it has proof for,
  * for example the head that the board recorded for a closed item. The owner path names none. An accepted head never clears the
  * test of the work copy and of the stash.
+ *
+ * While the dismiss guard is off, the test reads only HEAD and gives no reason. The removal of the work copy still uses the plain git
+ * command, which refuses a changed or untracked file, and the branch and the stash of the repo stay.
  */
-export const checkPushed = async (deps: Deps, plan: DismissPlan, acceptedHeads: readonly string[] = []): Promise<CliResult<PushedCheck>> => {
+export const checkPushed = async (
+  deps: Deps,
+  plan: DismissPlan,
+  acceptedHeads: readonly string[] = [],
+  guards: GuardValues = allOn,
+): Promise<CliResult<PushedCheck>> => {
   const { workCopy, gitDir } = plan;
   const reasons: string[] = [];
   const head = await headOf(deps, workCopy, gitDir);
   if (!head.ok) return head;
+  if (!isGuardOn(guards, guardIds.dismiss)) return ok({ head: head.value, reasons: [], checked: false });
   if (head.value === null) {
     reasons.push('the work copy has no commit');
   } else if (!acceptedHeads.includes(head.value)) {
@@ -325,7 +342,7 @@ export const checkPushed = async (deps: Deps, plan: DismissPlan, acceptedHeads: 
   if (stash.value > 0) {
     reasons.push(`the stash of the repo holds ${stash.value} ${stash.value === 1 ? 'entry' : 'entries'}, and every work copy of the project shares it`);
   }
-  return ok({ head: head.value, reasons });
+  return ok({ head: head.value, reasons, checked: true });
 };
 
 /** The reasons that the work of a worker is not pushed, or an empty list when it is: the reasons of `checkPushed`. */
@@ -338,9 +355,12 @@ export const unpushedReasons = async (
   return checked.ok ? ok(checked.value.reasons) : checked;
 };
 
-/** The files that git ignores in the work copy: the files that the removal deletes and that no commit holds. */
-export const ignoredIn = (deps: Deps, plan: DismissPlan): Promise<CliResult<IgnoredList>> =>
-  ignoredFilesOf(deps, plan.workCopy, dismissWords.maxIgnoredShown, plan.gitDir);
+/**
+ * The files that git ignores in the work copy: the files that the removal deletes and that no commit holds. Null while the dismiss
+ * guard is off: the run does not list them.
+ */
+export const ignoredIn = async (deps: Deps, plan: DismissPlan, guards: GuardValues = allOn): Promise<CliResult<IgnoredList | null>> =>
+  isGuardOn(guards, guardIds.dismiss) ? ignoredFilesOf(deps, plan.workCopy, dismissWords.maxIgnoredShown, plan.gitDir) : ok(null);
 
 /** The names of the files of the inbox of a worker, cut at the cap: the shape of the ignored list. */
 export type InboxList = IgnoredList;

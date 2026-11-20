@@ -11,7 +11,7 @@ import type { DecisionLogPort, RequestPort } from '../../src/commands/board-open
 import { runDismiss, type DismissOptions } from '../../src/commands/dismiss.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
-import { boardKeys, boardTextLimits, dismissWords, files, requestDeciders, schemaIds, stateLock, type HookEvent } from '../../src/names.js';
+import { boardKeys, boardTextLimits, dismissWords, files, guardIds, requestDeciders, schemaIds, stateLock, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { withStateLock } from '../../src/state/state-lock.js';
@@ -24,6 +24,7 @@ import { boardText, itemRecord } from '../helpers/board-node.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { FILE_MONITOR_OFF_WORD, gitHandler, type GitFixture, type GitLog } from '../helpers/git-fake.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, type GuardedSetup } from '../helpers/guarded-node.js';
 import { sampleConfig, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 import { COORDINATOR_PANE, HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
@@ -2326,6 +2327,127 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
       const error = await errorOf(made, { words: ['alpha'], yes: true }, portOf({ alpha: open }));
       expect(error).toEqual(await errorOf(made, { words: ['alpha'], yes: true }, portOf({ alpha: busyWith('item 7') })));
       expect(error.message).toContain('open work: item 7');
+      await expectNothingChanged(made, ['alpha']);
+    });
+  });
+});
+
+describe('the dismiss guard', () => {
+  const alpha = copyOf('alpha');
+  const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
+  const DECISION_LOG = join(layoutOf(HOME).stateDir, files.decisionLog);
+  /** A piece of the line that names the checks that the guard turned off. */
+  const UNCHECKED = 'did not check that the worker can end now';
+  const OFF: GuardedSetup = { off: [guardIds.dismiss] };
+  /** The caller is the coordinator pane of the node: the env of its pane, and the start command that `start` gives it. */
+  const AS_COORDINATOR: Partial<Setup> = {
+    tmux: { coordinatorCommands: { [NODE]: coordinatorWordsOf(HOME, NODE) } },
+    env: { TMUX_PANE: COORDINATOR_PANE, FACTORY_SESSION: NODE },
+  };
+
+  /** The worker alpha on a node whose local file holds each guard of `guards` off, with the owner record unless it has none. */
+  const guardedMake = async (guards: GuardedSetup, origin: string, setup: Setup = {}): Promise<Made> => {
+    const off = guards.off ?? [];
+    const config = withGuardsOff(setup.config ?? sampleConfig(), off);
+    const made = await make({ workers: [{ id: 'alpha' }], ...setup, config });
+    registerRoot(made.deps, HOME, config.core.node.id, [], origin);
+    if (guards.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, made.deps.now()));
+    return made;
+  };
+
+  /** One run of the command line, as a person types it. */
+  const runOn = async (made: Made, words: readonly string[]): Promise<{ readonly code: number; readonly out: string; readonly err: string }> => {
+    const sink = captureSink();
+    const code = await runCli(['dismiss', ...words, '--home', HOME], made.deps, sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  const isFreed = async (made: Made): Promise<boolean> => (await recordState(made, 'alpha')) === 'absent';
+
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.dismiss))('dismiss ID --yes frees a worker whose branch is not on the remote only while the guard counts as off: %s', async (_state, setup, on) => {
+      const made = await guardedMake(setup, origin, { git: { remotes: { [cloneOf('web')]: { copies: {} } } } });
+      const result = await runOn(made, ['alpha', '--yes']);
+      expect(result.code, result.err).toBe(on ? 1 : 0);
+      expect(await isFreed(made)).toBe(!on);
+      expect(result.out.includes(UNCHECKED)).toBe(!on);
+    });
+
+    it.each(guardStatesOf(guardIds.dismiss))('dismiss ID --yes frees a worker that has open work only while the guard counts as off: %s', async (_state, setup, on) => {
+      const made = await guardedMake(setup, origin, { config: sampleConfigWithBoard() });
+      made.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha' })]));
+      const result = await runOn(made, ['alpha', '--yes']);
+      expect(result.code, result.err).toBe(on ? 1 : 0);
+      expect(await isFreed(made)).toBe(!on);
+    });
+
+    it.each(guardStatesOf(guardIds.dismiss))('the dry run names the ignored files that the removal deletes only while the guard counts as on, and else names the checks that did not run: %s', async (_state, setup, on) => {
+      const made = await guardedMake(setup, origin, { git: { ignoredFiles: { [alpha]: ['cache/a.log'] } } });
+      const result = await runOn(made, ['alpha']);
+      expect(result.code, result.err).toBe(0);
+      expect(result.out.includes('cache/a.log')).toBe(on);
+      expect(result.out.includes(UNCHECKED)).toBe(!on);
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it.each(guardStatesOf(guardIds.dismiss))('dismiss --idle shows the pushed test and the ignored count of a worker only while the guard counts as on: %s', async (_state, setup, on) => {
+      const made = await guardedMake(setup, origin, { config: sampleConfigWithBoard(), git: { ignoredFiles: { [alpha]: ['cache/a.log'] } } });
+      made.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'done', lane: 'alpha' })]));
+      const result = await runOn(made, ['--idle', '--json']);
+      expect(result.code, result.err).toBe(0);
+      const json = JSON.parse(result.out) as { readonly workers: readonly unknown[] };
+      expect(json.workers).toEqual([expect.objectContaining({ id: 'alpha', pushed: on ? true : null, ignoredCount: on ? 1 : null })]);
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it.each(guardStatesOf(guardIds.dismiss))('dismiss ID --closed frees a worker that no closed item names, and logs no decision, only while the guard counts as off: %s', async (_state, setup, on) => {
+      const made = await guardedMake(setup, origin, { config: sampleConfigWithBoard(), ...AS_COORDINATOR });
+      made.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'done', lane: 'beta' })]));
+      const result = await runOn(made, ['alpha', '--closed']);
+      expect(result.code, result.err).toBe(on ? 4 : 0);
+      expect(await isFreed(made)).toBe(!on);
+      expect(made.deps.files.has(DECISION_LOG)).toBe(false);
+      expect(result.out.includes('logged no decision')).toBe(!on);
+    });
+  });
+
+  describe.each(FOLDER_ORIGINS)('in %s, with the guard off and a matching record', (_folder, origin) => {
+    it('dismiss ID still runs the dry run first: with no yes flag it ends nothing and removes nothing', async () => {
+      const made = await guardedMake(OFF, origin);
+      const result = await runOn(made, ['alpha']);
+      expect(result.code, result.err).toBe(0);
+      expect(result.out).toContain(`Would remove the work copy ${alpha}`);
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('dismiss ID --yes still removes a work copy only with the plain git command and keeps the branch, so git keeps a copy with a changed file', async () => {
+      const made = await guardedMake(OFF, origin, {
+        git: { status: { [alpha]: ' M src/changed.ts\0' }, worktreeRemoveFails: { [cloneOf('web')]: 'fatal: contains modified or untracked files' } },
+      });
+      const result = await runOn(made, ['alpha', '--yes']);
+      expect(result.code, result.out).toBe(1);
+      expect(result.err).toContain('contains modified or untracked files');
+      expect(removals(made)).toEqual([`worktree remove -- ${alpha}`]);
+      expect(made.git.commands().filter((command) => /^branch -[dD]\b/.test(command))).toEqual([]);
+      expect(await recordState(made, 'alpha')).toBe('valid');
+    });
+
+    it('dismiss ID --yes still stops with exit 4 for a record whose work copy is outside the work copies folder, and nothing changes', async () => {
+      const made = await guardedMake(OFF, origin);
+      const file = workerPathsOf(HOME, 'alpha').recordFile;
+      made.deps.seed(file, (made.deps.files.get(file) ?? '').replace(alpha, '/elsewhere/alpha'));
+      const result = await runOn(made, ['alpha', '--yes']);
+      expect(result.code, result.out).toBe(4);
+      expect(made.git.commands()).toEqual([]);
+      await expectNothingChanged(made, []);
+    });
+
+    it('dismiss ID --closed --ask-owner still needs a closed item: the request frees nothing and opens no request without one', async () => {
+      const made = await guardedMake(OFF, origin, { config: sampleConfigWithBoard(), ...AS_COORDINATOR });
+      made.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'done', lane: 'beta' })]));
+      const result = await runOn(made, ['alpha', '--closed', '--ask-owner']);
+      expect(result.code, result.out).toBe(1);
+      expect(result.err).toContain('dismiss-closed-proof');
       await expectNothingChanged(made, ['alpha']);
     });
   });

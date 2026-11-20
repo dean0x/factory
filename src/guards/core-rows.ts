@@ -403,7 +403,7 @@ const dismissRows: readonly GuardRow[] = [
     id: 'dismiss-pushed',
     guard: guardIds.dismiss,
     name: 'A dismiss needs the head on the remote, no changed or untracked file and an empty stash',
-    applies: 'Dismiss, free and reset',
+    applies: 'Dismiss and free',
     harm: true,
     sites: [...at('src/workers/dismiss.ts', 'checkPushed'), ...at('src/commands/dismiss.ts', 'dismissOne')],
   }),

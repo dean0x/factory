@@ -69,10 +69,12 @@ const coreGuards: readonly GuardDefinition[] = [
       'No commit in the state folder removes a work item or makes the board unreadable.',
     ),
   ),
-  guardOf(
-    guardIds.dismiss,
-    'Dismiss',
-    `A dismiss removes the work copy of a ${worker} only when its work is pushed, its copy is clean and its item is closed.`,
+  wiredGuard(
+    guardOf(
+      guardIds.dismiss,
+      'Dismiss',
+      `A dismiss removes the work copy of a ${worker} only when its work is pushed, its copy is clean and its item is closed.`,
+    ),
   ),
   wiredGuard(
     guardOf(

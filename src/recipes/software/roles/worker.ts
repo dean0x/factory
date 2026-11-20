@@ -88,7 +88,7 @@ export const WORKER_PARTS: readonly TextPart[] = [
   '## Disk',
   '',
   { guards: [guardIds.machineLimits], lines: ['- If the free disk is below `{{diskLimitKey}}`, clean up your own work copy first. Then tell the {{coordinator}}.'] },
-  '- When your pull request merges, remove its work copy. First check that no unpushed work remains.',
+  { segments: ['- When your pull request merges, remove its work copy.', { guards: [guardIds.dismiss], text: ' First check that no unpushed work remains.' }] },
   '- Never delete a file of another session. Ask the {{coordinator}}.',
   '',
   '## Review results',
