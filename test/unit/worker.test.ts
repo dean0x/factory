@@ -1346,6 +1346,21 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard of the machine limits in %s
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker new: the plan checks of a new worker in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.spend))('refuses the id of the node and an id that has a record with exit 2 with every value of the spend guard, here %s', async (_state, setup) => {
+    const made = make({ ...settingsCheckSetup(setup), origin });
+    const runNew = async (id: string): Promise<readonly [number, string]> => {
+      const sink = captureSink();
+      const code = await runCli(['worker', 'new', id, '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
+      return [code, sink.errors.join('')];
+    };
+    expect(await runNew('demo')).toEqual([2, expect.stringContaining('the id of this node')]);
+    expect((await runNew('alpha'))[0]).toBe(0);
+    expect(await runNew('alpha')).toEqual([2, expect.stringContaining('has a record already')]);
+    expect(made.events.filter((event) => event === 'git worktree-add')).toHaveLength(1);
+  });
+});
+
 /** The sample config with a session proxy that stops the launch when it does not answer. */
 const withSessionProxy = (config: FactoryConfig): FactoryConfig => ({
   ...config,

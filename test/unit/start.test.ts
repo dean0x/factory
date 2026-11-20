@@ -48,6 +48,7 @@ import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-accept
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
 import { chainOf, tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { launchWordsOf } from '../helpers/worker-launch-words.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
 
 const HOME = '/w/node';
@@ -1799,6 +1800,27 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       expect(splitsOf(made.deps)).toBe(0);
       expect(workerPanes(made.tmux)).toHaveLength(1);
       if (result.ok) expect(result.value.json).toMatchObject({ started: false, workersWithoutPane: ['alpha', 'gamma'] });
+    });
+
+    describe.each(FOLDER_ORIGINS)('in %s, with the guard of spend', (_folder, origin) => {
+      it.each(guardStatesOf(guardIds.spend))('keeps each worker with no live pane stopped only while the guard counts as on, and else resumes it after its ended pane closes: %s', async (_state, setup, on) => {
+        const off = setup.off ?? [];
+        const config = withGuardsOff(sampleConfig(), off);
+        const ended: PaneFixture = { ...paneOf('alpha', true), command: launchWordsOf(HOME, 'alpha') };
+        const made = await seeded({ origin, config, tmux: { sessions: RUNNING, panes: [ended, paneOf('beta')] } });
+        if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, made.deps.now()));
+        const sink = captureSink();
+        expect(await runCli([commands.start, '--home', HOME, '--json'], made.deps, sink), sink.errors.join('')).toBe(0);
+        const json = JSON.parse(sink.out.join('')) as Record<string, unknown>;
+        expect(splitsOf(made.deps)).toBe(on ? 0 : 2);
+        expect(made.deps.warned.some((line) => line.includes('must stay stopped'))).toBe(on);
+        expect(json['workersWithoutPane']).toEqual(on ? ['alpha', 'gamma'] : undefined);
+        if (!on) {
+          expect(json['workers']).toEqual({ resumed: ['alpha', 'gamma'], skipped: [], failed: [] });
+          expect(resumesOf(made.tmux)).toMatchObject({ alpha: SESSION.alpha, gamma: SESSION.gamma });
+          expect(made.tmux.commands().some((line) => line.startsWith('kill-pane'))).toBe(true);
+        }
+      });
     });
 
     it('counts a pane whose program ended as no live pane', async () => {

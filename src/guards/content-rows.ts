@@ -348,9 +348,12 @@ const spendRows: readonly GuardRow[] = [
     name: `${commands.start} never resumes a ${worker} that has no pane, so a stopped ${worker} does not spend again`,
     applies: commands.start,
     harm: true,
-    sites: at('src/workers/recovery.ts', 'recoverWorkers', 'workersWithoutPane', 'noPaneWarning'),
+    sites: [
+      ...at('src/commands/start.ts', 'checkRunningSession'),
+      ...at('src/workers/recovery.ts', 'recoverWorkers', 'workersWithoutPane', 'noPaneWarning'),
+    ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'new-worker-plan',
     guard: guardIds.spend,
     name: `A new ${worker} takes a slug that is not the id of the ${roles.node} or a child, a listed project, no link, and an id, a work copy and a branch that are not taken`,

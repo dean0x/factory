@@ -120,6 +120,7 @@ const textGuardIds = [
   guardIds.permissionMode,
   guardIds.proxy,
   guardIds.setupText,
+  guardIds.spend,
 ] as const;
 
 /** The start of each rendered line that a guard removes when it is off. */
@@ -128,6 +129,10 @@ const guardedLineStarts: readonly (readonly [string, string])[] = [
   [guardIds.permissionMode, '- Run every session in auto permission mode.'],
   [guardIds.proxy, '- If the proxy does not answer, the launch stops.'],
   [guardIds.proxy, '- Show only the proxy id and its host and port.'],
+  [guardIds.spend, '- Coordinate. Do not produce.'],
+  [guardIds.spend, '- If no worker is free, create one.'],
+  [guardIds.spend, '- Each worker works on one track in its own work copy.'],
+  [guardIds.spend, '- Watch the capacity of the machine and the usage limits.'],
   [guardIds.setupText, 'The role text of this session comes only from'],
   [guardIds.setupText, '- Your role text comes only from'],
   [guardIds.installRules, '- Do not install outside'],
@@ -177,10 +182,12 @@ const guardedBody = (body: string, guards: GuardValues): string =>
     })
     .join('\n');
 
-it('finds each guarded line and the delete guard text in the layer 1 templates when every guard is on', () => {
-  const lines = blockTemplatesFor(blockInput(1, { modes: { ...softwareOwnerModes, merge: 'delegated' as const } }))
-    .flatMap((block) => block.body.split('\n'));
-  expect(guardedLineStarts.filter(([, start]) => !lines.some((line) => line.startsWith(start)))).toEqual([]);
+it('finds each guarded line in the layer 1 or layer 2 templates, and each guarded line end once in the layer 1 templates, when every guard is on', () => {
+  const linesOf = (layer: number): readonly string[] =>
+    blockTemplatesFor(blockInput(layer, { modes: { ...softwareOwnerModes, merge: 'delegated' as const } })).flatMap((block) => block.body.split('\n'));
+  const lines = linesOf(1);
+  const both = [...lines, ...linesOf(2)];
+  expect(guardedLineStarts.filter(([, start]) => !both.some((line) => line.startsWith(start)))).toEqual([]);
   for (const [, tail] of guardedLineTails) expect(lines.filter((line) => line.endsWith(tail)), tail).toHaveLength(1);
 });
 

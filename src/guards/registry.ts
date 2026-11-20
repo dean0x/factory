@@ -188,10 +188,12 @@ const coreGuards: readonly GuardDefinition[] = [
       `Role text comes only from the program, and setup text is used only after the ${owner} accepted it.`,
     ),
   ),
-  guardOf(
-    guardIds.spend,
-    `Spend and new ${worker}s`,
-    `A stopped ${worker} stays stopped, and the spend rules limit new ${worker}s.`,
+  wiredGuard(
+    guardOf(
+      guardIds.spend,
+      `Spend and new ${worker}s`,
+      `A stopped ${worker} stays stopped, and the spend rules limit new ${worker}s.`,
+    ),
   ),
   guardOf(
     guardIds.workConduct,

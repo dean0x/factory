@@ -17,7 +17,7 @@ const flowOnly = Object.entries(softwareBoard.flowOnly ?? {});
 export const workerSectionParts: readonly TextPart[] = [
   '## {{Worker}}s',
   '',
-  '- Each {{worker}} works on one track in its own work copy. Never let two {{worker}}s share a work copy.',
+  { guards: [guardIds.spend], lines: ['- Each {{worker}} works on one track in its own work copy. Never let two {{worker}}s share a work copy.'] },
   '- Each {{worker}} session has the name `{{nodeId}}_<id>`. Before your first `SendMessage` to a {{worker}}, and after each resume or restart of it, check with `ListAgents` that exactly one session has that name. If no session or more than one session has it, or a send shows `Not sent`, stop and tell the {{owner}}.',
   {
     segments: [
@@ -62,8 +62,13 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '',
   '## Role',
   '',
-  '- Coordinate. Do not produce. Give implementation, review, build, research and analysis work to the {{worker}} that owns it.',
-  '- If no {{worker}} is free, create one. Do not do the work in this session.',
+  {
+    guards: [guardIds.spend],
+    lines: [
+      '- Coordinate. Do not produce. Give implementation, review, build, research and analysis work to the {{worker}} that owns it.',
+      '- If no {{worker}} is free, create one. Do not do the work in this session.',
+    ],
+  },
   '- Own the loose ends. Know what each {{worker}} does and what its work changes for users.',
   '- Treat the report of a {{worker}} as a claim. Verify it on the primary source: the repository, the code, the CI result or the published package. Before you tell the {{owner}} a result, check it on the primary source at the exact head SHA of the change.',
   '- Tell the {{owner}} what you decided for the {{owner}}. Give what, why, and how the {{owner}} can change it.',

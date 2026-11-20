@@ -110,6 +110,9 @@ const roleTextReason = 'A part of the acceptance compare; readRoleText reads the
 /** The reason of the machine facts, which the machine report and the board also show: only the warning of a new worker follows the guard. */
 const machineReason = 'Reads or words the facts of the machine for the warning, the machine report and the board; makeWorker reads the value and reads no fact while the guard is off.';
 
+/** The reason of the recovery parts that a running session uses: only the decision of start follows the guard. */
+const stoppedReason = 'Lists, names or resumes the workers with no live pane; checkRunningSession reads the value and resumes them only while the guard is off.';
+
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -201,6 +204,9 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'proxy-down-stops', path: 'src/safety/proxy.ts', symbol: 'checkProxyHealth', reason: 'The one health call of a proxy; proxyHealthOf reads the value and makes no call while the guard is off.' },
   { row: 'proxy-down-stops', path: 'src/workers/lifecycle.ts', symbol: 'requireProxies', reason: 'Passes the values of its caller to chooseProxy, and proxyHealthOf reads the value.' },
   { row: 'proxy-down-stops', path: 'src/commands/lifecycle.ts', symbol: 'runRestart', reason: 'Passes the values of its launch checks to requireProxies and to the launch, and proxyHealthOf reads the value.' },
+  { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'recoverWorkers', reason: stoppedReason },
+  { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'workersWithoutPane', reason: stoppedReason },
+  { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'noPaneWarning', reason: stoppedReason },
   { row: 'machine-warnings', path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'The bounds of the limit values in the config parse, which reads no guard value; makeWorker reads the value.' },
 ];
 
@@ -306,7 +312,7 @@ describe('the guards of a recipe', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
       guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
-      guardIds.setupText, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 
@@ -983,7 +989,7 @@ describe('the rows of the registry', () => {
         'setup-text-content', 'worker-refusal-text', 'acceptance-store-place', 'acceptance-path-form', 'init-accepts-own-text-once',
         'received-init-acceptance', 'setup-set-file-rules', 'worker-refusal-role-text', 'work-rules-block',
       ],
-      spend: ['new-worker-keeps-copy'],
+      spend: ['new-worker-plan', 'new-worker-keeps-copy'],
       'work-conduct': [
         'profile-strength-text', 'profile-no-overwrite-text', 'profile-conflict-text', 'roadmap-rules-text', 'read-profile-file-text',
         'ste-writing-profile-text',
@@ -1338,6 +1344,7 @@ describe('the text rows of the registry', () => {
     const safety = bodyOf(blocks, blockNames.safety);
     return {
       'src/recipes/software/roles/coordinator.ts': [coordinator],
+      'src/recipes/software/roles/manager.ts': [bodyOf(blockTemplatesFor(blockInput(2, { guards })), blockNames.manager)],
       'src/recipes/software/roles/worker.ts': [bodyOf(blocks, blockNames.worker)],
       'src/templates/work-rules.ts': [bodyOf(blocks, blockNames.workRules)],
       'src/templates/safety.ts': [safety],
