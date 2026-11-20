@@ -229,10 +229,10 @@ const sessionCheckRows: readonly GuardRow[] = [
   alwaysOnRow({
     id: 'dismiss-idle-pick-list',
     guard: guardIds.sessionChecks,
-    name: `Each pick of idle ${worker}s is read and checked again, and only a ${worker} of the idle list is removed`,
+    name: `A piped pick has byte and time limits. The check after the pick keeps the ${worker} and project from the idle list`,
     applies: `${commands.dismiss} of idle ${worker}s`,
     harm: true,
-    sites: at('src/commands/dismiss.ts', 'requirePick', 'pickAndFree'),
+    sites: at('src/commands/dismiss.ts', 'readIdleAnswer', 'requirePick', 'pickAndFree'),
   }),
   codeRow({
     id: 'coordinator-caller',

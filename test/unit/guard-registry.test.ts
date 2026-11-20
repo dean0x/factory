@@ -1017,7 +1017,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
-    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(170);
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(171);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
@@ -1030,8 +1030,8 @@ describe('the rows of the registry', () => {
         'clone-project-path', 'clone-unique-targets',
       ],
       dismiss: [
-        'dismiss-dry-run', 'dismiss-paths', 'dismiss-no-force', 'dismiss-inbox-stop', 'dismiss-work-item-unknown', 'dismiss-ask-owner',
-        'dismiss-dry-run-text', 'dismiss-ask-owner-text', 'dismiss-copy-reviews-text', 'dismiss-review-results-text',
+        'dismiss-dry-run', 'dismiss-paths', 'dismiss-no-force', 'dismiss-inbox-stop', 'dismiss-inbox-ignored', 'dismiss-work-item-unknown',
+        'dismiss-ask-owner', 'dismiss-dry-run-text', 'dismiss-ask-owner-text', 'dismiss-copy-reviews-text', 'dismiss-review-results-text',
       ],
       'file-link-safety': [
         'user-folder-never', 'settings-write-no-link', 'settings-write-inside-folder', 'private-file-mode', 'local-file-mode', 'safe-write',

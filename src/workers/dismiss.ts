@@ -355,12 +355,9 @@ export const unpushedReasons = async (
   return checked.ok ? ok(checked.value.reasons) : checked;
 };
 
-/**
- * The files that git ignores in the work copy: the files that the removal deletes and that no commit holds. Null while the dismiss
- * guard is off: the run does not list them.
- */
-export const ignoredIn = async (deps: Deps, plan: DismissPlan, guards: GuardValues = allOn): Promise<CliResult<IgnoredList | null>> =>
-  isGuardOn(guards, guardIds.dismiss) ? ignoredFilesOf(deps, plan.workCopy, dismissWords.maxIgnoredShown, plan.gitDir) : ok(null);
+/** The capped list of ignored files that the removal deletes and that no commit holds. */
+export const ignoredIn = (deps: Deps, plan: DismissPlan): Promise<CliResult<IgnoredList>> =>
+  ignoredFilesOf(deps, plan.workCopy, dismissWords.maxIgnoredShown, plan.gitDir);
 
 /** The names of the files of the inbox of a worker, cut at the cap: the shape of the ignored list. */
 export type InboxList = IgnoredList;

@@ -459,10 +459,10 @@ const dismissRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/workers/dismiss.ts', 'inboxFilesIn'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'dismiss-inbox-ignored',
     guard: guardIds.dismiss,
-    name: 'A dismiss lists the ignored files that it deletes',
+    name: 'A dismiss lists the ignored files up to the cap and does not remove a work copy if the list fails',
     applies: 'Dismiss',
     harm: true,
     sites: at('src/workers/dismiss.ts', 'ignoredIn'),

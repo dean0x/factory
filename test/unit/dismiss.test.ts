@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { PassThrough } from 'node:stream';
+import { describe, expect, it, vi } from 'vitest';
 import type { DecisionAskInput, DecisionLogInput } from '../../src/board/contract.js';
 import { parseWaiting } from '../../src/board/files.js';
 import { freeRequestOf } from '../../src/board/free-request.js';
@@ -10,8 +11,9 @@ import { runCli } from '../../src/cli/run.js';
 import type { DecisionLogPort, RequestPort } from '../../src/commands/board-open.js';
 import { runDismiss, type DismissOptions } from '../../src/commands/dismiss.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
-import { boardKeys, boardTextLimits, dismissWords, files, guardIds, requestDeciders, schemaIds, stateLock, type HookEvent } from '../../src/names.js';
+import { boardKeys, boardTextLimits, dismissWords, files, guardIds, hookNames, requestDeciders, schemaIds, stateLock, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { installGuard } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
@@ -135,8 +137,9 @@ const make = async (setup: Setup = {}): Promise<Made> => {
     stdoutIsTTY: answer !== undefined,
     prompt: () => {
       setup.atPrompt?.(made);
-      return ok(answer ?? setup.piped ?? '');
+      return answer === undefined ? failure('no answer was given') : ok(answer);
     },
+    ...(setup.piped === undefined ? {} : { stdin: setup.piped }),
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
   const deps: FakeDeps = {
@@ -2405,22 +2408,22 @@ describe('the guards of dismiss', () => {
       expect(await isFreed(made)).toBe(!on);
     });
 
-    it.each(guardStatesOf(guardIds.dismiss))('the dry run names the ignored files that the removal deletes only while the guard counts as on, and else names the checks that did not run: %s', async (_state, setup, on) => {
+    it.each(guardStatesOf(guardIds.dismiss))('the dry run lists ignored files with each guard value: %s', async (_state, setup, on) => {
       const made = await guardedMake(setup, origin, { git: { ignoredFiles: { [alpha]: ['cache/a.log'] } } });
       const result = await runOn(made, ['alpha']);
       expect(result.code, result.err).toBe(0);
-      expect(result.out.includes('cache/a.log')).toBe(on);
+      expect(result.out).toContain('The removal deletes 1 ignored file: cache/a.log.');
       expect(result.out.includes(UNCHECKED)).toBe(!on);
       await expectNothingChanged(made, ['alpha']);
     });
 
-    it.each(guardStatesOf(guardIds.dismiss))('dismiss --idle shows the pushed test and the ignored count of a worker only while the guard counts as on: %s', async (_state, setup, on) => {
+    it.each(guardStatesOf(guardIds.dismiss))('dismiss --idle lists the ignored count with each guard value: %s', async (_state, setup, on) => {
       const made = await guardedMake(setup, origin, { config: sampleConfigWithBoard(), git: { ignoredFiles: { [alpha]: ['cache/a.log'] } } });
       made.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'done', lane: 'alpha' })]));
       const result = await runOn(made, ['--idle', '--json']);
       expect(result.code, result.err).toBe(0);
       const json = JSON.parse(result.out) as { readonly workers: readonly unknown[] };
-      expect(json.workers).toEqual([expect.objectContaining({ id: 'alpha', pushed: on ? true : null, ignoredCount: on ? 1 : null })]);
+      expect(json.workers).toEqual([expect.objectContaining({ id: 'alpha', pushed: on ? true : null, ignoredCount: 1 })]);
       await expectNothingChanged(made, ['alpha']);
     });
 
@@ -2433,6 +2436,16 @@ describe('the guards of dismiss', () => {
       expect(made.deps.files.has(DECISION_LOG)).toBe(false);
       expect(result.out.includes('logged no decision')).toBe(!on);
     });
+  });
+
+  const freeWords = (mode: string): readonly string[] => {
+    if (mode === '--idle') return [mode];
+    return mode === 'dry run' ? ['alpha'] : ['alpha', mode];
+  };
+  const freeModeSetup = (mode: string): Setup => ({
+    config: sampleConfigWithBoard(),
+    ...(mode === '--closed' ? AS_COORDINATOR : {}),
+    ...(mode === '--idle' ? { terminal: { answer: 'alpha' } } : {}),
   });
 
   describe.each(FOLDER_ORIGINS)('the dismiss guard in %s, with the guard off and a matching record', (_folder, origin) => {
@@ -2452,9 +2465,46 @@ describe('the guards of dismiss', () => {
       expect(result.code, result.out).toBe(1);
       expect(result.err).toContain('contains modified or untracked files');
       expect(result.err).not.toContain('--force');
+      expect(result.err).toContain('Check the work copy and its remote branch');
       expect(result.err).not.toContain('its work is pushed');
       expect(removals(made)).toEqual([`worktree remove -- ${alpha}`]);
       expect(made.git.commands().filter((command) => /^branch -[dD]\b/.test(command))).toEqual([]);
+      expect(await recordState(made, 'alpha')).toBe('valid');
+    });
+
+    it.each(['--yes', '--closed', '--idle'])('lists the ignored files that a free deletes with %s', async (mode) => {
+      const made = await guardedMake(OFF, origin, {
+        ...freeModeSetup(mode), git: { ignoredFiles: { [alpha]: ['cache/a.log'] } },
+      });
+      seedClosedItem(made);
+      const result = await runOn(made, freeWords(mode));
+      expect(result.code, result.err).toBe(0);
+      expect(result.out).toContain('The removal deleted 1 ignored file: cache/a.log.');
+      expect(await isFreed(made)).toBe(true);
+    });
+
+    it.each(['dry run', '--yes', '--closed', '--idle'])('stops on a fault of the ignored file list with %s', async (mode) => {
+      const made = await guardedMake(OFF, origin, {
+        ...freeModeSetup(mode), git: { ignoredReadFails: { [alpha]: 'fatal: unable to read the index' } },
+      });
+      seedClosedItem(made);
+      const result = await runOn(made, freeWords(mode));
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('unable to read the index');
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('dismiss --idle tells the owner to check the work copy and remote branch after git refuses removal', async () => {
+      const made = await guardedMake(OFF, origin, {
+        ...freeModeSetup('--idle'), git: { worktreeRemoveFails: { [cloneOf('web')]: 'fatal: contains modified or untracked files' } },
+      });
+      seedClosedItem(made);
+      const result = await runOn(made, ['--idle']);
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('contains modified or untracked files');
+      expect(result.err).toContain('Check the work copy and its remote branch');
+      expect(result.err).not.toContain('its work is pushed');
+      expect(removals(made)).toEqual([`worktree remove -- ${alpha}`]);
       expect(await recordState(made, 'alpha')).toBe('valid');
     });
 
@@ -2539,17 +2589,98 @@ describe('the guards of dismiss', () => {
     });
 
     it.each(guardStatesOf(guardIds.sessionChecks))('dismiss --idle with no terminal window takes the pick of a script only while the guard counts as off: %s', async (_state, setup, on) => {
-      const made = await guardedMake(setup, origin, { config: sampleConfigWithBoard(), piped: 'alpha' });
+      const made = await guardedMake(setup, origin, { config: sampleConfigWithBoard(), piped: 'alpha\nzeta\n' });
       seedClosedItem(made);
       const result = await runOn(made, ['--idle']);
       expect(result.code, result.err).toBe(0);
-      expect(made.deps.prompts).toHaveLength(on ? 0 : 1);
+      expect(made.deps.prompts).toHaveLength(0);
       expect(await isFreed(made)).toBe(!on);
     });
   });
 
+  it('dismiss --idle shows the list, then stops at the time limit when the input stays open with no bytes', async () => {
+    const made = await guardedMake(SESSION_OFF, FOLDER_ORIGINS[0][1], { config: sampleConfigWithBoard() });
+    seedClosedItem(made);
+    const input = new PassThrough();
+    const stdin = process.stdin;
+    Object.defineProperty(process, 'stdin', { value: input, configurable: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { readStdin, prompt } = createNodeDeps();
+    const run = runOn({ ...made, deps: { ...made.deps, readStdin, prompt } }, ['--idle']);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(made.deps.written.join('')).toMatch(/IGNORED[^\n]*\nalpha\s+web/);
+      await vi.advanceTimersByTimeAsync(hookNames.stdinTimeoutMs - 1);
+      expect(input.destroyed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const pending = Symbol('still waits for input');
+      const result = await Promise.race([run, Promise.resolve().then(() => pending)]);
+      expect(result).toMatchObject({ code: 1, err: expect.stringContaining('cannot read stdin: ETIMEDOUT') });
+      await expectNothingChanged(made, ['alpha']);
+    } finally {
+      input.end();
+      await run;
+      vi.useRealTimers();
+      Object.defineProperty(process, 'stdin', { value: stdin, configurable: true });
+    }
+  });
+
+  it.each([
+    ['empty', '', 'no answer was given'],
+    ['over the byte cap', `alpha\n${'é'.repeat(100)}`, 'larger than 200 bytes'],
+  ])('dismiss --idle keeps the worker when piped input is %s', async (_case, piped, message) => {
+    const made = await guardedMake(SESSION_OFF, FOLDER_ORIGINS[0][1], { config: sampleConfigWithBoard(), piped });
+    seedClosedItem(made);
+    const result = await runOn(made, ['--idle']);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain(message);
+    await expectNothingChanged(made, ['alpha']);
+  });
+
   /** Both guards that keep a free out of a session are off, with the matching record. */
   const SESSION_AND_DISMISS_OFF: GuardedSetup = { off: [guardIds.sessionChecks, guardIds.dismiss] };
+
+  describe.each([
+    { context: 'outside a session with every guard on', guards: {}, caller: {} },
+    { context: 'in a session with both guards off', guards: SESSION_AND_DISMISS_OFF, caller: IN_SESSION },
+  ])('the idle pick $context', ({ guards, caller }) => {
+    const origin = FOLDER_ORIGINS[0][1];
+
+    it('keeps a worker that joins the idle list after the owner sees it', async () => {
+      const both = (status: string) => boardText([
+        itemRecord('B-1', { status: 'done', lane: 'alpha' }), itemRecord('B-2', { status, lane: 'beta' }),
+      ]);
+      const made = await guardedMake(guards, origin, {
+        ...caller, workers: [{ id: 'alpha' }, { id: 'beta' }], config: sampleConfigWithBoard(), terminal: { answer: 'beta' },
+        atPrompt: (current) => current.deps.seed(BOARD_FILE, both('done')),
+      });
+      made.deps.seed(BOARD_FILE, both('doing'));
+      const result = await runOn(made, ['--idle']);
+      expect(result.code, result.err).toBe(1);
+      expect(result.err).toContain('the worker beta is not in the list');
+      await expectNothingChanged(made, ['alpha', 'beta']);
+    });
+
+    it('keeps the picked worker if its project changes after the owner sees the list', async () => {
+      const nextCopy = copyOf('alpha', 'api');
+      const nextAdmin = adminOf('alpha', 'api');
+      const record = workerPathsOf(HOME, 'alpha').recordFile;
+      const made = await guardedMake(guards, origin, {
+        ...caller, config: withProject(sampleConfigWithBoard(), 'api'), terminal: { answer: 'alpha' },
+        git: pushedGit(HOME, [{ id: 'alpha' }, { id: 'alpha', project: 'api' }]),
+        atPrompt: ({ deps }) => deps.seed(record, (deps.files.get(record) ?? '').replace(alpha, nextCopy).replace('"web"', '"api"')),
+      });
+      made.deps.seed(`${nextCopy}/.git`, `gitdir: ${nextAdmin}\n`);
+      made.deps.seed(`${nextAdmin}/gitdir`, `${nextCopy}/.git\n`);
+      seedClosedItem(made);
+      const result = await runOn(made, ['--idle']);
+      expect(made.deps.written.join('')).toMatch(/\nalpha\s+web\s/);
+      expect(result.code, result.err).toBe(1);
+      expect(result.err).toContain('the worker alpha is not in the list');
+      expect(await readWorkerRecord(made.deps, HOME, 'alpha')).toMatchObject({ ok: true, value: { record: { project: 'api' } } });
+      await expectNothingChanged(made, ['alpha']);
+    });
+  });
 
   describe.each(FOLDER_ORIGINS)('the session-checks guard in %s, with the guard off and a matching record', (_folder, origin) => {
     it('dismiss --idle still frees only a worker of the idle list: a pick that is not listed frees nothing', async () => {
@@ -2559,21 +2690,6 @@ describe('the guards of dismiss', () => {
       expect(result.code, result.out).toBe(1);
       expect(result.err).toContain('the worker zeta is not in the list of idle workers');
       await expectNothingChanged(made, ['alpha']);
-    });
-
-    it('keeps a worker that joins the idle list after the owner sees it', async () => {
-      const both = (status: string) => boardText([
-        itemRecord('B-1', { status: 'done', lane: 'alpha' }), itemRecord('B-2', { status, lane: 'beta' }),
-      ]);
-      const made = await guardedMake(SESSION_AND_DISMISS_OFF, origin, {
-        ...IN_SESSION, workers: [{ id: 'alpha' }, { id: 'beta' }], config: sampleConfigWithBoard(), terminal: { answer: 'beta' },
-        atPrompt: (current) => current.deps.seed(BOARD_FILE, both('done')),
-      });
-      made.deps.seed(BOARD_FILE, both('doing'));
-      const result = await runOn(made, ['--idle']);
-      expect(result.code, result.out).toBe(1);
-      expect(result.err).toContain('the worker beta is not in the list');
-      await expectNothingChanged(made, ['alpha', 'beta']);
     });
 
     it('dismiss --idle still reads and checks each pick again after the answer: a worker that turns busy while the owner types is not freed', async () => {
