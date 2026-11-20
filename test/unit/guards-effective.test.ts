@@ -148,6 +148,26 @@ describe('the pre-read of the guard values', () => {
   });
 });
 
+describe('a key of a fixed guard that the owner wrote by hand', () => {
+  const sample = sampleConfig();
+  const shared = { ...sample, core: { ...sample.core, shared_guards: { [guardIds.cloneRules]: guardValues.on } } };
+  it.each([
+    ['the local file, with the value off and a matching record', guardedNode({}, { off: [guardIds.cloneRules, OFF_GUARD] })],
+    ['the shared file', guardedNode({}, { config: shared })],
+  ])('keeps the fixed guard on in the full load, the pre-read and the proof, and keeps the off value of another guard: %s', async (_name, deps) => {
+    const loaded = await loadConfig(deps, GUARDED_HOME, recipes);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const read = await guardSourceFor(deps, GUARDED_HOME, recipes, commands.status).read();
+    const state = await readGuardState(deps, GUARDED_HOME, loaded.value, 'always');
+    for (const values of [read.values, state.values]) {
+      expect(isGuardOn(values, guardIds.cloneRules)).toBe(true);
+      expect(isGuardOn(values, OFF_GUARD)).toBe(false);
+    }
+    expect(state.unmatched).toEqual([]);
+  });
+});
+
 describe('the proof of an off value with a check of the config parse', () => {
   const withField = (name: string) => {
     const board = sampleBoard();

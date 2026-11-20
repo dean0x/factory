@@ -86,6 +86,23 @@ export const setGuardText = (text: string, values: GuardValues): Result<string, 
   return ok(configDocumentText(doc));
 };
 
+/**
+ * Remove the named ids from the guard map under `key`. Each other key, comment and blank line stays, and a map that the removal
+ * leaves empty goes with its key. A text that holds none of the ids comes back unchanged.
+ */
+export const removeGuardKeysText = (text: string, key: string, ids: readonly string[]): Result<string, string> => {
+  const parsed = parseConfigDocument(text);
+  if (!parsed.ok) return err(`${key} cannot be changed: the text does not parse`);
+  const doc = parsed.value;
+  const current = doc.get(key, true);
+  if (!isMap(current)) return ok(text);
+  const found = ids.filter((id) => current.has(id));
+  if (found.length === 0) return ok(text);
+  for (const id of found) current.delete(id);
+  if (current.items.length === 0) doc.delete(key);
+  return ok(configDocumentText(doc));
+};
+
 /** Remove the child with this id. The entry goes with its own comments. */
 export const removeChildText = (text: string, id: string): Result<string, string> => {
   const parsed = parseConfigDocument(text);

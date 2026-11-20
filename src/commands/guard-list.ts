@@ -1,7 +1,7 @@
 import { exitCodeFor, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, renderError, tableLines, type CommandOutput, type OutLine } from '../cli/output.js';
 import { inspectSharedConfig, loadConfig, readNodeIdentity } from '../config/load.js';
-import type { SharedConfig } from '../config/schema.js';
+import { fixedGuardKeyWarnings, type SharedConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
@@ -129,6 +129,7 @@ export const runGuardList = async (
       loosened: state?.loosened ?? [],
     },
     warnings: [
+      ...(loaded.ok ? fixedGuardKeyWarnings(loaded.value) : []),
       ...(state?.fault == null ? [] : [state.fault]),
       ...(!loaded.ok && loaded.error.hint !== undefined ? [loaded.error.hint] : []),
     ],

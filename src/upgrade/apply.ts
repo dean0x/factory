@@ -428,7 +428,9 @@ export const configFileText = async (
   if (original.value === null) return failure(`${label} not found`);
   const migrated = runTextMigrations(original.value, textSteps);
   if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
-  return checkedText(migrated.value, file);
+  // The text path removes the same values as the finisher of the value path.
+  const finished = file.finishText === undefined ? migrated : file.finishText(migrated.value);
+  return finished.ok ? checkedText(finished.value, file) : failure(`${label}: ${finished.error.message}`);
 };
 
 /**

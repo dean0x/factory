@@ -39,7 +39,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardDoctorWords, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText, workerRecord } from '../../src/names.js';
+import { boardWarnPercent, checkIds, childReasons, dirs, env, files, guardConfigWords, guardDoctorWords, guardIds, guardRecords, instructionFiles, lessonLimits, maxFileBytes, roleText, workerRecord } from '../../src/names.js';
 import { blockInputOf, blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { allOn } from '../../src/guards/effective.js';
@@ -237,6 +237,23 @@ describe('doctor: shared guard state', () => {
     expect(found?.text).toContain('work-conduct is not settable in this version; its value stays on');
     expect(found?.text).not.toContain('wired');
     expect(found?.text).toContain('Own file Edit rules are incomplete.');
+  });
+
+  it.each(['local', 'shared'] as const)('warns for a key of a fixed guard in the %s file and keeps the guard on', async (file) => {
+    const deps = await initialized();
+    const config = sampleConfig();
+    const id = guardIds.cloneRules;
+    writeConfig(deps, { ...config, core: { ...config.core, ...(file === 'local' ? { guards: { [id]: 'off' } } : { shared_guards: { [id]: 'on' } }) } });
+    deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: { [id]: { value: 'off', at: '2030-01-02T03:04:05.678Z' } },
+      prefix: { hash: sha256Hex(config.core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
+    }] }));
+    const found = await guardCheck(deps);
+    expect(found?.level).toBe('warn');
+    expect(found?.text).toContain('0 off; 0 with H');
+    expect(found?.text).toContain(file === 'local'
+      ? guardConfigWords.fixedKey(files.localConfig, 'guards', id)
+      : guardConfigWords.fixedKey(files.config, 'shared_guards', id));
+    expect(found?.text).not.toContain('not settable');
   });
 
   it('warns when only the setup acceptance rule is absent', async () => {

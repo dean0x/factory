@@ -2453,6 +2453,11 @@ export const guardConfigWords = {
   localComment: 'The local value of this guard.',
   sharedComment: 'This guard stays on on every machine.',
   droppedRetired: (ids: readonly string[]): string => `Removed retired guard ids: ${ids.join(', ')}.`,
+  /** The warning for a key of a fixed guard: the load keeps the key and ignores its value. */
+  fixedKey: (file: string, key: string, id: string): string =>
+    `${file}: ${key}.${id}: ${id} is a fixed guard with no setting, so ${program} ignores the value. Run "${commandText(commands.upgrade)}" to remove the key.`,
+  /** The upgrade line for the keys of fixed guards that the rewrite of one file removes. */
+  droppedFixed: (file: string, paths: readonly string[]): string => `${file}: remove ${paths.join(', ')}, because a fixed guard has no setting.`,
 } as const;
 
 /** The guard store has its own schema, keys and bounds, apart from approval records. */

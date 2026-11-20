@@ -1393,7 +1393,7 @@ Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and i
 | The local file, `factory.local.yaml` | The facts of the owner and this machine. |
 | The recipe | The guard definitions and rows for its kind of work. |
 
-**Config keys.** The local key `guards` in `factory.local.yaml` accepts `on` or `off` for each known guard id. The shared key `shared_guards` in `factory.yaml` accepts `on` only. A shared `on` keeps the guard on even when the local value is `off`. An unknown or retired id is refused. The message names the id and `factory guard list`.
+**Config keys.** The local key `guards` in `factory.local.yaml` accepts `on` or `off` for each known guard id. The shared key `shared_guards` in `factory.yaml` accepts `on` only. A shared `on` keeps the guard on even when the local value is `off`. An unknown or retired id is refused. The message names the id and `factory guard list`. A key of a fixed guard has no setting: the load accepts it, `guard list` and `doctor` warn about it, every read keeps the guard on, and `upgrade` removes the key. `guard set` refuses the id as an unknown id.
 
 A missing key means `on`. New nodes and existing nodes with no guard keys keep every guard on. `init` writes no guard value. Config splits and upgrade rewrites keep guard values. Related config keys keep their own meaning; a related key is not a guard key.
 

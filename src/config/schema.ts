@@ -430,16 +430,33 @@ const olderLayoutPaths = (raw: unknown): readonly (readonly string[])[] => {
   ];
 };
 
-/** Check guard ids against the entry without a call into any guard value rule. A fixed guard has no key, so its id is unknown here. */
+/**
+ * Check guard ids against the entry without a call into any guard value rule. A key of a fixed guard is no issue: an earlier version
+ * accepted it, so the load keeps it with a warning (`fixedGuardKeyWarnings`), and no read gives its value.
+ */
 const guardIdIssues = (
   values: GuardValues,
   known: readonly Guard[],
   key: typeof guardKeys.local | typeof guardKeys.shared,
 ): readonly z.core.$ZodIssue[] => {
-  const ids = new Set(known.filter((guard) => !guard.fixed).map((guard) => guard.id));
+  const ids = new Set(known.map((guard) => guard.id));
   return Object.keys(values)
     .filter((id) => !ids.has(id) || retiredGuardIds.includes(id))
     .map((id) => customIssue([key, id], guardSetWords.unknownId(id)));
+};
+
+/**
+ * One warning for each key of a fixed guard in the two guard maps. A fixed guard has no setting and is never wired, so every read of
+ * the guard values keeps it on, also with an off value and a matching owner record. `factory upgrade` removes the keys.
+ */
+export const fixedGuardKeyWarnings = (config: FactoryConfig): readonly string[] => {
+  const fixed = guardsFor(config.entry).filter((guard) => guard.fixed).map((guard) => guard.id);
+  const warningsOf = (values: GuardValues, file: string, key: string): readonly string[] =>
+    Object.keys(values).filter((id) => fixed.includes(id)).map((id) => guardConfigWords.fixedKey(file, key, id));
+  return [
+    ...warningsOf(config.core.guards, files.localConfig, guardKeys.local),
+    ...warningsOf(config.core.shared_guards, files.config, guardKeys.shared),
+  ];
 };
 
 /**

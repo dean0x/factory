@@ -14,9 +14,10 @@ import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
 import { fileSteps, rootMoves, type BlockRename, type FileStep, type RootMove } from '../migrate/files.js';
 import { isRecord, type SchemaParser, type TextParser, type VersionSpec } from '../migrate/inspect.js';
-import { retiredGuardIds } from '../guards/registry.js';
+import { removeGuardKeysText } from '../config/edit.js';
+import { guardsFor, retiredGuardIds } from '../guards/registry.js';
 import type { GuardValues } from '../guards/types.js';
-import { guardConfigWords, guardKeys } from '../names.js';
+import { files, guardConfigWords, guardKeys } from '../names.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
 import { jsonText } from '../state/files.js';
@@ -33,8 +34,13 @@ export interface UpgradeFile {
   readonly migrations: readonly Migration[];
   /** Check a value against the schema, and give the new text of the file. */
   finish(raw: unknown): CliResult<string>;
-  /** Notices about values that the finisher removes from the raw file. */
+  /**
+   * Notices about values that the finisher removes from the raw file. A current file with a notice is written again with no
+   * migration step.
+   */
   notices?(raw: unknown): readonly string[];
+  /** The step of `finish` that removes values, on the text of a file that people edit: its comments and key order stay. */
+  finishText?(text: string): CliResult<string>;
 }
 
 /** The managed blocks of one node, and the key of the queue in its board file: the recipe of the config gives both. */
@@ -85,24 +91,44 @@ export const finisher =
     return parsed.success ? ok(render(parsed.data)) : failure(describeIssues(parsed.error));
   };
 
-/** The local finisher removes only retired ids. Each other value still goes through the local schema. */
-export const localFinisher = (retired: readonly string[] = retiredGuardIds): Required<Pick<UpgradeFile, 'finish' | 'notices'>> => {
+/** The ids of the guard map under `key` of a raw file that `drop` names. */
+const idsIn = (raw: unknown, key: string, drop: readonly string[]): readonly string[] => {
+  const values = isRecord(raw) ? raw[key] : undefined;
+  return isRecord(values) ? Object.keys(values).filter((id) => drop.includes(id)) : [];
+};
+
+/** The raw file with no id of `drop` in the guard map under `key`. A raw file of another form stays, so the schema refuses it. */
+const withoutIds = (raw: unknown, key: string, drop: readonly string[]): unknown => {
+  const values = isRecord(raw) ? raw[key] : undefined;
+  if (!isRecord(raw) || !isRecord(values)) return raw;
+  return { ...raw, [key]: Object.fromEntries(Object.entries(values).filter(([id]) => !drop.includes(id))) };
+};
+
+/** The upgrade line for the keys of fixed guards in one file, or none. */
+const fixedNotices = (raw: unknown, file: string, key: string, fixed: readonly string[]): readonly string[] => {
+  const found = idsIn(raw, key, fixed);
+  return found.length === 0 ? [] : [guardConfigWords.droppedFixed(file, found.map((id) => `${key}.${id}`))];
+};
+
+/** The fixed guards of the recipes of a registry. A fixed guard has no setting, so the upgrade removes a key of one. */
+const fixedIdsOf = (registry: RecipeRegistry): readonly string[] => [
+  ...new Set(registry.flatMap((entry) => guardsFor(entry).filter((guard) => guard.fixed).map((guard) => guard.id))),
+];
+
+/** The local finisher removes only retired ids and the keys of fixed guards. Each other value still goes through the local schema. */
+export const localFinisher = (
+  retired: readonly string[] = retiredGuardIds,
+  fixed: readonly string[] = [],
+): Required<Pick<UpgradeFile, 'finish' | 'notices'>> => {
   const finish = finisher(localConfigSchema, renderLocalConfig);
-  const retiredIn = (raw: unknown): readonly string[] => {
-    const values = isRecord(raw) ? raw[guardKeys.local] : undefined;
-    return isRecord(values) ? Object.keys(values).filter((id) => retired.includes(id)) : [];
-  };
   return {
-    finish: (raw) => {
-      if (!isRecord(raw)) return finish(raw);
-      const values = raw[guardKeys.local];
-      if (!isRecord(values)) return finish(raw);
-      const kept = Object.fromEntries(Object.entries(values).filter(([id]) => !retired.includes(id)));
-      return finish({ ...raw, [guardKeys.local]: kept });
-    },
+    finish: (raw) => finish(withoutIds(raw, guardKeys.local, [...retired, ...fixed])),
     notices: (raw) => {
-      const removed = retiredIn(raw);
-      return removed.length === 0 ? [] : [guardConfigWords.droppedRetired(removed)];
+      const removed = idsIn(raw, guardKeys.local, retired);
+      return [
+        ...(removed.length === 0 ? [] : [guardConfigWords.droppedRetired(removed)]),
+        ...fixedNotices(raw, files.localConfig, guardKeys.local, fixed),
+      ];
     },
   };
 };
@@ -133,19 +159,33 @@ const sharedPartSchema = (registry: RecipeRegistry): SchemaParser<SharedConfig> 
   return { safeParse: (raw) => schema.safeParse(splitConfigValue(raw).shared) };
 };
 
+/** The shared finisher removes only the keys of fixed guards, on the value and on the text. */
+const sharedFinisher = (registry: RecipeRegistry): Required<Pick<UpgradeFile, 'finish' | 'notices' | 'finishText'>> => {
+  const finish = finisher(sharedPartSchema(registry), renderSharedConfig);
+  const fixed = fixedIdsOf(registry);
+  return {
+    finish: (raw) => finish(withoutIds(raw, guardKeys.shared, fixed)),
+    notices: (raw) => fixedNotices(raw, files.config, guardKeys.shared, fixed),
+    finishText: (text) => {
+      const edited = removeGuardKeysText(text, guardKeys.shared, fixed);
+      return edited.ok ? edited : failure(edited.error);
+    },
+  };
+};
+
 /** How `upgrade` handles the files of a node. The registry sets the recipes that the shared file can name. */
 export const specFor = (registry: RecipeRegistry): UpgradeSpec => ({
   config: {
     spec: sharedSpecFor(registry),
     parse: parseYamlText,
     migrations: configMigrations,
-    finish: finisher(sharedPartSchema(registry), renderSharedConfig),
+    ...sharedFinisher(registry),
   },
   local: {
     spec: LOCAL_SPEC,
     parse: parseYamlText,
     migrations: [],
-    ...localFinisher(),
+    ...localFinisher(retiredGuardIds, fixedIdsOf(registry)),
   },
   state: {
     spec: STATE_SPEC,

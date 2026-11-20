@@ -6,7 +6,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { guardRowsFor, guardsFor } from '../../src/guards/registry.js';
 import { guardOf } from '../../src/guards/build.js';
 import type { Guard } from '../../src/guards/types.js';
-import { dirs, files, guardIds, guardListWords, schemaIds } from '../../src/names.js';
+import { dirs, files, guardConfigWords, guardIds, guardListWords, schemaIds } from '../../src/names.js';
 import { recipes, type RecipeEntry, type RecipeRegistry } from '../../src/recipes/index.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { publishRecipe, twoRecipeRegistry } from '../helpers/publish-recipe.js';
@@ -294,6 +294,22 @@ describe('guard list', () => {
         guardRowsFor(recipes[0]).filter((item) => item.guard === id).map((item) => `${guardListWords.fixed} ${item.kind}`),
       );
     }
+  });
+
+  it.each([
+    ['the local file, with the value off and a matching record', 'guards', files.localConfig],
+    ['the shared file', 'shared_guards', files.config],
+  ] as const)('shows a fixed guard as on and warns for its key in %s', async (_name, key, file) => {
+    const config = sampleConfig();
+    const id = guardIds.cloneRules;
+    const deps = make({ ...config, core: { ...config.core, ...(key === 'guards' ? { guards: { [id]: 'off' } } : { shared_guards: { [id]: 'on' } }) } });
+    seedRecord(deps, { [id]: 'off' });
+    const result = await run(deps, ['--all']);
+    const lines = linesOf(result.out);
+    expect(result.code).toBe(0);
+    expect(rowCells(lines[0] ?? '', lines.find((line) => line.startsWith(`${id} `)) ?? '')).toEqual([id, 'on', 'on', '', guardListWords.fixed]);
+    expect(lines.at(-1)).toBe(guardListWords.countLine(0, guardsFor(recipes[0]).length, 0));
+    expect(result.err).toContain(guardConfigWords.fixedKey(file, key, id));
   });
 
   it('caps the rows of a large family and names the rest in a more line', async () => {

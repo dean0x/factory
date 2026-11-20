@@ -16,7 +16,7 @@ import { probeChildren } from '../comms/children.js';
 import { fileTransport } from '../comms/transport.js';
 import { inspectConfig, localFileAccess, readNodeIdentity, wideModeNote } from '../config/load.js';
 import { folderKey } from '../config/primitives.js';
-import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
+import { CONFIG_SCHEMA_VERSION, fixedGuardKeyWarnings, type FactoryConfig } from '../config/schema.js';
 import { withGuards, type Deps } from '../core/deps.js';
 import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { guardStorePathOf, type GuardReadState } from '../core/guard-records.js';
@@ -929,8 +929,9 @@ const checkGuards = async (
   if (isRecord(config.raw) && !Object.hasOwn(config.raw, guardKeys.local)) parts.push(guardDoctorWords.noKey);
   for (const guard of state.unmatched) warnings.push(`${guardStartWords.unmatched(guard)}: run "${commandText(commandLines.guardSet)} ${guard} on"`);
   for (const guard of definitions) {
-    if (!guard.wired && config.value.core.guards[guard.id] === 'off') warnings.push(guardDoctorWords.unsettableOff(guard.id));
+    if (!guard.wired && !guard.fixed && config.value.core.guards[guard.id] === 'off') warnings.push(guardDoctorWords.unsettableOff(guard.id));
   }
+  warnings.push(...fixedGuardKeyWarnings(config.value));
   const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
   if (state.recordCount !== null) {
     parts.push(guardDoctorWords.recordCount(state.recordCount));

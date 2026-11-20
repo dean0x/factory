@@ -86,11 +86,17 @@ const CHANGING: readonly BlockAction[] = ['update', 'render', 'replace', 'add'];
 
 export const isChange = (plan: BlockPlan): boolean => CHANGING.includes(plan.action);
 
+/**
+ * The plan of one versioned file. A current file that holds a value that its finisher removes (a notice of `file.notices`) is
+ * written again: the plan migrates it to its own version with no step.
+ */
 export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Promise<CliResult<FilePlan>> => {
   const state = await inspectFile(deps, path, file.parse, file.spec);
   switch (state.kind) {
     case 'valid':
-      return ok({ kind: 'current', version: state.version, raw: state.raw });
+      return ok((file.notices?.(state.raw) ?? []).length === 0
+        ? { kind: 'current', version: state.version, raw: state.raw }
+        : { kind: 'migrate', from: state.version, to: state.version, steps: [], raw: state.raw });
     case 'older': {
       const steps = planMigrations(state.version, file.spec.supported, file.migrations);
       if (!steps.ok) return failure(`${file.spec.file}: ${steps.error.message}`);
@@ -550,16 +556,20 @@ export const planLines = (
   blocks: readonly BlockPlan[],
   upgrade: UpgradeSpec,
 ): OutLine[] => {
+  const currentLine = (file: UpgradeFile, version: number): OutLine =>
+    ({ level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${version} is current` });
+  // A plan with no step keeps the version: the notice of the finisher names what changes.
   const fileLine = (plan: LocalPlan, file: UpgradeFile): OutLine => {
     switch (plan.kind) {
       case 'current':
-        return { level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${plan.version} is current` };
+        return currentLine(file, plan.version);
       case 'create':
         return {
           level: 'text',
           text: `${file.spec.file}: new file, with mode 600, from the local keys of ${upgrade.config.spec.file}`,
         };
       case 'migrate':
+        if (plan.steps.length === 0) return currentLine(file, plan.to);
         return {
           level: 'text',
           text: `${file.spec.file}: ${file.spec.key} ${plan.from} to ${plan.to} (${plan.steps.length} ${plan.steps.length === 1 ? 'step' : 'steps'})`,

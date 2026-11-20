@@ -14,7 +14,8 @@ import { isRecord } from '../../src/migrate/inspect.js';
 import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
 import {
-  boardKeys, commands, commandText, env, guardIds, guardRecordWords, hookNames, roleText, setupBlockNames, stateGuard, stateLock,
+  boardKeys, commands, commandText, env, files, guardConfigWords, guardIds, guardRecordWords, hookNames, roleText, setupBlockNames, stateGuard,
+  stateLock,
 } from '../../src/names.js';
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
@@ -540,6 +541,38 @@ describe('upgrade: effective guard values', () => {
     ]);
     expect(parseYamlText(text(deps, LOCAL))).toMatchObject({ ok: true, value: { guards: { 'install-rules': 'off' } } });
     expect(text(deps, LOCAL)).not.toContain('retired-fixture-guard');
+  });
+
+  describe('a key of a fixed guard that the owner wrote by hand', () => {
+    const id = guardIds.cloneRules;
+    const cases = [
+      ['the local file', LOCAL, `guards: {${id}: off, install-rules: off}`, guardConfigWords.droppedFixed(files.localConfig, [`guards.${id}`])],
+      ['the shared file', CONFIG, `shared_guards: {${id}: on, install-rules: on}`, guardConfigWords.droppedFixed(files.config, [`shared_guards.${id}`])],
+    ] as const;
+
+    it.each(cases)('removes the key from %s with one notice, keeps the other values and comments, and leaves nothing to upgrade', async (_name, path, line, notice) => {
+      const { deps } = await makeNode();
+      const comments = text(deps, path).split('\n').filter((entry) => entry.trimStart().startsWith('#'));
+      deps.seed(path, `${text(deps, path)}\n${line}\n`);
+      const output = success(await upgrade(deps));
+      expect(lineTexts(output).filter((entry) => entry === notice)).toHaveLength(1);
+      expect(notice).toBe(path === LOCAL
+        ? `factory.local.yaml: remove guards.${id}, because a fixed guard has no setting.`
+        : `factory.yaml: remove shared_guards.${id}, because a fixed guard has no setting.`);
+      expect(text(deps, path)).not.toContain(id);
+      expect(text(deps, path)).toContain('install-rules');
+      if (path === CONFIG) for (const comment of comments) expect(text(deps, path)).toContain(comment);
+      expect(lineTexts(success(await upgrade(deps)))).toContain('Nothing to upgrade.');
+    });
+
+    it.each(cases)('names the removal from %s in a dry run and changes no file', async (_name, path, line, notice) => {
+      const { deps } = await makeNode();
+      deps.seed(path, `${text(deps, path)}\n${line}\n`);
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(lineTexts(output)).toEqual(expect.arrayContaining([notice, 'Dry run: no file was changed.']));
+      expect(snapshot(deps)).toEqual(before);
+    });
   });
 
   describe('a guard record whose root differs from the factory folder only in letter case', () => {

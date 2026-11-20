@@ -6,7 +6,7 @@ import type { Deps } from '../../src/core/deps.js';
 import { readGuardState, readGuardStore, recordGuards, recordPrefix } from '../../src/core/guard-records.js';
 import { ok } from '../../src/core/result.js';
 import { guardsFor } from '../../src/guards/registry.js';
-import { env, files, guardIds, guardRecords, guardRecordWords } from '../../src/names.js';
+import { env, files, guardIds, guardRecords, guardRecordWords, guardSetWords } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { softwareGuardIds } from '../../src/recipes/software/guard-parts.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeOptions } from '../helpers/fake-deps.js';
@@ -87,6 +87,25 @@ describe('the guard command channel', () => {
       expect(deps.files).toEqual(before);
     });
   }
+});
+
+describe('guard set with a key of a fixed guard that the owner wrote by hand', () => {
+  const sample = sampleConfig();
+  const id = guardIds.cloneRules;
+  it.each([
+    ['the local file', { ...sample, core: { ...sample.core, guards: { [id]: 'off' as const } } }],
+    ['the shared file', { ...sample, core: { ...sample.core, shared_guards: { [id]: 'on' as const } } }],
+  ])('refuses the id with exit 2 and the list command, and leaves it out of --all: %s', async (_name, config) => {
+    const deps = fixture({}, config);
+    const refused = await run(deps, ['set', id, 'on']);
+    expect(refused.code).toBe(2);
+    expect(refused.err).toContain(guardSetWords.unknownId(id));
+    const all = await run(deps, ['set', '--all', 'off']);
+    expect(all.code).toBe(0);
+    const stored = await readGuardStore(deps, STORE);
+    expect(stored.ok ? Object.keys(stored.value[0]?.values ?? {}).sort() : null).toEqual(wired.map((guard) => guard.id).sort());
+    expect((await state(deps))?.values[id]).toBe('on');
+  });
 });
 
 describe('guard set writes', () => {

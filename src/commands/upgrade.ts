@@ -465,6 +465,12 @@ export const runUpgrade = async (
     if (!raw.ok) return raw;
     localNotices = upgrade.local.notices(local.value.kind === 'create' ? upgrade.localPartOf(raw.value) : raw.value);
   }
+  let configNotices: readonly string[] = [];
+  if (configText.value !== null && upgrade.config.notices !== undefined) {
+    const raw = migratedFile(config.value, upgrade.config);
+    if (!raw.ok) return raw;
+    configNotices = upgrade.config.notices(raw.value);
+  }
 
   // A role text above the cap is a warning only: the run writes its files, and a worker refuses the text until it is shorter.
   const roleSizeWarning = roleTextSizeWarning(blockSet.value.templates, commandText(commands.upgrade), allOnPackage);
@@ -477,7 +483,7 @@ export const runUpgrade = async (
     ...recordLines,
     ...planLines(config.value, local.value, state.value, files, stateGitignore.value, boardKey.value, guard.value, root.value, blocks, upgrade),
     ...resumeLines(changes),
-    ...localNotices.map((text): OutLine => ({ level: 'ok', text })),
+    ...[...localNotices, ...configNotices].map((text): OutLine => ({ level: 'ok', text })),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
     ...setup.value.warnings.map((text): OutLine => ({ level: 'warn', text })),
     ...roleSizeWarnings.map((text): OutLine => ({ level: 'warn', text })),
