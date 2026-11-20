@@ -14,7 +14,8 @@ import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
 import {
-  activeMachine, commands, env, files, guardIds, guardStartWords, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles,
+  activeMachine, commands, env, files, guardConfigWords, guardIds, guardStartWords, hookNames, schemaIds, stateGuard, stateLock, tmuxNames,
+  trackedFiles,
 } from '../../src/names.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
@@ -522,6 +523,19 @@ describe('start:the delete guard of the state repo', () => {
       .map((call) => withoutStateWords(call.args).slice(2).join(' '))
       .filter((command) => command.includes('core.hooksPath') || command.startsWith('rev-parse --absolute-git-dir'));
     expect(guardReads).toEqual([]);
+  });
+});
+
+describe('start:a key of a fixed guard', () => {
+  it.each([
+    ['the local file', { guards: { [guardIds.cloneRules]: 'off' } }, guardConfigWords.fixedKey(files.localConfig, 'guards', guardIds.cloneRules)],
+    ['the shared file', { shared_guards: { [guardIds.cloneRules]: 'on' } }, guardConfigWords.fixedKey(files.config, 'shared_guards', guardIds.cloneRules)],
+  ] as const)('prints the warning of the key in %s once, and starts the session', async (_file, keys, warning) => {
+    const config = sampleConfig();
+    const { deps, tmux } = make({ config: { ...config, core: { ...config.core, ...keys } } });
+    await succeeded(deps);
+    expect(deps.warned.filter((line) => line === warning)).toHaveLength(1);
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(true);
   });
 });
 

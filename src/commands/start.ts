@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
-import type { FactoryConfig } from '../config/schema.js';
+import { fixedGuardKeyWarnings, type FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, noConsentRemedy, ownDenyRulesOf, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
 import type { AttachedEnd, Deps } from '../core/deps.js';
 import type { GuardReadState } from '../core/guard-records.js';
@@ -569,6 +569,8 @@ export const runStart = async (
   if (!notes.ok) return notes;
   // One read of the guard values serves the summary, the render and every step of the run that acts on a guard.
   const { deps, state: guards } = await guardReadOf(base, home, loaded.value, 'always');
+  // A key of a fixed guard changes no value, so it is one warning line for each key: the run goes on with the guard on.
+  for (const warning of fixedGuardKeyWarnings(loaded.value)) deps.warn(warning);
 
   // The root checks come before the tool check, the proxy health request and any launch, also in a dry run. A warning is
   // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.
