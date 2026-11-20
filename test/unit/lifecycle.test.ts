@@ -1719,6 +1719,20 @@ describe.each(['own', 'received'] as const)('restart in an %s root: the guard of
   });
 });
 
+describe.each(FOLDER_ORIGINS)('reboot in %s: the guard of the proxy', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.proxy))('stops nothing and exits 1 for proxies that do not answer only while the guard counts as on, and else starts each worker with its own proxy: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const made = await make({ origin, config: withGuardsOff(withWorkerProxy(), off), fetch: () => failure('no answer') });
+    if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+    const sink = captureSink();
+    expect(await runCli(['reboot', '--home', HOME], made.deps, sink), sink.errors.join('')).toBe(on ? 1 : 0);
+    expect(made.deps.fetched.length > 0).toBe(on);
+    expect(countOf(made, 'new-session') > 0).toBe(!on);
+    if (on) expectNothingStopped(made);
+    else expect(baseUrlsOf(made)).toEqual({ alpha: PROXY_URL, beta: SECOND_PROXY_URL, gamma: PROXY_URL });
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('shutdown and restart in %s: the guard of the pane safety', (_title, origin) => {
   const guarded = async (setup: GuardedSetup, change: Setup = {}): Promise<Made> => {
     const off = setup.off ?? [];
