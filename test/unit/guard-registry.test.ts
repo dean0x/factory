@@ -1025,11 +1025,11 @@ describe('the rows of the registry', () => {
     const paths = [...new Set(rows.flatMap((row) => row.sites.map((site) => site.path)))];
     const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
     expect(rows.length).toBeGreaterThan(0);
-    const reads = rows.flatMap((row) => {
-      const texts = sourceScan.declarationTextsOf(sources, row.sites);
-      return row.sites.filter((_site, index) => texts[index] === null || texts[index]?.includes(idNameOf(row.guard)) === true)
-        .map((site) => `${row.id} ${site.path} ${site.symbol}`);
-    });
+    // One parse of the files for all sites: a parse for each row takes more time than the test limit on a slow machine.
+    const rowSites = rows.flatMap((row) => row.sites.map((site) => ({ row, site })));
+    const texts = sourceScan.declarationTextsOf(sources, rowSites.map(({ site }) => site));
+    const reads = rowSites.filter(({ row }, index) => texts[index] === null || texts[index]?.includes(idNameOf(row.guard)) === true)
+      .map(({ row, site }) => `${row.id} ${site.path} ${site.symbol}`);
     expect(reads).toEqual([]);
   });
 
