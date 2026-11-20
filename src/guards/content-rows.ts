@@ -48,21 +48,21 @@ const rootScanRows: readonly GuardRow[] = [
     id: 'local-files-not-tracked',
     guard: guardIds.rootScan,
     name: `A scan stops when git tracks the local config, the state folder, the folder of the ${coordinator} or a clone folder, so personal values and clones do not go out with a push`,
-    applies: `${commands.start}, ${commands.upgrade} and doctor`,
+    applies: `${commands.start} and doctor`,
     harm: true,
-    sites: [
-      ...at('src/commands/root-content.ts', 'scanRepo'),
-      ...at('src/core/root-paths.ts', 'trackedProblems', 'describeTrackedProblems'),
-      ...at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
-    ],
+    sites: [...at('src/commands/root-content.ts', 'scanRepo'), ...at('src/core/root-paths.ts', 'trackedProblems', 'describeTrackedProblems')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'received-tracked-links',
     guard: guardIds.rootScan,
     name: `A received ${folder} that tracks a link fails the scan, so no read or write leaves the ${folder} through a link`,
-    applies: `Scan of a received ${folder}`,
+    applies: `Scan of a received ${folder} and ${commands.upgrade}`,
     harm: true,
-    sites: [...at('src/commands/root-content.ts', 'scanRepo'), ...at('src/core/root-paths.ts', 'requireNoTrackedLinks')],
+    sites: [
+      ...at('src/commands/root-content.ts', 'trackedLinkFinding'),
+      ...at('src/core/root-paths.ts', 'requireNoTrackedLinks'),
+      ...at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
+    ],
   }),
   codeRow({
     id: 'other-ignore-rules-warning',

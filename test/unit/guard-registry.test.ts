@@ -97,6 +97,8 @@ const workCopyReason = 'Reaches judgeSettings, which uses the guard value for op
 const tokenTestReason = 'A pure test of one text, which the hidden error keys and the task file check share; scanTrackedTexts reads the value and drops its token finding while the guard is off.';
 /** The reason of the scan and the text of the instruction file warning, which every caller runs only while the guard is on. */
 const instructionReason = 'A scan or a text of the warning; warnInstructionFiles, instructionWarnings and checkInstructionFiles read the value and skip it while the guard is off.';
+/** The reason of the pure tracked path helpers, which the checks of init of a received folder share. */
+const trackedProblemReason = 'A pure helper that the checks of init of a received folder share; scanRepo reads the value and lists no problem while the guard is off.';
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -153,6 +155,8 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'settings-write-changed', path: 'src/core/claude-settings.ts', symbol: 'ensureHookSettings', reason: 'Calls askConsent and planAfterConsent, which read the value.' },
   { row: 'instruction-files-warning', path: 'src/core/instruction-files.ts', symbol: 'scanInstructionFiles', reason: instructionReason },
   { row: 'instruction-files-warning', path: 'src/core/instruction-files.ts', symbol: 'instructionFileWarnings', reason: instructionReason },
+  { row: 'local-files-not-tracked', path: 'src/core/root-paths.ts', symbol: 'trackedProblems', reason: trackedProblemReason },
+  { row: 'local-files-not-tracked', path: 'src/core/root-paths.ts', symbol: 'describeTrackedProblems', reason: trackedProblemReason },
 ];
 
 const software = {
@@ -256,7 +260,7 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.folderTrust, guardIds.gitSafety,
-      guardIds.resumeRoutines, guardIds.secrets, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.resumeRoutines, guardIds.rootScan, guardIds.secrets, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 
@@ -926,7 +930,7 @@ describe('the rows of the registry', () => {
       'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],
       'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-default-branch'],
-      'root-scan': ['root-scan-clean', 'ignore-lists', 'ignored-check-fails-closed'],
+      'root-scan': ['root-scan-clean', 'ignore-lists', 'ignored-check-fails-closed', 'received-tracked-links'],
       'safety-block': ['role-block-render', 'safety-block-insert'],
       secrets: ['token-keys-hidden', 'credential-strip', 'printable-output'],
       'setup-text': [

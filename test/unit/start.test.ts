@@ -1084,6 +1084,22 @@ describe.each(FOLDER_ORIGINS)('start in %s: the guard of folder trust', (_folder
   });
 });
 
+describe.each(FOLDER_ORIGINS)('start in %s: the stop of the scan of the folder', (_folder, origin) => {
+  it.each([
+    ['every guard on: a local config that git does not ignore stops', [], false, 4],
+    ['the scan guard off: a local config that git does not ignore does not stop', [guardIds.rootScan], false, 0],
+    ['the scan guard off: a fault of the settings check that is on still stops', [guardIds.rootScan], true, 4],
+    ['the scan guard and the settings check off: neither fault stops', [guardIds.rootScan, guardIds.settingsCheck], true, 0],
+  ] as const)('%s', async (_name, off, settingsFault, code) => {
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config, ignored: [] });
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    if (settingsFault) deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { FACTORY_ANYTHING: '1' } }));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(code);
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('start in %s: the path checks of the guard of the Claude Code settings write', (_folder, origin) => {
   const CHANGED = JSON.stringify({ model: 'opus', statusLine: { type: 'command', command: 'my-line' } });
 

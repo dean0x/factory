@@ -190,7 +190,8 @@ const listTracked = async (deps: Deps, home: string): Promise<CliResult<TrackedL
 
 /**
  * The ignore rules. The local file and the state folder are a stop, also when git can not answer for them: a check that
- * did not finish is no pass. The other folders give one warning, also when git can not answer for them.
+ * did not finish is no pass. The other folders give one warning, also when git can not answer for them. While the guard of
+ * the scan is off, the check does not run.
  */
 const scanIgnoreRules = async (
   deps: Deps,
@@ -198,6 +199,7 @@ const scanIgnoreRules = async (
   tracked: readonly string[],
   projectPaths: readonly string[],
 ): Promise<readonly RootFinding[]> => {
+  if (!(await guardOn(deps, guardIds.rootScan, home))) return [];
   const id = checkIds.rootRepo;
   const probes = ignoreProbesOf(projectPaths);
   const required = [
@@ -260,6 +262,12 @@ const setupScanOf = (check: SetupCheck): SetupScan => ({
       : finding(checkIds.rootRepo, 'fail', check.stop.text, check.stop.remedy),
 });
 
+/** The stop for a link that a received root tracks. It runs with every guard value: no read or write goes through a link. */
+const trackedLinkFinding = async (deps: Deps, home: string, set: readonly string[]): Promise<RootFinding | null> => {
+  const linked = await requireNoTrackedLinks(deps, home, set);
+  return linked.ok ? null : failureFrom(checkIds.rootRepo, linked.error, `Replace the link with a plain file, then ${doctorAgain}.`);
+};
+
 const scanRepo = async (
   deps: Deps,
   home: string,
@@ -295,19 +303,15 @@ const scanRepo = async (
   }
 
   const set = trackedSetOf(tracked);
-  let linkStop = false;
-  if (received && !capStop) {
-    const linked = await requireNoTrackedLinks(deps, home, set);
-    if (!linked.ok) {
-      linkStop = true;
-      findings.push(failureFrom(id, linked.error, `Replace the link with a plain file, then ${doctorAgain}.`));
-    }
-  }
+  const linkStop = received && !capStop ? await trackedLinkFinding(deps, home, set) : null;
+  if (linkStop !== null) findings.push(linkStop);
 
-  const problems = trackedProblems(tracked, projectPaths);
+  // The checks of the tracked paths follow the guard of the scan. The cap and the link stop above run with every value.
+  const checked = await guardOn(deps, guardIds.rootScan, home);
+  const problems = checked ? trackedProblems(tracked, projectPaths) : [];
   const stops = problems.filter((problem) => problem.kind !== 'clone' || received);
   const clones = problems.filter((problem) => problem.kind === 'clone' && !received);
-  const workCopies = trackedUnder(tracked, dirs.workCopies);
+  const workCopies = checked ? trackedUnder(tracked, dirs.workCopies) : [];
   if (stops.length > 0) {
     findings.push(finding(id, 'fail', `the git repo of the ${places.folder} tracks files that must stay on this machine: ${describeTrackedProblems(stops)}`, REMOVE_REMEDY));
   }
@@ -324,7 +328,7 @@ const scanRepo = async (
       ),
     );
   }
-  if (!received) {
+  if (!received && checked) {
     const covered = new Set([...problems.map((problem) => problem.path), ...workCopies]);
     const shared = tracked.filter((path) => !covered.has(path) && (isInstructionPath(path) || isClaudeSettingsPath(path)));
     if (shared.length > 0) {
@@ -341,11 +345,11 @@ const scanRepo = async (
 
   findings.push(...(await scanIgnoreRules(deps, home, tracked, projectPaths)));
   let setup: SetupScan | null = null;
-  if (received && !capStop && !linkStop && stops.length === 0) {
+  if (received && !capStop && linkStop === null && stops.length === 0) {
     setup = setupScanOf(await checkSetupSet(deps, { home, set, node: config?.core.node.id ?? null, received }));
     if (setup.finding !== null) findings.push(setup.finding);
   }
-  return { findings, tracked, capped: list.reachedCap, setup, skippedBy: null };
+  return { findings, tracked, capped: list.reachedCap, setup, skippedBy: checked ? null : guardIds.rootScan };
 };
 
 // ---- The tracked text files: tokens, file URLs and user folder paths ----
@@ -357,7 +361,8 @@ const named = (paths: readonly string[], one: string, many: string): string =>
  * The scan of the tracked text files (design 4.4). It reads at most `caps.maxCount` files and at most `caps.maxFileBytes`
  * bytes of one file, and it names every file that it did not read: a warning, never a gap in silence. A token is a failure
  * while the guard of secrets is on, and the finding names the files and never the value. A scan that finds no token reads no
- * guard value. A `file` URL and a user folder path are a warning.
+ * guard value. A `file` URL, a user folder path and a file that the scan did not read are a warning while the guard of the scan
+ * is on.
  */
 export const scanTrackedTexts = async (
   deps: Deps,
@@ -400,6 +405,9 @@ export const scanTrackedTexts = async (
     if (text.value.toLowerCase().includes(address.scheme) || USER_FOLDER_PATH.test(text.value)) withAddress.push(shown);
   }
   const tokens = withToken.length > 0 && (await guardOn(deps, guardIds.secrets, home)) ? withToken : [];
+  const warned = (withAddress.length > 0 || unread.length > 0) && (await guardOn(deps, guardIds.rootScan, home));
+  const addresses = warned ? withAddress : [];
+  const skipped = warned ? unread : [];
   return [
     ...(tokens.length === 0
       ? []
@@ -411,23 +419,23 @@ export const scanTrackedTexts = async (
             `Remove the value from the file, put it in ${files.localConfig}, then ${doctorAgain}.`,
           ),
         ]),
-    ...(withAddress.length === 0
+    ...(addresses.length === 0
       ? []
       : [
           finding(
             id,
             'warn',
-            `${named(withAddress, 'holds', 'hold')} a file URL or a user folder path, which does not work on another machine`,
+            `${named(addresses, 'holds', 'hold')} a file URL or a user folder path, which does not work on another machine`,
             'Use an address that a host serves, or a path inside the folder, or keep it on purpose.',
           ),
         ]),
-    ...(unread.length === 0
+    ...(skipped.length === 0
       ? []
       : [
           finding(
             id,
             'warn',
-            `the scan for tokens did not read ${namedItems(unread)}`,
+            `the scan for tokens did not read ${namedItems(skipped)}`,
             'Check them by hand, or remove them from git with "git rm --cached".',
           ),
         ]),
@@ -940,6 +948,18 @@ const PERMISSION_ONLY_TEXT = guardDoctorWords.partlyChecked(
   guardIds.settingsCheck,
 );
 
+/** The ok texts of the root checks when the guard of the scan is off. */
+const REPO_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  `git lists the files that the ${places.folder} tracks`,
+  'the tracked and the ignored paths are',
+  guardIds.rootScan,
+);
+const FILES_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  'no tracked text file holds a token',
+  'the file URLs, the user folder paths and the files that the scan did not read are',
+  guardIds.rootScan,
+);
+
 const RESULT_ORDER = [checkIds.rootRepo, checkIds.rootFiles, checkIds.projectPaths, checkIds.permissionMode, checkIds.delegations];
 
 const resultOf = (scan: RootScan, id: string): RootCheckResult => {
@@ -956,7 +976,9 @@ const resultOf = (scan: RootScan, id: string): RootCheckResult => {
 /** The text of a check with no finding: it names the part that an off guard did not check. */
 const okTextOf = (scan: RootScan, id: string): string => {
   if (id === checkIds.permissionMode && !scan.settingsChecked) return PERMISSION_ONLY_TEXT;
-  if (id === checkIds.rootRepo && scan.skippedBy !== null) return guardDoctorWords.notChecked(scan.skippedBy);
+  if (scan.skippedBy === guardIds.rootScan && id === checkIds.rootRepo) return REPO_ONLY_TEXT;
+  if (scan.skippedBy === guardIds.rootScan && id === checkIds.rootFiles) return FILES_ONLY_TEXT;
+  if (scan.skippedBy !== null && id === checkIds.rootRepo) return guardDoctorWords.notChecked(scan.skippedBy);
   return OK_TEXT[id] ?? '';
 };
 

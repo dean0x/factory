@@ -150,10 +150,12 @@ const coreGuards: readonly GuardDefinition[] = [
       'A resume file and a standing routine stay inside the folders and the commands that they name.',
     ),
   ),
-  guardOf(
-    guardIds.rootScan,
-    'Scan of the folder',
-    `The scan of the ${folder} finds ignored and tracked files that could leak data or change the rules.`,
+  wiredGuard(
+    guardOf(
+      guardIds.rootScan,
+      'Scan of the folder',
+      `The scan of the ${folder} finds ignored and tracked files that could leak data or change the rules.`,
+    ),
   ),
   guardOf(
     guardIds.safetyBlock,
