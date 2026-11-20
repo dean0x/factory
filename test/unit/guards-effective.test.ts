@@ -16,7 +16,7 @@ import {
 import { countReadsOf } from '../helpers/read-count.js';
 import { sampleBoard, sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 
-const guards = guardsFor(softwareRecipe).map((guard): Guard => ({ ...guard, wired: true }));
+const guards = guardsFor(softwareRecipe).map((guard): Guard => ({ ...guard, wired: true, fixed: false }));
 const node = 'demo';
 const root = '/work/demo';
 const at = '2026-11-17T00:00:00.000Z';
@@ -64,6 +64,16 @@ describe('effective guard values', () => {
   it('keeps unwired guards on even with an off record', () => {
     expect(guardRulesOf(guards.map((guard) => ({ ...guard, wired: false })), { node, root, local, record })).toMatchObject({
       values: Object.fromEntries(guards.map(({ id }) => [id, 'on'])), unmatched: [], loosened: [],
+    });
+  });
+
+  it('keeps a fixed guard on by its fixed mark, also when it is marked wired and has an off value with a matching record', () => {
+    const fixed = guards.map((guard): Guard => ({ ...guard, fixed: true }));
+    expect(guardRulesOf(fixed, { node, root, local, record })).toMatchObject({
+      values: Object.fromEntries(guards.map(({ id }) => [id, 'on'])),
+      sources: Object.fromEntries(guards.map(({ id }) => [id, 'missing'])),
+      unmatched: [],
+      loosened: [],
     });
   });
 

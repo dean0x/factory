@@ -13,7 +13,7 @@ import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
-import { isGuardOn } from '../guards/effective.js';
+import { isGuardOn, isSettable } from '../guards/effective.js';
 import { guardsFor } from '../guards/registry.js';
 import type { GuardValues } from '../guards/types.js';
 import { requireSession } from '../launch/tmux-run.js';
@@ -160,7 +160,7 @@ export const requireRoleBlocks = async (
   if (dryRun) return ok([...notes, `The role blocks are out of date after a guard change or a package change. ${renderedBy}`]);
   const written = await writeBlockPlans(deps, home, changes, commands.start);
   if (!written.ok) return written;
-  const values = guardsFor(config.entry).filter((guard) => guard.wired)
+  const values = guardsFor(config.entry).filter(isSettable)
     .map((guard) => `${guard.id} ${guards.values[guard.id] ?? 'on'}`).join(', ');
   deps.warn(`Rendered the role blocks again after a guard change or a package change: ${values}.`);
   return ok(notes);

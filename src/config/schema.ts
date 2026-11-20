@@ -446,8 +446,8 @@ const guardIdIssues = (
 };
 
 /**
- * One warning for each key of a fixed guard in the two guard maps. A fixed guard has no setting and is never wired, so every read of
- * the guard values keeps it on, also with an off value and a matching owner record. `factory upgrade` removes the keys.
+ * One warning for each key of a fixed guard in the two guard maps. A fixed guard has no setting, so every read of the guard values
+ * keeps it on by its fixed mark, also with an off value and a matching owner record. `factory upgrade` removes the keys.
  */
 export const fixedGuardKeyWarnings = (config: FactoryConfig): readonly string[] => {
   const fixed = guardsFor(config.entry).filter((guard) => guard.fixed).map((guard) => guard.id);

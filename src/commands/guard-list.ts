@@ -6,7 +6,7 @@ import type { Deps } from '../core/deps.js';
 import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
-import type { GuardRules } from '../guards/effective.js';
+import { isSettable, type GuardRules } from '../guards/effective.js';
 import { guardRowsFor, guardsFor } from '../guards/registry.js';
 import type { Guard, GuardRow, GuardState, GuardValue } from '../guards/types.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
@@ -29,7 +29,7 @@ interface ListedGuard extends Omit<GuardState, 'value'> {
  */
 const listedGuard = (guard: Guard, state: GuardRules | null): ListedGuard => ({
   ...guard,
-  settable: guard.wired,
+  settable: isSettable(guard),
   value: guard.fixed ? guardValues.on : state === null ? guardListWords.unknown : state.values[guard.id] ?? guardValues.on,
   source: state === null ? 'notLoaded' : state.sources[guard.id] ?? 'missing',
   since: state?.since[guard.id] ?? null,

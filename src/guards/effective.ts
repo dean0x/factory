@@ -83,22 +83,29 @@ export interface GuardRules {
   readonly loosened: readonly string[];
 }
 
+/**
+ * True when a value can turn the guard off: the guard is wired, and it is not fixed. A fixed guard has no setting, so every read of
+ * the values keeps it on by its fixed mark, whatever its wired mark says.
+ */
+export const isSettable = (guard: Pick<Guard, 'wired' | 'fixed'>): boolean => guard.wired && !guard.fixed;
+
 /** Only a matching owner record can allow a local off value. A failed load keeps every guard on. */
 export const guardRulesOf = (guards: readonly Guard[], facts: GuardFacts): GuardRules => {
   const healthy = facts.loadError !== true && facts.fault == null;
   const record = healthy && facts.record?.node === facts.node && facts.record.root === facts.root ? facts.record : null;
   const states = guards.map((guard) => {
+    const settable = isSettable(guard);
     const local = facts.local?.[guard.id] ?? guardValues.on;
     const saved = record?.values[guard.id];
     const shared = facts.shared?.[guard.id] === guardValues.on;
-    const matched = healthy && guard.wired && !shared && facts.local?.[guard.id] !== undefined && saved?.value === local;
+    const matched = healthy && settable && !shared && facts.local?.[guard.id] !== undefined && saved?.value === local;
     const off = matched && local === guardValues.off;
     let source: GuardState['source'] = 'missing';
-    if (healthy && guard.wired) {
+    if (healthy && settable) {
       if (shared) source = 'shared';
       else if (matched) source = 'local';
       else if (local === guardValues.off) source = 'noRecord';
-    } else if (guard.wired && facts.local?.[guard.id] !== undefined) {
+    } else if (settable && facts.local?.[guard.id] !== undefined) {
       source = 'unread';
     }
     return {
@@ -106,7 +113,7 @@ export const guardRulesOf = (guards: readonly Guard[], facts: GuardFacts): Guard
       value: off ? guardValues.off : guardValues.on,
       source,
       since: matched ? saved.at : null,
-      unmatched: guard.wired && local !== (saved?.value ?? guardValues.on),
+      unmatched: settable && local !== (saved?.value ?? guardValues.on),
     };
   });
   return {

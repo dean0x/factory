@@ -6,7 +6,7 @@ import { removedByDisplay } from '../cli/output.js';
 import { loadConfig } from '../config/load.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION } from '../config/schema.js';
-import { guardRulesOf, type GuardProxies, type GuardRecord, type GuardRules } from '../guards/effective.js';
+import { guardRulesOf, isSettable, type GuardProxies, type GuardRecord, type GuardRules } from '../guards/effective.js';
 import { guardsFor } from '../guards/registry.js';
 import type { GuardDefinition, GuardNeed, GuardValue, GuardValues } from '../guards/types.js';
 import {
@@ -316,7 +316,7 @@ export interface GuardConfig {
 
 /** True when the local file sets a wired guard off: only then can a record of the guard store change a value. */
 export const holdsLocalOff = (config: GuardConfig): boolean =>
-  guardsFor(config.entry).some((guard) => guard.wired && config.core.guards[guard.id] === guardValues.off);
+  guardsFor(config.entry).some((guard) => isSettable(guard) && config.core.guards[guard.id] === guardValues.off);
 
 /** True when the state holds what the store gave: its records or its fault. */
 export const readsStore = (state: GuardReadState): boolean => state.recordCount !== null || state.fault !== null;
