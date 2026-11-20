@@ -158,10 +158,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'Safety block',
     'A session starts only when the fixed rules are in place and have not changed.',
   ),
-  guardOf(
-    guardIds.secrets,
-    'Secrets and output text',
-    'No token, key or password goes into a file, a report or any other output.',
+  wiredGuard(
+    guardOf(
+      guardIds.secrets,
+      'Secrets and output text',
+      'No token, key or password goes into a file, a report or any other output.',
+    ),
   ),
   guardOf(
     guardIds.setupText,

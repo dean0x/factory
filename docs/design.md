@@ -1420,6 +1420,7 @@ The off text of an approval point applies in both `owner` and `delegated` mode. 
 | `settings-write` | Show the hook settings change without a consent question. Use the latest file text without a stop for a change since the plan. The file checks and the rules for `--yes` still apply. |
 | `delete-guard` | Let a commit in the state folder remove an item id, skip the checks and warnings about the installed hooks, and remove the board rule text. The installed hooks stay as they are. |
 | `git-safety` | Let a commit of factory in the state folder take staged changes and changes of the owner, and let git run there when its config names a program. Git still runs there without its hooks, and a config that git can not list still stops the step. Init of a new state folder and of a state folder with no valid marker keeps every check. |
+| `secrets` | Let the scan of the folder pass a tracked text that holds a value like a token, skip the token check of the config values in doctor, and remove the rules about keys and the environment of a process from the role text. Error output still hides token values, and git output still has no user info in a URL. |
 
 The code checks of every other guard and all integrity checks still run.
 

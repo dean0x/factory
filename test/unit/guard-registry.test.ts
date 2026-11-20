@@ -93,6 +93,8 @@ const recordExceptions = [
 const analyzerReason = 'A pure analysis of one settings text; judgeSettings reads the value and keeps only the permission stop when the guard is off.';
 /** The reason for the work copy sites that pass the guard value to the check of the file contents. */
 const workCopyReason = 'Reaches judgeSettings, which uses the guard value for optional checks of the file contents.';
+/** The reason of the pure token tests, which other rows share: the scan of the tracked texts reads the value. */
+const tokenTestReason = 'A pure test of one text, which the hidden error keys and the task file check share; scanTrackedTexts reads the value and drops its token finding while the guard is off.';
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -125,6 +127,10 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'state-git-config', path: 'src/commands/init-state.ts', symbol: 'makeStateFolder', reason: 'Checks the config of a new repo in a staging folder of init; a new folder is no node yet, so every guard is on there.' },
   { row: 'state-git-config', path: 'src/commands/start.ts', symbol: 'runStart', reason: 'Calls requireStateConfigListable, whose one stop is a git that can not list the config; that stop applies with every value.' },
   { row: 'state-git-config', path: 'src/commands/init-existing.ts', symbol: 'checkExisting', reason: 'Calls requireStateConfigSafe, which reads the value.' },
+  { row: 'token-tracked-text', path: 'src/safety/secrets.ts', symbol: 'textHasToken', reason: tokenTestReason },
+  { row: 'token-tracked-text', path: 'src/safety/secrets.ts', symbol: 'looksLikeToken', reason: tokenTestReason },
+  { row: 'token-config-values', path: 'src/safety/secrets.ts', symbol: 'findTokenPaths', reason: 'A pure search of the config values; checkSecrets reads the value and does not search while the guard is off.' },
+  { row: 'token-config-values', path: 'src/safety/secrets.ts', symbol: 'looksLikeTokenAt', reason: 'A pure helper of findTokenPaths; checkSecrets reads the value and does not search while the guard is off.' },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'envPrefixIn', reason: analyzerReason },
   { row: 'settings-env-traffic', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
@@ -246,7 +252,7 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.gitSafety,
-      guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.resumeRoutines, guardIds.secrets, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 

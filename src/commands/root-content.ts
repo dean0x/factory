@@ -19,7 +19,7 @@ import { delegationReport, type DelegationReport } from '../core/owner-record.js
 import { comparable, isSameOrInside, isWrittenInside, userClaudeFolderOf } from '../core/paths.js';
 import { describeProjectPathIssue, projectFolderKey, projectPathIssue } from '../core/project-path.js';
 import { ok } from '../core/result.js';
-import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import { guardOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import {
   describeTrackedProblems,
@@ -347,8 +347,9 @@ const named = (paths: readonly string[], one: string, many: string): string =>
 
 /**
  * The scan of the tracked text files (design 4.4). It reads at most `caps.maxCount` files and at most `caps.maxFileBytes`
- * bytes of one file, and it names every file that it did not read: a warning, never a gap in silence. A token is a failure,
- * and the finding names the files and never the value. A `file` URL and a user folder path are a warning.
+ * bytes of one file, and it names every file that it did not read: a warning, never a gap in silence. A token is a failure
+ * while the guard of secrets is on, and the finding names the files and never the value. A scan that finds no token reads no
+ * guard value. A `file` URL and a user folder path are a warning.
  */
 export const scanTrackedTexts = async (
   deps: Deps,
@@ -390,14 +391,15 @@ export const scanTrackedTexts = async (
     if (textHasToken(text.value)) withToken.push(shown);
     if (text.value.toLowerCase().includes(address.scheme) || USER_FOLDER_PATH.test(text.value)) withAddress.push(shown);
   }
+  const tokens = withToken.length > 0 && (await guardOn(deps, guardIds.secrets, home)) ? withToken : [];
   return [
-    ...(withToken.length === 0
+    ...(tokens.length === 0
       ? []
       : [
           finding(
             id,
             'fail',
-            `${named(withToken, 'holds', 'hold')} a value that looks like a password or a token`,
+            `${named(tokens, 'holds', 'hold')} a value that looks like a password or a token`,
             `Remove the value from the file, put it in ${files.localConfig}, then ${doctorAgain}.`,
           ),
         ]),

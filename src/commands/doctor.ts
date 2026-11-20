@@ -38,7 +38,7 @@ import {
   tmuxVersionOf,
   toolNames,
 } from '../core/tools.js';
-import { allGuardsOn, allOn, guardOn } from '../guards/effective.js';
+import { allGuardsOn, allOn, guardOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
@@ -489,10 +489,12 @@ export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
     : check(checkIds.roles, 'ok', `layer ${layer} has the ${role} role template`);
 };
 
-export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
+/** A config value that looks like a token fails the check. With the guard of secrets off, the check does not run. */
+export const checkSecrets = (state: DocState<FactoryConfig>, guards: GuardValues = allOn): CheckResult => {
   if (state.kind === 'missing' || state.kind === 'unparsable' || state.kind === 'unsafe') {
     return notChecked(checkIds.secrets, `${fileOf(state)} does not parse`);
   }
+  if (!isGuardOn(guards, guardIds.secrets)) return check(checkIds.secrets, 'ok', guardDoctorWords.notChecked(guardIds.secrets));
   const where = `${files.config} or ${files.localConfig}`;
   const paths = findTokenPaths(state.raw);
   return paths.length === 0
@@ -1038,7 +1040,7 @@ const runChecks = async (base: Deps, home: string, registry: RecipeRegistry): Pr
     checkTracker(config),
     idleCompaction,
     children,
-    checkSecrets(config),
+    checkSecrets(config, guards?.values),
     ...rootCheckResults(rootScan),
     instructionFileCheck,
     checkProxyEnv(deps),

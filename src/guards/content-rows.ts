@@ -162,9 +162,9 @@ const secretRows: readonly GuardRow[] = [
     id: 'token-config-values',
     guard: guardIds.secrets,
     name: 'A config value that looks like a token is refused, so no token enters a tracked config that a push shares',
-    applies: `Config load, doctor and ${commands.init}`,
+    applies: 'Doctor',
     harm: true,
-    sites: at('src/safety/secrets.ts', 'findTokenPaths', 'looksLikeTokenAt'),
+    sites: [...at('src/commands/doctor.ts', 'checkSecrets'), ...at('src/safety/secrets.ts', 'findTokenPaths', 'looksLikeTokenAt')],
   }),
   alwaysOnRow({
     id: 'token-keys-hidden',
