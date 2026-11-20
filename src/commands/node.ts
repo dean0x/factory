@@ -464,24 +464,35 @@ const refuseDelivery = (result: Exclude<DeliverResult, { readonly kind: 'written
 
 /**
  * The text of the task file as the child gets it: CRLF becomes LF. A text that the screen would show in another form (a control
- * character other than the line break and the tab, a bidi or hidden character) is exit 2, and a text that looks like a token is
- * exit 4. No refusal repeats a part of the text.
+ * character other than the line break and the tab, a bidi or hidden character) is exit 2 while the task-files guard is on in
+ * `guards`. A text that looks like a token is exit 4 while the secrets guard is on. No refusal repeats a part of the text.
  */
-const checkedTask = (text: string, id: string): CliResult<string> => {
+const checkedTask = (text: string, id: string, guards: GuardValues): CliResult<string> => {
   const body = text.replace(/\r\n/g, '\n');
   const again = `Then run "${commandText(sendAgain(id))}" again.`;
-  if (removedByDisplay(body)) {
+  if (isGuardOn(guards, guardIds.taskFiles) && removedByDisplay(body)) {
     return usageError(nodeSendReasons.controlChars, `Remove the character from the task file. ${again}`);
   }
-  if (textHasToken(body)) return safetyRefusal(nodeSendReasons.token, `Remove the token from the task file. ${again}`);
+  if (isGuardOn(guards, guardIds.secrets) && textHasToken(body)) {
+    return safetyRefusal(nodeSendReasons.token, `Remove the token from the task file. ${again}`);
+  }
   return ok(body);
 };
 
+/** The line of each guard that is off in `guards`, with the checks of a send that it turned off. */
+const SEND_OFF_LINES: readonly (readonly [string, string])[] = [
+  [guardIds.ownerGo, `The guard ${guardIds.ownerGo} is off, so the header of the file does not say that it carries no authority of the ${roles.owner}.`],
+  [
+    guardIds.taskFiles,
+    `The guard ${guardIds.taskFiles} is off, so this send did not check the task file for hidden characters, a dot part or the local config. ` +
+      'It did not check that the state repo of the child ignores the inbox.',
+  ],
+  [guardIds.secrets, `The guard ${guardIds.secrets} is off, so this send did not check the task for text like a token.`],
+];
+
 /** The lines of a send that name the parts that a guard turned off, so that no line of the send reads as their result. */
 const guardOffLines = (guards: GuardValues): readonly OutLine[] =>
-  isGuardOn(guards, guardIds.ownerGo)
-    ? []
-    : [{ level: 'text', text: `The guard ${guardIds.ownerGo} is off, so the header of the file does not say that it carries no authority of the ${roles.owner}.` }];
+  SEND_OFF_LINES.filter(([guard]) => !isGuardOn(guards, guard)).map(([, text]) => ({ level: 'text', text }));
 
 const sentOutput = (node: OpenNode, id: string, session: string, file: string, guards: GuardValues): CommandOutput => {
   const listCheck = `Check with ${sendTools.listAgents} that exactly one session has the name ${session}.`;
@@ -530,7 +541,7 @@ const runSend = async (
 
   const text = await readAssignment(deps, { home, path: options.file, again: sendAgain(id) });
   if (!text.ok) return text;
-  const body = checkedTask(text.value, id);
+  const body = checkedTask(text.value, id, guards);
   if (!body.ok) return body;
 
   const delivered = await fileTransport(deps, registry).deliver(child.address, {

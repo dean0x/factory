@@ -1109,6 +1109,44 @@ describe.each(FOLDER_ORIGINS)('worker new: the link stop of the exclude file in 
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker new: the guard task-files in %s', (_title, origin) => {
+  const TREE = '/w/tree';
+  const HIDDEN = `${TREE}/.drafts/task.md`;
+  const TASK = '# Task\n\nFix the build.\n';
+
+  /** A node whose local file holds task-files off as the setup says, with a file in a folder of the work tree that starts with a dot. */
+  const guardedMake = (setup: GuardedSetup): Made => {
+    const off = setup.off ?? [];
+    return make({
+      origin,
+      tree: TREE,
+      config: withGuardsOff(sampleConfig(), off),
+      seed: {
+        [HIDDEN]: TASK,
+        ...(setup.record === false ? {} : { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) }),
+      },
+    });
+  };
+
+  it.each(guardStatesOf(guardIds.taskFiles))('copies an assignment below a folder that starts with a dot only while the guard counts as off: %s', async (_state, setup, on) => {
+    const made = guardedMake(setup);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', HIDDEN], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(made.deps.files.get(`${INBOX}/assignment.md`)).toBe(on ? undefined : TASK);
+    expect(sink.out.join('').includes(`The guard ${guardIds.taskFiles} is off`)).toBe(!on);
+  });
+
+  it('still refuses an assignment file outside the folder and the work tree with exit 4 while the guard is off', async () => {
+    const made = guardedMake({ off: [guardIds.taskFiles] });
+    made.deps.seed('/w/other/task.md', TASK);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', '/w/other/task.md'], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(4);
+    expect(made.deps.files.has(`${INBOX}/assignment.md`)).toBe(false);
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings write in %s', (_title, origin) => {
   it.each(guardStatesOf(guardIds.settingsWrite))('needs a consent for the hook settings with no terminal window only while the guard is on, with the guard %s', async (_state, setup, on) => {
     const off = setup.off ?? [];

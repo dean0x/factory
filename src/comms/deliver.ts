@@ -182,7 +182,7 @@ const answersAsTarget = (answer: PingResult, input: DeliverInput): boolean =>
  *  3. The first ping: no answer is `notAnswering`, and another id or layer than the target is `mismatch`. Nothing is written yet.
  *  4. The state folder and the inbox: the same checks. A state folder that is not there is `notIgnored`, and it is never made.
  *     The count of the inbox comes after its owner and mode, and reads at most `nodeInbox.maxFiles` names (`full`).
- *  5. The state repo of the child ignores the inbox (else `notIgnored`).
+ *  5. The state repo of the child ignores the inbox (else `notIgnored`), while the task-files guard of the sender is on.
  *  6. A new file with a name made here, mode 600, never replacing a file. The inbox is made with mode 700 if it is not there.
  *  7. The second ping. Unless it answers with the same id and layer, the file is removed and the value is `mismatch`; if the
  *     removal fails, `mismatch` holds the path of the file.
@@ -208,7 +208,7 @@ export const deliverToHome = async (deps: Deps, ping: Ping, address: string, inp
   if (!state.ok) return state.error;
   const room = await requireRoom(deps, layout, Buffer.byteLength(text, 'utf8'));
   if (!room.ok) return room.error;
-  const ignored = await requireIgnored(deps, layout);
+  const ignored = isGuardOn(guards, guardIds.taskFiles) ? await requireIgnored(deps, layout) : ok(undefined);
   if (!ignored.ok) return ignored.error;
   const name = nameOf(deps, input.senderId);
   if (!name.ok) return name.error;

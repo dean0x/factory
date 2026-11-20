@@ -1,4 +1,4 @@
-import { commandLines, commands, flags, flagText, guardIds, places, program, requestWords, roles } from '../names.js';
+import { assignmentSource, commandLines, commands, flags, flagText, guardIds, places, program, requestWords, roles } from '../names.js';
 import { alwaysOnRow, at, codeRow, fixedTextRow, textRow } from './build.js';
 import type { GuardRow } from './types.js';
 
@@ -37,24 +37,40 @@ const machineLimitRows: readonly GuardRow[] = [
 ];
 
 const taskFileRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'child-inbox-delivery',
     guard: guardIds.taskFiles,
-    name: 'A task file goes only into the inbox of a child, as a new private file, and only when the state repo of the child ignores the inbox',
+    name: 'A task file goes only into the inbox of a child, as a new private file that replaces no file, and the inbox stays within its count and size',
     applies: commandLines.nodeSend,
     harm: true,
     sites: [
-      ...at('src/comms/deliver.ts', 'deliverToHome', 'inspectEntry', 'requireState', 'requireRoom', 'requireIgnored'),
+      ...at('src/comms/deliver.ts', 'inspectEntry', 'requireState', 'requireRoom', 'writeMessage'),
       ...at('src/commands/node.ts', 'refuseDelivery'),
     ],
   }),
   codeRow({
-    id: 'send-content-checks',
+    id: 'child-inbox-ignored',
     guard: guardIds.taskFiles,
-    name: 'A task file goes only to a child, holds no control or hidden character and no token, and does not fill the inbox',
+    name: 'A task file goes into the inbox of a child only when the state repo of the child ignores the inbox',
     applies: commandLines.nodeSend,
     harm: true,
-    sites: [...at('src/commands/node.ts', 'checkedTask', 'runSend'), ...at('src/comms/deliver.ts', 'holdsHiddenCharacter', 'requireRoom')],
+    sites: at('src/comms/deliver.ts', 'deliverToHome', 'requireIgnored'),
+  }),
+  alwaysOnRow({
+    id: 'send-target',
+    guard: guardIds.taskFiles,
+    name: 'A task file goes only to a child of the config, and the header of the file holds no control or hidden character',
+    applies: commandLines.nodeSend,
+    harm: true,
+    sites: [...at('src/commands/node.ts', 'runSend'), ...at('src/comms/deliver.ts', 'holdsHiddenCharacter')],
+  }),
+  codeRow({
+    id: 'send-content-checks',
+    guard: guardIds.taskFiles,
+    name: 'A task file holds no control or hidden character that the screen would show in another form',
+    applies: commandLines.nodeSend,
+    harm: true,
+    sites: at('src/commands/node.ts', 'checkedTask'),
   }),
   alwaysOnRow({
     id: 'child-address-form',
@@ -84,7 +100,7 @@ const taskFileRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/comms/report-schema.ts', 'reportSchema', 'parseReport'), ...at('src/report/build.ts', 'checkReport')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'report-file-write',
     guard: guardIds.taskFiles,
     name: `The report file is written only in the event file folder of the ${node}, and a link on its path is a security stop`,
@@ -92,17 +108,21 @@ const taskFileRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/report/outbox.ts', 'writeReportFile', 'tightenEventFolder'), ...at('src/commands/status.ts', 'refreshReport')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'assignment-file-check',
     guard: guardIds.taskFiles,
-    name: 'An assignment file is a plain text file inside the folder or the work tree, with no link, no dot part and no change during the read, and it is never the local config',
+    name: 'An assignment file is a plain text file inside the folder or the work tree, with no link and no change during the read',
     applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
     harm: true,
-    sites: [
-      ...at('src/workers/assignment.ts', 'readAssignment', 'placeOf'),
-      ...at('src/core/place-rule.ts', 'dotRuleReason'),
-      ...at('src/commands/node.ts', 'checkedTask'),
-    ],
+    sites: at('src/workers/assignment.ts', 'readAssignment', 'namesBelow'),
+  }),
+  codeRow({
+    id: 'assignment-dot-place',
+    guard: guardIds.taskFiles,
+    name: `An assignment file has no part that starts with a dot, except ${assignmentSource.ordersShown} of the ${folder}, and it is never the local config`,
+    applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
+    harm: true,
+    sites: [...at('src/workers/assignment.ts', 'placeOf'), ...at('src/core/place-rule.ts', 'dotRuleReason')],
   }),
 ];
 

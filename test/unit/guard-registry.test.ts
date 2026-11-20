@@ -175,6 +175,8 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'token-tracked-text', path: 'src/safety/secrets.ts', symbol: 'looksLikeToken', reason: tokenTestReason },
   { row: 'token-config-values', path: 'src/safety/secrets.ts', symbol: 'findTokenPaths', reason: 'A pure search of the config values; checkSecrets reads the value and does not search while the guard is off.' },
   { row: 'token-config-values', path: 'src/safety/secrets.ts', symbol: 'looksLikeTokenAt', reason: 'A pure helper of findTokenPaths; checkSecrets reads the value and does not search while the guard is off.' },
+  { row: 'child-inbox-ignored', path: 'src/comms/deliver.ts', symbol: 'requireIgnored', reason: 'The check of the ignore rule; deliverToHome reads the value and does not call it while the guard is off.' },
+  { row: 'assignment-dot-place', path: 'src/core/place-rule.ts', symbol: 'dotRuleReason', reason: 'The shared place rule, which the board doc check also uses; placeOf reads the value and does not call it while the guard is off.' },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'envPrefixIn', reason: analyzerReason },
   { row: 'settings-env-traffic', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
@@ -370,7 +372,7 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.dismiss, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.sessionChecks, guardIds.ownerGo, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.taskFiles, guardIds.sessionChecks, guardIds.ownerGo, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
       guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality',
     ]);
   });
@@ -797,12 +799,15 @@ describe('the rows of the registry', () => {
       ],
       'task-files': [
         'child-inbox-delivery',
+        'child-inbox-ignored',
+        'send-target',
         'send-content-checks',
         'child-address-form',
         'child-files-untrusted',
         'report-listed-fields',
         'report-file-write',
         'assignment-file-check',
+        'assignment-dot-place',
         'task-file-inbox-text',
         'long-task-file-text',
         'session-name-check-text',
@@ -930,6 +935,7 @@ describe('the rows of the registry', () => {
       secrets: [
         'token-tracked-text',
         'token-config-values',
+        'task-file-token',
         'token-keys-hidden',
         'credential-strip',
         'printable-output',
@@ -1002,7 +1008,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(229);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(233);
     expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
@@ -1039,7 +1045,15 @@ describe('the rows of the registry', () => {
         'child-no-shell', 'agent-claude-only', 'tmux-quoting', 'run-shell-limits',
       ],
       'machine-limits': ['lock-bounds', 'lock-place'],
-      'task-files': ['child-address-form', 'child-files-untrusted', 'report-listed-fields'],
+      'task-files': [
+        'child-inbox-delivery',
+        'send-target',
+        'child-address-form',
+        'child-files-untrusted',
+        'report-listed-fields',
+        'report-file-write',
+        'assignment-file-check',
+      ],
       'session-checks': [
         'owner-channel', 'decide-channel', 'setup-ask-channel', 'init-yes-in-session', 'received-init-outside-session',
         'existing-init-outside-session', 'upgrade-registration-consent', 'overwrite-safety-outside-session', 'dismiss-idle-pick-list',
@@ -1193,7 +1207,7 @@ describe('the rows of the registry', () => {
   });
 
   it('cites the shared place rule for assignment files', () => {
-    const row = software.rows.find((candidate) => candidate.id === 'assignment-file-check');
+    const row = software.rows.find((candidate) => candidate.id === 'assignment-dot-place');
     expect(row).toMatchObject({ guard: guardIds.taskFiles, harm: true });
     expect(row?.sites).toContainEqual({ path: 'src/core/place-rule.ts', symbol: 'dotRuleReason' });
   });

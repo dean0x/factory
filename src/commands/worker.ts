@@ -92,6 +92,11 @@ const needsUsage = (what: string): CliResult<never> =>
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 
+/** The line of a copied assignment while the task-files guard is off: the place check of the file did not run. */
+const UNPLACED_LINE = text(
+  `The guard ${guardIds.taskFiles} is off, so the check of the assignment file did not look for a dot part or the local config.`,
+);
+
 /** The same error with this remedy line. */
 const withHint = (error: CliError, hint: string): CliError => ({ ...error, hint });
 
@@ -405,6 +410,7 @@ const runNew = async (
           `Then run "${commandText(commandLines.workerWatch)} ${flagText(flags.ready)} ${id}".`,
       ),
       ...(copy === null ? [] : [text(`Copied the assignment to ${relative(home, copy)}.`)]),
+      ...(copy === null || isGuardOn(prepared.value.guards.values, guardIds.taskFiles) ? [] : [UNPLACED_LINE]),
     ],
     json: {
       schema: schemaIds.workerNew,

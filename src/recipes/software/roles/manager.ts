@@ -28,7 +28,7 @@ export const MANAGER_PARTS: readonly TextPart[] = [
     ],
   },
   '- A child that you cannot read is unknown. Say so. Do not guess its state.',
-  '- Never type into the session of a grandchild. Go through the child that owns it.',
+  { guards: [guardIds.taskFiles], lines: ['- Never type into the session of a grandchild. Go through the child that owns it.'] },
   '',
   ...workerSectionParts,
   '',
@@ -48,7 +48,7 @@ export const MANAGER_PARTS: readonly TextPart[] = [
   '## Limits',
   '',
   '- A {{manager}} does no work at the level of pull requests. Do not review, fix, merge or release a pull request.',
-  '- Do not change the files of a child. Ask the child.',
+  { guards: [guardIds.taskFiles], lines: ['- Do not change the files of a child. Ask the child.'] },
 ];
 
 export const MANAGER_LINES: readonly string[] = linesFor(MANAGER_PARTS, allOn);

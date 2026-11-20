@@ -936,10 +936,14 @@ describe('node send', () => {
     return deps;
   };
 
-  /** One run of `node send web --file TASK` as a person types it. */
-  const sendLine = async (deps: Deps, file: string = TASK): Promise<{ readonly code: number; readonly out: string; readonly err: string }> => {
+  /** One run of `node send ID --file FILE` as a person types it. */
+  const sendLine = async (
+    deps: Deps,
+    file: string = TASK,
+    id = 'web',
+  ): Promise<{ readonly code: number; readonly out: string; readonly err: string }> => {
     const sink = captureSink();
-    const code = await runCli(['node', 'send', 'web', '--file', file, '--home', HOME], deps, sink);
+    const code = await runCli(['node', 'send', id, '--file', file, '--home', HOME], deps, sink);
     return { code, out: sink.out.join(''), err: sink.errors.join('') };
   };
 
@@ -950,6 +954,93 @@ describe('node send', () => {
       expect(result.code, result.err).toBe(0);
       expect(deps.files.get(SENT)).toBe(`${(on ? HEADER : HEADER.slice(0, -1)).join('\n')}\n\nBuild the page.\n`);
       expect(result.out.includes(`The guard ${guardIds.ownerGo} is off`)).toBe(!on);
+    });
+  });
+
+  describe.each(FOLDER_ORIGINS)('the guard task-files in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.taskFiles))('sends a task with a control character only while the guard counts as off: %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin, { task: 'a\u0001b\n' });
+      const result = await sendLine(deps);
+      expect(result.code, result.err).toBe(on ? 2 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+      expect(result.out.includes(`The guard ${guardIds.taskFiles} is off`)).toBe(!on);
+    });
+
+    it.each(guardStatesOf(guardIds.taskFiles))('writes into the inbox of a child whose state repo does not ignore it only while the guard counts as off: %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin, { stateGitignore: GITIGNORE_WITHOUT_INBOX });
+      const result = await sendLine(deps);
+      expect(result.code, result.err).toBe(on ? 3 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+    });
+
+    it.each(guardStatesOf(guardIds.taskFiles))('sends a task file below a folder that starts with a dot only while the guard counts as off: %s', async (_state, setup, on) => {
+      const file = `${HOME}/.drafts/task.md`;
+      const deps = guardedSendable(setup, origin);
+      deps.seed(file, 'Build the page.\n');
+      const result = await sendLine(deps, file);
+      expect(result.code, result.err).toBe(on ? 4 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+    });
+
+    it.each(guardStatesOf(guardIds.taskFiles))('sends the local config as a task file only while the guard counts as off: %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin);
+      const result = await sendLine(deps, LOCAL_PATH);
+      expect(result.code, result.err).toBe(on ? 4 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+    });
+
+    describe('with the guard off and its owner record', () => {
+      const OFF: GuardedSetup = { off: [guardIds.taskFiles] };
+
+      it('still refuses a link as the inbox with exit 4, because a task file goes only into the inbox of the child', async () => {
+        const deps = guardedSendable(OFF, origin, { links: { [INBOX]: '/elsewhere' } });
+        deps.seedDir(INBOX);
+        const result = await sendLine(deps);
+        expect(result.code, result.err).toBe(4);
+        expect(result.err).toContain(nodeSendReasons.unsafe);
+      });
+
+      it('still refuses a full inbox with exit 3, because the inbox stays within its count', async () => {
+        const deps = guardedSendable(OFF, origin);
+        for (let index = 0; index < nodeInbox.maxFiles; index += 1) deps.seed(`${INBOX}/old-${index}.md`, 'x');
+        const result = await sendLine(deps);
+        expect(result.code, result.err).toBe(3);
+        expect(inboxFiles(deps)).toHaveLength(nodeInbox.maxFiles);
+      });
+
+      it('still refuses a child with no state folder with exit 3, and makes no folder', async () => {
+        const deps = guardedSendable(OFF, origin, { stateGitignore: null });
+        const result = await sendLine(deps);
+        expect(result.code, result.err).toBe(3);
+        expect(deps.dirs.has(`${CHILD}/.factory`)).toBe(false);
+      });
+
+      it('still refuses an id that is not a child with exit 2, because a task file goes only to a child', async () => {
+        const deps = guardedSendable(OFF, origin);
+        const result = await sendLine(deps, TASK, 'nobody');
+        expect(result.code, result.err).toBe(2);
+        expect(result.err).toContain(nodeSendReasons.notChild);
+      });
+
+      it('still refuses a task file that is a link with exit 4', async () => {
+        const link = `${HOME}/.factory/orders/link.md`;
+        const deps = guardedSendable(OFF, origin, { links: { [link]: TASK } });
+        const result = await sendLine(deps, link);
+        expect(result.code, result.err).toBe(4);
+        expect(result.err).toContain('it is a link');
+        expect(deps.dirs.has(INBOX)).toBe(false);
+      });
+    });
+  });
+
+  describe.each(FOLDER_ORIGINS)('the guard secrets in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.secrets))('sends a task with text like a token only while the guard counts as off, and prints no value: %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin, { task: `Push with ${FAKE_GITHUB_TOKEN} now.\n` });
+      const result = await sendLine(deps);
+      expect(result.code, result.err).toBe(on ? 4 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+      expect(`${result.out}${result.err}`).not.toContain(FAKE_GITHUB_TOKEN);
+      expect(result.out.includes(`The guard ${guardIds.secrets} is off`)).toBe(!on);
     });
   });
 

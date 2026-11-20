@@ -175,6 +175,14 @@ const secretRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/commands/doctor.ts', 'checkSecrets'), ...at('src/safety/secrets.ts', 'findTokenPaths', 'looksLikeTokenAt')],
   }),
+  codeRow({
+    id: 'task-file-token',
+    guard: guardIds.secrets,
+    name: 'A task file that holds text like a token is refused, and the value is never printed',
+    applies: commandLines.nodeSend,
+    harm: true,
+    sites: at('src/commands/node.ts', 'checkedTask'),
+  }),
   alwaysOnRow({
     id: 'token-keys-hidden',
     guard: guardIds.secrets,
