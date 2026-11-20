@@ -2579,6 +2579,8 @@ export const guardDoctorWords = {
   atCap: 'The guard store is at its record cap.',
   /** The warning for an off value of a guard that this version cannot set. */
   unsettableOff: (id: string): string => `${id} is ${guardListWords.notSettable}; its value stays on`,
+  /** The proxy check with the proxy guard off: a launch sends no health request and always uses the named proxy. */
+  proxyOff: `The guard ${guardIds.proxy} is off, so sessions start with this proxy and no health check.`,
   /** The line of a check that did not run, because its guard is off. */
   notChecked: (id: string): string => `not checked: the guard ${id} is off`,
   /** The line of a check that did not run, because each of its guards is off. */

@@ -1078,6 +1078,29 @@ describe('doctor: proxies', () => {
     expect(result?.text).toContain('on_fail is direct');
   });
 
+  const proxyStates = guardStatesOf(guardIds.proxy).flatMap(([state, setup, on]) =>
+    (['stop', 'direct'] as const).map((onFail) => [state, onFail, setup, on] as const));
+  it.each(proxyStates)('names what a launch does with a proxy that is down while the proxy guard is %s and on_fail is %s', async (_state, onFail, setup, on) => {
+    const deps = await initialized({ git: { committed: [`${HOME}/.factory`] } });
+    deps.seedDir(`${HOME}/.factory/.git`);
+    const off = setup.off ?? [];
+    const proxied = withGuardsOff(withProxies(onFail), off);
+    writeConfig(deps, { ...proxied, recipe: { ...proxied.recipe, projects: [] } });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(proxied.core.node.id, HOME, off, deps.now()));
+    const found = ((await doctor(deps)).json['checks'] as CheckResult[]).find((entry) => entry.id === 'proxy:local');
+    expect(deps.fetched).toEqual(['http://127.0.0.1:8787/v1/health']);
+    if (!on) {
+      expect(found).toMatchObject({ level: 'warn', text: expect.stringContaining(guardDoctorWords.proxyOff) });
+      expect(guardDoctorWords.proxyOff).toBe('The guard proxy is off, so sessions start with this proxy and no health check.');
+    } else if (onFail === 'direct') {
+      expect(found).toMatchObject({ level: 'warn', text: expect.stringContaining('on_fail is direct: sessions start without it.') });
+    } else {
+      expect(found).toMatchObject({ level: 'fail', text: expect.stringContaining('Start the proxy') });
+    }
+    if (on) expect(found?.text).not.toContain(guardDoctorWords.proxyOff);
+    else expect(found?.text).not.toContain('without it');
+  });
+
   it('checks a proxy that only a worker uses, and skips a proxy that nothing uses', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
     const used = withProxies('stop', { 'web-search': { proxy: 'spare' } });
