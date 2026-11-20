@@ -59,10 +59,7 @@ const storeSchema = z.strictObject({
   [keys.records]: z.array(recordSchema).max(guardRecords.maxRecords),
 });
 
-/**
- * The key compares the real root exactly, with no letter case fold: on a volume that tells letter case apart, two roots that differ
- * only in letter case are two folders. A record of a root in other letter case does not match, so its guards stay on.
- */
+/** The key uses the exact real root. Letter case never makes two records share a key. */
 const recordKey = (node: string, root: string): string => JSON.stringify([node, resolve(root)]);
 
 const recordsOf = (text: string): Result<readonly GuardRecord[], string> => {
@@ -321,8 +318,17 @@ export const readGuardState = async (deps: Deps, home: string, config: GuardConf
   if (place.value.path === null) return stateOf(place.value.root, null, null, { recordCount: 0 });
   const read = await readGuardStore(deps, place.value.path);
   if (!read.ok) return stateOf(place.value.root, null, read.error, { remedy: guardRecordWords.unreadableRemedy });
-  const key = recordKey(config.core.node.id, place.value.root);
+  const { root } = place.value;
+  const node = config.core.node.id;
+  const key = recordKey(node, root);
   const found = read.value.find((record) => recordKey(record.node, record.root) === key);
-  const record = found === undefined ? null : { ...found, root: place.value.root };
-  return stateOf(place.value.root, record, null, { recordCount: read.value.length });
+  const details = { recordCount: read.value.length };
+  if (found === undefined) {
+    // A match after a letter case fold can only stop the launch. It cannot supply a record.
+    const foldedRoot = resolve(root).toLowerCase();
+    if (read.value.some((record) => record.node === node && resolve(record.root).toLowerCase() === foldedRoot)) {
+      return stateOf(root, null, guardRecordWords.caseMismatch, { ...details, remedy: guardRecordWords.caseRemedy });
+    }
+  }
+  return stateOf(root, found === undefined ? null : { ...found, root }, null, details);
 };

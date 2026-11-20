@@ -983,6 +983,25 @@ describe('start:--dry-run', () => {
 });
 
 describe('start:the guard summary', () => {
+  it('stops and names the record commands when the node has only an earlier guard record', async () => {
+    const config = withGuardsOff(sampleConfig(), [guardIds.installRules]);
+    const { deps } = make({ config });
+    const at = deps.now().toISOString();
+    deps.seed(GUARD_STORE, JSON.stringify({ schema: 1, records: [{ node: config.core.node.id, root: HOME,
+      values: { [guardIds.installRules]: { value: 'off', at } },
+      prefix: { hash: sha256Hex('Earlier owner prefix'), at },
+    }] }));
+    const darwin = { ...deps, platform: { ...deps.platform, os: 'darwin' as const },
+      fs: { ...deps.fs, realpath: (path: string) => path === HOME ? Promise.resolve(ok('/w/Node')) : deps.fs.realpath(path) },
+    };
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], darwin, sink), sink.errors.join('')).toBe(4);
+    expect(sink.errors.join('')).toContain('factory guard confirm');
+    expect(sink.errors.join('')).toContain('factory guard set');
+    const state = await readGuardState(darwin, HOME, config, 'always');
+    expect(new Set(Object.values(state.values))).toEqual(new Set(['on']));
+  });
+
   it('names each unmatched value and the absent prefix record in one line', async () => {
     const config = sampleConfig();
     const { deps } = make({ config: { ...config, core: { ...config.core, guards: { 'install-rules': 'off' } } } });

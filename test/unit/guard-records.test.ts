@@ -376,6 +376,19 @@ describe('one guard state read', () => {
     expect(state.unmatched).toContain(guard.id);
   });
 
+  it.each([false, true])('uses the exact record or reports a folder fault (exact record: %s)', async (hasExact) => {
+    const deps = provedFixture({ os: 'darwin' });
+    const saved = record({ [guard.id]: { value: 'off', at } }, { hash: sha256Hex('current prefix'), at });
+    const folded = { ...saved, root: root.toUpperCase(), prefix: { hash: sha256Hex('other prefix'), at } };
+    deps.seed(path, storeText(hasExact ? [folded, saved] : [folded]));
+
+    const state = await storeApi.readGuardState(deps, root, config(), 'always');
+    expect(state).toMatchObject({
+      record: hasExact, prefix: hasExact ? saved.prefix : null, fault: hasExact ? null : expect.any(String),
+      values: { [guard.id]: hasExact ? 'off' : 'on', [otherGuard.id]: 'on' },
+    });
+  });
+
   it('treats no state place as an absent store on a read', async () => {
     const state = await storeApi.readGuardState(fixture({ env: {} }), root, config(), 'always');
     expect(state).toMatchObject({ values: { [guard.id]: 'on' }, record: false, prefix: null, fault: null });
