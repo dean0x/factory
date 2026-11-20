@@ -731,6 +731,61 @@ describe('the hook settings checks and the guard of setup and role text', () => 
   });
 });
 
+describe('the guard of the pane safety', () => {
+  const withPaneSafetyOff = (deps: FakeDeps): FakeDeps => ({
+    ...deps, guards: guardSourceOf({ home: HOME, values: { [guardIds.paneSafety]: guardValues.off }, state: null }),
+  });
+  const compactOff = (world: World): Promise<CliResult<ResetOutcome>> =>
+    world.reset('compact', withProgram(withPaneSafetyOff(world.deps), world.tmux, atWait(1, writesLine('PreCompact'))));
+  const summoned = async (world: World): Promise<void> => {
+    valueOf(await summonWorker(world.deps, { home: HOME, session: NODE, workerId: WORKER, minutes: 15 }));
+  };
+  type OffCase = readonly [name: string, refusal: string, setup: Setup, change: (world: World) => unknown];
+  const offCases: readonly OffCase[] = [
+    ['a pane that a summon shows in the view window', 'factory layout', {}, summoned],
+    ['work that is not pushed', 'is not pushed', { git: { status: { [COPY]: ' M a.ts\0' } } }, () => undefined],
+    ['no resume notes', RESUME_FILE, {}, (world: World) => void world.deps.files.delete(RESUME_FILE)],
+    ['a busy session', 'busy', {}, (world: World) => world.deps.seed(lineFile(SESSION), lineText('UserPromptSubmit', NOW - MINUTE))],
+    ['a line from before the start of the pane process', 'not later than the start', {}, (world: World) => world.deps.seed(lineFile(SESSION), lineText('Stop', START - 1))],
+    ['a numbered list of choices on the screen', 'numbered list', { screen: DIALOG_SCREEN }, () => undefined],
+    ['a pane in a mode of tmux', 'is in a mode of tmux', { tmux: { panesInMode: [PANE] } }, () => undefined],
+  ];
+
+  it.each(offCases)('stops for %s only while the guard is on, and else types the line', async (_name, refusal, setup, change) => {
+    const on = await make(setup);
+    await change(on);
+    expect(textOf(errorOf(await on.reset('compact')))).toContain(refusal);
+    const off = await make(setup);
+    await change(off);
+    valueOf(await compactOff(off));
+    expect(off.tmux.typed()).toHaveLength(3);
+  });
+
+  it('reads no resume notes while the guard is off, and the output names no age of the notes', async () => {
+    const world = await make();
+    const outcome = valueOf(await compactOff(world));
+    expect(outcome.resumeAgeMs).toBeNull();
+    expect(resetOutput(outcome).lines.map((line) => line.text).join('\n')).not.toContain('resume notes');
+    expect(resetOutput(outcome).json).toMatchObject({ resumeAgeSeconds: null });
+  });
+
+  it.each([
+    ['a pane whose start command changes after the checks', 4, (nth: number, stdout: string) => (nth === 1 ? stdout : withStartCommand(stdout, 'sleep 300'))],
+    ['a pane whose process id changes after the checks', 3, (nth: number, stdout: string) => (nth === 1 ? stdout : withPid(stdout, 4778))],
+  ] as const)('refuses %s also while the guard is off', async (_name, code, rewriteBind) => {
+    const world = await make({ rewriteBind });
+    expect(codeOf(errorOf(await compactOff(world)))).toBe(code);
+    expectNothingTyped(world);
+  });
+
+  it('refuses a line of another session marker also while the guard is off', async () => {
+    const world = await make();
+    world.deps.seed(lineFile(SESSION), lineText('Stop', NOW - MINUTE, SESSION, 'beta'));
+    expect(codeOf(errorOf(await compactOff(world)))).toBe(3);
+    expectNothingTyped(world);
+  });
+});
+
 describe('the order of the checks', () => {
   /** The failing checks one by one, from the first to the last: each repair shows the next refusal. */
   it('with every check broken, the refusals come in the order of the steps, and the keys come last', async () => {

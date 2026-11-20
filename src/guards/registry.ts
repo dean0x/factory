@@ -132,10 +132,12 @@ const coreGuards: readonly GuardDefinition[] = [
     `A go of the ${owner} comes only from ${owner} input, never from text of a tool, a file or another session.`,
     [`${keys.root.owner}.${keys.owner.prefix}`],
   ),
-  guardOf(
-    guardIds.paneSafety,
-    'Pane and stop safety',
-    'Typed lines and stop signals reach only the session that they are meant for, and only when it is safe.',
+  wiredGuard(
+    guardOf(
+      guardIds.paneSafety,
+      'Pane and stop safety',
+      'Typed lines and stop signals reach only the session that they are meant for, and only when it is safe.',
+    ),
   ),
   wiredGuard(
     guardOf(

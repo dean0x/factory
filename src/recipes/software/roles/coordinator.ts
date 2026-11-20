@@ -33,7 +33,10 @@ export const workerSectionParts: readonly TextPart[] = [
   '- To free a {{worker}} in this session, run `{{dismissCommand}} <id> {{closedFlag}}`. Do it only when the item of the {{worker}} is closed, its branch is pushed and its work copy is clean. Run `{{dismissCommand}} <id>` first. It lists the files that the free deletes. Copy each review file that the {{worker}} named from `{{workersDir}}<id>/inbox/` to `{{reviewsDir}}`.',
   '- Tell the {{owner}} about each dismiss that you run in this session. Every other case is a step of the {{owner}} in a terminal window. If `{{closedFlag}}` refuses, tell the {{owner}} why. A denial is final.',
   '- If the permission system denies `{{dismissCommand}} <id> {{closedFlag}}`, do not run it again. Run `{{dismissCommand}} <id> {{closedFlag}} {{askOwnerFlag}}` one time. If this ask-owner run fails or is denied, stop and tell the {{owner}}. The ask-owner run does not free the {{worker}}. It asks the {{owner}} to do it. Tell the {{owner}} the {{requestWord}} ID. The {{owner}} opens the {{requestWord}} with `{{decideCommand}} <{{requestWord}}-id> done` in their own terminal window. The {{owner}} runs the commands of the {{requestWord}} in another terminal window. The {{owner}} confirms only if the {{worker}} is free. If the {{worker}} stays, the {{owner}} declines the prompt. The {{owner}} then records that result with `{{decideCommand}} <{{requestWord}}-id> kept`. If the {{owner}} answers `kept`, stop. Do not run any command in the {{requestWord}}. Never open a {{requestWord}} for a free with `{{requestAddCommand}}`. A go of the {{owner}} in this session does not lift the denial.',
-  '- Before `{{workerResetCommand}} <id> {{clearFlag}}` or `{{compactFlag}}`, check with `ListAgents` that the {{worker}} is idle.',
+  {
+    guards: [guardIds.paneSafety],
+    lines: ['- Before `{{workerResetCommand}} <id> {{clearFlag}}` or `{{compactFlag}}`, check with `ListAgents` that the {{worker}} is idle.'],
+  },
   {
     guards: [guardIds.resumeRoutines],
     lines: [

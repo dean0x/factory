@@ -117,6 +117,7 @@ const textGuardIds = [
   guardIds.contextLimits,
   guardIds.deleteGuard,
   guardIds.fileLinkSafety,
+  guardIds.paneSafety,
   guardIds.permissionMode,
   guardIds.proxy,
   guardIds.setupText,
@@ -126,6 +127,7 @@ const textGuardIds = [
 /** The start of each rendered line that a guard removes when it is off. */
 const guardedLineStarts: readonly (readonly [string, string])[] = [
   [guardIds.fileLinkSafety, '- Claude Code loads the user rules itself.'],
+  [guardIds.paneSafety, '- Before `factory worker reset <id> --clear`'],
   [guardIds.permissionMode, '- Run every session in auto permission mode.'],
   [guardIds.proxy, '- If the proxy does not answer, the launch stops.'],
   [guardIds.proxy, '- Show only the proxy id and its host and port.'],

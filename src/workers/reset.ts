@@ -5,7 +5,8 @@ import { typeLine } from '../comms/typing.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { guardValuesFor } from '../guards/effective.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import {
   capitalize,
   commandLines,
@@ -14,6 +15,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   lastSeen,
   resetKinds,
   roles,
@@ -60,7 +62,9 @@ import { requireOneLivePane } from './stop.js';
  * 10. `typeLine`: the mode of the pane is read (exit 1 for a failed read, exit 3 for a pane in a mode of tmux), then the capture of the
  *     screen, which is the last read before the keys (exit 3 for a numbered list of choices);
  * 11. the confirm (`confirmReset`).
- * A mode or a dialog that opens after its read and before the keys is not seen.
+ * A mode or a dialog that opens after its read and before the keys is not seen. While pane safety is off, the view check of steps 4
+ * and 8, steps 6 and 7, the state and time checks of step 9 and the mode and screen checks of step 10 do not run. The bind of steps 4
+ * and 8, the owned line of step 9 and the line checks of `typeLine` run with every value.
  */
 
 const KINDS = Object.keys(resetKinds) as readonly ResetKind[];
@@ -113,8 +117,8 @@ export interface ResetOutcome {
   readonly paneId: string;
   /** The name of the session in the session list of the agent program. */
   readonly name: string;
-  /** How long ago the resume notes changed, in milliseconds. */
-  readonly resumeAgeMs: number;
+  /** How long ago the resume notes changed, in milliseconds. Null when pane safety is off, because then the notes are not read. */
+  readonly resumeAgeMs: number | null;
 }
 
 /** The clause that ends a remedy line: `run "<command>" again.` It follows `Then`, and at the start of a sentence it follows `capitalize`. */
@@ -137,9 +141,12 @@ const requireLivePane = async (deps: Deps, request: ResetRequest, again: string)
   );
 };
 
-/** A pane that a summon shows in the view window is refused: the person looks at it, and a typed line could meet a typed answer. */
-const requireOutOfView = (pane: BoundPane, workerId: string, again: string): CliResult<void> =>
-  pane.inView
+/**
+ * A pane that a summon shows in the view window is refused: the person looks at it, and a typed line could meet a typed answer.
+ * `checked` is false while pane safety is off, and then the pane passes.
+ */
+const requireOutOfView = (pane: BoundPane, workerId: string, again: string, checked: boolean): CliResult<void> =>
+  checked && pane.inView
     ? notReady(
         `the pane ${pane.paneId} of the ${roles.worker} ${workerId} is in the window ${tmuxNames.windowView}: a summon shows it there`,
         `Wait until the summon ends, or run "${commandText(commands.layout)}" to show the board again. Then ${runAgain(again)}`,
@@ -206,7 +213,13 @@ const requireResumeNotes = async (deps: Deps, home: string, workerId: string, ag
 };
 
 /** The pane read again right before the keys: it must be bound to the worker, still alive, out of the view window, and the same process. */
-const requireSamePane = async (deps: Deps, request: ResetRequest, pane: BoundPane, again: string): Promise<CliResult<BoundPane>> => {
+const requireSamePane = async (
+  deps: Deps,
+  request: ResetRequest,
+  pane: BoundPane,
+  again: string,
+  checked: boolean,
+): Promise<CliResult<BoundPane>> => {
   const { home, workerId } = request;
   const bound = await requireBoundPane(deps, { home, paneId: pane.paneId, workerId, again });
   if (!bound.ok) return bound;
@@ -217,7 +230,7 @@ const requireSamePane = async (deps: Deps, request: ResetRequest, pane: BoundPan
       `Run "${commandText(lineFor(commandLines.workerResume, workerId))}" to start the ${roles.worker} again. Then ${runAgain(again)}`,
     );
   }
-  const visible = requireOutOfView(now, workerId, again);
+  const visible = requireOutOfView(now, workerId, again, checked);
   if (!visible.ok) return visible;
   if (now.pid !== pane.pid) {
     return notReady(
@@ -231,7 +244,8 @@ const requireSamePane = async (deps: Deps, request: ResetRequest, pane: BoundPan
 /**
  * The last-seen line of the worker, read after the bind. The line must belong to the worker and hold an event. The session must wait
  * at its prompt: a session that works or waits at a dialog is exit 1. The line must be later than the start of the pane process, so a
- * line of an earlier process of a pid that tmux used again never passes. The value is the id of the session of the line.
+ * line of an earlier process of a pid that tmux used again never passes. The value is the id of the session of the line. `checked`
+ * is false while pane safety is off: then the line must still belong to the worker, and the state and time checks do not run.
  */
 const requireIdleSession = async (
   deps: Deps,
@@ -239,6 +253,7 @@ const requireIdleSession = async (
   paneId: string,
   start: number,
   again: string,
+  checked: boolean,
 ): Promise<CliResult<string>> => {
   const { home, workerId } = request;
   const seen = await readOwnLastSeen(deps, home, workerId);
@@ -248,6 +263,7 @@ const requireIdleSession = async (
     return notReady(`cannot use the last-seen line of the ${roles.worker} ${workerId}: ${seen.value.reason}`, wait);
   }
   const { line } = seen.value;
+  if (!checked) return ok(line[lastSeen.keys.sessionId]);
   const state = promptStateOf(line);
   switch (state) {
     case null:
@@ -277,32 +293,36 @@ const requireIdleSession = async (
 interface Checked {
   readonly pane: BoundPane;
   readonly sessionId: string;
-  readonly resumeAgeMs: number;
+  readonly resumeAgeMs: number | null;
   readonly name: string;
 }
 
-/** The checks from the record of the worker to the line of its session. Nothing is typed. */
-const checkWorker = async (deps: Deps, request: ResetRequest, again: string): Promise<CliResult<Checked>> => {
+/**
+ * The checks from the record of the worker to the line of its session. Nothing is typed. While pane safety is off, the view check,
+ * the push check, the resume notes and the state of the session do not stop the reset.
+ */
+const checkWorker = async (deps: Deps, request: ResetRequest, again: string, guards: GuardValues): Promise<CliResult<Checked>> => {
   const { home, config, workerId, kind } = request;
+  const checked = isGuardOn(guards, guardIds.paneSafety);
   const record = await requireRecord(deps, home, workerId, commandText(commandLines.workerReset), flagText(resetKinds[kind].flag));
   if (!record.ok) return record;
   const name = sessionNames.worker(config.core.node.id, workerId);
   if (!name.ok) return failure(name.error);
   const live = await requireLivePane(deps, request, again);
   if (!live.ok) return live;
-  const placed = requireOutOfView(live.value, workerId, again);
+  const placed = requireOutOfView(live.value, workerId, again, checked);
   if (!placed.ok) return placed;
   const start = await requireFreshSession(deps, home, record.value, live.value, again);
   if (!start.ok) return start;
-  const roleTextChecked = await requireRoleText(deps, { home, config, guards: await guardValuesFor(deps, home), retry: commandText(again) });
+  const roleTextChecked = await requireRoleText(deps, { home, config, guards, retry: commandText(again) });
   if (!roleTextChecked.ok) return roleTextChecked;
-  const pushed = await requirePushed(deps, request, record.value, again);
+  const pushed = checked ? await requirePushed(deps, request, record.value, again) : ok(undefined);
   if (!pushed.ok) return pushed;
-  const resumeAgeMs = await requireResumeNotes(deps, home, workerId, again);
+  const resumeAgeMs = checked ? await requireResumeNotes(deps, home, workerId, again) : ok(null);
   if (!resumeAgeMs.ok) return resumeAgeMs;
-  const pane = await requireSamePane(deps, request, live.value, again);
+  const pane = await requireSamePane(deps, request, live.value, again, checked);
   if (!pane.ok) return pane;
-  const sessionId = await requireIdleSession(deps, request, pane.value.paneId, start.value, again);
+  const sessionId = await requireIdleSession(deps, request, pane.value.paneId, start.value, again, checked);
   if (!sessionId.ok) return sessionId;
   return ok({ pane: pane.value, sessionId: sessionId.value, resumeAgeMs: resumeAgeMs.value, name: name.value });
 };
@@ -317,11 +337,12 @@ export const resetWorker = async (deps: Deps, request: ResetRequest): Promise<Cl
   const again = resetLine(workerId, kind);
   const caller = await requireCoordinatorCaller(deps, home, config, again);
   if (!caller.ok) return caller;
-  const checked = await checkWorker(deps, request, again);
+  const guards = await guardValuesFor(deps, home);
+  const checked = await checkWorker(deps, request, again, guards);
   if (!checked.ok) return checked;
   const { pane, sessionId, resumeAgeMs, name } = checked.value;
   const typedAt = deps.now();
-  const typed = await typeLine(deps, pane.paneId, resetKinds[kind].line, `Then ${runAgain(again)}`);
+  const typed = await typeLine(deps, pane.paneId, resetKinds[kind].line, `Then ${runAgain(again)}`, guards);
   if (!typed.ok) return typed;
   const confirmed = await confirmReset(deps, { home, paneId: pane.paneId, workerId, kind, typedAt, sessionBefore: sessionId, again });
   if (!confirmed.ok) return confirmed;
@@ -355,7 +376,7 @@ export const resetOutput = (outcome: ResetOutcome): CommandOutput => {
   return {
     lines: [
       { level: 'ok', text: `${capitalize(resetKinds[kind].done)} the session of the ${roles.worker} ${workerId} in the pane ${paneId}, and its session confirmed it.` },
-      text(`The resume notes changed ${ageText(resumeAgeMs)} ago.`),
+      ...(resumeAgeMs === null ? [] : [text(`The resume notes changed ${ageText(resumeAgeMs)} ago.`)]),
       text(next),
     ],
     json: {
@@ -365,7 +386,7 @@ export const resetOutput = (outcome: ResetOutcome): CommandOutput => {
       pane: paneId,
       name,
       confirmed: true,
-      resumeAgeSeconds: Math.floor(resumeAgeMs / MS_PER_SECOND),
+      resumeAgeSeconds: resumeAgeMs === null ? null : Math.floor(resumeAgeMs / MS_PER_SECOND),
     },
     warnings: [],
     failed: false,

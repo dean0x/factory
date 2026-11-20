@@ -122,14 +122,18 @@ export const paneModeArgs = (pane: string): Result<TmuxArgs, string> => {
   return target.ok ? ok(call('display-message', '-p', '-t', target.value, '#{pane_in_mode}')) : target;
 };
 
-/** What the answer of the mode read says: no mode, a mode, or no answer at all (tmux has no such pane). */
-export type PaneMode = 'none' | 'active' | 'absent';
+/** What the answer of the mode read says: no mode, a mode, an answer that tmux never gives, or no answer at all (no such pane). */
+export type PaneMode = 'none' | 'active' | 'unknown' | 'absent';
 
-/** Reads the output of `paneModeArgs`. Only the text `0` means no mode: any other text fails closed as a mode. */
+/**
+ * Reads the output of `paneModeArgs`. Only the text `0` means no mode, and only the text `1` means a mode. Any other text is
+ * unknown, and the caller refuses it as a mode with every guard value: the read fails closed.
+ */
 export const parsePaneMode = (text: string): PaneMode => {
   const value = text.trim();
   if (value === '') return 'absent';
-  return value === '0' ? 'none' : 'active';
+  if (value === '0') return 'none';
+  return value === '1' ? 'active' : 'unknown';
 };
 
 /**

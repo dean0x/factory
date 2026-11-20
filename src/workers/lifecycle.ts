@@ -2,10 +2,11 @@ import { err, ok } from '../core/result.js';
 import { failure, notReady, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import { guardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { killSessionArgs, type PaneRow } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
-import { commandLines, commands, commandText, env, lastSeen, roles, type CommandName } from '../names.js';
+import { commandLines, commands, commandText, env, guardIds, lastSeen, roles, type CommandName } from '../names.js';
 import { clearActiveMark, type ClearOutcome } from '../state/active-machine.js';
 import { readOwnLastSeen, type OwnSessionRead } from './last-seen.js';
 import { chooseProxy, requireCleanSettings, requireWorkCopy, type ProxyAnswers, type ProxyWish } from './launch.js';
@@ -105,7 +106,7 @@ const requireLivePane = async (deps: Deps, request: TargetCheck, id: string): Pr
 
 /**
  * The checks of one worker, in this order: the panes of the worker (exit 4 or exit 2), the session id that it resumes (exit 3),
- * the pane that it must not stop (exit 2) and the case of its session (exit 3), then the work copy, its settings (exit 4 for a
+ * while pane safety is on the pane that it must not stop (exit 2) and the case of its session (exit 3), then the work copy, its settings (exit 4 for a
  * settings file) and the delivery of its role text (exit 3, exit 4 or exit 1). The value is the id to resume, or null for a worker
  * that does not start again.
  */
@@ -124,7 +125,8 @@ const checkWorker = async (
   if (!seen.ok) return seen;
   const resume = record === undefined ? ok(null) : resumeIdOf(id, seen.value);
   if (!resume.ok) return resume;
-  if (pane !== null) {
+  // While pane safety is off, the stop of each worker makes its own checks: the bind, the case of the session and the signal.
+  if (pane !== null && (await guardOn(deps, guardIds.paneSafety, home))) {
     const other = requireOtherPane(deps, id, pane, again);
     if (!other.ok) return other;
     const known = requireStopCase(id, seen.value, pane);

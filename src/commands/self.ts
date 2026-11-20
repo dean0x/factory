@@ -7,6 +7,7 @@ import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
 import type { CoordinatorPane } from '../launch/tmux.js';
 import {
   commandLines,
@@ -16,6 +17,7 @@ import {
   dirs,
   flags,
   flagText,
+  guardIds,
   roles,
   schemaIds,
   selfCommands,
@@ -148,15 +150,20 @@ export const selfReset = async (deps: Deps, request: SelfResetRequest): Promise<
   const nodeId = config.core.node.id;
   const caller = await requireCoordinatorCaller(deps, home, config, commandLines.selfReset);
   if (!caller.ok) return caller;
-  const hooks = await requireCoordinatorHooks(deps, home);
-  if (!hooks.ok) return hooks;
-  const line = await requireLineWithoutDialog(deps, home, nodeId, caller.value.paneId);
-  if (!line.ok) return line;
-  const notes = await requireResumeNotes(deps, home, nodeId);
-  if (!notes.ok) return notes;
+  const guards = await guardValuesFor(deps, home);
+  // While pane safety is off, the hooks, the last-seen line and the resume notes do not stop the reset. The caller rule, the bind
+  // again and the line checks of `typeLine` run with every value.
+  if (isGuardOn(guards, guardIds.paneSafety)) {
+    const hooks = await requireCoordinatorHooks(deps, home);
+    if (!hooks.ok) return hooks;
+    const line = await requireLineWithoutDialog(deps, home, nodeId, caller.value.paneId);
+    if (!line.ok) return line;
+    const notes = await requireResumeNotes(deps, home, nodeId);
+    if (!notes.ok) return notes;
+  }
   const pane = await requireSamePane(deps, request, caller.value);
   if (!pane.ok) return pane;
-  const typed = await typeLine(deps, pane.value.paneId, typing.lines.compact, THEN_AGAIN);
+  const typed = await typeLine(deps, pane.value.paneId, typing.lines.compact, THEN_AGAIN, guards);
   if (!typed.ok) return typed;
   return ok({ paneId: pane.value.paneId });
 };

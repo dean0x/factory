@@ -392,7 +392,7 @@ export interface WorkerResumeRequest extends WorkerLaunchRequest {
 export const resumeWorker = async (deps: Deps, request: WorkerResumeRequest): Promise<CliResult<WorkerLaunch>> => {
   const { deadPanes = [], ...launch } = request;
   for (const pane of deadPanes) {
-    const closed = await closeWorkerPane(deps, launch.config.core.node.id, pane.paneId);
+    const closed = await closeWorkerPane(deps, launch.config.core.node.id, pane.paneId, launch.guards);
     if (!closed.ok) return closed;
   }
   return launchWorker(deps, launch);

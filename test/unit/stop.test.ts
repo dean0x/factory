@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { stopFallback, stopPoll, stopWay, stopWays, schemaIds, type HookEvent, type StopCase } from '../../src/names.js';
+import { guardSourceOf } from '../../src/guards/effective.js';
+import { guardIds, guardValues, stopFallback, stopPoll, stopWay, stopWays, schemaIds, type HookEvent, type StopCase } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession, type OwnSessionRead } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -710,6 +711,16 @@ describe('worker stop: a pane that a summon put in the slot of the view window',
     const swapAt = made.events.indexOf('tmux swap-pane');
     expect(made.events.indexOf(`terminate ${PID}`)).toBeLessThan(swapAt);
     expect(swapAt).toBeLessThan(made.events.indexOf('tmux kill-pane'));
+  });
+
+  it('closes the pane with no swap of the board while the guard of the pane safety is off', async () => {
+    const made = make({ summoned: SUMMONED });
+    await seed(made.deps);
+    const off = { ...made.deps, guards: guardSourceOf({ home: HOME, values: { [guardIds.paneSafety]: guardValues.off }, state: null }) };
+    expect(await stopWorker(off, { home: HOME, session: NODE, workerId: 'alpha' })).toMatchObject({ ok: true, value: { kind: 'stopped' } });
+    expect(made.events).not.toContain('tmux swap-pane');
+    expect(paneOf(made, PANE)).toBeUndefined();
+    expect(paneOf(made, BOARD)?.options['@slot_summon']).toBe(SUMMONED.mark);
   });
 
   it('keeps the focus on the coordinator pane when it brings the board back', async () => {

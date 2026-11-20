@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { parseSelfReset, selfReset, selfResetOutput, type SelfResetOutcome } from '../../src/commands/self.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { hookSettingsPlaceOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { guardSourceOf } from '../../src/guards/effective.js';
 import { launchArgv } from '../../src/launch/argv.js';
-import { maxFileBytes, schemaIds, type HookEvent } from '../../src/names.js';
+import { guardIds, guardValues, maxFileBytes, schemaIds, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
@@ -368,6 +369,38 @@ describe('the caller rule comes first', () => {
     const world = await make({ env: { TMUX_PANE: '%1' }, settings: null, resume: null, line: null });
     const error = await refused(world);
     expect(codeOf(error)).toBe(2);
+  });
+});
+
+describe('the guard of the pane safety', () => {
+  const runOff = (world: World): Promise<CliResult<SelfResetOutcome>> =>
+    selfReset(
+      { ...world.deps, guards: guardSourceOf({ home: HOME, values: { [guardIds.paneSafety]: guardValues.off }, state: null }) },
+      { home: HOME, config: sampleConfig() },
+    );
+  const withoutNotification = JSON.stringify({ hooks: Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([name]) => name !== 'Notification')) });
+
+  it.each([
+    ['a dialog in the last-seen line', { line: { event: 'Notification' } }],
+    ['no resume notes', { resume: null }],
+    ['settings without a hook event', { settings: withoutNotification }],
+    ['a numbered list of choices on the screen', { screen: DIALOG_SCREEN }],
+    ['a pane in a mode of tmux', { tmux: { panesInMode: [COORDINATOR_PANE] } }],
+  ] as const)('stops for %s only while the guard is on, and else types the line', async (_name, setup: Setup) => {
+    expect(codeOf(await refused(await make(setup)))).toBe(3);
+    const off = await make(setup);
+    valueOf(await runOff(off));
+    expect(off.tmux.typed()).toEqual(COMPACT_KEYS);
+  });
+
+  it('refuses a pane with another pid in the second read also while the guard is off', async () => {
+    const world = await make({
+      rewriteRead: (nth, stdout) => (nth === 2 ? stdout.replace(`|${COORDINATOR_PID}|`, `|${COORDINATOR_PID + 1}|`) : stdout),
+    });
+    const error = errorOf(await runOff(world));
+    expect(codeOf(error)).toBe(3);
+    expect(error.message).toContain('changed');
+    expectNothingTyped(world);
   });
 });
 

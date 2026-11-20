@@ -2,7 +2,8 @@ import { failure, notReady, safetyRefusal, type CliResult } from '../cli/errors.
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
-import { commands, commandText, keys, places, roles } from '../names.js';
+import { guardOn } from '../guards/effective.js';
+import { commands, commandText, guardIds, keys, places, roles } from '../names.js';
 import { coordinatorEndedArgs, hasSessionArgs, showHomeArgs, type TmuxArgs } from './tmux.js';
 
 const TMUX_TIMEOUT_MS = 15_000;
@@ -51,7 +52,8 @@ export const isSameHome = async (deps: Deps, stored: string, home: string): Prom
 
 /**
  * The session must be the session of this factory folder (exit 4). The remedy names `shutdown` in the folder that owns the
- * session. `again` is the command line to run again after the fix: `start` for a caller that names none.
+ * session. `again` is the command line to run again after the fix: `start` for a caller that names none. While pane safety is off,
+ * a session of another folder counts as the session of this folder. A failed read of the home option stops with every value.
  */
 export const requireOwnSession = async (
   deps: Deps,
@@ -62,6 +64,7 @@ export const requireOwnSession = async (
   const shown = await tmuxStep(deps, showHomeArgs(id));
   if (!shown.ok) return shown;
   if (await isSameHome(deps, shown.value.trim(), home)) return ok(undefined);
+  if (!(await guardOn(deps, guardIds.paneSafety, home))) return ok(undefined);
   return safetyRefusal(
     `a tmux session ${id} belongs to another ${places.folder}`,
     `Run "${commandText(commands.shutdown)}" in the ${places.folder} that owns the session, or end that session by hand. ` +

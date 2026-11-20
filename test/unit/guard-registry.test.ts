@@ -113,6 +113,11 @@ const machineReason = 'Reads or words the facts of the machine for the warning, 
 /** The reason of the recovery parts that a running session uses: only the decision of start follows the guard. */
 const stoppedReason = 'Lists, names or resumes the workers with no live pane; checkRunningSession reads the value and resumes them only while the guard is off.';
 
+/** The reasons of the pane safety sites that get the value from a caller or a callee. */
+const ownSessionReason = 'Calls requireOwnSession, which reads the value; a session that does not run and a failed read stop with every value.';
+const selfResetReason = 'A check of the reset of the coordinator; selfReset reads the value and does not call it while the guard is off.';
+const resetReason = 'A check of the reset of a worker; checkWorker reads the value and skips it, or passes its result, while the guard is off.';
+
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -208,6 +213,21 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'workersWithoutPane', reason: stoppedReason },
   { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'noPaneWarning', reason: stoppedReason },
   { row: 'machine-warnings', path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'The bounds of the limit values in the config parse, which reads no guard value; makeWorker reads the value.' },
+  { row: 'own-tmux-session', path: 'src/launch/tmux-run.ts', symbol: 'requireSession', reason: ownSessionReason },
+  { row: 'own-tmux-session', path: 'src/commands/start.ts', symbol: 'runStart', reason: ownSessionReason },
+  { row: 'own-tmux-session', path: 'src/commands/layout.ts', symbol: 'runLayout', reason: ownSessionReason },
+  { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireLineWithoutDialog', reason: selfResetReason },
+  { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireResumeNotes', reason: selfResetReason },
+  { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireCoordinatorHooks', reason: selfResetReason },
+  { row: 'reset-order', path: 'src/workers/reset.ts', symbol: 'requireOutOfView', reason: resetReason },
+  { row: 'reset-order', path: 'src/workers/reset.ts', symbol: 'requirePushed', reason: resetReason },
+  { row: 'reset-order', path: 'src/workers/reset.ts', symbol: 'requireResumeNotes', reason: resetReason },
+  { row: 'reset-order', path: 'src/workers/reset.ts', symbol: 'requireIdleSession', reason: resetReason },
+  { row: 'reset-order', path: 'src/workers/reset.ts', symbol: 'resetWorker', reason: 'Passes the values of its one guard read to checkWorker and typeLine, which read the value.' },
+  { row: 'reset-order', path: 'src/workers/session-checks.ts', symbol: 'requireLineAfterStart', reason: 'A pure time check that the watch also uses; requireIdleSession calls it only while checkWorker finds the guard on.' },
+  { row: 'shutdown-targets', path: 'src/workers/lifecycle.ts', symbol: 'checkTargets', reason: 'Calls checkWorker for each worker, and checkWorker reads the value.' },
+  { row: 'shutdown-targets', path: 'src/commands/lifecycle.ts', symbol: 'runShutdown', reason: 'Calls checkTargets before the first stop, and checkWorker reads the value.' },
+  { row: 'worker-resume-checks', path: 'src/commands/worker.ts', symbol: 'requireNoLivePane', reason: 'A pure test of the panes; runResume reads the value and does not call it while the guard is off.' },
 ];
 
 const software = {
@@ -311,7 +331,7 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
       guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
@@ -799,14 +819,18 @@ describe('the rows of the registry', () => {
         'pane-list-fails-closed',
         'pane-mode-fails-closed',
         'pane-binding',
+        'typed-line-form',
         'typed-line',
         'self-reset-checks',
         'reset-order',
         'stop-term-only',
         'stop-target-checks',
+        'stop-target-bind',
         'signal-limits',
         'shutdown-targets',
+        'session-exact-name',
         'slot-summon-marks',
+        'held-pane-stays',
         'worker-resume-checks',
         'resume-owned-session',
         'worker-idle-text',
@@ -931,7 +955,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(218);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(222);
     expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
@@ -978,7 +1002,10 @@ describe('the rows of the registry', () => {
         'approval-store-place', 'profile-owner-only-wait-text', 'profile-no-invented-decision-text', 'glossary-owner-approves-text',
         'stage-not-approval-glossary-text', 'answered-row-not-proof-text', 'settle-relay-text',
       ],
-      'pane-safety': ['pane-list-fails-closed', 'stop-term-only', 'signal-limits'],
+      'pane-safety': [
+        'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'stop-term-only', 'stop-target-bind',
+        'signal-limits', 'session-exact-name', 'slot-summon-marks', 'resume-owned-session',
+      ],
       'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],
       'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-default-branch'],

@@ -1835,6 +1835,27 @@ describe.each(FOLDER_ORIGINS)('worker resume: the guard of the Claude Code setti
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker resume: the guard of the pane safety in %s', (_title, origin) => {
+  const launches = (made: Made): number => made.tmux.commands().filter((command) => /^(split-window|new-window|new-session)\b/.test(command)).length;
+
+  it.each(guardStatesOf(guardIds.paneSafety))('refuses a worker that runs in a live pane only while the guard counts as on, with the guard %s', async (_state, setup, on) => {
+    const made = await withWorkers({ ...settingsCheckSetup(setup), origin, tmux: { panes: [alphaPane()] } });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'resume', 'alpha', '--home', HOME], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 2 : 0);
+    expect(launches(made)).toBe(on ? 0 : 1);
+  });
+
+  it('refuses a pane with the mark of the worker that its launch did not make, also with the guard off and a matching record', async () => {
+    const made = await withWorkers({
+      ...settingsCheckSetup({ off: [guardIds.paneSafety] }), origin, tmux: { panes: [alphaPane({ command: ['claude'] })] },
+    });
+    const sink = captureSink();
+    expect(await runCli(['worker', 'resume', 'alpha', '--home', HOME], made.deps, sink)).toBe(4);
+    expect(launches(made)).toBe(0);
+  });
+});
+
 describe('worker resume: the session of the worker', () => {
   it('starts the program with --resume and the session id of the last-seen line, in a marked pane', async () => {
     const made = await withWorkers();
