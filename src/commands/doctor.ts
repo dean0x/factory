@@ -508,9 +508,13 @@ export const checkSecrets = (state: DocState<FactoryConfig>, guards: GuardValues
 
 /**
  * An instruction file of an agent in the root or in a folder above it reaches every session of the factory. It is a
- * warning only, never a failure: the file is the choice of the person who owns that folder.
+ * warning only, never a failure: the file is the choice of the person who owns that folder. While folder trust is off, the check
+ * does not run.
  */
 export const checkInstructionFiles = async (deps: Deps, home: string): Promise<CheckResult> => {
+  if (!(await guardOn(deps, guardIds.folderTrust, home))) {
+    return check(checkIds.instructionFiles, 'ok', guardDoctorWords.notChecked(guardIds.folderTrust));
+  }
   const lines = instructionFileWarnings(await scanInstructionFiles(deps, home));
   return lines.length === 0
     ? check(checkIds.instructionFiles, 'ok', `no agent instruction file is in the ${places.folder} or above it`)

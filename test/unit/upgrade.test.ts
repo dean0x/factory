@@ -4719,6 +4719,21 @@ describe('upgrade: the setup text needs the owner', () => {
       expect(hashesOf(deps)[0]).not.toBe(before);
     });
 
+    it.each(guardStatesOf(guardIds.folderTrust))('in a received folder, stops when the root is not the top of a git work tree only while folder trust counts as on: %s', async (_state, setup, on) => {
+      const { deps } = await receivedNode();
+      const off = setup.off ?? [];
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      const noWorkTree: FakeDeps = {
+        ...deps,
+        run: async (command, args, options) =>
+          args[0] === '-C' && args[1] === HOME && args[2] === 'rev-parse' ? exited(128, '', 'fatal: not a git repository\n') : deps.run(command, args, options),
+      };
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME], noWorkTree, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+      expect(sink.errors.join('').includes('not the top folder of a git work tree')).toBe(on);
+    });
+
     it('stops with the same remedy when git can not list the files of a root from another machine', async () => {
       const { deps } = await receivedNode();
       const noGit: FakeDeps = {

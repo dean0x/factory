@@ -77,10 +77,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'File and link safety',
     'Reads and writes follow no link, stay in their own folder and keep private files private.',
   ),
-  guardOf(
-    guardIds.folderTrust,
-    'Folder trust',
-    `A ${folder} counts only when the ${places.list} lists it, and a received ${folder} is checked before it is used.`,
+  wiredGuard(
+    guardOf(
+      guardIds.folderTrust,
+      'Folder trust',
+      `A ${folder} counts only when the ${places.list} lists it, and a received ${folder} is checked before it is used.`,
+    ),
   ),
   wiredGuard(
     guardOf(

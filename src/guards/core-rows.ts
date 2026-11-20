@@ -790,7 +790,7 @@ const folderTrustRows: readonly GuardRow[] = [
   codeRow({
     id: 'received-root-checks',
     guard: guardIds.folderTrust,
-    name: 'A received folder is a work tree whose list of tracked files stays within its cap and holds no link before its setup text is checked',
+    name: 'A received folder is the top folder of a git work tree before its setup text is checked',
     applies: commands.upgrade,
     harm: true,
     sites: at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
@@ -818,8 +818,9 @@ const folderTrustRows: readonly GuardRow[] = [
     applies: 'Doctor, start, init and the launch of a session',
     harm: true,
     sites: [
-      ...at('src/core/instruction-files.ts', 'scanInstructionFiles', 'instructionFileWarnings'),
+      ...at('src/core/instruction-files.ts', 'scanInstructionFiles', 'instructionFileWarnings', 'warnInstructionFiles'),
       ...at('src/workers/launch.ts', 'instructionWarnings'),
+      ...at('src/commands/doctor.ts', 'checkInstructionFiles'),
     ],
   }),
 ];

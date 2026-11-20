@@ -6,13 +6,14 @@ import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
 import { ok } from '../core/result.js';
+import { guardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import { toolNames } from '../core/tools.js';
 import { workerLaunchArgv } from '../launch/argv.js';
 import { isPaneId, setPaneOptionArgs, splitWorkerPaneArgs, tileWorkersArgs } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
-import { commandLines, commands, commandText, dirs, env, keys, places, roles, tmuxNames, values } from '../names.js';
+import { commandLines, commands, commandText, dirs, env, guardIds, keys, places, roles, tmuxNames, values } from '../names.js';
 import { checkProxyHealth, type ProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
 import { confirmLaunch, paneFailure, type PaneFailureRequest } from './confirm.js';
@@ -203,7 +204,8 @@ export const requireCleanTrackedSettings = async (
 /**
  * The instruction files that the session of a worker loads besides those of its project: the files in `work-copies/` and in
  * the folder of the project. The files in the work copy itself belong to the project. The files in the factory folder and
- * above it are the warning of the start of the factory. It is a warning only: it never stops a launch.
+ * above it are the warning of the start of the factory. It is a warning only: it never stops a launch. While folder trust is off,
+ * it gives no warning.
  */
 const instructionWarnings = async (
   deps: Deps,
@@ -211,6 +213,7 @@ const instructionWarnings = async (
   workerId: string,
   workCopy: string,
 ): Promise<readonly string[]> => {
+  if (!(await guardOn(deps, guardIds.folderTrust, home))) return [];
   const scan = await scanInstructionFiles(deps, dirname(workCopy), layoutOf(home).workCopiesDir);
   return [
     ...(scan.found.length === 0

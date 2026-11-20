@@ -95,6 +95,8 @@ const analyzerReason = 'A pure analysis of one settings text; judgeSettings read
 const workCopyReason = 'Reaches judgeSettings, which uses the guard value for optional checks of the file contents.';
 /** The reason of the pure token tests, which other rows share: the scan of the tracked texts reads the value. */
 const tokenTestReason = 'A pure test of one text, which the hidden error keys and the task file check share; scanTrackedTexts reads the value and drops its token finding while the guard is off.';
+/** The reason of the scan and the text of the instruction file warning, which every caller runs only while the guard is on. */
+const instructionReason = 'A scan or a text of the warning; warnInstructionFiles, instructionWarnings and checkInstructionFiles read the value and skip it while the guard is off.';
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -149,6 +151,8 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'settings-write-consent', path: 'src/commands/start.ts', symbol: 'settleHook', reason: consentCallerReason },
   { row: 'settings-write-consent', path: 'src/upgrade/hook-settings.ts', symbol: 'applyHookSettings', reason: consentCallerReason },
   { row: 'settings-write-changed', path: 'src/core/claude-settings.ts', symbol: 'ensureHookSettings', reason: 'Calls askConsent and planAfterConsent, which read the value.' },
+  { row: 'instruction-files-warning', path: 'src/core/instruction-files.ts', symbol: 'scanInstructionFiles', reason: instructionReason },
+  { row: 'instruction-files-warning', path: 'src/core/instruction-files.ts', symbol: 'instructionFileWarnings', reason: instructionReason },
 ];
 
 const software = {
@@ -251,7 +255,7 @@ describe('the guards of a recipe', () => {
 
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.gitSafety,
+      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.folderTrust, guardIds.gitSafety,
       guardIds.resumeRoutines, guardIds.secrets, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });

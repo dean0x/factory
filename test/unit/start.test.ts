@@ -1071,6 +1071,19 @@ describe.each(FOLDER_ORIGINS)('start in %s: the guard of the Claude Code setting
   });
 });
 
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of folder trust', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.folderTrust))('warns about an agent instruction file and stops for a received folder that is not the top of a work tree only while the guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config, noRepo: true });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    deps.seed(`${HOME}/${files.claudeMd}`, 'Rules.\n');
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on && origin === 'received' ? 4 : 0);
+    expect(deps.warned.some((line) => line.startsWith('Agent instruction files are in'))).toBe(on);
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('start in %s: the path checks of the guard of the Claude Code settings write', (_folder, origin) => {
   const CHANGED = JSON.stringify({ model: 'opus', statusLine: { type: 'command', command: 'my-line' } });
 

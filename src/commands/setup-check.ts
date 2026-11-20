@@ -4,6 +4,7 @@ import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
 import { isWorkTreeRoot, trackedFilesOf } from '../core/git.js';
 import { err, ok } from '../core/result.js';
+import { guardOn } from '../guards/effective.js';
 import {
   namedItems,
   requireNoLinks,
@@ -14,7 +15,7 @@ import {
   trackedSetOf,
 } from '../core/root-paths.js';
 import { acceptanceState, acceptSetup, manifestChange } from '../core/setup-acceptance.js';
-import { commands, commandText, files, places, program, roles, setupAcceptance } from '../names.js';
+import { commands, commandText, files, guardIds, places, program, roles, setupAcceptance } from '../names.js';
 import type { SetupTexts } from '../templates/types.js';
 import { collectSetup, type CollectedSetup } from './init-received.js';
 
@@ -152,9 +153,14 @@ const ownSetOf = async (deps: Deps, home: string): Promise<CliResult<readonly st
   return plain.ok ? ok(present) : plain;
 };
 
-/** The subject of a received root: every path that git tracks, apart from the config and the ignore file. */
+/**
+ * The subject of a received root: every path that git tracks, apart from the config and the ignore file. With folder trust off, a
+ * root that is not the top of a work tree has an empty subject, so no setup text of it counts. The cap and the link check of the
+ * list always run, because the setup check needs the whole list.
+ */
 const trackedSetOfRoot = async (deps: Deps, home: string): Promise<CliResult<readonly string[]>> => {
   if (!(await isWorkTreeRoot(deps, home))) {
+    if (!(await guardOn(deps, guardIds.folderTrust, home))) return ok([]);
     const stop = notListedStop(home);
     return safetyRefusal(stop.text, stop.remedy);
   }

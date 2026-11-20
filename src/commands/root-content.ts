@@ -93,6 +93,8 @@ export interface RootScan {
   readonly delegations: DelegationReport | null;
   /** False when the guard of the settings check is off. The scan stops and the permission mode check still apply. */
   readonly settingsChecked: boolean;
+  /** The off guard whose checks of the root repo did not run, or null when they ran. */
+  readonly skippedBy: string | null;
 }
 
 export interface RootCheckResult {
@@ -170,6 +172,8 @@ interface RepoScan {
   readonly capped: boolean;
   /** The check of the files that the owner must accept, or null when a stop before it made the check useless. */
   readonly setup: SetupScan | null;
+  /** The off guard whose checks of the root repo did not run, or null when they ran. */
+  readonly skippedBy: string | null;
 }
 
 /** The setup check, and the finding that it gave. */
@@ -268,13 +272,17 @@ const scanRepo = async (
   const listed = await listTracked(deps, home);
   const list = listed.ok ? listed.value : null;
   if (list === null) {
+    // Only a folder that is not the top of a work tree follows folder trust. A git that fails stays a failure.
+    if (listed.ok && !(await guardOn(deps, guardIds.folderTrust, home))) {
+      return { findings: [], tracked: null, capped: false, setup: null, skippedBy: guardIds.folderTrust };
+    }
     const stop = notListedStop(home);
     const unlisted = received
       ? finding(id, 'fail', stop.text, stop.remedy)
       : listed.ok
         ? notChecked(id, `git cannot list the files that git tracks in ${home}`)
         : failureFrom(id, listed.error, GIT_REMEDY);
-    return { findings: [unlisted], tracked: null, capped: false, setup: null };
+    return { findings: [unlisted], tracked: null, capped: false, setup: null, skippedBy: null };
   }
   const tracked = list.paths;
   const findings: RootFinding[] = [];
@@ -337,7 +345,7 @@ const scanRepo = async (
     setup = setupScanOf(await checkSetupSet(deps, { home, set, node: config?.core.node.id ?? null, received }));
     if (setup.finding !== null) findings.push(setup.finding);
   }
-  return { findings, tracked, capped: list.reachedCap, setup };
+  return { findings, tracked, capped: list.reachedCap, setup, skippedBy: null };
 };
 
 // ---- The tracked text files: tokens, file URLs and user folder paths ----
@@ -899,6 +907,7 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
     setupFinding: setup.finding,
     delegations,
     settingsChecked: isGuardOn(await guardValuesFor(deps, home), guardIds.settingsCheck),
+    skippedBy: repo.skippedBy,
   };
 };
 
@@ -941,7 +950,14 @@ const resultOf = (scan: RootScan, id: string): RootCheckResult => {
     return { id, level, text: [modesLine(scan.delegations), ...own.map(sentence)].join('. ') };
   }
   if (own.length > 0) return { id, level, text: own.map(sentence).join(' ') };
-  return { id, level, text: id === checkIds.permissionMode && !scan.settingsChecked ? PERMISSION_ONLY_TEXT : (OK_TEXT[id] ?? '') };
+  return { id, level, text: okTextOf(scan, id) };
+};
+
+/** The text of a check with no finding: it names the part that an off guard did not check. */
+const okTextOf = (scan: RootScan, id: string): string => {
+  if (id === checkIds.permissionMode && !scan.settingsChecked) return PERMISSION_ONLY_TEXT;
+  if (id === checkIds.rootRepo && scan.skippedBy !== null) return guardDoctorWords.notChecked(scan.skippedBy);
+  return OK_TEXT[id] ?? '';
 };
 
 /** One result for each root check, in a fixed order, for `doctor`. */
