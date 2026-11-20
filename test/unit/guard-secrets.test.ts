@@ -40,6 +40,24 @@ describe('the guard of secrets and output text', () => {
       expect(found.map((check) => check.level)).toEqual(on ? ['fail'] : []);
     });
 
+    it.each(guardStatesOf(guardIds.secrets))('doctor names the token part of a clean root file check as not checked only while the guard is off: %s', async (_state, setup, on) => {
+      const { handler } = gitHandler({ repos: { [GUARDED_HOME]: {} }, tracked: { [GUARDED_HOME]: ['notes.md'] } });
+      const deps = guardedNode({ run: handler }, { ...setup, origin });
+      deps.seed(`${GUARDED_HOME}/notes.md`, 'Plain notes.\n');
+      const check = (await doctorChecksOf(deps)).find((line) => line.id === checkIds.rootFiles);
+      expect(check?.level).toBe('ok');
+      expect(check?.text.includes('holds a token')).toBe(on);
+      expect(check?.text.includes(guardDoctorWords.notChecked(guardIds.secrets))).toBe(!on);
+    });
+
+    it('doctor names the root file check as not checked when the guards of secrets and of the scan are both off', async () => {
+      const { handler } = gitHandler({ repos: { [GUARDED_HOME]: {} }, tracked: { [GUARDED_HOME]: ['notes.md'] } });
+      const deps = guardedNode({ run: handler }, { off: [guardIds.secrets, guardIds.rootScan], origin });
+      deps.seed(`${GUARDED_HOME}/notes.md`, 'Plain notes.\n');
+      const check = (await doctorChecksOf(deps)).find((line) => line.id === checkIds.rootFiles);
+      expect(check).toMatchObject({ level: 'ok', text: guardDoctorWords.notCheckedBy([guardIds.rootScan, guardIds.secrets]) });
+    });
+
     it.each(guardStatesOf(guardIds.secrets))('doctor fails a config value that looks like a token only while the guard is on: %s', async (_state, setup, on) => {
       const deps = guardedNode({}, { ...setup, origin, config: configWithToken() });
       const check = (await doctorChecksOf(deps)).find((line) => line.id === checkIds.secrets);

@@ -2576,6 +2576,8 @@ export const guardDoctorWords = {
   unsettableOff: (id: string): string => `${id} is ${guardListWords.notSettable}; its value stays on`,
   /** The line of a check that did not run, because its guard is off. */
   notChecked: (id: string): string => `not checked: the guard ${id} is off`,
+  /** The line of a check that did not run, because each of its guards is off. */
+  notCheckedBy: (ids: readonly string[]): string => `not checked: the guards ${ids.join(' and ')} are off`,
   /** The line of a check of which only a part ran, because its guard is off. */
   partlyChecked: (done: string, skipped: string, id: string): string => `${done}; ${skipped} ${guardDoctorWords.notChecked(id)}`,
 } as const;

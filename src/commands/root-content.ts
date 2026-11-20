@@ -93,6 +93,8 @@ export interface RootScan {
   readonly delegations: DelegationReport | null;
   /** False when the guard of the settings check is off. The scan stops and the permission mode check still apply. */
   readonly settingsChecked: boolean;
+  /** False when the guard of secrets is off: the scan of the tracked texts gives no token finding. */
+  readonly tokensChecked: boolean;
   /** The off guard whose checks of the root repo did not run, or null when they ran. */
   readonly skippedBy: string | null;
 }
@@ -894,6 +896,7 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
   const projects = await scanProjects(deps, home, config);
   const settings = await scanSettings(deps, home, projectPaths, repo.tracked ?? []);
   const delegations = config === null ? null : await delegationReport(deps, home, config);
+  const guards = await guardValuesFor(deps, home);
   // A received root checked its files in the scan of the repo. An own root accepts its setup text, which is there whether
   // git tracks it or not.
   const setup =
@@ -914,7 +917,8 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
     setup: setup.check,
     setupFinding: setup.finding,
     delegations,
-    settingsChecked: isGuardOn(await guardValuesFor(deps, home), guardIds.settingsCheck),
+    settingsChecked: isGuardOn(guards, guardIds.settingsCheck),
+    tokensChecked: isGuardOn(guards, guardIds.secrets),
     skippedBy: repo.skippedBy,
   };
 };
@@ -959,6 +963,12 @@ const FILES_ONLY_TEXT = guardDoctorWords.partlyChecked(
   'the file URLs, the user folder paths and the files that the scan did not read are',
   guardIds.rootScan,
 );
+/** The ok text of the root file check when the guard of secrets is off. */
+const ADDRESSES_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  'no tracked text file holds a file URL or a user folder path',
+  'the values like a token are',
+  guardIds.secrets,
+);
 
 const RESULT_ORDER = [checkIds.rootRepo, checkIds.rootFiles, checkIds.projectPaths, checkIds.permissionMode, checkIds.delegations];
 
@@ -976,6 +986,9 @@ const resultOf = (scan: RootScan, id: string): RootCheckResult => {
 /** The text of a check with no finding: it names the part that an off guard did not check. */
 const okTextOf = (scan: RootScan, id: string): string => {
   if (id === checkIds.permissionMode && !scan.settingsChecked) return PERMISSION_ONLY_TEXT;
+  if (id === checkIds.rootFiles && !scan.tokensChecked) {
+    return scan.skippedBy === guardIds.rootScan ? guardDoctorWords.notCheckedBy([guardIds.rootScan, guardIds.secrets]) : ADDRESSES_ONLY_TEXT;
+  }
   if (scan.skippedBy === guardIds.rootScan && id === checkIds.rootRepo) return REPO_ONLY_TEXT;
   if (scan.skippedBy === guardIds.rootScan && id === checkIds.rootFiles) return FILES_ONLY_TEXT;
   if (scan.skippedBy !== null && id === checkIds.rootRepo) return guardDoctorWords.notChecked(scan.skippedBy);
