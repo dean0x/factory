@@ -1,4 +1,4 @@
-import { commandLines, commands, guardIds, places, requestWords, roles } from '../names.js';
+import { commandLines, commands, flags, flagText, guardIds, places, program, requestWords, roles } from '../names.js';
 import { alwaysOnRow, at, codeRow, fixedTextRow, textRow } from './build.js';
 import type { GuardRow } from './types.js';
 
@@ -138,9 +138,17 @@ const sessionCheckRows: readonly GuardRow[] = [
     id: 'yes-in-session',
     guard: guardIds.sessionChecks,
     name: 'In a session, the flag that answers every question gives no consent to the hook settings, except for a work copy that has no settings file',
-    applies: `${commands.init}, ${commands.upgrade} and ${commandLines.workerNew}`,
+    applies: `${commands.start}, ${commands.upgrade} and ${commandLines.workerNew}`,
     harm: true,
     sites: at('src/core/claude-settings.ts', 'yesCounts', 'yesRefused', 'askConsent'),
+  }),
+  alwaysOnRow({
+    id: 'init-yes-in-session',
+    guard: guardIds.sessionChecks,
+    name: `In a session, the flag that answers every question gives ${commands.init} no consent to the hook settings, except for a work copy that has no settings file`,
+    applies: commands.init,
+    harm: true,
+    sites: at('src/core/claude-settings.ts', 'consentGuards'),
   }),
   alwaysOnRow({
     id: 'received-init-outside-session',
@@ -158,7 +166,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-existing.ts', 'checkExisting'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'upgrade-registration-consent',
     guard: guardIds.sessionChecks,
     name: 'A session cannot register a folder again; an upgrade asks for consent unless it is a dry run or has the flag that answers every question',
@@ -166,7 +174,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/upgrade.ts', 'requireRegistrationConsent'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'overwrite-safety-outside-session',
     guard: guardIds.sessionChecks,
     name: 'A session cannot rewrite the safety block, also with the flag that answers every question',
@@ -185,16 +193,26 @@ const sessionCheckRows: readonly GuardRow[] = [
   codeRow({
     id: 'dismiss-idle-pick',
     guard: guardIds.sessionChecks,
-    name: `A session or a script cannot remove idle ${worker}s: the pick needs a terminal window, and each pick is read and checked again`,
+    name: `A session or a script cannot remove idle ${worker}s: the pick needs a terminal window outside a session`,
     applies: `${commands.dismiss} of idle ${worker}s`,
     harm: true,
-    sites: at('src/commands/dismiss.ts', 'requirePick', 'pickAndFree', 'dismissIdle'),
+    sites: at('src/commands/dismiss.ts', 'dismissIdle'),
+  }),
+  alwaysOnRow({
+    id: 'dismiss-idle-pick-list',
+    guard: guardIds.sessionChecks,
+    name: `Each pick of idle ${worker}s is read and checked again, and only a ${worker} of the idle list is removed`,
+    applies: `${commands.dismiss} of idle ${worker}s`,
+    harm: true,
+    sites: at('src/commands/dismiss.ts', 'requirePick', 'pickAndFree'),
   }),
   codeRow({
     id: 'coordinator-caller',
     guard: guardIds.sessionChecks,
     name: `A step for the ${coordinator} runs only for a caller that looks like the ${coordinator}; this stops a mistake and is no proof`,
-    applies: `${commandLines.workerReset}, ${commandLines.selfReset}, ${commandLines.itemUnassign}, ${commandLines.requestClose} and ${commandLines.workerWatch}`,
+    applies:
+      `${commandLines.workerReset}, ${commandLines.selfReset}, ${commandLines.itemUnassign}, ${commandLines.requestClose}, ` +
+      `${commandLines.requestDoc}, ${commandLines.workerWatch} and ${commands.dismiss} ${flagText(flags.closed)}`,
     harm: false,
     sites: [
       ...at('src/workers/panes.ts', 'requireCoordinatorCaller'),
@@ -202,9 +220,17 @@ const sessionCheckRows: readonly GuardRow[] = [
       ...at('src/workers/watch.ts', 'requireWatchCaller'),
       ...at('src/workers/reset.ts', 'resetWorker'),
       ...at('src/commands/self.ts', 'selfReset'),
-      ...at('src/commands/request.ts', 'requireRelayer'),
+      ...at('src/commands/request.ts', 'requireRelayer', 'execute'),
       ...at('src/commands/dismiss.ts', 'dismissClosed'),
     ],
+  }),
+  alwaysOnRow({
+    id: 'coordinator-target-pane',
+    guard: guardIds.sessionChecks,
+    name: `A step that acts on the pane of the ${coordinator} reads that pane first: the session of the ${node} runs and belongs to this ${folder}, and ${program} started the pane`,
+    applies: commandLines.selfReset,
+    harm: true,
+    sites: [...at('src/workers/panes.ts', 'requireCoordinatorPane'), ...at('src/commands/self.ts', 'requireTargetPane')],
   }),
 ];
 

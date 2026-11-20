@@ -23,7 +23,11 @@ export const workerSectionParts: readonly TextPart[] = [
     segments: [
       '- Give a task with `SendMessage`. A `SendMessage` carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}. Write a long task as a file in `{{workersDir}}<id>/inbox/`, with a new plain name each time, and name the file. The file is the durable copy. A `SendMessage` has no read receipt. After `{{workerNewCommand}} {{yesFlag}}`, send one `SendMessage` that names the copied file.',
       { guards: [guardIds.folderTrust], text: ' If the output of that command names a trust question, tell the {{owner}} at once which pane waits.' },
-      ' In this session, `{{yesFlag}}` is the consent to the hook settings of a new work copy. It counts only when the work copy has no settings file. Else the command stops, and the {{owner}} runs it in a terminal window.',
+      ' In this session, `{{yesFlag}}` is the consent to the hook settings of a new work copy.',
+      {
+        guards: [guardIds.sessionChecks],
+        text: ' It counts only when the work copy has no settings file. Else the command stops, and the {{owner}} runs it in a terminal window.',
+      },
     ],
   },
   '- Run `{{workerWatchCommand}}` as a background task. The watch reports a {{worker}} that finished a turn or that needs you. It runs for up to 24 hours. When the watch reports a {{worker}}, deal with the report. If a {{worker}} waits for the {{owner}}, for example at a dialog, ask the {{owner}}. Never answer it yourself. Then run `{{workerWatchCommand}} {{readyFlag}} <id>` in the background: it reports the {{worker}} when it is ready, and it watches the other {{worker}}s as before. After that report, run the watch with no `{{readyFlag}}`. If another cause stays, run the watch again with the ids of the other {{worker}}s only: `{{workerWatchCommand}} <id>...`. The watch ends at its first report, or after 24 hours with no change. Then run it again, except after a report `{{replacedWord}}`.',

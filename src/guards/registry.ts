@@ -125,10 +125,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'Task files and messages between sessions',
     `A ${worker} acts only on task files in its own folder, and text from another session carries no authority of the ${owner}.`,
   ),
-  guardOf(
-    guardIds.sessionChecks,
-    'Session and caller checks',
-    'A command that only a person may run refuses a session that calls it.',
+  wiredGuard(
+    guardOf(
+      guardIds.sessionChecks,
+      'Session and caller checks',
+      'A command that only a person may run refuses a session that calls it.',
+    ),
   ),
   guardOf(
     guardIds.ownerGo,

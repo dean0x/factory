@@ -14,7 +14,7 @@ import { inFactorySession } from '../core/factory-session.js';
 import type { IgnoredList } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { shellWord } from '../core/shell-word.js';
-import { allOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
+import { allOn, guardOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import type { PaneRow } from '../launch/tmux.js';
 import {
@@ -95,9 +95,12 @@ const checkWords = (options: DismissOptions): CliResult<void> => {
   return options.words.length === 1 ? ok(undefined) : usage(`${commands.dismiss} takes one argument: the id of the ${roles.worker}`);
 };
 
-/** The yes flag gives no consent inside a factory session: the stop comes before any read. */
-const requireOutsideSession = (deps: Deps, again: string): CliResult<void> =>
-  inFactorySession(deps)
+/**
+ * The yes flag gives no consent inside a factory session: the stop comes before the first read of the worker. It follows the
+ * session-checks guard of the node at `home`. With no node home (the search for the factory folder failed), the stop stays.
+ */
+const requireOutsideSession = async (deps: Deps, home: string | null, again: string): Promise<CliResult<void>> =>
+  inFactorySession(deps) && (home === null || (await guardOn(deps, guardIds.sessionChecks, home)))
     ? safetyRefusal(
         `${flagText(flags.yes)} gives no consent inside a ${places.session}, so ${commands.dismiss} frees nothing`,
         `Run "${commandText(again)}" in a terminal window outside a ${places.session}.`,
@@ -304,11 +307,11 @@ const pushedMark = (inspected: Inspected): true | null => (inspected.checked ? t
 const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeRegistry, workItems: WorkItemPort): Promise<CliResult<CommandOutput>> => {
   const [id = ''] = options.words;
   const again = dismissLine(id);
+  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
   if (options.yes) {
-    const outside = requireOutsideSession(deps, again);
+    const outside = await requireOutsideSession(deps, located.ok ? located.value.home : null, again);
     if (!outside.ok) return outside;
   }
-  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
   if (!located.ok) return located;
   const home = located.value.home;
   const loaded = await loadConfig(deps, home, registry);
@@ -918,7 +921,8 @@ interface Listed {
 }
 
 /**
- * The pick step of `dismiss --idle`, in a terminal window outside a factory session: the owner types the ids. The owner may take
+ * The pick step of `dismiss --idle`, in a terminal window outside a factory session (anywhere while the session-checks guard is off):
+ * the owner types the ids. The owner may take
  * long, so after the answer the state of the workers is read again, and every picked id is checked again (it must be listed as
  * idle with no open work, and its work must be pushed) before the first change. Then each picked worker is freed as `dismiss ID --yes`
  * frees it. The table goes to stdout before the question, so the owner sees the state, the pushed test and the ignored files that
@@ -971,7 +975,8 @@ const pickAndFree = async (
  * `dismiss --idle`: lists the idle workers that have no open work, with their state, whether their work is pushed and the count of the
  * ignored files that their free deletes, and changes nothing. Inside a factory session the pick step stops (exit 4). With no terminal
  * window the list is all. In a terminal window the owner types the ids to dismiss: every id is checked before the first change, and
- * then each picked worker is freed as `dismiss ID --yes` frees it.
+ * then each picked worker is freed as `dismiss ID --yes` frees it. While the session-checks guard is off, the pick step runs also in
+ * a session and with no terminal window.
  */
 const dismissIdle = async (deps: Deps, options: DismissOptions, registry: RecipeRegistry, workItems: WorkItemPort): Promise<CliResult<CommandOutput>> => {
   const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
@@ -1008,7 +1013,10 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
     ignoredMore: ignored.get(entry.id)?.reachedCap ?? false,
   }));
   const json = { ...base, freed: false, workers: listed, picked: [] };
-  if (inFactorySession(deps)) {
+  // The stop in a session and the list with no terminal window keep a session and a script from the pick. While the session-checks
+  // guard is off, the pick reads its answer from the standard input, and the checks of each pick in `pickAndFree` run as before.
+  const ownerChannel = isGuardOn(guards, guardIds.sessionChecks);
+  if (ownerChannel && inFactorySession(deps)) {
     return ok({
       lines: [
         ...table,
@@ -1022,7 +1030,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
     });
   }
   if (idle.length === 0) return ok({ lines: table, json, warnings, failed: false });
-  if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
+  if (ownerChannel && !(deps.stdinIsTTY && deps.stdoutIsTTY)) {
     return ok({
       lines: [...table, text(`To pick, run "${commandText(IDLE_LINE)}" in a terminal window.`)],
       json,

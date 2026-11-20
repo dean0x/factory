@@ -44,7 +44,7 @@ describe('guard set arguments', () => {
     [['set', guardIds.cloneRules, 'off'], `Unknown guard "${guardIds.cloneRules}"`],
     [['set', guardIds.hookRuntime, 'on'], `Unknown guard "${guardIds.hookRuntime}"`],
     [['set', softwareGuardIds.prRules, 'off'], 'not settable in this version'],
-    [['set', guardIds.sessionChecks, 'off'], 'not settable in this version'],
+    [['set', guardIds.ownerGo, 'off'], 'not settable in this version'],
     [['set', A, 'off', '--all'], '--all'],
     [['set', A, 'bad'], 'on or off'],
     [['set', A, 'off', '--json'], '--json'],
@@ -71,13 +71,26 @@ describe('the guard command channel', () => {
     [{ stdinIsTTY: false }, guardRecordWords.inputRequired],
     [{ stdoutIsTTY: false }, guardRecordWords.outputRequired],
   ] as const;
+  const restricted = [guardIds.sessionChecks, guardIds.approvalDelegation, guardIds.ownerGo, guardIds.fileLinkSafety];
+  /** The node holds each restricted guard off, with the matching owner record. */
+  const seedRestrictedOff = (deps: ReturnType<typeof fixture>): void => {
+    const config = sampleConfig();
+    seedConfig(deps, HOME, { ...config, core: { ...config.core, guards: Object.fromEntries(restricted.map((id) => [id, 'off'])) } });
+    deps.seed(STORE, JSON.stringify({ schema: guardRecords.schema, records: [{ node: 'demo', root: HOME, prefix: null, values: Object.fromEntries(restricted.map((id) => [id, { value: 'off', at: deps.now().toISOString() }])) }] }));
+  };
+
+  it('runs the channel cases on a node whose session-checks guard counts as off', async () => {
+    const deps = fixture();
+    seedRestrictedOff(deps);
+    const result = await run(deps, ['list', '--json']);
+    expect(result.code, result.err).toBe(0);
+    expect(JSON.parse(result.out)).toMatchObject({ guards: expect.arrayContaining([expect.objectContaining({ id: guardIds.sessionChecks, value: 'off' })]) });
+  });
+
   for (const command of [['set', A, 'off'], ['confirm']]) {
     it.each(cases)(`${command[0]} refuses a restricted channel %j before any read`, async (options, message) => {
       const deps = fixture(options);
-      const config = sampleConfig();
-      const restricted = [guardIds.sessionChecks, guardIds.approvalDelegation, guardIds.ownerGo, guardIds.fileLinkSafety];
-      seedConfig(deps, HOME, { ...config, core: { ...config.core, guards: Object.fromEntries(restricted.map((id) => [id, 'off'])) } });
-      deps.seed(STORE, JSON.stringify({ schema: guardRecords.schema, records: [{ node: 'demo', root: HOME, prefix: null, values: Object.fromEntries(restricted.map((id) => [id, { value: 'off', at: deps.now().toISOString() }])) }] }));
+      seedRestrictedOff(deps);
       const before = new Map(deps.files);
       const seen: string[] = [];
       const result = await run(withFsWatch(deps, (method) => { seen.push(method); }), command);

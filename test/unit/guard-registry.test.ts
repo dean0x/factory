@@ -125,6 +125,9 @@ const localWriteReason = 'Calls a write of the local board, whose first step giv
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
+/** The reason of a step for the coordinator whose caller rule reads the value itself. */
+const coordinatorCallerReason = 'Calls requireCoordinatorCaller, which reads the value.';
+
 /** The reason of the checks of the closed path, which the owner request form shares with every guard on. */
 const closedProofReason = 'dismissClosed reads the value and does not call it while the guard is off; the owner request form calls it with every guard on.';
 
@@ -243,6 +246,16 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'dismiss-pushed', path: 'src/commands/dismiss.ts', symbol: 'dismissOne', reason: 'Passes the values of its one guard read to readyOf and checkPushed, which reads the value; the dry run and the plain removal run with every value.' },
   { row: 'dismiss-closed-proof', path: 'src/commands/dismiss.ts', symbol: 'closedWorkOf', reason: closedProofReason },
   { row: 'dismiss-closed-proof', path: 'src/commands/dismiss.ts', symbol: 'closedChecks', reason: closedProofReason },
+  { row: 'yes-in-session', path: 'src/core/claude-settings.ts', symbol: 'yesRefused', reason: 'The negation of yesCounts, which reads the value.' },
+  { row: 'yes-in-session', path: 'src/core/claude-settings.ts', symbol: 'askConsent', reason: 'Passes the values that ensureHookSettings reads with consentGuards to yesCounts, which reads the value.' },
+  { row: 'dismiss-yes-in-session', path: 'src/commands/dismiss.ts', symbol: 'dismissOne', reason: 'Calls requireOutsideSession, which reads the value.' },
+  { row: 'coordinator-caller', path: 'src/commands/item.ts', symbol: 'unassign', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/workers/watch.ts', symbol: 'requireWatchCaller', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/workers/reset.ts', symbol: 'resetWorker', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/commands/self.ts', symbol: 'selfReset', reason: 'Calls requireTargetPane, whose caller rule reads the value; the read of the target pane runs with every value.' },
+  { row: 'coordinator-caller', path: 'src/commands/request.ts', symbol: 'requireRelayer', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/commands/request.ts', symbol: 'execute', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'dismissClosed', reason: 'Calls closedChecks or freeUnproved, which call requireCoordinatorCaller, which reads the value.' },
 ];
 
 const software = {
@@ -348,7 +361,7 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.dismiss, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.sessionChecks, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
       guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality',
     ]);
   });
@@ -793,13 +806,16 @@ describe('the rows of the registry', () => {
         'decide-channel',
         'setup-ask-channel',
         'yes-in-session',
+        'init-yes-in-session',
         'received-init-outside-session',
         'existing-init-outside-session',
         'upgrade-registration-consent',
         'overwrite-safety-outside-session',
         'dismiss-yes-in-session',
         'dismiss-idle-pick',
+        'dismiss-idle-pick-list',
         'coordinator-caller',
+        'coordinator-target-pane',
         'decide-channel-text',
         'yes-in-session-text',
       ],
@@ -976,7 +992,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(225);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(228);
     expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
@@ -1015,8 +1031,9 @@ describe('the rows of the registry', () => {
       'machine-limits': ['lock-bounds', 'lock-place'],
       'task-files': ['child-address-form', 'child-files-untrusted', 'report-listed-fields'],
       'session-checks': [
-        'owner-channel', 'decide-channel', 'setup-ask-channel', 'received-init-outside-session', 'existing-init-outside-session',
-        'decide-channel-text',
+        'owner-channel', 'decide-channel', 'setup-ask-channel', 'init-yes-in-session', 'received-init-outside-session',
+        'existing-init-outside-session', 'upgrade-registration-consent', 'overwrite-safety-outside-session', 'dismiss-idle-pick-list',
+        'coordinator-target-pane', 'decide-channel-text',
       ],
       'owner-go': [
         'decide-prompt', 'answered-row-not-proof', 'settle-relay-rules', 'owner-row-under-lock', 'decision-record-escape',

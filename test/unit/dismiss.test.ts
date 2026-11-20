@@ -63,6 +63,8 @@ interface Setup {
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** A person types at the terminal window, and the answer to the question of the pick step. */
   readonly terminal?: { readonly answer: string };
+  /** A script gives this answer on the standard input, with no terminal window. */
+  readonly piped?: string;
   readonly links?: Readonly<Record<string, string>>;
   readonly config?: FactoryConfig;
   /** Runs at each `git fetch`, after the run read the state of the workers. It stands for a change of the machine during the fetch. */
@@ -131,7 +133,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
     stdoutIsTTY: answer !== undefined,
     prompt: () => {
       setup.atPrompt?.(made);
-      return ok(answer ?? '');
+      return ok(answer ?? setup.piped ?? '');
     },
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
@@ -2332,7 +2334,7 @@ describe('dismiss ID --closed: the in-session free of a finished worker', () => 
   });
 });
 
-describe('the dismiss guard', () => {
+describe('the guards of dismiss', () => {
   const alpha = copyOf('alpha');
   const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
   const DECISION_LOG = join(layoutOf(HOME).stateDir, files.decisionLog);
@@ -2364,7 +2366,7 @@ describe('the dismiss guard', () => {
 
   const isFreed = async (made: Made): Promise<boolean> => (await recordState(made, 'alpha')) === 'absent';
 
-  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+  describe.each(FOLDER_ORIGINS)('the dismiss guard in %s', (_folder, origin) => {
     it.each(guardStatesOf(guardIds.dismiss))('dismiss ID --yes frees a worker whose branch is not on the remote only while the guard counts as off: %s', async (_state, setup, on) => {
       const made = await guardedMake(setup, origin, { git: { remotes: { [cloneOf('web')]: { copies: {} } } } });
       const result = await runOn(made, ['alpha', '--yes']);
@@ -2411,7 +2413,7 @@ describe('the dismiss guard', () => {
     });
   });
 
-  describe.each(FOLDER_ORIGINS)('in %s, with the guard off and a matching record', (_folder, origin) => {
+  describe.each(FOLDER_ORIGINS)('the dismiss guard in %s, with the guard off and a matching record', (_folder, origin) => {
     it('dismiss ID still runs the dry run first: with no yes flag it ends nothing and removes nothing', async () => {
       const made = await guardedMake(OFF, origin);
       const result = await runOn(made, ['alpha']);
@@ -2448,6 +2450,64 @@ describe('the dismiss guard', () => {
       const result = await runOn(made, ['alpha', '--closed', '--ask-owner']);
       expect(result.code, result.out).toBe(1);
       expect(result.err).toContain('dismiss-closed-proof');
+      await expectNothingChanged(made, ['alpha']);
+    });
+  });
+
+  /** The env of a factory session that is not the coordinator pane. */
+  const IN_SESSION: Partial<Setup> = { env: { FACTORY_SESSION: NODE } };
+  const SESSION_OFF: GuardedSetup = { off: [guardIds.sessionChecks] };
+  /** The board of alpha: its one item is closed, so the idle list holds alpha. */
+  const seedClosedItem = (made: Made): void => made.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'done', lane: 'alpha' })]));
+
+  describe.each(FOLDER_ORIGINS)('the session-checks guard in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.sessionChecks))('dismiss ID --yes in a factory session frees the worker only while the guard counts as off: %s', async (_state, setup, on) => {
+      const made = await guardedMake(setup, origin, IN_SESSION);
+      const result = await runOn(made, ['alpha', '--yes']);
+      expect(result.code, result.err).toBe(on ? 4 : 0);
+      expect(await isFreed(made)).toBe(!on);
+      expect(result.err.includes('gives no consent inside a factory session')).toBe(on);
+    });
+
+    it.each(guardStatesOf(guardIds.sessionChecks))('dismiss --idle in a factory session asks for the pick and frees the pick only while the guard counts as off: %s', async (_state, setup, on) => {
+      const made = await guardedMake(setup, origin, { ...IN_SESSION, config: sampleConfigWithBoard(), terminal: { answer: 'alpha' } });
+      seedClosedItem(made);
+      const result = await runOn(made, ['--idle']);
+      expect(result.code, result.err).toBe(on ? 4 : 0);
+      expect(made.deps.prompts).toHaveLength(on ? 0 : 1);
+      expect(await isFreed(made)).toBe(!on);
+    });
+
+    it.each(guardStatesOf(guardIds.sessionChecks))('dismiss --idle with no terminal window takes the pick of a script only while the guard counts as off: %s', async (_state, setup, on) => {
+      const made = await guardedMake(setup, origin, { config: sampleConfigWithBoard(), piped: 'alpha' });
+      seedClosedItem(made);
+      const result = await runOn(made, ['--idle']);
+      expect(result.code, result.err).toBe(0);
+      expect(made.deps.prompts).toHaveLength(on ? 0 : 1);
+      expect(await isFreed(made)).toBe(!on);
+    });
+  });
+
+  describe.each(FOLDER_ORIGINS)('the session-checks guard in %s, with the guard off and a matching record', (_folder, origin) => {
+    it('dismiss --idle still frees only a worker of the idle list: a pick that is not listed frees nothing', async () => {
+      const made = await guardedMake(SESSION_OFF, origin, { ...IN_SESSION, config: sampleConfigWithBoard(), terminal: { answer: 'alpha zeta' } });
+      seedClosedItem(made);
+      const result = await runOn(made, ['--idle']);
+      expect(result.code, result.out).toBe(1);
+      expect(result.err).toContain('the worker zeta is not in the list of idle workers');
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('dismiss --idle still reads and checks each pick again after the answer: a worker that turns busy while the owner types is not freed', async () => {
+      const made = await guardedMake(SESSION_OFF, origin, {
+        ...IN_SESSION,
+        config: sampleConfigWithBoard(),
+        terminal: { answer: 'alpha' },
+        atPrompt: (current) => current.turnBusy('alpha'),
+      });
+      seedClosedItem(made);
+      const result = await runOn(made, ['--idle']);
+      expect(result.code, result.out).toBe(1);
       await expectNothingChanged(made, ['alpha']);
     });
   });
