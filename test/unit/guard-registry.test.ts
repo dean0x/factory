@@ -117,6 +117,11 @@ const stoppedReason = 'Lists, names or resumes the workers with no live pane; ch
 const selfResetReason = 'A check of the reset of the coordinator; selfReset reads the value and does not call it while the guard is off.';
 const resetReason = 'A check of the reset of a worker; checkWorker reads the value and skips it, or passes its result, while the guard is off.';
 
+/** The reason of a board site that gets the values of the node from its caller and gives them to the check that reads the value. */
+const boardValuesReason = (check: string): string => `Passes the values of its caller to ${check}, which reads the value.`;
+/** The reason of a command step whose board write refuses a hosted tracker kind in the first step of the local board. */
+const localWriteReason = 'Calls a write of the local board, whose first step gives the values of the node to requireLocalKind, which reads the value.';
+
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
 
@@ -136,6 +141,14 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'requireOwnerChannel', reason: 'The channel check of every owner record; approvalsFromFlags reads the value before it calls it, and the release scope records share it.' },
   { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'putRecord', reason: 'The one writer of owner records, which the release scope records share; recordApprovals reads the value and writes no record for an off point.' },
   { row: 'delegation-warning', path: 'src/commands/root-content.ts', symbol: 'delegationFindings', reason: 'Lists the unmatched points of delegationReport, which reads the value and gives none when the guard is off.' },
+  { row: 'board-flow-stages', path: 'src/board/edit.ts', symbol: 'checkMove', reason: boardValuesReason('requireSettableStage') },
+  { row: 'board-worker-field', path: 'src/board/edit.ts', symbol: 'unassignIn', reason: 'The one command that takes a worker off an item; its checks of the stored worker and of the cap of former workers bound the data and run with every value. changeItemIn reads the value.' },
+  { row: 'board-hosted-refusal', path: 'src/commands/track.ts', symbol: 'execute', reason: localWriteReason },
+  { row: 'board-hosted-refusal', path: 'src/commands/queue.ts', symbol: 'execute', reason: localWriteReason },
+  { row: 'board-doc-place', path: 'src/board/edit.ts', symbol: 'checkDocPath', reason: boardValuesReason('docPathIssue') },
+  { row: 'board-doc-place', path: 'src/core/place-rule.ts', symbol: 'dotRuleReason', reason: 'The shared place rule, which the check of an assignment file also uses; docPathIssue reads the value and does not call it while the guard is off.' },
+  { row: 'board-doc-view', path: 'src/commands/item.ts', symbol: 'docsOf', reason: boardValuesReason('docPathIssue') },
+  { row: 'active-machine-mark', path: 'src/state/active-machine.ts', symbol: 'otherMachineWarning', reason: 'The text of the warning; claimLocked reads the value and does not print it while the guard is off.' },
   { row: 'delete-hook', path: 'src/state/head-board.ts', symbol: 'earlierReadableBoard', reason: 'A helper of runStateGuard, which reads the value and lets the commit pass when the guard is off.' },
   { row: 'delete-hook-install', path: 'src/commands/init-state.ts', symbol: 'makeStateFolder', reason: 'Calls guardPlanOf, which reads the value and plans no install when the guard is off.' },
   { row: 'delete-hook-install', path: 'src/state/guard.ts', symbol: 'folderRefusal', reason: 'A refusal text of installGuard, which runs only when guardPlanOf, which reads the value, plans an install.' },
@@ -328,7 +341,7 @@ describe('the guards of a recipe', () => {
 
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
+      guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
       guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
       guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality',
     ]);
@@ -968,7 +981,7 @@ describe('the rows of the registry', () => {
         .filter(([, ids]) => ids.length > 0),
     );
     expect(pinned).toEqual({
-      'board-edits': ['board-reserved-names', 'board-reserved-names-text'],
+      'board-edits': ['board-reserved-names', 'board-file-links', 'board-commit-paths', 'board-reserved-names-text'],
       'clone-rules': [
         'clone-source', 'clone-option-end', 'clone-inside-folder', 'clone-missing-folder', 'clone-received-local', 'clone-url',
         'clone-project-path', 'clone-unique-targets',
@@ -1136,7 +1149,8 @@ describe('the rows of the registry', () => {
 
   it('keeps doc file checks, local writes and reserved names in their existing rows', () => {
     const file = software.rows.find((row) => row.id === 'board-file-links');
-    expect(file?.sites).toContainEqual({ path: 'src/board/local.ts', symbol: 'createLocalBoard' });
+    expect(file?.sites).toContainEqual({ path: 'src/board/local.ts', symbol: 'requireDocFile' });
+    expect(file?.sites).toContainEqual({ path: 'src/board/edit.ts', symbol: 'plainPathFault' });
     expect(file?.applies).toContain(commandLines.itemDoc);
     const local = software.rows.find((row) => row.id === 'board-hosted-refusal');
     expect(local?.sites).toContainEqual({ path: 'src/board/local.ts', symbol: 'requireLocalKind' });

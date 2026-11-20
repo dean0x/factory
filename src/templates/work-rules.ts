@@ -11,13 +11,15 @@ import { linesFor, type TextPart } from './fill.js';
 export const WORK_RULES_PARTS: readonly TextPart[] = [
   '# Work rules',
   '',
-  'The {{program}} folder above this one holds the board, the {{requestsWord}}, the queue and the decision log. Keep no other copy.',
-  '',
+  {
+    guards: [guardIds.boardEdits],
+    lines: ['The {{program}} folder above this one holds the board, the {{requestsWord}}, the queue and the decision log. Keep no other copy.', ''],
+  },
   '## Commands',
   '',
   '- Run a {{program}} command that only reads with `{{jsonFlag}}`. Before you use a command for the first time, run it with `{{helpFlag}}`.',
   '- If a command refuses, tell the {{owner}} its exit code and its error text. Do not look for a way around the refusal.',
-  '- Only you change the board. A {{worker}} does not run a {{program}} command that changes the state.',
+  { guards: [guardIds.boardEdits], lines: ['- Only you change the board. A {{worker}} does not run a {{program}} command that changes the state.'] },
   '- Name the item id in each assignment. A {{worker}} names that id in each milestone report.',
   '',
   '## Limits',

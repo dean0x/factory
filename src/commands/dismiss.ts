@@ -14,6 +14,7 @@ import { inFactorySession } from '../core/factory-session.js';
 import type { IgnoredList } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { shellWord } from '../core/shell-word.js';
+import { guardValuesFor } from '../guards/effective.js';
 import type { PaneRow } from '../launch/tmux.js';
 import {
   commands,
@@ -501,7 +502,7 @@ const dismissAskOwner = async (
   const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return stopAsk(loaded.error);
   const config = loaded.value;
-  const local = requireLocalKind(config.core.tracker.kind, commands.dismiss);
+  const local = requireLocalKind(config.core.tracker.kind, commands.dismiss, await guardValuesFor(deps, home));
   if (!local.ok) return stopAsk(local.error);
   const checkedAt = deps.now().toISOString();
   const checked = await closedChecks(deps, options, workItems, home, config, again);

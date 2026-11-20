@@ -102,7 +102,7 @@ const boardEditRows: readonly GuardRow[] = [
       ...at('src/commands/queue.ts', 'execute'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'board-file-links',
     guard: guardIds.boardEdits,
     name: 'Board files, decisions and docs use plain relative paths with no link; a doc link checks file kind and size',
@@ -110,8 +110,8 @@ const boardEditRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/board/files.ts', 'textOfFile'),
-      ...at('src/board/local.ts', 'createLocalBoard'),
-      ...at('src/board/edit.ts', 'docPathIssue'),
+      ...at('src/board/local.ts', 'requireDocFile'),
+      ...at('src/board/edit.ts', 'plainPathFault'),
     ],
   }),
   codeRow({
@@ -130,7 +130,7 @@ const boardEditRows: readonly GuardRow[] = [
     harm: false,
     sites: [...at('src/commands/item.ts', 'docsOf'), ...at('src/board/edit.ts', 'docPathIssue')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'board-commit-paths',
     guard: guardIds.boardEdits,
     name: 'A board commit takes plain relative paths with no link, valid text and at most one MiB',

@@ -12,6 +12,8 @@ import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { guardValuesFor } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import { boardKeys, commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, places, roles, schemaIds } from '../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import type { RecipeRegistry } from '../recipes/index.js';
@@ -225,15 +227,15 @@ const stageCopyOf = (item: BoardItem): readonly string[] | null => {
 
 /**
  * The docs of an item, in the stored order. Only a stored entry that is text and passes the doc name check is kept. This repeats the
- * name check of the write only: the checks of the file itself (no link, a plain file, the size limit) are the job of the reader of
- * the path. A key that is not a list gives an empty list.
+ * name check of the write only, with the same guard values: the checks of the file itself (no link, a plain file, the size limit) are
+ * the job of the reader of the path. A key that is not a list gives an empty list.
  */
-const docsOf = (item: BoardItem): readonly string[] => {
+const docsOf = (item: BoardItem, guards: GuardValues): readonly string[] => {
   const stored = item.record[boardKeys.docs];
-  return Array.isArray(stored) ? stored.filter((entry): entry is string => typeof entry === 'string' && docPathIssue(entry) === null) : [];
+  return Array.isArray(stored) ? stored.filter((entry): entry is string => typeof entry === 'string' && docPathIssue(entry, guards) === null) : [];
 };
 
-const itemJson = (action: Subcommand, item: BoardItem): JsonDoc => ({
+const itemJson = (action: Subcommand, item: BoardItem, guards: GuardValues): JsonDoc => ({
   schema: schemaIds.item,
   action,
   item: {
@@ -244,18 +246,18 @@ const itemJson = (action: Subcommand, item: BoardItem): JsonDoc => ({
     track: item.track,
     epic: epicOf(item),
     stages: stageCopyOf(item),
-    docs: docsOf(item),
+    docs: docsOf(item, guards),
   },
 });
 
-const itemAnswer = (verb: string, action: Subcommand, item: BoardItem): CommandOutput =>
-  answer(`${verb} ${displayLine(item.id)}: ${titleText(item)}`, itemJson(action, item));
+const itemAnswer = (verb: string, action: Subcommand, item: BoardItem, guards: GuardValues): CommandOutput =>
+  answer(`${verb} ${displayLine(item.id)}: ${titleText(item)}`, itemJson(action, item, guards));
 
 /** The line of a doc link: the item as for any write, or one line that says the item held the path already. */
-const linkAnswer = (path: string, linked: DocLinked): CommandOutput =>
+const linkAnswer = (path: string, linked: DocLinked, guards: GuardValues): CommandOutput =>
   linked.changed
-    ? itemAnswer('Linked', itemCommands.doc, linked.item)
-    : answer(`Already linked ${displayLine(path)} to ${displayLine(linked.item.id)}.`, itemJson(itemCommands.doc, linked.item));
+    ? itemAnswer('Linked', itemCommands.doc, linked.item, guards)
+    : answer(`Already linked ${displayLine(path)} to ${displayLine(linked.item.id)}.`, itemJson(itemCommands.doc, linked.item, guards));
 
 /** The one line of a move: the id, the part that moved, and its old and new value. A move to the same value says that nothing changed. */
 const moveAnswer = (config: FactoryConfig, move: ItemMove, moved: ItemMoved): CommandOutput => {
@@ -397,7 +399,7 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   if (!ref.ok) return ref;
   const valid = checkItemId(action.id);
   if (!valid.ok) return valid;
-  const local = requireLocalKind(config.core.tracker.kind, commands.item);
+  const local = requireLocalKind(config.core.tracker.kind, commands.item, await guardValuesFor(deps, board.home));
   if (!local.ok) return local;
   const ready = checkRecordSetup({ recipe: config.entry.board, config: config.core.board }, hook.stage);
   if (!ready.ok) return ready;
@@ -435,7 +437,7 @@ const unassign = async (deps: Deps, board: OpenBoard, id: string): Promise<CliRe
   const { item, worker } = freed.value;
   return ok(
     answer(`Took ${displayLine(worker)} off ${displayLine(item.id)}: ${titleText(item)}`, {
-      ...itemJson(itemCommands.unassign, item),
+      ...itemJson(itemCommands.unassign, item, await guardValuesFor(deps, board.home)),
       worker,
     }),
   );
@@ -443,14 +445,16 @@ const unassign = async (deps: Deps, board: OpenBoard, id: string): Promise<CliRe
 
 const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<CliResult<CommandOutput>> => {
   const { connector, config } = board;
+  /** The guard values of the node, for the doc view of an item in the output. */
+  const guards = (): Promise<GuardValues> => guardValuesFor(deps, board.home);
   switch (action.kind) {
     case itemCommands.add: {
       const added = await connector.addItem(action.input);
-      return added.ok ? ok(itemAnswer('Added', action.kind, added.value)) : added;
+      return added.ok ? ok(itemAnswer('Added', action.kind, added.value, await guards())) : added;
     }
     case itemCommands.update: {
       const saved = await connector.updateItem(action.id, action.patch);
-      return saved.ok ? ok(itemAnswer('Saved', action.kind, saved.value)) : saved;
+      return saved.ok ? ok(itemAnswer('Saved', action.kind, saved.value, await guards())) : saved;
     }
     case itemCommands.move: {
       const moved = await connector.moveItem(action.id, action.move);
@@ -458,7 +462,7 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
     }
     case itemCommands.close: {
       const closed = await connector.closeItem(action.id);
-      return closed.ok ? ok(itemAnswer('Closed', action.kind, closed.value)) : closed;
+      return closed.ok ? ok(itemAnswer('Closed', action.kind, closed.value, await guards())) : closed;
     }
     case itemCommands.list: {
       if (!action.follow) return listAnswer(connector, config, action.query);
@@ -471,7 +475,7 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       return unassign(deps, board, action.id);
     case itemCommands.doc: {
       const linked = await connector.linkDoc({ id: action.id, path: action.path });
-      return linked.ok ? ok(linkAnswer(action.path, linked.value)) : linked;
+      return linked.ok ? ok(linkAnswer(action.path, linked.value, await guards())) : linked;
     }
     default: {
       const unreachable: never = action;

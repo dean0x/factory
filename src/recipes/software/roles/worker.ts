@@ -29,7 +29,7 @@ export const WORKER_PARTS: readonly TextPart[] = [
   '',
   '- Run a {{program}} command that only reads with `{{jsonFlag}}`. Before you use a command for the first time, run it with `{{helpFlag}}`.',
   '- If a command refuses, report its exit code and its error text to the {{coordinator}}. Do not look for a way around the refusal.',
-  '- Only the {{coordinator}} changes the board. Do not run a {{program}} command that changes the state.',
+  { guards: [guardIds.boardEdits], lines: ['- Only the {{coordinator}} changes the board. Do not run a {{program}} command that changes the state.'] },
   '',
   '## Limits',
   '',

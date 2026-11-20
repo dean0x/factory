@@ -4,6 +4,8 @@ import type { BoardConfig } from '../config/schema.js';
 import { dotRuleReason, type NameCompare } from '../core/place-rule.js';
 import { projectFolderKey } from '../core/project-path.js';
 import { ok, type Err } from '../core/result.js';
+import { allOn, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import {
   approvalLinkLabels,
   boardIds,
@@ -17,6 +19,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   markLimits,
   maxBoardNumber,
   maxEchoChars,
@@ -200,17 +203,17 @@ export const checkPatch = (setup: BoardSetup, patch: ItemPatch): CliResult<ItemC
 };
 
 /**
- * A move to a state of the setup, or to a stage that a command may set (a stage that only a flow sets is a usage error). The key is
- * the key of the item that the move sets: its status, or its stage.
+ * A move to a state of the setup, or to a stage that a command may set (a stage that only a flow sets is a usage error while the guard
+ * of board edits is on in `guards`). The key is the key of the item that the move sets: its status, or its stage.
  */
 export interface CheckedMove {
   readonly key: typeof boardKeys.status | typeof boardKeys.stage;
   readonly value: string;
 }
 
-export const checkMove = (setup: BoardSetup, move: ItemMove): CliResult<CheckedMove> => {
+export const checkMove = (setup: BoardSetup, move: ItemMove, guards: GuardValues = allOn): CliResult<CheckedMove> => {
   if ('stage' in move) {
-    const stage = requireSettableStage(setup.recipe, move.stage);
+    const stage = requireSettableStage(setup.recipe, move.stage, guards);
     return stage.ok ? ok({ key: boardKeys.stage, value: stage.value }) : stage;
   }
   const states = setup.config?.states ?? [];
@@ -379,17 +382,19 @@ const plainPathFault = (path: string): string | null => {
  * The one name check of the doc rule, or null for a path that passes. It reads the path text and no file. The write (`checkDocPath`)
  * and every view of a stored path call it, so they agree on each path. The checks run in this order: a plain path with no hidden
  * character, then the place rule. The place rule refuses the local config at the top of the factory folder, in any letter case, and
- * a part that starts with a dot. It has no exception for the orders folder.
+ * a part that starts with a dot. It has no exception for the orders folder. The place rule follows the guard of board edits in
+ * `guards`. The plain path check runs with every value, because it keeps a doc inside the factory folder and bounds the text of a path.
  */
-export const docPathIssue = (path: string): DocPathIssue | null => {
+export const docPathIssue = (path: string, guards: GuardValues = allOn): DocPathIssue | null => {
   const fault = plainPathFault(path);
   if (fault !== null) return { kind: 'form', reason: fault };
+  if (!isGuardOn(guards, guardIds.boardEdits)) return null;
   const place = dotRuleReason(path.split('/'), { atFactoryTop: true, ordersException: false, sameName: sameDocName });
   return place === null ? null : { kind: 'place', reason: `is refused: ${displayLine(place, maxEchoChars)}` };
 };
 
-export const checkDocPath = (path: string, again: CommandText): CliResult<string> => {
-  const issue = docPathIssue(path);
+export const checkDocPath = (path: string, again: CommandText, guards: GuardValues = allOn): CliResult<string> => {
+  const issue = docPathIssue(path, guards);
   if (issue === null) return ok(path);
   const message = `the path ${shown(path)} ${issue.reason}`;
   return issue.kind === 'form'
@@ -522,17 +527,19 @@ export const addItemIn = (doc: BoardDoc, item: NewItem, at: string): CliResult<E
  * removes a worker. An empty value for an item with no worker key is refused as `checkPatch` held it back. An item with no worker key
  * takes a worker, and a patch with the stored value changes nothing. The guard reads the item that was
  * read under the lock, so a worker that arrived after the first look still stops the patch. A stored value of any kind counts, so
- * the guard does not lower for a value that is not text.
+ * the guard does not lower for a value that is not text. While the guard of board edits is off in `guards`, a new value replaces the
+ * stored worker; an empty value is still refused, because no write holds an empty value.
  */
 export const changeItemIn = (
   doc: BoardDoc,
   id: string,
   changes: ItemChanges,
   workerField: string | undefined,
+  guards: GuardValues = allOn,
 ): CliResult<Edit<string>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
-  if (workerField !== undefined && Object.hasOwn(found.value.record, workerField)) {
+  if (workerField !== undefined && Object.hasOwn(found.value.record, workerField) && isGuardOn(guards, guardIds.boardEdits)) {
     const changed = Object.hasOwn(changes.fields, workerField) && changes.fields[workerField] !== found.value.record[workerField];
     if (changed || changes.emptyWorker !== undefined) return usageError(workerFieldGuard.message(id), workerFieldGuard.remedy(id));
   }

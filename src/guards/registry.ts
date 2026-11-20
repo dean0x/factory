@@ -32,10 +32,12 @@ const coreGuards: readonly GuardDefinition[] = [
       [approvalKey],
     ),
   ),
-  guardOf(
-    guardIds.boardEdits,
-    'Board edits',
-    'Board data changes only through the commands, in local files that hold no link.',
+  wiredGuard(
+    guardOf(
+      guardIds.boardEdits,
+      'Board edits',
+      'Board data changes only through the commands, in local files that hold no link.',
+    ),
   ),
   wiredGuard(
     guardOf(

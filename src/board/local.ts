@@ -6,6 +6,8 @@ import type { Deps } from '../core/deps.js';
 import { decisionIdsOf, decisionPlaceOf, readDecisionProof, readDecisionStore, readScopedDecisions, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
+import { allOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import {
   commandLines,
   commands,
@@ -13,6 +15,7 @@ import {
   dirs,
   env,
   files,
+  guardIds,
   hostedBoardLine,
   maxEchoChars,
   maxFileBytes,
@@ -97,7 +100,8 @@ import { requestsOf, type RequestLinkRules } from './requests.js';
  *
  * A hosted tracker kind (`github`, `jira` or `linear`) keeps the truth of the board at the provider. factory still keeps the local
  * files, and they are the source for the views (design 4.10). This version has no provider, so every write of a hosted kind stops with a security stop (exit 4) before the input check and
- * before the lock: it makes no commit and changes no file. A read of a hosted kind reads the local files, as the kind `local` does.
+ * before the lock: it makes no commit and changes no file. While the guard of board edits is off, the write goes to the local files, as
+ * for the kind `local`: no write reaches a provider. A read of a hosted kind reads the local files, as the kind `local` does.
  */
 
 export interface LocalBoardOptions {
@@ -172,23 +176,47 @@ interface BoardEdited<T> {
 }
 
 /**
- * A hosted tracker kind is a security stop (exit 4) with one line. Every board write starts with this check, and so does a command
- * that makes a call to the network before its write.
+ * A hosted tracker kind is a security stop (exit 4) with one line, while the guard of board edits is on in `guards`. Every board write
+ * starts with this check, and so does a command that makes a call to the network before its write.
  */
-export const requireLocalKind = (kind: string, command: CommandName): CliResult<void> =>
-  kind === values.trackerLocal
+export const requireLocalKind = (kind: string, command: CommandName, guards: GuardValues = allOn): CliResult<void> =>
+  kind === values.trackerLocal || !isGuardOn(guards, guardIds.boardEdits)
     ? ok(undefined)
     : safetyRefusal(
         hostedBoardLine(displayLine(kind, maxEchoChars)),
         `Set the tracker kind to ${values.trackerLocal} in the config, then run "${commandText(command)}" again.`,
       );
 
+/**
+ * The file checks of a doc link, after the name check: the file must be a plain file of the factory folder, with no link on the
+ * way (a link is a security stop, exit 4), and it holds at most `maxFileBytes` bytes (exit 2). One look at the file itself gives
+ * its kind and its size, and follows no link. A look that fails stops the link, so the check fails closed. The checks run with every
+ * guard value, because they keep a doc link inside the factory folder and bound the size of the file.
+ */
+const requireDocFile = async (deps: Deps, layout: Layout, path: string): Promise<CliResult<void>> => {
+  const full = join(layout.home, path);
+  const linked = await requireNoLinks(deps, layout.home, [full]);
+  if (!linked.ok) return linked;
+  const info = await deps.fs.lstatInfo(full);
+  if (!info.ok) return info;
+  const shownPath = JSON.stringify(displayLine(path, maxEchoChars));
+  if (info.value === null || info.value.kind !== 'file') return usageError(`${shownPath} is not a file of the ${places.folder}`);
+  return info.value.size > maxFileBytes ? usageError(`${shownPath} is larger than ${maxFileBytes} bytes`) : ok(undefined);
+};
+
 export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoardOptions): LocalBoard => {
   const { queueKey } = options;
   const setup: BoardSetup = { recipe: options.recipe, config: options.config };
 
-  /** The first step of every write: a hosted kind stops here, before the input check, the lock and any file call. */
-  const requireLocalTracker = (): CliResult<void> => requireLocalKind(options.tracker, options.command);
+  /** The guard values of the node of this board, from the one guard read of the command. */
+  const nodeGuards = (): Promise<GuardValues> => guardValuesFor(deps, layout.home);
+
+  /**
+   * The first step of every write: a hosted kind stops here, before the input check, the lock and any board file call. Only a hosted
+   * kind reads the guard values.
+   */
+  const requireLocalTracker = async (): Promise<CliResult<void>> =>
+    requireLocalKind(options.tracker, options.command, options.tracker === values.trackerLocal ? allOn : await nodeGuards());
 
   /**
    * One `commitBoardChange` call. The value of the change reaches the caller through the closure, because the helper gives back only
@@ -474,27 +502,11 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   const itemWrite = (message: string, edit: (doc: BoardDoc) => CliResult<Edit<string>>): Promise<CliResult<BoardItem>> =>
     boardWrite({ message, edit, resultOf: itemIn });
 
-  /**
-   * The file checks of a doc link, after the name check: the file must be a plain file of the factory folder, with no link on the
-   * way (a link is a security stop, exit 4), and it holds at most `maxFileBytes` bytes (exit 2). One look at the file itself gives
-   * its kind and its size, and follows no link. A look that fails stops the link, so the check fails closed.
-   */
-  const requireDocFile = async (path: string): Promise<CliResult<void>> => {
-    const full = join(layout.home, path);
-    const linked = await requireNoLinks(deps, layout.home, [full]);
-    if (!linked.ok) return linked;
-    const info = await deps.fs.lstatInfo(full);
-    if (!info.ok) return info;
-    const shownPath = JSON.stringify(displayLine(path, maxEchoChars));
-    if (info.value === null || info.value.kind !== 'file') return usageError(`${shownPath} is not a file of the ${places.folder}`);
-    return info.value.size > maxFileBytes ? usageError(`${shownPath} is larger than ${maxFileBytes} bytes`) : ok(undefined);
-  };
-
   return {
     kind: options.tracker,
 
     async addItem(input) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const checked = checkNewItem(setup, input);
       if (!checked.ok) return checked;
@@ -502,17 +514,18 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async updateItem(id, patch) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
       const changes = checkPatch(setup, patch);
       if (!changes.ok) return changes;
-      return itemWrite(commitMessages.updateItem(id), (doc) => changeItemIn(doc, id, changes.value, setup.config?.worker_field));
+      const guards = await nodeGuards();
+      return itemWrite(commitMessages.updateItem(id), (doc) => changeItemIn(doc, id, changes.value, setup.config?.worker_field, guards));
     },
 
     async checkApproval(id, approval, ref) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
@@ -523,7 +536,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async recordChecked(id, checked, worker, approval) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
@@ -542,7 +555,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async unassignItem(id) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
@@ -559,11 +572,11 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async moveItem(id, move) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
-      const checked = checkMove(setup, move);
+      const checked = checkMove(setup, move, await nodeGuards());
       if (!checked.ok) return checked;
       return boardWrite<ItemMoved, ItemMoved>({
         message: commitMessages.moveItem(id),
@@ -573,7 +586,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async closeItem(id) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
@@ -598,7 +611,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async addTrack(input) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const checked = checkNewTrack(input);
       if (!checked.ok) return checked;
@@ -618,12 +631,12 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async askDecision(input) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const checked = checkDecision(input);
       if (!checked.ok) return checked;
       for (const path of checked.value.docs) {
-        const file = await requireDocFile(path);
+        const file = await requireDocFile(deps, layout, path);
         if (!file.ok) return file;
       }
       const place = await decisionPlaceOf(deps, layout.home, options.node);
@@ -642,13 +655,13 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async linkRequestDoc(input) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkRequestId(input.id);
       if (!valid.ok) return valid;
       const path = checkDocPath(input.path, commandLines.requestDoc);
       if (!path.ok) return path;
-      const file = await requireDocFile(path.value);
+      const file = await requireDocFile(deps, layout, path.value);
       if (!file.ok) return file;
       const place = await decisionPlaceOf(deps, layout.home, options.node);
       if (!place.ok) return place;
@@ -669,7 +682,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async logDecision(input) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const checked = checkLogEntry(input);
       if (!checked.ok) return checked;
@@ -697,7 +710,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async closeRequest(id, settlement, relayScope = []) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkRequestId(id);
       if (!valid.ok) return valid;
@@ -738,7 +751,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async setQueueRow(input) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const checked = checkQueueRow(setup, input);
       if (!checked.ok) return checked;
@@ -750,13 +763,13 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async linkDoc(input) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(input.id);
       if (!valid.ok) return valid;
-      const path = checkDocPath(input.path, commandLines.itemDoc);
+      const path = checkDocPath(input.path, commandLines.itemDoc, await nodeGuards());
       if (!path.ok) return path;
-      const file = await requireDocFile(path.value);
+      const file = await requireDocFile(deps, layout, path.value);
       if (!file.ok) return file;
       return boardWrite<boolean, DocLinked>({
         message: commitMessages.linkDoc(input.id),
@@ -769,7 +782,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async decisionRequest(id) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const guarded = await requireGuardOn(deps, layout.stateDir);
       if (!guarded.ok) return guarded;
@@ -799,7 +812,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async decisionRead(id) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkRequestId(id);
       if (!valid.ok) return valid;
@@ -815,7 +828,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async recordDecision(input, writeProof) {
-      const local = requireLocalTracker();
+      const local = await requireLocalTracker();
       if (!local.ok) return local;
       const { request } = input;
       const path = decisionRecordPath({ id: request.id, title: request.title, at: input.at });
