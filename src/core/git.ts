@@ -1,7 +1,8 @@
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { codedFailure, failure, gitConfigUnreadable, hasCode, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
-import { commands, commandText, dirs, minGitVersion, program, trackedFiles, type CommandName } from '../names.js';
+import { guardOnAtState } from '../guards/effective.js';
+import { commands, commandText, dirs, guardIds, minGitVersion, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps, RunOutput } from './deps.js';
 import { isInUserClaudeFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
@@ -674,7 +675,9 @@ const programKeysOf = (stdout: string): readonly string[] | null => {
  * The read needs git 2.26 (`--show-scope`). A git that does not know the option exits with 129: that error (exit 1) names the
  * version and carries the code `gitConfigUnreadable`, so a caller can tell it from the other failures. Any other fault (git does
  * not run, the time limit, another exit code, a list that does not parse) is a plain failure (exit 1) with no code and no
- * version text. Every fault is an error, never an accept. `command` is the command that the person runs again.
+ * version text. Every fault is an error, never an accept. `command` is the command that the person runs again. While the git
+ * safety guard of the node above the state folder is off, a key that names a program is no stop; a list that git can not give
+ * still is.
  */
 export const requireStateConfigSafe = async (deps: Deps, stateDir: string, command: CommandName): Promise<CliResult<void>> => {
   const again = `then run "${commandText(command)}" again.`;
@@ -696,7 +699,7 @@ export const requireStateConfigSafe = async (deps: Deps, stateDir: string, comma
   const keys = programKeysOf(result.value.stdout);
   if (keys === null) return unreadable('git printed a list that is not in the form that was expected');
   const [first] = keys;
-  if (first === undefined) return ok(undefined);
+  if (first === undefined || !(await guardOnAtState(deps, guardIds.gitSafety, stateDir))) return ok(undefined);
   const unset = `git -C ${dirs.state} config --unset ${shellWord(first)}`;
   return safetyRefusal(
     `the local git config of ${dirs.state} sets ${shownPaths(keys)}, which ${keys.length === 1 ? 'names' : 'name'} a program, so ${program} makes no git change there`,
@@ -722,7 +725,9 @@ export const requireStateConfigListable = async (deps: Deps, stateDir: string, c
  * Refuse when a commit in the state repo could take a change of the owner. The local git config of the state folder must name no
  * program that has no switch for one call (`requireStateConfigSafe`). The index of the state repo must hold no
  * staged change. A path of `touched` must have no change of the owner, staged or not: `changing` names the command that
- * changes these paths ("the upgrade"), and `command` is the command that the person runs again.
+ * changes these paths ("the upgrade"), and `command` is the command that the person runs again. While the git safety guard of
+ * the node above the state folder is off, a staged change or a change of the owner is no stop; a status that git can not give
+ * still is.
  */
 export const requireStateRepoReady = async (
   deps: Deps,
@@ -737,22 +742,20 @@ export const requireStateRepoReady = async (
   const status = await stateStatusOf(deps, stateDir);
   if (!status.ok) return status;
   const staged = status.value.filter((entry) => ![' ', '?', '!'].includes(entry.index));
+  const changed = status.value.filter((entry) =>
+    touched.some((path) => entry.path === path || entry.path.startsWith(`${path}/`)),
+  );
+  if (staged.length + changed.length === 0 || !(await guardOnAtState(deps, guardIds.gitSafety, stateDir))) return ok(undefined);
   if (staged.length > 0) {
     return failure(
       `${dirs.state} has staged changes: ${shownPaths(staged.map((entry) => entry.path))}`,
       `Commit them, or clear them with "git reset" in ${dirs.state}. ${again}`,
     );
   }
-  const changed = status.value.filter((entry) =>
-    touched.some((path) => entry.path === path || entry.path.startsWith(`${path}/`)),
+  return failure(
+    `${dirs.state} has changes in files that ${changing} changes: ${shownPaths(changed.map((entry) => entry.path))}`,
+    `Commit them, or put the files back with git in ${dirs.state}. ${again}`,
   );
-  if (changed.length > 0) {
-    return failure(
-      `${dirs.state} has changes in files that ${changing} changes: ${shownPaths(changed.map((entry) => entry.path))}`,
-      `Commit them, or put the files back with git in ${dirs.state}. ${again}`,
-    );
-  }
-  return ok(undefined);
 };
 
 /**

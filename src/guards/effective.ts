@@ -1,7 +1,7 @@
-import { resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import type { ProxyConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { guardStartWords, guardValues, keys } from '../names.js';
+import { dirs, guardStartWords, guardValues, keys } from '../names.js';
 import type { Guard, GuardContext, GuardSource, GuardState, GuardValue, GuardValues } from './types.js';
 
 /** An absent value means on. This constant has no file or environment dependency. */
@@ -38,6 +38,15 @@ export const isGuardOn = (values: GuardValues, id: string): boolean => values[id
 /** True unless the pre-read found the guard off for the node home that the site acts on. Only a wired guard can be off there. */
 export const guardOn = async (deps: Deps, id: string, home: string): Promise<boolean> =>
   isGuardOn(await guardValuesFor(deps, home), id);
+
+/** The node home of a state folder: the folder above it. Null for a folder with another name, for example a staging folder of init. */
+export const guardedHomeOf = (stateDir: string): string | null => (basename(stateDir) === dirs.state ? dirname(stateDir) : null);
+
+/** `guardOn` for the node home above a state folder. A folder with another name is no node, so every guard is on there. */
+export const guardOnAtState = async (deps: Deps, id: string, stateDir: string): Promise<boolean> => {
+  const home = guardedHomeOf(stateDir);
+  return home === null || (await guardOn(deps, id, home));
+};
 
 export interface RecordedGuardValue {
   readonly value: GuardValue;

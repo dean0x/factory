@@ -82,10 +82,12 @@ const coreGuards: readonly GuardDefinition[] = [
     'Folder trust',
     `A ${folder} counts only when the ${places.list} lists it, and a received ${folder} is checked before it is used.`,
   ),
-  guardOf(
-    guardIds.gitSafety,
-    'Git safety',
-    'Git runs in the state folder without its hooks, and a commit takes only the paths that it names.',
+  wiredGuard(
+    guardOf(
+      guardIds.gitSafety,
+      'Git safety',
+      'Git runs in the state folder without its hooks, and a commit takes only the paths that it names.',
+    ),
   ),
   fixedGuard(
     guardOf(

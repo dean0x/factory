@@ -122,6 +122,9 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'delete-hook-warning', path: 'src/state/guard.ts', symbol: 'guardPlanWarnings', reason: 'A pure text of the plan of guardPlanOf, which reads the value and gives no warning when the guard is off.' },
   { row: 'no-lost-item-ids', path: 'src/commands/upgrade.ts', symbol: 'runUpgrade', reason: 'Reaches requireNoLostIds through lockedBoardText, and requireNoLostIds reads the value.' },
   { row: 'no-lost-item-ids', path: 'src/state/item-ids.ts', symbol: 'lostItemIds', reason: 'A pure comparison of two board texts; requireNoLostIds reads the value.' },
+  { row: 'state-git-config', path: 'src/commands/init-state.ts', symbol: 'makeStateFolder', reason: 'Checks the config of a new repo in a staging folder of init; a new folder is no node yet, so every guard is on there.' },
+  { row: 'state-git-config', path: 'src/commands/start.ts', symbol: 'runStart', reason: 'Calls requireStateConfigListable, whose one stop is a git that can not list the config; that stop applies with every value.' },
+  { row: 'state-git-config', path: 'src/commands/init-existing.ts', symbol: 'checkExisting', reason: 'Calls requireStateConfigSafe, which reads the value.' },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'envPrefixIn', reason: analyzerReason },
   { row: 'settings-env-traffic', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
@@ -242,7 +245,8 @@ describe('the guards of a recipe', () => {
 
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.gitSafety,
+      guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 
@@ -891,7 +895,7 @@ describe('the rows of the registry', () => {
         'registration-check', 'home-env-conflict', 'unregistered-upgrade', 'origin-received', 'home-is-new', 'home-outside-roots',
         'received-init-checks', 'init-proposal-confirm', 'existing-registration-ask',
       ],
-      'git-safety': ['state-git-hooks-off', 'commit-named-paths', 'root-repo-init'],
+      'git-safety': ['state-git-hooks-off', 'commit-named-paths', 'work-tree-top', 'root-repo-init'],
       'hook-runtime': ['hook-never-fails', 'hook-silent-outside', 'hook-session-identity', 'statusline-command', 'statusline-identity'],
       'launch-commands': [
         'launch-values', 'launch-fixed-argv', 'launch-env-clean', 'worker-launch-bounds', 'child-no-shell', 'agent-claude-only',

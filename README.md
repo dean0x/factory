@@ -252,11 +252,13 @@ A guard groups checks and role rules that keep one thing safe. `factory guard li
 
 The local key `guards` accepts `on` or `off`. The shared key `shared_guards` accepts `on` only; a shared `on` keeps that guard on. A missing key means on. `init` writes no guard values. A local off takes effect only with the matching record of the owner that `factory guard set` writes. It also needs a whole config that loads and an entry of the factory list with the node id of that config. The record names the real factory folder with its exact letter case. If the same node has only a match in different letter case, every guard stays on, and the launch and `upgrade` stop. Run `factory upgrade` in a terminal window, outside a session, to write the record again with the exact letter case. It writes only when the real path of the stored folder is the factory folder. Else run `factory guard confirm` and `factory guard set` to record the prefix and the guard values again.
 
-This version can set `approval-delegation`, `settings-check`, `settings-write`, `context-limits`, `delete-guard`, `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. Every other guard stays on. The guard `merge-quality` holds the checked head SHA, green CI there and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
+This version can set `approval-delegation`, `settings-check`, `settings-write`, `context-limits`, `delete-guard`, `git-safety`, `approval-merge`, `approval-release`, `resume-routines` and `install-rules`. Every other guard stays on. The guard `merge-quality` holds the checked head SHA, green CI there and the posted review of a releasable change. It is separate from `approval-merge`. This version knows it but cannot set it, so it stays on.
 
 With `settings-check` off, factory skips optional checks of the file contents. It still stops if it cannot read all settings files or a file skips the permission prompts.
 
 With `settings-write` off, factory shows the hook settings change but does not ask for consent. The file checks and the rules for `--yes` still apply.
+
+With `git-safety` off, a commit of factory in `.factory/` can take staged changes and changes of the owner, and a git config there that names a program does not stop it. Git still runs there without its hooks. A git config that git can not list still stops the step.
 
 For example, run `factory guard set resume-routines off` in your terminal window outside factory and Claude Code sessions. The command lists the guards and asks for consent. `factory guard set resume-routines on` puts the rule back. Both input and output must be terminals. A code check follows the new value at the next command. The role text changes at the next `factory start` or `factory upgrade`. `guard set` and `guard confirm` accept no `--json` output.
 

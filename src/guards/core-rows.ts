@@ -854,11 +854,11 @@ const gitSafetyRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/core/git.ts', 'commitPaths'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'work-tree-top',
     guard: guardIds.gitSafety,
     name: 'A git change runs only at the expected top of the work tree',
-    applies: 'Git writes and init',
+    applies: 'Init of a new state folder and of a state folder with a missing or broken marker',
     harm: true,
     sites: [...at('src/core/git.ts', 'requireWorkTreeTop'), ...at('src/commands/init-state.ts', 'makeStateFolder')],
   }),
