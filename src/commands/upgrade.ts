@@ -414,9 +414,10 @@ export const runUpgrade = async (
   // run later, when its text is made, so here it only leaves the record unknown.
   const migratedState = migratedFile(state.value, upgrade.state);
   const recorded = migratedState.ok ? recordedBlockNames(migratedState.value, renames) : null;
+  const guards = guardRead.value?.read.state.values ?? allOn;
   const blocks = settleSetupBlocks(
     (await inspectBlocks(deps, home, blockSet.value.templates, pending)).map((status) =>
-      planBlock(status, named(status), isBlockRecorded(recorded, status.template.name)),
+      planBlock(status, named(status), isBlockRecorded(recorded, status.template.name), guards),
     ),
   );
 

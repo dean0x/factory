@@ -1883,6 +1883,22 @@ describe('upgrade: managed blocks', () => {
     expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).kind).toBe('safety');
   });
 
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.safetyBlock))('stops for an edited safety block only while the safety block guard counts as on, and else keeps the block: %s', async (_state, setup, on) => {
+      const { deps } = await makeNode();
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      editSafety(deps);
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+      expect(sink.errors.join('').includes('block safety was edited. factory did not change it.')).toBe(on);
+      expect(sink.errors.join('').includes('block safety was edited, so factory keeps it.')).toBe(!on);
+      expect(text(deps, CLAUDE)).toContain('Edited safety line.');
+    });
+  });
+
   it('keeps an edited role block with a warning that names the overwrite flag, and goes on', async () => {
     const { deps } = await makeNode();
     edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');

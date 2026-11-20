@@ -118,11 +118,12 @@ const safetyBlockRows: readonly GuardRow[] = [
   codeRow({
     id: 'safety-block-intact',
     guard: guardIds.safetyBlock,
-    name: `A start stops when the safety block is edited, missing or malformed, or when its file is a link, so the ${coordinator} never runs without its fixed rules`,
+    name: `A start stops when the safety block is edited, missing or malformed, so the ${coordinator} never runs without its fixed rules; a link at its file stops a start with every value`,
     applies: `${commands.start}, ${commands.restart}, ${commands.reboot}, ${commandLines.workerNew} and doctor`,
     harm: true,
     sites: [
       ...at('src/commands/launch-checks.ts', 'requireSafetyBlock'),
+      ...at('src/commands/doctor.ts', 'checkBlocks'),
       ...at('src/blocks/status.ts', 'safetyStateOf', 'isSafetyStop'),
       ...at('src/commands/start.ts', 'runStart'),
     ],

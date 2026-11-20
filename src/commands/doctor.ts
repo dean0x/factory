@@ -465,16 +465,20 @@ const describeBlockProblem = (status: BlockStatus, recorded: ReadonlySet<string>
 };
 
 /**
- * A safety block that is edited, missing or malformed fails the check. Any other block problem is a warning.
- * `recorded` holds the names that the node state records. With null, every block counts as recorded.
+ * A safety block that is edited, missing or malformed fails the check while the guard of the safety block is on. Any other block
+ * problem is a warning. `recorded` holds the names that the node state records. With null, every block counts as recorded.
  */
-export const checkBlocks = (statuses: readonly BlockStatus[], recorded: ReadonlySet<string> | null = null): CheckResult => {
+export const checkBlocks = (
+  statuses: readonly BlockStatus[],
+  recorded: ReadonlySet<string> | null = null,
+  guards: GuardValues = allOn,
+): CheckResult => {
   const problems = statuses.flatMap((status) => describeBlockProblem(status, recorded));
   return problems.length === 0
     ? check(checkIds.blocks, 'ok', `${statuses.length} managed blocks are intact`)
     : check(
         checkIds.blocks,
-        statuses.some(isSafetyStop) ? 'fail' : 'warn',
+        statuses.some(isSafetyStop) && isGuardOn(guards, guardIds.safetyBlock) ? 'fail' : 'warn',
         `${problems.map((problem) => problem.text).join('; ')}. ${[...new Set(problems.map((problem) => problem.remedy))].join(' ')}`,
       );
 };
@@ -547,7 +551,7 @@ export const checkNodeBlocks = async (
   // A node state that is not valid gives no record, and every block then counts as recorded.
   const nodeState = await inspectState(deps, home);
   const recorded = nodeState.kind === 'valid' ? recordedBlockNames(nodeState.raw, pending.renames) : null;
-  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending), recorded);
+  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending), recorded, guards ?? allOn);
 };
 
 /** A rendered file, the setup file that its text comes from, and the names of both for the output. */

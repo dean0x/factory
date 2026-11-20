@@ -163,10 +163,12 @@ const coreGuards: readonly GuardDefinition[] = [
       `The scan of the ${folder} finds ignored and tracked files that could leak data or change the rules.`,
     ),
   ),
-  guardOf(
-    guardIds.safetyBlock,
-    'Safety block',
-    'A session starts only when the fixed rules are in place and have not changed.',
+  wiredGuard(
+    guardOf(
+      guardIds.safetyBlock,
+      'Safety block',
+      'A session starts only when the fixed rules are in place and have not changed.',
+    ),
   ),
   wiredGuard(
     guardOf(

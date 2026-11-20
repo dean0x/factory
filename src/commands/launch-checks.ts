@@ -13,6 +13,7 @@ import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
+import { isGuardOn } from '../guards/effective.js';
 import { guardsFor } from '../guards/registry.js';
 import type { GuardValues } from '../guards/types.js';
 import { requireSession } from '../launch/tmux-run.js';
@@ -26,6 +27,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   guardRoleWords,
   overwriteCommand,
   program,
@@ -68,13 +70,17 @@ export const toolProblems = async (deps: Deps, readVersion: boolean): Promise<re
   return problems;
 };
 
-/** A launch uses only the prefix whose exact text the owner confirmed. A store fault stops every launch. */
+/**
+ * A launch uses only the prefix whose exact text the owner confirmed. A store fault stops every launch: with a fault every guard is
+ * on. While the guard of the safety block is off, a prefix that differs from its record is no stop.
+ */
 export const requireConfirmedPrefix = (config: FactoryConfig, guards: GuardReadState): CliResult<void> => {
   if (guards.fault !== null) {
     const hint = `Run "${commandText(commands.doctor)}" to check the guard store.`;
     return safetyRefusal(guards.fault, guards.remedy === null ? hint : `${hint} ${guards.remedy}`);
   }
-  if (guards.prefix !== null && guards.prefix.hash !== sha256Hex(config.core.owner.prefix)) {
+  const checked = isGuardOn(guards.values, guardIds.safetyBlock);
+  if (checked && guards.prefix !== null && guards.prefix.hash !== sha256Hex(config.core.owner.prefix)) {
     return safetyRefusal(`the ${roles.owner} prefix differs from its record`, `Run "${commandText(commandLines.guardConfirm)}" to confirm the ${roles.owner} prefix.`);
   }
   return ok(undefined);
@@ -84,10 +90,14 @@ const roleTemplates = (config: FactoryConfig, modes: ApprovalModes, values: Guar
   blockTemplatesFor(blockInputOf(config, { coordinator: null, worker: null }, modes, values))
     .filter((template) => template.name !== blockNames.safety);
 
-/** A record requires on H guard text. Without a record, only text unique to an off render conflicts. */
+/**
+ * A record requires on H guard text. Without a record, only text unique to an off render conflicts. While the guard of the safety
+ * block is off, no role block conflicts.
+ */
 const conflictingRoleGuard = (
   config: FactoryConfig, modes: ApprovalModes, guards: GuardReadState, status: Extract<BlockStatus, { readonly kind: 'intact' | 'edited' | 'missing' }>,
 ): string | null => {
+  if (!isGuardOn(guards.values, guardIds.safetyBlock)) return null;
   for (const guard of guardsFor(config.entry)) {
     if ((guards.record && !guard.harm) || guards.values[guard.id] === 'off') continue;
     const on = roleTemplates(config, modes, { ...guards.values, [guard.id]: 'on' }).find((block) => block.name === status.template.name);
@@ -162,8 +172,9 @@ export const requireRoleBlocks = async (
  * - equal: no action;
  * - intact but different (the package, a mode or the prefix changed): render the block again, print a notice and go on;
  *   a dry run writes nothing and returns a note;
- * - edited, missing or not readable: exit 4, because the safety rules are a security boundary.
- * A link at the coordinator file is a stop first: nothing is read or written through it. The coordinator folder exists
+ * - edited, missing or not readable: exit 4, because the safety rules are a security boundary. While the guard of the safety
+ *   block is off, such a block is no stop: the launch goes on as with an equal block, and writes nothing to it.
+ * A link at the coordinator file is a stop first, with every value: nothing is read or written through it. The coordinator folder exists
  * after this check, because a missing file is a missing block. The value is the notes of a dry run. The note ends with
  * `renderedBy`: the sentence that says which command renders the block again.
  */
@@ -184,7 +195,8 @@ export const requireSafetyBlock = async (
   const file = join(dirs.coordinator, files.claudeMd);
   const modes = await effectiveModes(deps, home, config);
   const status = await inspectBlock(deps, home, safetyTemplateFor(config, modes, guards.values));
-  const state = safetyStateOf(status);
+  const found = safetyStateOf(status);
+  const state = found === 'different' || isGuardOn(guards.values, guardIds.safetyBlock) ? found : 'equal';
   const roleBlocks = state === 'equal' || state === 'different'
     ? await requireRoleBlocks(deps, home, config, guards, modes, dryRun, renderedBy) : ok<readonly string[]>([]);
   if (!roleBlocks.ok) return roleBlocks;

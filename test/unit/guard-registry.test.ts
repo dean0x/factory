@@ -150,6 +150,12 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'settings-cross-session', path: 'src/safety/settings.ts', symbol: 'heldCrossSession', reason: analyzerReason },
   { row: 'no-permission-skip-setting', path: 'src/safety/settings.ts', symbol: 'skipsOf', reason: skipsReason },
   { row: 'no-permission-skip-setting', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: skipsReason },
+  { row: 'safety-block-intact', path: 'src/blocks/status.ts', symbol: 'safetyStateOf', reason: 'A pure state of one block; requireSafetyBlock reads the value and goes on as with an equal block while the guard is off.' },
+  { row: 'safety-block-intact', path: 'src/blocks/status.ts', symbol: 'isSafetyStop', reason: 'A pure test of one block; checkBlocks reads the value and gives a warning, not a failure, while the guard is off.' },
+  { row: 'safety-block-intact', path: 'src/commands/start.ts', symbol: 'runStart', reason: 'Calls requireSafetyBlock, which reads the value.' },
+  { row: 'upgrade-block-checks', path: 'src/upgrade/plan.ts', symbol: 'refusalOf', reason: 'Refuses the plans of planBlock, which reads the value and keeps an edited safety block while the guard is off; a newer or broken block stops with every value.' },
+  { row: 'upgrade-block-checks', path: 'src/commands/upgrade.ts', symbol: 'runUpgrade', reason: 'Passes the values of its one guard read to planBlock, which reads the value.' },
+  { row: 'upgrade-block-checks', path: 'src/blocks/status.ts', symbol: 'isAddedAsNewBlock', reason: 'Never adds the safety block as a new block; only the owner adds it, so no value loosens this part.' },
   { row: 'settings-work-copy', path: 'src/commands/root-content.ts', symbol: 'checkTrackedSettings', reason: workCopyReason },
   { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanSettings', reason: workCopyReason },
   { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanTrackedSettings', reason: workCopyReason },
@@ -266,8 +272,8 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.permissionMode, guardIds.resumeRoutines, guardIds.rootScan, guardIds.secrets, guardIds.installRules,
-      'approval-merge', 'approval-release',
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.permissionMode, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
+      guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
 

@@ -9,7 +9,7 @@ import { ok } from '../../src/core/result.js';
 import { allOn } from '../../src/guards/effective.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import type { GuardValues } from '../../src/guards/types.js';
-import { blockNames, env, files } from '../../src/names.js';
+import { blockNames, env, files, guardIds, guardValues } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { blockInputOf, blockTemplatesFor } from '../../src/templates/index.js';
 import { writeLastSeen } from '../../src/workers/last-seen.js';
@@ -17,6 +17,7 @@ import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { noSetupTexts } from '../helpers/blocks.js';
 import { createFakeDeps, exited, registerRoot, withFailingWrites, type FakeDeps } from '../helpers/fake-deps.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
+import { guardStoreText } from '../helpers/guarded-node.js';
 import { runReboot, runRestart, runStart, runWorker } from '../helpers/package-registry.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -104,6 +105,21 @@ const expectRefusal = (result: CliResult<CommandOutput>, remedy: string): void =
   if (result.ok) return;
   expect(exitCodeFor(result.error)).toBe(4);
   expect(`${result.error.message} ${result.error.hint}`).toContain(remedy);
+};
+/** The three states of one guard: on, off with the matching owner record, and off with no record. Only the second turns it off. */
+const guardStates = ['on', 'off with a matching record', 'off with no record'] as const;
+/** A node in one state of the guard `id`. */
+const makeIn = async (origin: (typeof origins)[number], id: string, state: (typeof guardStates)[number], running = true) => {
+  const base = sampleConfig();
+  const config = state === 'on' ? base : { ...base, core: { ...base.core, guards: { [id]: guardValues.off } } };
+  const made = await make(origin, config, running);
+  if (state === 'off with a matching record') made.deps.seed(STORE, guardStoreText('demo', HOME, [id], made.deps.now()));
+  return { ...made, on: state !== 'off with a matching record' };
+};
+/** The result of a launch that a guard that counts as on refuses, and that goes on while the guard is off. */
+const expectOnlyOnRefusal = (result: CliResult<CommandOutput>, on: boolean, remedy: string): void => {
+  if (on) expectRefusal(result, remedy);
+  else expect(must(result).failed).toBe(false);
 };
 const fileSnapshot = (deps: FakeDeps) => [deps.files.get(layoutOf(HOME).claudeMd), deps.files.get(layoutOf(HOME).workerMd)];
 const paneStarts = (tmux: ReturnType<typeof tmuxHandler>['log']) =>
@@ -419,6 +435,35 @@ for (const origin of origins) {
       expectRefusal(await launch(deps, 'worker resume'), 'is not the record that factory wrote');
       expect(paneStarts(tmux)).toEqual([]);
     });
+    for (const state of guardStates) {
+      for (const command of ['start', 'worker resume'] as const) {
+        it(`${command} refuses an edited safety block only while the safety block guard counts as on, in the ${origin} folder: ${state}`, async () => {
+          const { deps, tmux, on } = await makeIn(origin, guardIds.safetyBlock, state, command !== 'start');
+          const path = layoutOf(HOME).claudeMd;
+          deps.seed(path, (deps.files.get(path) ?? '').replace('# Safety rules', '# Changed rules'));
+          const before = fileSnapshot(deps);
+          expectOnlyOnRefusal(await launch(deps, command), on, '--overwrite safety');
+          expect(fileSnapshot(deps)[0]).toEqual(before[0]);
+          expect(paneStarts(tmux).length > 0).toBe(!on);
+        });
+      }
+      it(`worker resume refuses a changed prefix only while the safety block guard counts as on, in the ${origin} folder: ${state}`, async () => {
+        const { deps, tmux, config, on } = await makeIn(origin, guardIds.safetyBlock, state);
+        await confirm(deps, config);
+        seedConfig(deps, HOME, { ...config, core: { ...config.core, owner: { ...config.core.owner, prefix: '[Changed {owner} {node} {date}]' } } });
+        expectOnlyOnRefusal(await launch(deps, 'worker resume'), on, 'factory guard confirm');
+        expect(paneStarts(tmux).length > 0).toBe(!on);
+      });
+      it(`worker resume refuses an edited coordinator block that lacks on guard text only while the safety block guard counts as on, in the ${origin} folder: ${state}`, async () => {
+        const { deps, tmux, config, on } = await makeIn(origin, guardIds.safetyBlock, state);
+        await confirm(deps, config);
+        editRole(deps, config, true);
+        const before = fileSnapshot(deps);
+        expectOnlyOnRefusal(await launch(deps, 'worker resume'), on, `--overwrite ${blockNames.coordinator}`);
+        expect(fileSnapshot(deps)).toEqual(before);
+        expect(paneStarts(tmux).length > 0).toBe(!on);
+      });
+    }
     it(`start keeps unmatched local off values on in the ${origin} folder`, async () => {
       const config = sampleConfig();
       const { deps } = await make(origin, { ...config, core: { ...config.core, guards: { 'install-rules': 'off' } } });
