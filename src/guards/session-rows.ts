@@ -350,7 +350,7 @@ const ownerGoRows: readonly GuardRow[] = [
 ];
 
 const paneSafetyRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'own-tmux-session',
     guard: guardIds.paneSafety,
     name: 'A command acts only on the tmux session of its own folder; a session of another folder is a security stop',

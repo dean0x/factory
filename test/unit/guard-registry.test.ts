@@ -114,7 +114,6 @@ const machineReason = 'Reads or words the facts of the machine for the warning, 
 const stoppedReason = 'Lists, names or resumes the workers with no live pane; checkRunningSession reads the value and resumes them only while the guard is off.';
 
 /** The reasons of the pane safety sites that get the value from a caller or a callee. */
-const ownSessionReason = 'Calls requireOwnSession, which reads the value; a session that does not run and a failed read stop with every value.';
 const selfResetReason = 'A check of the reset of the coordinator; selfReset reads the value and does not call it while the guard is off.';
 const resetReason = 'A check of the reset of a worker; checkWorker reads the value and skips it, or passes its result, while the guard is off.';
 
@@ -213,9 +212,6 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'workersWithoutPane', reason: stoppedReason },
   { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'noPaneWarning', reason: stoppedReason },
   { row: 'machine-warnings', path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'The bounds of the limit values in the config parse, which reads no guard value; makeWorker reads the value.' },
-  { row: 'own-tmux-session', path: 'src/launch/tmux-run.ts', symbol: 'requireSession', reason: ownSessionReason },
-  { row: 'own-tmux-session', path: 'src/commands/start.ts', symbol: 'runStart', reason: ownSessionReason },
-  { row: 'own-tmux-session', path: 'src/commands/layout.ts', symbol: 'runLayout', reason: ownSessionReason },
   { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireLineWithoutDialog', reason: selfResetReason },
   { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireResumeNotes', reason: selfResetReason },
   { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireCoordinatorHooks', reason: selfResetReason },
@@ -1003,8 +999,8 @@ describe('the rows of the registry', () => {
         'stage-not-approval-glossary-text', 'answered-row-not-proof-text', 'settle-relay-text',
       ],
       'pane-safety': [
-        'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'stop-term-only', 'stop-target-bind',
-        'signal-limits', 'session-exact-name', 'slot-summon-marks', 'resume-owned-session',
+        'own-tmux-session', 'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'stop-term-only',
+        'stop-target-bind', 'signal-limits', 'session-exact-name', 'slot-summon-marks', 'resume-owned-session',
       ],
       'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],

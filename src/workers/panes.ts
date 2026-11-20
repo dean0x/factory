@@ -185,7 +185,7 @@ export const requireCoordinatorCaller = async (
       runAgainIn(again, coordinatorPlace),
     );
   }
-  const session = await requireSession(deps, nodeId, home, commandText(again), 'caller');
+  const session = await requireSession(deps, nodeId, home, commandText(again));
   if (!session.ok) return session;
   const read = await readCoordinatorPane(deps, nodeId);
   if (!read.ok) return read;

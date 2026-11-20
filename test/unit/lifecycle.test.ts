@@ -1728,10 +1728,10 @@ describe.each(FOLDER_ORIGINS)('shutdown and restart in %s: the guard of the pane
   };
   const shutdownCode = (made: Made): Promise<number> => runCli(['shutdown', '--home', HOME], made.deps, captureSink());
 
-  it.each(guardStatesOf(guardIds.paneSafety))('ends a session of the same name with another home only while the guard counts as off: %s', async (_state, setup, on) => {
+  it.each(guardStatesOf(guardIds.paneSafety))('ends no session of the same name with another home, also with the guard off and a matching record: %s', async (_state, setup) => {
     const made = await guarded(setup, { sessions: { [NODE]: OTHER_HOME } });
-    expect(await shutdownCode(made)).toBe(on ? 4 : 0);
-    expect(countOf(made, 'kill-session')).toBe(on ? 0 : 1);
+    expect(await shutdownCode(made)).toBe(4);
+    expect(countOf(made, 'kill-session')).toBe(0);
   });
 
   it.each(guardStatesOf(guardIds.paneSafety))('stops the worker in the pane of the caller only while the guard counts as off: %s', async (_state, setup, on) => {
