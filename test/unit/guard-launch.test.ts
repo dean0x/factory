@@ -373,7 +373,7 @@ for (const origin of origins) {
     }
     it(`start warns once for a missing role block without on guard text in the ${origin} folder`, async () => {
       const base = sampleConfig();
-      const config = { ...base, core: { ...base.core, guards: { 'install-rules': 'off' as const } } };
+      const config = { ...base, core: { ...base.core, guards: { 'install-rules': 'off' as const, 'file-link-safety': 'off' as const } } };
       const { deps } = await make(origin, config);
       must(await recordValues(deps, config));
       const template = templates(config).find((block) => block.name === blockNames.workRules);
@@ -409,6 +409,15 @@ for (const origin of origins) {
       const counted = countReadsOf(deps, STORE);
       must(await launch(counted.deps, 'start'));
       expect(counted.count()).toBe(1);
+    });
+    it(`worker resume refuses a record whose work copy is not the folder of its worker in the ${origin} folder`, async () => {
+      const { deps, tmux } = await make(origin);
+      const other = `${HOME}/work-copies/web/gamma`;
+      deps.seed(`${other}/.claude/settings.local.json`, JSON.stringify(ownSettingsEntries));
+      deps.files.delete(workerPathsOf(HOME, 'alpha').recordFile);
+      must(await writeWorkerRecord(deps, HOME, { id: 'alpha', project: 'web', workCopy: other, branch: 'worker/alpha' }));
+      expectRefusal(await launch(deps, 'worker resume'), 'is not the record that factory wrote');
+      expect(paneStarts(tmux)).toEqual([]);
     });
     it(`start keeps unmatched local off values on in the ${origin} folder`, async () => {
       const config = sampleConfig();

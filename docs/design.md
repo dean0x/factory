@@ -1426,7 +1426,7 @@ The off text of an approval point applies in both `owner` and `delegated` mode. 
 | `root-scan` | Skip the checks of the tracked and the ignored paths in the scan of the folder, and its warnings about file URLs, user folder paths and tracked texts that it did not read. Each other fault of the scan still stops `start` while its own guard is on. A tracked link of a received folder, a list of tracked files at its cap and a git that fails still stop the scan. |
 | `secrets` | Let the scan of the folder pass a tracked text that holds a value like a token, skip the token check of the config values in doctor, and remove the rules about keys and the environment of a process from the role text. Error output still hides token values, and git output still has no user info in a URL. |
 
-The code checks of every other guard and all integrity checks still run.
+The code checks of every other guard and all integrity checks still run. The guard `launch-commands` has no key: the record of a worker, the config and the fixed folders of the factory folder already refuse the folders that its launch checks refuse, so an off value would allow nothing.
 
 **Set a guard.** Run `factory guard set ID on|off` to change one guard. Run `factory guard set --all on|off` to change every guard that this version can set. The command counts the guards that it skips. It writes the local values and their records of the owner. It keeps all other guard values and records.
 

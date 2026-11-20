@@ -289,9 +289,9 @@ describe('the guards of a recipe', () => {
     expect(excepted.filter((site) => !unread.includes(site))).toEqual([]);
   });
 
-  it('makes clone rules and hook runtime fixed guards: no key, never wired, no harm mark and only rows that are always on', () => {
+  it('makes clone rules, hook runtime and launch commands fixed guards: no key, never wired, no harm mark and only rows that are always on', () => {
     const fixed = software.guards.filter((guard) => guard.fixed);
-    expect(idsOf(fixed)).toEqual([guardIds.cloneRules, guardIds.hookRuntime]);
+    expect(idsOf(fixed)).toEqual([guardIds.cloneRules, guardIds.hookRuntime, guardIds.launchCommands]);
     for (const guard of fixed) {
       expect(guard, guard.id).toMatchObject({ key: null, wired: false, harm: false });
       expect(rowsOf(guard).length, guard.id).toBeGreaterThan(0);
@@ -325,7 +325,7 @@ describe('the guards of a recipe', () => {
       'folder-trust': true,
       'git-safety': true,
       'hook-runtime': false,
-      'launch-commands': true,
+      'launch-commands': false,
       'machine-limits': true,
       'task-files': true,
       'session-checks': true,
@@ -919,8 +919,8 @@ describe('the rows of the registry', () => {
       'git-safety': ['state-git-hooks-off', 'commit-named-paths', 'work-tree-top', 'root-repo-init'],
       'hook-runtime': ['hook-never-fails', 'hook-silent-outside', 'hook-session-identity', 'statusline-command', 'statusline-identity'],
       'launch-commands': [
-        'launch-values', 'launch-fixed-argv', 'launch-env-clean', 'worker-launch-bounds', 'child-no-shell', 'agent-claude-only',
-        'tmux-quoting', 'run-shell-limits',
+        'launch-values', 'launch-fixed-argv', 'launch-env-clean', 'launch-folder-bounds', 'worker-launch-bounds', 'work-copy-exact-path',
+        'child-no-shell', 'agent-claude-only', 'tmux-quoting', 'run-shell-limits',
       ],
       'machine-limits': ['lock-bounds', 'lock-place'],
       'task-files': ['child-address-form', 'child-files-untrusted', 'report-listed-fields'],

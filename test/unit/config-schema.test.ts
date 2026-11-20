@@ -48,7 +48,7 @@ describe('guard config values', () => {
     expect(guards.every((guard) => guard.whenMissing === 'on')).toBe(true);
   });
 
-  it.each([guardIds.cloneRules, guardIds.hookRuntime])('refuses a local and a shared key of the fixed guard %s as an unknown id that names the list command', (id) => {
+  it.each([guardIds.cloneRules, guardIds.hookRuntime, guardIds.launchCommands])('refuses a local and a shared key of the fixed guard %s as an unknown id that names the list command', (id) => {
     const { shared, local } = sampleFiles();
     for (const parsed of [
       parseConfig(shared, { ...local, guards: { [id]: 'on' } }),

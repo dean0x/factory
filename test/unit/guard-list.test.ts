@@ -387,7 +387,7 @@ describe('guard list', () => {
     deps.seed(`${HOME}/${files.localConfig}`, 'schema: [');
     const result = await run(deps);
     expect(result.code).toBe(1);
-    expect(linesOf(result.out).at(-1)).toBe('The off count is unknown for 30 guards. The off count with the mark H is unknown.');
+    expect(linesOf(result.out).at(-1)).toBe('The off count is unknown for 29 guards. The off count with the mark H is unknown.');
   });
 
   it.each([

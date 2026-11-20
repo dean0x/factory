@@ -101,10 +101,12 @@ const coreGuards: readonly GuardDefinition[] = [
       [statuslineKey],
     ),
   ),
-  guardOf(
-    guardIds.launchCommands,
-    'Launch and tmux commands',
-    'A session starts with a fixed command line, a clean environment and quoted values.',
+  fixedGuard(
+    guardOf(
+      guardIds.launchCommands,
+      'Launch and tmux commands',
+      'A session starts with a fixed command line, a clean environment and quoted values.',
+    ),
   ),
   guardOf(
     guardIds.machineLimits,

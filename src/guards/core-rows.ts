@@ -949,7 +949,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/launch/argv.ts', 'checkSession', 'stripScript'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'launch-folder-bounds',
     guard: guardIds.launchCommands,
     name: `The ${coordinator} and state folders of a launch are inside the folder, and a project that is or holds the folder is refused`,
@@ -965,7 +965,7 @@ const launchCommandRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/launch/argv.ts', 'workerLaunchArgv'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'work-copy-exact-path',
     guard: guardIds.launchCommands,
     name: 'The work copy is exactly the derived path with no link, because it is the main scope of the permissions of the session',
