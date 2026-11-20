@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { allOn } from '../../src/guards/effective.js';
 import { recipes } from '../../src/recipes/index.js';
+import { linesFor } from '../../src/templates/fill.js';
 import { softwareWordList } from '../../src/recipes/software/words.js';
 import { OLD_WORD_LIST } from '../helpers/old-words.js';
 import { softwareWordsIn } from '../helpers/software-words.js';
@@ -128,7 +130,7 @@ describe('no software word in the core', () => {
   it('holds the words in the recipe: its glossary, its safety lines and its project key', () => {
     const entry = recipes.find((candidate) => candidate.id === 'software');
     expect(entry?.glossary.flatMap((word) => softwareWordsIn(`${word.term} ${word.text}`)).length).toBeGreaterThan(0);
-    expect(entry?.safetyLines.flatMap(softwareWordsIn).length).toBeGreaterThan(0);
+    expect(linesFor(entry?.safetyLines ?? [], allOn).flatMap(softwareWordsIn).length).toBeGreaterThan(0);
     expect(entry?.projectKeys).toEqual(['merge_method']);
     expect(entry?.initProjectKeys).toEqual(['url', 'repo', 'default_branch', 'gate']);
   });

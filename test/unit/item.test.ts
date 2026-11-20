@@ -25,7 +25,7 @@ import { BOARD_PATH, LAYOUT, LOG_PATH, WAITING_PATH, type BoardRepo } from '../h
 import { exited, missingProgram, registerRoot, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { HOME, HOOK, STATE } from '../helpers/guard-fixture.js';
 import {
-  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff,
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, type GuardedSetup,
 } from '../helpers/guarded-node.js';
 import { publishBoard, publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
 import { sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
@@ -811,6 +811,41 @@ describe('item record: linked approval', () => {
       expect(sink.errors.join('')).toContain(missingApproval.error.message);
       expect(world.gh.calls).toEqual([]);
       expectUntouched(world.repo, MERGE_BOARD);
+    });
+  });
+
+  describe.each(FOLDER_ORIGINS)('the guard owner-go in %s', (_folder, origin) => {
+    /** The merge world on a node whose local file holds each guard of the setup off, with the owner record unless it has none. */
+    const guardedWorld = async (setup: GuardedSetup, waiting?: string): Promise<MergeWorld> => {
+      const off = setup.off ?? [];
+      const config = withGuardsOff(sampleConfigWithBoard(), off);
+      const world = await mergeWorld({ config, decisionLog: logOf(), ...(waiting === undefined ? {} : { waiting }) });
+      registerRoot(world.repo.deps, HOME, config.core.node.id, [], origin);
+      if (setup.record !== false) world.repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, world.repo.deps.now()));
+      return world;
+    };
+
+    /** One run of `item record B-1 --ref 12` as a person types it. */
+    const recordLine = async (world: MergeWorld): Promise<{ readonly code: number; readonly out: string; readonly err: string }> => {
+      const sink = captureSink();
+      const code = await runCli(['item', 'record', 'B-1', '--ref', '12', '--home', HOME], world.gh.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+
+    it.each(guardStatesOf(guardIds.ownerGo))('records a merge with no linked approval in owner mode only while the guard counts as off: %s', async (_state, setup, on) => {
+      const world = await guardedWorld(setup);
+      const result = await recordLine(world);
+      expect(result.code, result.err).toBe(on ? 1 : 0);
+      expect(itemIn(world.repo, 'B-1').stage).toBe(on ? 'review' : 'merged');
+      expect(result.out.includes('did not check the linked approval requests')).toBe(!on);
+    });
+
+    it.each(guardStatesOf(guardIds.ownerGo))('records a merge while a linked request is still open only while the guard counts as off: %s', async (_state, setup, on) => {
+      const world = await guardedWorld(setup, waitingOf(approvalRequest('D-2', MERGE_LINK)));
+      const result = await recordLine(world);
+      expect(result.code, result.err).toBe(on ? 1 : 0);
+      expect(result.err.includes('request "D-2" is still open')).toBe(on);
+      expect(itemIn(world.repo, 'B-1').stage).toBe(on ? 'review' : 'merged');
     });
   });
 

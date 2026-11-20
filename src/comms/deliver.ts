@@ -5,7 +5,19 @@ import { accessFaultOf } from '../core/access.js';
 import type { Deps } from '../core/deps.js';
 import { err, ok, type Result } from '../core/result.js';
 import { createInFolder } from '../core/safe-write.js';
-import { address as addressNames, commands, files, messageFile, messageHeaderLines, nodeInbox, privateFile } from '../names.js';
+import { allOn, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
+import {
+  address as addressNames,
+  commands,
+  files,
+  guardIds,
+  messageFile,
+  messageHeader,
+  messageHeaderLines,
+  nodeInbox,
+  privateFile,
+} from '../names.js';
 import { ignoresLine, INBOX_GITIGNORE_LINE } from '../state/files.js';
 import { readGitignore } from '../state/gitignore.js';
 import { layoutOf, type Layout } from '../state/layout.js';
@@ -19,6 +31,8 @@ export interface DeliverInput {
   readonly targetId: string;
   readonly targetLayer: number;
   readonly body: string;
+  /** The guard values of the node of the sender. Absent: every guard is on. */
+  readonly guards?: GuardValues;
 }
 
 /**
@@ -173,8 +187,10 @@ const answersAsTarget = (answer: PingResult, input: DeliverInput): boolean =>
  *  7. The second ping. Unless it answers with the same id and layer, the file is removed and the value is `mismatch`; if the
  *     removal fails, `mismatch` holds the path of the file.
  * Every fault gives a kind: a safety stop of a step is `unsafe`, any other fault is `io`. No result holds text of the child.
+ * The header ends with the line that the file carries no authority of the owner while the owner-go guard of the sender is on.
  */
 export const deliverToHome = async (deps: Deps, ping: Ping, address: string, input: DeliverInput): Promise<DeliverResult> => {
+  const guards = input.guards ?? allOn;
   if ([input.senderId, input.senderAddress, input.targetId].some(holdsHiddenCharacter)) return IO;
   const checked = checkFileAddress(address);
   if (!checked.ok) return NOT_ANSWERING;
@@ -186,7 +202,8 @@ export const deliverToHome = async (deps: Deps, ping: Ping, address: string, inp
   if (!answersAsTarget(first, input)) return { kind: 'mismatch', stranded: null };
 
   const layout = layoutOf(home.value);
-  const text = [...messageHeaderLines(input), '', input.body].join('\n');
+  const header = messageHeaderLines(input).filter((line) => line !== messageHeader.notice || isGuardOn(guards, guardIds.ownerGo));
+  const text = [...header, '', input.body].join('\n');
   const state = await requireState(deps, layout);
   if (!state.ok) return state.error;
   const room = await requireRoom(deps, layout, Buffer.byteLength(text, 'utf8'));

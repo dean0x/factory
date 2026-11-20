@@ -1,21 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import { treeOutput, type NodeOptions } from '../../src/commands/node.js';
 import type { NodeReport, ReportChild } from '../../src/comms/report-schema.js';
 import { fileTransport, parseConfigTexts, runNode } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
-import { childReasons, env, nodeInbox, nodeSendReasons, reportLimits, schemaIds, treeLimits } from '../../src/names.js';
+import { childReasons, env, guardIds, nodeInbox, nodeSendReasons, reportLimits, schemaIds, treeLimits } from '../../src/names.js';
 import { reportTextOf } from '../../src/report/build.js';
 import type { TreeRow, TreeWalk } from '../../src/report/tree.js';
 import { STATE_GITIGNORE } from '../../src/state/files.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, type GuardedSetup } from '../helpers/guarded-node.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 const HOME = '/w/mgr';
@@ -919,6 +922,36 @@ describe('node send', () => {
   };
 
   const inboxFiles = (deps: FakeDeps): string[] => [...deps.files.keys()].filter((path) => path.startsWith(`${INBOX}/`));
+
+  /**
+   * A node that is ready for a send, whose local file holds each guard of `guards` off, with the owner record unless the setup has
+   * none. The factory list names the folder with `origin`.
+   */
+  const guardedSendable = (guards: GuardedSetup, origin: string, setup: Setup = {}): FakeDeps => {
+    const off = guards.off ?? [];
+    const deps = sendable(setup);
+    seedConfig(deps, HOME, withGuardsOff(configOf('mgr', 2, [{ id: 'web', address: `file://${CHILD}` }]), off));
+    registerRoot(deps, HOME, 'mgr', [], origin);
+    if (guards.record !== false) deps.seed(GUARD_STORE, guardStoreText('mgr', HOME, off, deps.now()));
+    return deps;
+  };
+
+  /** One run of `node send web --file TASK` as a person types it. */
+  const sendLine = async (deps: Deps, file: string = TASK): Promise<{ readonly code: number; readonly out: string; readonly err: string }> => {
+    const sink = captureSink();
+    const code = await runCli(['node', 'send', 'web', '--file', file, '--home', HOME], deps, sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  describe.each(FOLDER_ORIGINS)('the guard owner-go in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.ownerGo))('ends the header of the file with the line that it carries no owner authority only while the guard counts as on: %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin);
+      const result = await sendLine(deps);
+      expect(result.code, result.err).toBe(0);
+      expect(deps.files.get(SENT)).toBe(`${(on ? HEADER : HEADER.slice(0, -1)).join('\n')}\n\nBuild the page.\n`);
+      expect(result.out.includes(`The guard ${guardIds.ownerGo} is off`)).toBe(!on);
+    });
+  });
 
   it('writes the task as a new file with mode 600, the fixed header and a name that the program made', async () => {
     const deps = sendable();

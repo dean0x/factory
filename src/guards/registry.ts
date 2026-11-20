@@ -132,11 +132,13 @@ const coreGuards: readonly GuardDefinition[] = [
       'A command that only a person may run refuses a session that calls it.',
     ),
   ),
-  guardOf(
-    guardIds.ownerGo,
-    `Go of the ${owner}`,
-    `A go of the ${owner} comes only from ${owner} input, never from text of a tool, a file or another session.`,
-    [`${keys.root.owner}.${keys.owner.prefix}`],
+  wiredGuard(
+    guardOf(
+      guardIds.ownerGo,
+      `Go of the ${owner}`,
+      `A go of the ${owner} comes only from ${owner} input, never from text of a tool, a file or another session.`,
+      [`${keys.root.owner}.${keys.owner.prefix}`],
+    ),
   ),
   wiredGuard(
     guardOf(

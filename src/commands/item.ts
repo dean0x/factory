@@ -12,9 +12,24 @@ import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { guardValuesFor } from '../guards/effective.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
-import { boardKeys, commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, places, roles, schemaIds } from '../names.js';
+import {
+  boardKeys,
+  commandLines,
+  commands,
+  commandText,
+  files,
+  flags,
+  flagText,
+  guardIds,
+  itemCommands,
+  itemWords,
+  places,
+  requestWords,
+  roles,
+  schemaIds,
+} from '../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
@@ -364,10 +379,15 @@ const checkInputOf = async (
   return ok({ ref, project, cloneDir: resolve(home, project.path), branches });
 };
 
-const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded): CommandOutput => {
+/** The line of a record while the owner-go guard is off: no check of the linked approval requests ran. */
+const UNAPPROVED_LINE = textLine(
+  `The guard ${guardIds.ownerGo} is off, so this record did not check the linked approval ${requestWords.requests} of the item.`,
+);
+
+const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded, guards: GuardValues): CommandOutput => {
   const id = displayLine(recorded.item.id);
   const summary = displayLine(checked.summary);
-  return answer(recorded.changed ? `Recorded ${id}: ${summary}` : `${id}: ${summary} already recorded`, {
+  const done = answer(recorded.changed ? `Recorded ${id}: ${summary}` : `${id}: ${summary} already recorded`, {
     schema: schemaIds.item,
     action: itemCommands.record,
     id: recorded.item.id,
@@ -377,6 +397,7 @@ const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded): Command
     summary: checked.summary,
     changed: recorded.changed,
   });
+  return isGuardOn(guards, guardIds.ownerGo) ? done : { ...done, lines: [...done.lines, UNAPPROVED_LINE] };
 };
 
 /**
@@ -399,7 +420,8 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   if (!ref.ok) return ref;
   const valid = checkItemId(action.id);
   if (!valid.ok) return valid;
-  const local = requireLocalKind(config.core.tracker.kind, commands.item, await guardValuesFor(deps, board.home));
+  const guards = await guardValuesFor(deps, board.home);
+  const local = requireLocalKind(config.core.tracker.kind, commands.item, guards);
   if (!local.ok) return local;
   const ready = checkRecordSetup({ recipe: config.entry.board, config: config.core.board }, hook.stage);
   if (!ready.ok) return ready;
@@ -420,7 +442,7 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   const checked = await hook.check(deps, input.value);
   if (!checked.ok) return checked;
   const recorded = await connector.recordChecked(action.id, checked.value, worker.value, approval);
-  return recorded.ok ? ok(recordedAnswer(checked.value, recorded.value)) : recorded;
+  return recorded.ok ? ok(recordedAnswer(checked.value, recorded.value, guards)) : recorded;
 };
 
 /**

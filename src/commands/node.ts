@@ -13,6 +13,8 @@ import { locateHomeFolder } from '../core/home.js';
 import { isSameOrInside, realPathOf } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import {
   address as addressNames,
   commandLines,
@@ -21,6 +23,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   maxDisplayWidth,
   maxFileBytes,
   nodeCommands,
@@ -474,7 +477,13 @@ const checkedTask = (text: string, id: string): CliResult<string> => {
   return ok(body);
 };
 
-const sentOutput = (node: OpenNode, id: string, session: string, file: string): CommandOutput => {
+/** The lines of a send that name the parts that a guard turned off, so that no line of the send reads as their result. */
+const guardOffLines = (guards: GuardValues): readonly OutLine[] =>
+  isGuardOn(guards, guardIds.ownerGo)
+    ? []
+    : [{ level: 'text', text: `The guard ${guardIds.ownerGo} is off, so the header of the file does not say that it carries no authority of the ${roles.owner}.` }];
+
+const sentOutput = (node: OpenNode, id: string, session: string, file: string, guards: GuardValues): CommandOutput => {
   const listCheck = `Check with ${sendTools.listAgents} that exactly one session has the name ${session}.`;
   const sendStep = `Then send one ${sendTools.sendMessage} to ${session} that names the file.`;
   return {
@@ -482,6 +491,7 @@ const sentOutput = (node: OpenNode, id: string, session: string, file: string): 
       { level: 'ok', text: `Wrote the task for ${id} as a new file in its inbox.` },
       { level: 'text', text: `File: ${file}` },
       { level: 'text', text: `Session: ${session}` },
+      ...guardOffLines(guards),
       { level: 'text', text: listCheck },
       { level: 'text', text: sendStep },
     ],
@@ -516,6 +526,7 @@ const runSend = async (
   }
   const session = sessionNames.coordinator(id);
   if (!session.ok) return failure(session.error);
+  const guards = await guardValuesFor(deps, home);
 
   const text = await readAssignment(deps, { home, path: options.file, again: sendAgain(id) });
   if (!text.ok) return text;
@@ -528,8 +539,9 @@ const runSend = async (
     targetId: id,
     targetLayer: config.core.node.layer - 1,
     body: body.value,
+    guards,
   });
-  return delivered.kind === 'written' ? ok(sentOutput(node.value, id, session.value, delivered.path)) : refuseDelivery(delivered, id);
+  return delivered.kind === 'written' ? ok(sentOutput(node.value, id, session.value, delivered.path, guards)) : refuseDelivery(delivered, id);
 };
 
 export const runNode = async (

@@ -437,7 +437,7 @@ describe('one guard state read', () => {
       opens += 1;
       return deps.fs.openCheckedCore?.(...args) ?? failure('record core is absent');
     } } };
-    const state = await storeApi.readGuardState(watched, root, config(value === 'unwired' ? { [guardIds.ownerGo]: 'off' } : { [guard.id]: value }), 'when-off');
+    const state = await storeApi.readGuardState(watched, root, config(value === 'unwired' ? { [guardIds.workConduct]: 'off' } : { [guard.id]: value }), 'when-off');
     expect(opens).toBe(value === 'off' ? 1 : 0);
     expect(state.values[guard.id]).toBe(value === 'off' ? 'off' : 'on');
     if (value === 'off') expect(state).toMatchObject({ sources: { [guard.id]: 'local' }, since: { [guard.id]: at }, record: true, fault: null });

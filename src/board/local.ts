@@ -187,6 +187,9 @@ export const requireLocalKind = (kind: string, command: CommandName, guards: Gua
         `Set the tracker kind to ${values.trackerLocal} in the config, then run "${commandText(command)}" again.`,
       );
 
+/** True while a record of an item needs its approval check: the owner-go guard is on in `guards`. */
+const recordNeedsApproval = (guards: GuardValues): boolean => isGuardOn(guards, guardIds.ownerGo);
+
 /**
  * The file checks of a doc link, after the name check: the file must be a plain file of the factory folder, with no link on the
  * way (a link is a security stop, exit 4), and it holds at most `maxFileBytes` bytes (exit 2). One look at the file itself gives
@@ -296,9 +299,14 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   const approvalPlaceOf = async (approval: RecordApproval): Promise<CliResult<DecisionPlace | null>> =>
     approval.mode === roles.owner ? decisionPlaceOf(deps, layout.home, options.node) : ok(null);
 
+  /**
+   * The approval check of a record: an open linked request blocks it, and in owner mode the last settled linked request needs a go
+   * for the same reference and head. It follows the owner-go guard of the node: while that guard is off, a record needs neither.
+   */
   const approvalOf = async (
     texts: BoardTexts, id: string, approval: RecordApproval, place: DecisionPlace | null, ref: string, head: string | null,
   ): Promise<CliResult<void>> => {
+    if (!recordNeedsApproval(await nodeGuards())) return ok(undefined);
     const docs = approvalDocsOf(texts);
     if (!docs.ok) {
       return failure(
@@ -417,14 +425,14 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
 
   /**
    * The change of an owner answer, under the state lock. It asks nothing and makes no folder. The request is read again and its hash
-   * must be the hash that the owner saw. The new texts are the waiting file without the request, the log with the row, the profile
-   * record and `log.md`. The value is the path of the profile record.
+   * must be the hash that the owner saw while the owner-go guard is on in `guards`. The new texts are the waiting file without the
+   * request, the log with the row, the profile record and `log.md`. The value is the path of the profile record.
    */
-  const answerChange = (texts: BoardTexts, input: DecisionRecordCall, recordPath: string): CliResult<Applied<string>> => {
+  const answerChange = (texts: BoardTexts, input: DecisionRecordCall, recordPath: string, guards: GuardValues): CliResult<Applied<string>> => {
     const read = decisionDocsOf(texts);
     if (!read.ok) return read;
     const { id, hash } = input.request;
-    const request = recheckRequest(read.value.waiting, read.value.log, id, hash);
+    const request = recheckRequest(read.value.waiting, read.value.log, id, hash, guards);
     if (!request.ok) return request;
     if ((texts.get(recordPath) ?? null) !== null) {
       return failure(
@@ -834,10 +842,11 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       const path = decisionRecordPath({ id: request.id, title: request.title, at: input.at });
       if (!path.ok) return path;
       const written: { current: DecisionWrite | undefined } = { current: undefined };
+      const guards = await nodeGuards();
       const done = await commit(
         [...decisionFiles, path.value, stateRel.profileLog],
         commitMessages.recordDecision(request.id),
-        (texts) => answerChange(texts, input, path.value),
+        (texts) => answerChange(texts, input, path.value, guards),
         async () => {
           const folder = await prepareDecisionsFolder();
           if (!folder.ok) return folder;

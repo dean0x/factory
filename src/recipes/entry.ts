@@ -5,6 +5,7 @@ import type { Deps } from '../core/deps.js';
 import { allOn } from '../guards/effective.js';
 import type { GuardDefinition, GuardRow, GuardValues } from '../guards/types.js';
 import { boardKeys, guardValues, keys, values, type CommandName } from '../names.js';
+import type { TextPart } from '../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
 /** The mode of an approval point: `owner` or `delegated`. */
@@ -172,7 +173,7 @@ export interface RecipeHost {
  * - `approvalPoints` lists the steps that need an approval.
  * - `words` lists the words that only this recipe uses. No core text holds one.
  * - `glossary` holds the plain description of each word of the recipe.
- * - `safetyLines` is the part of the safety block that belongs to the recipe.
+ * - `safetyLines` is the part of the safety block that belongs to the recipe. A part can name the guards that keep it.
  * - `projectKeys` names the keys that the recipe adds to a project, in the order of the file.
  * - `projectDefaults` gives the value of each of those keys for a new project.
  * - `initProjectKeys` names the keys of the core that `init` writes into a new project. A project of the recipe holds no other.
@@ -191,7 +192,7 @@ export interface RecipeEntry {
   readonly approvalPoints: readonly ApprovalPoint[];
   readonly words: readonly string[];
   readonly glossary: readonly GlossaryEntry[];
-  readonly safetyLines: readonly string[];
+  readonly safetyLines: readonly TextPart[];
   readonly projectKeys: readonly string[];
   readonly projectDefaults: Readonly<Record<string, string>>;
   readonly initProjectKeys: readonly InitProjectKey[];

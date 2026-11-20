@@ -254,12 +254,22 @@ const ownerGoRows: readonly GuardRow[] = [
   codeRow({
     id: 'decision-proof',
     guard: guardIds.ownerGo,
-    name: `An answer counts only when the hash of the ${requestWords.request} that the ${owner} saw matches, is checked again under the lock, and no earlier answer exists`,
+    name: `An answer counts only when the ${requestWords.request} is still the text that the ${owner} saw: its hash is checked again under the lock`,
+    applies: commands.decide,
+    harm: true,
+    sites: [...at('src/board/decide.ts', 'recheckRequest'), ...at('src/board/local.ts', 'createLocalBoard')],
+  }),
+  alwaysOnRow({
+    id: 'decision-one-answer',
+    guard: guardIds.ownerGo,
+    name:
+      `A ${requestWords.request} gets one answer of the ${owner}: an earlier answer, also one for another text, stops a new one, ` +
+      `the key of an answer names the ${node}, the ${folder} and the ${requestWords.request}, and the decision log stays within its size`,
     applies: `${commands.decide} and every read of a proof`,
     harm: true,
     sites: [
       ...at('src/core/owner-record.ts', 'readDecisionProof', 'putDecision', 'decisionKeyOf'),
-      ...at('src/board/decide.ts', 'recheckRequest', 'requireLogRoom'),
+      ...at('src/board/decide.ts', 'requireLogRoom', 'proofOf'),
     ],
   }),
   alwaysOnRow({
@@ -274,7 +284,7 @@ const ownerGoRows: readonly GuardRow[] = [
       ...at('src/core/owner-record.ts', 'readDecisionProof'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'answered-no-reclose',
     guard: guardIds.ownerGo,
     name: `An answered ${requestWords.request} cannot be closed again, so no answer is overwritten`,
@@ -294,7 +304,7 @@ const ownerGoRows: readonly GuardRow[] = [
       ...at('src/board/decide.ts', 'closedBy'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'linked-relay-scope',
     guard: guardIds.ownerGo,
     name: `A linked ${requestWords.request} allows a relay only at the record point in ${owner} mode and only with an option key of that ${requestWords.request}`,
@@ -313,7 +323,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/commands/item.ts', 'recordChecked'),
-      ...at('src/board/local.ts', 'createLocalBoard'),
+      ...at('src/board/local.ts', 'createLocalBoard', 'recordNeedsApproval'),
       ...at('src/board/decide.ts', 'linkedApprovalsOf', 'approvalVerdict'),
     ],
   }),

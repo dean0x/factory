@@ -11,11 +11,13 @@ import { runRequest } from '../../src/commands/request.js';
 import type { Deps } from '../../src/core/deps.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
 import { ok } from '../../src/core/result.js';
+import { runCli } from '../../src/cli/run.js';
 import {
   boardTextLimits,
   dirs,
   env,
   files as fileNames,
+  guardIds,
   maxEchoChars,
   maxFileBytes,
   privateFile,
@@ -31,8 +33,10 @@ import { boardNode, boardText } from '../helpers/board-node.js';
 import { WAITING_PATH, type BoardRepo } from '../helpers/board-repo.js';
 import { exited, registerRoot } from '../helpers/fake-deps.js';
 import { HOME, HOOK } from '../helpers/guard-fixture.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, type GuardedSetup } from '../helpers/guarded-node.js';
 import { sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 
 // The decide command: the parse, the owner check, the request block, the question and the record.
 
@@ -922,6 +926,68 @@ describe('decide: a failure after the store write says what is saved', () => {
     expect(repo.commits).toEqual([]);
     expect(repo.deps.files.get(STORE_PATH)).toBe(before.get(STORE_PATH));
     expect(repo.textOf(fileNames.waiting)).toBe(waitingOf(ENTRY));
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('decide with the guard owner-go in %s', (_folder, origin) => {
+  /** The board node on a node whose local file holds each guard of the setup off, with the owner record unless it has none. */
+  const guardedNodeOf = async (guards: GuardedSetup, setup: Setup = {}): Promise<BoardRepo> => {
+    const off = guards.off ?? [];
+    const config = withGuardsOff(sampleConfigWithBoard(), off);
+    const repo = await boardNode({
+      config,
+      board: boardText(),
+      waiting: setup.waiting ?? waitingOf(ENTRY),
+      ...(setup.decisionLog === undefined ? {} : { decisionLog: setup.decisionLog }),
+    });
+    repo.deps.seedDir(PROFILE_DIR);
+    if (setup.store !== undefined) repo.deps.seed(STORE_PATH, setup.store);
+    registerRoot(repo.deps, HOME, config.core.node.id, [], origin);
+    if (guards.record !== false) repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, repo.deps.now()));
+    return repo;
+  };
+
+  /** One run of `decide D-1 a` as the owner types it in a terminal window. */
+  const decideLine = async (deps: Deps): Promise<{ readonly code: number; readonly out: string; readonly err: string }> => {
+    const sink = captureSink();
+    const code = await runCli(['decide', 'D-1', 'a', '--home', HOME], deps, sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  const OFF: GuardedSetup = { off: [guardIds.ownerGo] };
+
+  it.each(guardStatesOf(guardIds.ownerGo))('records the answer to a request that changed after the prompt only while the guard counts as off: %s', async (_state, setup, on) => {
+    const repo = await guardedNodeOf(setup);
+    const terminal = atTerminal(repo, () => {
+      repo.deps.seed(WAITING_PATH, waitingOf(CHANGED_ENTRY));
+      return ok('y');
+    });
+    const result = await decideLine(terminal.deps);
+    expect(result.code, result.err).toBe(on ? 1 : 0);
+    expect(result.err.includes('changed after the prompt')).toBe(on);
+    expect(storedRecords(repo)).toHaveLength(on ? 0 : 1);
+    expect(repo.commits).toHaveLength(on ? 0 : 1);
+    expect(result.out.includes(`The guard ${guardIds.ownerGo} is off`)).toBe(!on);
+  });
+
+  it('still refuses an answer with exit 1 while the owner store holds an answer for another text of the request, and asks nothing', async () => {
+    const repo = await guardedNodeOf(OFF, { store: storeOf(storedRecord({ hash: requestHashOf(textOf(CHANGED_ENTRY)) })) });
+    const before = new Map(repo.deps.files);
+    const terminal = atTerminal(repo);
+    const result = await decideLine(terminal.deps);
+    expect(result.code, result.err).toBe(1);
+    expect(result.err).toContain('for another text of the request');
+    expectNothingDone(repo, before, terminal);
+  });
+
+  it('still refuses a second answer with exit 1 for a request that the owner answered, and asks nothing', async () => {
+    const repo = await guardedNodeOf(OFF, { waiting: waitingOf(), decisionLog: logOf(answerRow()), store: storeOf(storedRecord()) });
+    const before = new Map(repo.deps.files);
+    const terminal = atTerminal(repo);
+    const result = await decideLine(terminal.deps);
+    expect(result.code, result.err).toBe(1);
+    expect(result.err).toContain('was answered by the owner');
+    expectNothingDone(repo, before, terminal);
   });
 });
 

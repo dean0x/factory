@@ -44,7 +44,7 @@ describe('guard set arguments', () => {
     [['set', guardIds.cloneRules, 'off'], `Unknown guard "${guardIds.cloneRules}"`],
     [['set', guardIds.hookRuntime, 'on'], `Unknown guard "${guardIds.hookRuntime}"`],
     [['set', softwareGuardIds.prRules, 'off'], 'not settable in this version'],
-    [['set', guardIds.ownerGo, 'off'], 'not settable in this version'],
+    [['set', guardIds.workConduct, 'off'], 'not settable in this version'],
     [['set', A, 'off', '--all'], '--all'],
     [['set', A, 'bad'], 'on or off'],
     [['set', A, 'off', '--json'], '--json'],

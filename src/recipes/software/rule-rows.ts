@@ -145,9 +145,14 @@ const ownerGoRows: readonly GuardRow[] = [
     id: 'owner-prefix-only-text',
     guard: guardIds.ownerGo,
     name: `Authority of the ${owner} comes only from input that is typed into the prompt of the session and starts with the ${owner} prefix`,
-    applies: `Role text of the ${coordinator}, the ${worker} and the safety block`,
+    applies: `Role text of the ${coordinator}, the ${worker}, the work rules and the safety block`,
     harm: true,
-    sites: [...at(COORDINATOR_FILE, 'coordinatorLines'), ...at(SAFETY_FILE, 'safetyLines'), ...at(WORKER_FILE, 'WORKER_LINES')],
+    sites: [
+      ...at(COORDINATOR_FILE, 'coordinatorLines'),
+      ...at(SAFETY_FILE, 'safetyLines'),
+      ...at(WORKER_FILE, 'WORKER_LINES'),
+      ...at(WORK_RULES_FILE, 'WORK_RULES_LINES'),
+    ],
   }),
   textRow({
     id: 'prefix-relay-only-text',
