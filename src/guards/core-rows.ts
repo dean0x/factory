@@ -117,10 +117,18 @@ const boardEditRows: readonly GuardRow[] = [
   codeRow({
     id: 'board-doc-place',
     guard: guardIds.boardEdits,
-    name: 'A doc link keeps local settings and dot folders private through one path name check in any letter case',
+    name: 'A doc link keeps dot folders private through one path name check in any letter case',
     applies: commandLines.itemDoc,
     harm: true,
     sites: [...at('src/board/edit.ts', 'checkDocPath', 'docPathIssue'), ...at('src/core/place-rule.ts', 'dotRuleReason')],
+  }),
+  alwaysOnRow({
+    id: 'board-doc-local-config',
+    guard: guardIds.boardEdits,
+    name: `A doc link is never the local config of the ${folder}, so the ${owner} prefix never reaches a ${worker}`,
+    applies: commandLines.itemDoc,
+    harm: true,
+    sites: at('src/core/place-rule.ts', 'localConfigReason'),
   }),
   codeRow({
     id: 'board-doc-view',

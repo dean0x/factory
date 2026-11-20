@@ -128,6 +128,18 @@ describe('the guard of board edits', () => {
       expect(repo.commits).toEqual([]);
     });
 
+    it('item doc still stops with exit 4 for the local config, because it holds the owner prefix, and a path with a dot part goes', async () => {
+      const repo = await nodeOf(OFF, origin);
+      repo.deps.seed(join(HOME, DOT_DOC), '# Notes\n');
+      const local = await runOn(repo.deps, ['item', 'doc', 'B-1', files.localConfig]);
+      expect(local.code, local.err).toBe(4);
+      expect(repo.commits).toEqual([]);
+      const dot = await runOn(repo.deps, ['item', 'doc', 'B-1', DOT_DOC]);
+      expect(dot.code, dot.err).toBe(0);
+      expect(repo.textOf(files.board)?.includes(DOT_DOC)).toBe(true);
+      expect(repo.textOf(files.board)?.includes(files.localConfig)).toBe(false);
+    });
+
     it('item add still stops with exit 4 for a board file that is a link, because a board read and write stay in the state folder', async () => {
       const repo = await nodeOf(OFF, origin);
       const result = await runOn(linkAt(repo.deps, BOARD_PATH), ['item', 'add', '--title', 'New', '--field', 'priority=P1']);

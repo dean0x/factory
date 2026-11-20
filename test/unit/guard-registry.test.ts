@@ -648,6 +648,7 @@ describe('the rows of the registry', () => {
         'board-hosted-refusal',
         'board-file-links',
         'board-doc-place',
+        'board-doc-local-config',
         'board-doc-view',
         'board-commit-paths',
         'active-machine-mark',
@@ -1011,19 +1012,19 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(235);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(236);
     expect(softwareRecipe.guardRows).toHaveLength(104);
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
-    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(168);
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(169);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
         .filter(([, ids]) => ids.length > 0),
     );
     expect(pinned).toEqual({
-      'board-edits': ['board-reserved-names', 'board-file-links', 'board-commit-paths', 'board-reserved-names-text'],
+      'board-edits': ['board-reserved-names', 'board-file-links', 'board-doc-local-config', 'board-commit-paths', 'board-reserved-names-text'],
       'clone-rules': [
         'clone-source', 'clone-option-end', 'clone-inside-folder', 'clone-missing-folder', 'clone-received-local', 'clone-url',
         'clone-project-path', 'clone-unique-targets',
