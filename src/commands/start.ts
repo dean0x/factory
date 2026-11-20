@@ -5,7 +5,8 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import type { FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, noConsentRemedy, ownDenyRulesOf, type HookSettingsOutcome, type HookSettingsRequest } from '../core/claude-settings.js';
 import type { AttachedEnd, Deps } from '../core/deps.js';
-import { readGuardState, type GuardReadState } from '../core/guard-records.js';
+import type { GuardReadState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import type { GuardValues } from '../guards/types.js';
 import { guardsFor } from '../guards/registry.js';
 import { readHookSettings } from '../workers/session-checks.js';
@@ -397,6 +398,7 @@ const settleHook = async (
   if (!deny.ok) return deny;
   const settings: HookSettingsRequest = {
     folder,
+    home,
     session: hookSessions.coordinator,
     ...request,
     deny: { rules: deny.value.rules, add: false },
@@ -513,14 +515,14 @@ const guardSummary = async (deps: Deps, home: string, config: FactoryConfig, sta
 };
 
 export const runStart = async (
-  deps: Deps,
+  base: Deps,
   options: StartOptions,
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
   // The registration check of the lookup keeps a config file of a cloned repo out: its proxy would get the requests of
   // the session. A config that does not pass it is a stop here, before any proxy check or launch.
   const located = await locateHomeFolder(
-    deps,
+    base,
     options.home,
     (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
     commands.start,
@@ -528,14 +530,16 @@ export const runStart = async (
   if (!located.ok) return located;
   const home = located.value.home;
   // The warning about instruction files comes before any change or launch, and it never stops the command.
-  await warnInstructionFiles(deps, home);
-  const loaded = await loadConfig(deps, home, registry);
+  await warnInstructionFiles(base, home);
+  const loaded = await loadConfig(base, home, registry);
   if (!loaded.ok) return loaded;
   const id = loaded.value.core.node.id;
   const { dryRun } = options;
   // A real run sets a wide mode of the local file back to 600 before it uses the file. A dry run only names the command.
-  const notes = await settleLocalMode(deps, home, !dryRun);
+  const notes = await settleLocalMode(base, home, !dryRun);
   if (!notes.ok) return notes;
+  // One read of the guard values serves the summary, the render and every step of the run that acts on a guard.
+  const { deps, state: guards } = await guardReadOf(base, home, loaded.value, 'always');
 
   // The root checks come before the tool check, the proxy health request and any launch, also in a dry run. A warning is
   // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.
@@ -555,7 +559,6 @@ export const runStart = async (
   const clean = requireRootClean(settled === null ? scan : withSetupAccepted(scan));
   if (!clean.ok) return clean;
   // The safety block comes after the root checks and before any tool check, proxy request or launch, also in a dry run.
-  const guards = await readGuardState(deps, home, loaded.value, 'always');
   const safety = await requireSafetyBlock(deps, home, loaded.value, guards, dryRun);
   if (!safety.ok) return safety;
   // The setup blocks come after the link rule of the coordinator file, from the bytes that the acceptance hashed.

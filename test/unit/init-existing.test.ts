@@ -12,7 +12,7 @@ import { locateHome } from '../../src/core/home.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { commands, env, stateGuard, stateKeys, stateLock, values } from '../../src/names.js';
+import { commands, env, guardIds, stateGuard, stateKeys, stateLock, values } from '../../src/names.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { inspectState } from '../../src/state/load.js';
@@ -36,6 +36,9 @@ import { acceptSetupText } from '../helpers/setup-acceptance.js';
 import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { countReadsOf } from '../helpers/read-count.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OFF_GUARD, OTHER_NODE_ID, withGuardsOff,
+} from '../helpers/guarded-node.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 
 const ROOT = '/w/node';
@@ -528,6 +531,54 @@ describe('init: the mode of the local file on a registered root', () => {
   });
 });
 
+describe.each(FOLDER_ORIGINS)('init: the guard of approval delegation on a registered root in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.approvalDelegation))('sets a delegation with the yes flag only while the guard is off, with the guard %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const { deps } = existing({ origin });
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), off));
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, off, deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', ROOT, '--yes', '--approval', 'merge=delegated'], deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 2 : 0);
+    expect(sink.errors.join('').includes('--yes cannot set the approval point merge to delegated')).toBe(on);
+    expect(recordsOf(deps)).toEqual([]);
+    if (!on) expect(sink.out.join('')).toContain('Approval points: merge delegated, release owner.');
+  });
+
+  it.each(guardStatesOf(guardIds.approvalDelegation))('sets a delegation with no terminal window only while the guard is off, with the guard %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const { deps } = existing({ origin });
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), off));
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, off, deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', ROOT, '--approval', 'merge=delegated', '--approval', 'release=owner'], deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('the approval point merge cannot be delegated: an approval record needs a terminal window')).toBe(on);
+    expect(recordsOf(deps)).toEqual([]);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('init: the guard values of a state folder that is made again on a listed root in %s', (_title, origin) => {
+  const WORKER_FILE = `${STATE}/roles/worker.md`;
+
+  // The first read of the shared config decides that the folder is a node, so this test needs no read fault: init accepts an entry
+  // with another node id and lists the folder again, and only the proof of the guard values must find the other id. The marker
+  // holds only block versions, so the worker file of the state folder is where the guard values show.
+  it('writes the worker file of every guard on when the factory list names another node id at the guard read', async () => {
+    const plain = existing({ state: 'absent', origin });
+    const plainSink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--yes'], plain.deps, plainSink), plainSink.errors.join('')).toBe(0);
+    const allOnWorker = plain.deps.files.get(WORKER_FILE);
+    expect(allOnWorker).toBeDefined();
+    const { deps } = existing({ state: 'absent', origin, entry: OTHER_NODE_ID });
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), [OFF_GUARD]));
+    deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, [OFF_GUARD], deps.now()));
+    const sink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--yes'], deps, sink), sink.errors.join('')).toBe(0);
+    expect(deps.files.get(WORKER_FILE)).toBe(allOnWorker);
+  });
+});
+
 describe('init: the approval points of a registered root', () => {
   it('asks each point again after the checks, with the current mode as the default, and keeps the local file as it is', async () => {
     const asked: string[] = [];
@@ -938,6 +989,17 @@ describe('init: a moved root, with no entry in the factory list', () => {
     const result = await runInit(deps, options());
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     expect(snapshot(deps)).toBe(before);
+  });
+
+  it('requires a second run for approval with a matching guard record but no list entry', async () => {
+    const { deps } = moved({}, { ...terminal, prompt: person() });
+    const off = [guardIds.approvalDelegation];
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), off));
+    deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, off, deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', ROOT, '--approval', 'merge=delegated'], deps, sink);
+    expect(code, sink.errors.join('')).toBe(2);
+    expect(sink.errors.join('')).toContain('the points are set in a second run');
   });
 
   it('refuses the approval flag, because the points are set in a second run', async () => {

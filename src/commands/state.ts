@@ -1,9 +1,11 @@
+import { basename, dirname } from 'node:path';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { isFileMode, stateBlobTextOf, stateHeadOf, stateIndexEntryAt, type IndexEntry } from '../core/git.js';
 import { ok } from '../core/result.js';
 import { namedItems, shownPath } from '../core/root-paths.js';
+import { guardOn } from '../guards/effective.js';
 import {
   commands,
   commandLines,
@@ -12,6 +14,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   maxFileBytes,
   schemaIds,
   stateCommands,
@@ -145,11 +148,18 @@ const checkBoardChange = async (deps: Deps, dir: string): Promise<CliResult<void
   return failure(`${removed} ${compared.value.older ? `${OLDER_NOTE} ` : ''}Mark an item closed, never remove it.`);
 };
 
-/** `state guard`: git runs it as the hook of the state repo. It takes no word. */
+/** The node home of the state folder that git runs the guard in: the folder above it. Null for a folder with another name. */
+export const guardedHomeOf = (stateDir: string): string | null => (basename(stateDir) === dirs.state ? dirname(stateDir) : null);
+
+/**
+ * `state guard`: git runs it as the hook of the state repo. It takes no word. The check runs first, so a commit that it passes reads
+ * no guard value. A stop counts only while the delete guard of the node is on; the installed hook stays the same for both values.
+ */
 export const runStateGuard = async (deps: Deps, words: readonly string[]): Promise<CliResult<CommandOutput>> => {
   if (words.length > 0) return usageError(`${GUARD_LINE} takes no argument`, `Git runs "${GUARD_LINE}", not a person.`);
   const checked = await checkBoardChange(deps, deps.cwd);
-  if (!checked.ok) return checked;
+  const home = guardedHomeOf(deps.cwd);
+  if (!checked.ok && (home === null || (await guardOn(deps, guardIds.deleteGuard, home)))) return checked;
   return ok({ lines: [], json: { schema: schemaIds.stateGuard, passed: true }, warnings: [], failed: false });
 };
 

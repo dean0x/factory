@@ -3,6 +3,7 @@ import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { recordDelegation, requireOwnerChannel } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
+import { guardOn } from '../guards/effective.js';
 import {
   approvalQuestion,
   commands,
@@ -11,6 +12,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   places,
   roles,
   values,
@@ -79,19 +81,21 @@ const parseFlags = (texts: readonly string[], points: readonly ApprovalPoint[]):
  * choice stops the command before the first clone and before any write. A `delegated` choice with `--yes` is a usage
  * error (exit 2). A `delegated` choice that the owner record writer would refuse is a stop (exit 4): no terminal window,
  * or a factory session. A point that no flag names has its mode in `base`: `owner` for a new factory, the current mode
- * for a factory that is there already.
+ * for a factory that is there already. With the guard of approval delegation off for the node in
+ * `home`, a `delegated` value needs no record, so neither stop runs.
  */
-export const approvalsFromFlags = (
+export const approvalsFromFlags = async (
   deps: Deps,
+  home: string,
   yes: boolean,
   points: readonly ApprovalPoint[],
   texts: readonly string[],
   base: ApprovalModes = ownerModes(points),
-): CliResult<ApprovalChoice> => {
+): Promise<CliResult<ApprovalChoice>> => {
   const given = parseFlags(texts, points);
   if (!given.ok) return given;
   const asked = points.find((point) => given.value.get(point.id) === DELEGATED_MODE);
-  if (asked !== undefined) {
+  if (asked !== undefined && (await guardOn(deps, guardIds.approvalDelegation, home))) {
     if (yes) {
       return usageError(
         `${flagText(flags.yes)} cannot set the approval point ${asked.id} to ${DELEGATED_MODE}`,
@@ -182,7 +186,8 @@ export const approvalLines = (
 /**
  * Write the record of each point that the owner set, through the owner record writer. A record that cannot be written is
  * a warning that names the point. The point counts as `owner` then, as the table of the effective mode says: the local
- * file asks for `delegated`, and no record agrees. The result holds the mode that counts for each point.
+ * file asks for `delegated`, and no record agrees. The result holds the mode that counts for each point. With the guard of
+ * approval delegation off, a `delegated` value counts with no record, and the run writes none for it.
  */
 export const recordApprovals = async (
   deps: Deps,
@@ -196,6 +201,10 @@ export const recordApprovals = async (
   for (const point of points) {
     const mode = choice.modes[point.id] ?? OWNER_MODE;
     counted[point.id] = OWNER_MODE;
+    if (mode === DELEGATED_MODE && !(await guardOn(deps, guardIds.approvalDelegation, root))) {
+      counted[point.id] = mode;
+      continue;
+    }
     if (!choice.set.includes(point.id)) continue;
     const written = await recordDelegation(deps, { root, node, point: point.id, mode });
     if (written.ok) {

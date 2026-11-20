@@ -13,7 +13,7 @@ import { CONFIG_SCHEMA_VERSION, mixConfigValue } from '../../src/config/schema.j
 import { isRecord } from '../../src/migrate/inspect.js';
 import { ownDenyRulesOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
-import { boardKeys, commands, env, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
+import { boardKeys, commands, env, guardIds, hookNames, roleText, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -46,6 +46,10 @@ import {
   type RunCall,
   type RunHandler,
 } from '../helpers/fake-deps.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withStoreReadFault,
+} from '../helpers/guarded-node.js';
+import { captureSink } from '../helpers/sink.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { composeRoleText } from '../../src/workers/role-text.js';
 import { readGuardState } from '../../src/core/guard-records.js';
@@ -508,7 +512,8 @@ describe('upgrade: effective guard values', () => {
     expect(config.value.core).toMatchObject({ guards, shared_guards: shared });
     const state = await readGuardState(deps, HOME, config.value, 'always');
     expect(state.values).toMatchObject({ 'install-rules': 'off', 'resume-routines': 'on', 'approval-merge': 'on' });
-    const templates = blockTemplatesFor(blockInputOf(config.value, { coordinator: null, worker: null }, config.value.core.approval, state.values));
+    // The migrated config is not on disk when the upgrade reads its guard values, so an off value has no proof yet: every guard is on.
+    const templates = blockTemplatesFor(blockInputOf(config.value, { coordinator: null, worker: null }, config.value.core.approval, allOn));
     expect((await inspectBlocks(deps, HOME, templates)).every((block) => planBlock(block, false).action === 'current')).toBe(true);
   });
 
@@ -744,6 +749,42 @@ describe('upgrade: the delete guard of the state repo', () => {
     const again = success(await upgrade(deps));
     expect(again.lines.at(-1)?.text).toBe('Nothing to upgrade.');
     expect(again.json).toMatchObject({ changed: false, stateGuard: 'current' });
+  });
+
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.deleteGuard))('writes the missing hook only while the delete guard counts as on: %s', async (_state, setup, on) => {
+      const { deps } = await unguarded();
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME, '--json'], deps, sink), sink.errors.join('')).toBe(0);
+      expect(JSON.parse(sink.out.join(''))).toMatchObject({ stateGuard: on ? 'install' : 'current' });
+      expect(deps.files.has(HOOK)).toBe(on);
+    });
+
+    it('acts on one read of the guard values, with no other read of the guard store that could fail', async () => {
+      const { deps } = await unguarded();
+      registerRoot(deps, HOME, 'demo', [], origin);
+      deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify({ [guardIds.deleteGuard]: 'off' })}\n`);
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, [guardIds.deleteGuard], deps.now()));
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME, '--json'], withStoreReadFault(deps, 2), sink), sink.errors.join('')).toBe(0);
+      expect(JSON.parse(sink.out.join(''))).toMatchObject({ stateGuard: 'current' });
+      expect(deps.files.has(HOOK)).toBe(false);
+    });
+
+    it('writes the missing hook when only the proof finds that the factory list names another node id', async () => {
+      const { deps } = await unguarded();
+      registerRoot(deps, HOME, OTHER_NODE_ID, [], origin);
+      deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify({ [guardIds.deleteGuard]: 'off' })}\n`);
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, [guardIds.deleteGuard], deps.now()));
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME, '--json'], withFirstConfigReadFault(deps, HOME), sink), sink.errors.join('')).toBe(0);
+      expect(JSON.parse(sink.out.join(''))).toMatchObject({ stateGuard: 'install' });
+      expect(deps.files.has(HOOK)).toBe(true);
+    });
   });
 
   it('writes the guard after the ready check and before the commit of the state files, and the commit holds no guard path', async () => {
@@ -5439,6 +5480,28 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     expect(error.kind).toBe('safety');
     expect(error.message).toContain(copySettings('beta'));
     expect(snapshot(deps)).toEqual(before);
+  });
+
+  // The fake reads the text at the path of the link, as a read through a link does.
+  describe.each(FOLDER_ORIGINS)('with the guard of the settings write in %s', (_folder, origin) => {
+    it.each([true, false])('stops at a settings file that is a link before any state change (guard on: %s)', async (on) => {
+      const links: Record<string, string> = {};
+      const { deps, gitSince } = await olderFactory({ links });
+      const off = on ? [] : [guardIds.settingsWrite];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (!on) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify({ [guardIds.settingsWrite]: 'off' })}\n`);
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      deps.seed(`${HOME}/.factory/.gitignore`, '# The state ignore file needs an update.\n');
+      links[copySettings('beta')] = '/outside/settings.json';
+      const before = snapshot(deps);
+      const sink = captureSink();
+      const code = await runCli(['upgrade', '--yes', '--home', HOME], deps, sink);
+      const err = sink.errors.join('');
+      expect(code, err).toBe(4);
+      expect(snapshot(deps)).toEqual(before);
+      expect(gitSince().some((command) => command.startsWith('commit '))).toBe(false);
+      expect(err).toContain(`the settings file ${copySettings('beta')} is a link`);
+    });
   });
 
   it('stops with exit 1 for a settings file that is not a JSON object, before any write', async () => {

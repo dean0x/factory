@@ -4,7 +4,7 @@ import { removedByDisplay } from '../cli/output.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { accessFaultOf } from '../core/access.js';
 import type { CheckedFault, Deps } from '../core/deps.js';
-import { readGuardState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import { ok, type Err } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { acceptedEntryOf, entryOfText, type ManifestEntry } from '../core/setup-acceptance.js';
@@ -242,7 +242,7 @@ export const requireRoleText = async (
   input: { readonly home: string; readonly config: FactoryConfig; readonly retry: string; readonly guards?: GuardValues | undefined },
 ): Promise<CliResult<void>> => {
   const { home, config, retry } = input;
-  const guards = input.guards ?? (await readGuardState(deps, home, config, 'when-off')).values;
+  const guards = input.guards ?? (await guardReadOf(deps, home, config, 'when-off')).state.values;
   const read = await readRoleText(deps, { home, config, guards });
   if (!read.ok) return read;
   return read.value.kind === 'ok' ? ok(undefined) : roleFaultRefusal(read.value.fault, { retry });

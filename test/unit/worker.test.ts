@@ -7,11 +7,15 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { guardIds, launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, withStoreReadFault,
+  type GuardedSetup,
+} from '../helpers/guarded-node.js';
 import {
   createFakeDeps,
   exited,
@@ -1078,6 +1082,65 @@ describe('worker new: the settings that the clone tracks stop the command before
   });
 });
 
+const PROGRAM_VARIABLE = '{"env":{"FACTORY_ANYTHING":"1"}}\n';
+const settingsCheckSetup = ({ off = [], record }: GuardedSetup): Pick<Setup, 'config' | 'seed'> => ({
+  config: withGuardsOff(sampleConfig(), off),
+  seed: record === false ? {} : { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+});
+
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings check in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.settingsCheck))('stops a tracked settings file that sets a program variable only while the guard is on, with the guard %s', async (_state, setup, on) => {
+    const made = make({ ...settingsCheckSetup(setup), origin, head: [{ path: '.claude/settings.json', text: PROGRAM_VARIABLE }] });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(made.deps.dirs.has(COPY)).toBe(!on);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the Claude Code settings write in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.settingsWrite))('needs a consent for the hook settings with no terminal window only while the guard is on, with the guard %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const made = make({
+      origin,
+      config: withGuardsOff(sampleConfig(), off),
+      seed: setup.record === false ? {} : { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+    });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 2 : 0);
+    expect(made.deps.files.has(SETTINGS_FILE)).toBe(!on);
+    expect(made.deps.prompts).toEqual([]);
+  });
+
+  it('acts on the guard values of its launch checks, with no other read of the guard store that could fail', async () => {
+    const off = [guardIds.settingsWrite];
+    const made = make({
+      origin,
+      config: withGuardsOff(sampleConfig(), off),
+      seed: { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+    });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME], withStoreReadFault(made.deps, 2), sink);
+    expect(code, sink.errors.join('')).toBe(0);
+    expect(made.deps.files.has(SETTINGS_FILE)).toBe(true);
+  });
+
+  it('needs a consent for the hook settings when only the proof finds that the factory list names another node id', async () => {
+    const off = [guardIds.settingsWrite];
+    const made = make({
+      origin,
+      config: withGuardsOff(sampleConfig(), off),
+      seed: { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) },
+    });
+    registerRoot(made.deps, HOME, OTHER_NODE_ID, [], origin);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME], withFirstConfigReadFault(made.deps, HOME), sink);
+    expect(code, sink.errors.join('')).toBe(2);
+    expect(made.deps.files.has(SETTINGS_FILE)).toBe(false);
+  });
+});
+
 describe('worker new: the role text of the new worker stops the command before the work copy exists', () => {
   const HOOKS_OFF = '{"disableAllHooks":true}\n';
 
@@ -1697,6 +1760,18 @@ describe('worker resume: the root checks and the session come first', () => {
   });
 });
 
+describe.each(FOLDER_ORIGINS)('worker resume: the guard of the Claude Code settings check in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.settingsCheck))('refuses settings with a program variable only while the guard counts as on, with the guard %s', async (_state, setup, on) => {
+    const made = await withWorkers({ ...settingsCheckSetup(setup), origin });
+    made.deps.seed(`${COPY}/.claude/settings.json`, PROGRAM_VARIABLE);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'resume', 'alpha', '--home', HOME], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    if (on) expect(sink.errors.join('')).toContain('work-copies/web/alpha/.claude/settings.json');
+    expect(made.tmux.commands().filter((command) => /^(split-window|new-window|new-session)\b/.test(command))).toHaveLength(on ? 0 : 1);
+  });
+});
+
 describe('worker resume: the session of the worker', () => {
   it('starts the program with --resume and the session id of the last-seen line, in a marked pane', async () => {
     const made = await withWorkers();
@@ -2132,6 +2207,54 @@ describe.each(['own', 'received'] as const)('worker resume: linked folders, %s r
     expect(made.events).not.toContain('tmux split-window');
     expect(made.events).not.toContain('tmux new-window');
     expect(made.events).not.toContain('tmux new-session');
+  });
+});
+
+const unreadSettingsCases = [
+  ['a linked settings file', [{ path: '.claude/settings.json', mode: LINK_MODE, text: '/elsewhere/settings.json' }], 'settings.json (a link)'],
+  ['a linked .claude folder', [{ path: '.claude', mode: LINK_MODE, text: '/elsewhere' }], '.claude is a link, so factory does not use it'],
+  ['a file over 1 MiB', [{ path: '.claude/settings.json', text: '{}'.padEnd(maxFileBytes + 1) }], 'settings.json (cannot be read)'],
+  ['more than 64 settings files', [
+    ...Array.from({ length: 64 }, (_, i) => ({ path: `.claude/settings-${String(i).padStart(2, '0')}.json`, text: '{}' })),
+    { path: '.claude/settings.json', text: '{}' },
+  ], 'holds more than 64 settings files'],
+] as const satisfies readonly (readonly [string, readonly HeadEntry[], string])[];
+
+describe.each(FOLDER_ORIGINS)('worker launch in %s with the settings check off', (_title, origin) => {
+  const off = [guardIds.settingsCheck];
+  const config = withGuardsOff(sampleConfig(), off);
+  const seed = { [GUARD_STORE]: guardStoreText(config.core.node.id, HOME, off, new Date('2026-11-01T00:00:00.000Z')) };
+  const expectRefusal = async (made: Made, args: readonly string[], message: string) => {
+    const sink = captureSink();
+    const code = await runCli(['worker', ...args, '--home', HOME, '--yes'], made.deps, sink);
+    expect(sink.errors.join('')).toContain(message);
+    expect(code).toBe(4);
+    expect(made.tmux.commands().filter((command) => /^(split-window|new-window|new-session)\b/.test(command))).toEqual([]);
+  };
+
+  it.each([
+    ...unreadSettingsCases,
+    ['a .claude file', [{ path: '.claude', text: 'not a folder' }], '.claude is not a folder, so factory can not write its settings file there'] as const,
+  ])('refuses %s in the next work copy before checkout', async (_name, head, message) => {
+    const made = make({ origin, config, seed, head });
+    await expectRefusal(made, ['new', 'alpha', '--project', 'web'], message);
+    expect(made.deps.dirs.has(COPY)).toBe(false);
+  });
+
+  describe.each([['the root', HOME], ['the current work copy', COPY]] as const)('in %s', (_place, folder) => {
+    it.each(unreadSettingsCases)('refuses %s', async (_name, entries, message) => {
+      const links: Record<string, string> = {};
+      const files: Record<string, string> = { ...seed, '/elsewhere/settings.json': '{}' };
+      for (const entry of entries) {
+        const path = `${folder}/${entry.path}`;
+        if ('mode' in entry) links[path] = entry.text;
+        // The fake directory list needs a file entry for the link.
+        if (entry.path !== '.claude') files[path] = 'mode' in entry ? '{}' : entry.text;
+      }
+      const setup = { origin, config, seed: files, links };
+      if (folder === COPY) await expectRefusal(await withWorkers(setup), ['resume', 'alpha'], message);
+      else await expectRefusal(make(setup), ['new', 'alpha', '--project', 'web'], message);
+    });
   });
 });
 

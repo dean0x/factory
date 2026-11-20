@@ -24,38 +24,46 @@ const machineKeys = [
 
 /** The guards of the core, in the order of the list. A recipe adds its own guards to them. */
 const coreGuards: readonly GuardDefinition[] = [
-  guardOf(
-    guardIds.approvalDelegation,
-    'Approval delegation',
-    `A step that needs an approval waits for the ${owner}, unless the ${owner} delegated it with an approval record.`,
-    [approvalKey],
+  wiredGuard(
+    guardOf(
+      guardIds.approvalDelegation,
+      'Approval delegation',
+      `A step that needs an approval waits for the ${owner}, unless the ${owner} delegated it with an approval record.`,
+      [approvalKey],
+    ),
   ),
   guardOf(
     guardIds.boardEdits,
     'Board edits',
     'Board data changes only through the commands, in local files that hold no link.',
   ),
-  guardOf(
-    guardIds.settingsCheck,
-    'Claude Code settings check',
-    'The settings files that a session reads cannot change its environment, its hooks or its commands.',
-    [statuslineKey],
+  wiredGuard(
+    guardOf(
+      guardIds.settingsCheck,
+      'Claude Code settings check',
+      'The settings files that a session reads cannot change its environment, its hooks or its commands.',
+      [statuslineKey],
+    ),
   ),
-  guardOf(
-    guardIds.settingsWrite,
-    'Claude Code settings write',
-    `A write of the hook settings needs the consent of the ${owner} and stays inside the session folder.`,
+  wiredGuard(
+    guardOf(
+      guardIds.settingsWrite,
+      'Claude Code settings write',
+      `A write of the hook settings needs the consent of the ${owner}.`,
+    ),
   ),
   guardOf(
     guardIds.cloneRules,
     'Clone and project rules',
     'A clone takes a plain URL and goes only into a missing folder of its own project.',
   ),
-  guardOf(guardIds.contextLimits, 'Context limits', 'A session saves its work before its context is full.', contextKeys),
-  guardOf(
-    guardIds.deleteGuard,
-    'Delete guard',
-    'No commit in the state folder removes a work item or makes the board unreadable.',
+  wiredGuard(guardOf(guardIds.contextLimits, 'Context limits', 'A session saves its work before its context is full.', contextKeys)),
+  wiredGuard(
+    guardOf(
+      guardIds.deleteGuard,
+      'Delete guard',
+      'No commit in the state folder removes a work item or makes the board unreadable.',
+    ),
   ),
   guardOf(
     guardIds.dismiss,

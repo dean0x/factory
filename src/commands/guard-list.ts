@@ -3,7 +3,7 @@ import { displayLine, renderError, tableLines, type CommandOutput, type OutLine 
 import { inspectSharedConfig, loadConfig, readNodeIdentity } from '../config/load.js';
 import type { SharedConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { readGuardState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
 import type { GuardRules } from '../guards/effective.js';
@@ -23,12 +23,12 @@ interface ListedGuard extends Omit<GuardState, 'value'> {
   readonly value: GuardValue | typeof guardListWords.unknown;
 }
 
-/** Registry facts and effective state share one row. A failed config load leaves the value unknown. */
+/** Registry facts and effective state share one row. A failed config load leaves the value unknown and names that fault as the source. */
 const listedGuard = (guard: Guard, state: GuardRules | null): ListedGuard => ({
   ...guard,
   settable: guard.wired,
   value: state === null ? guardListWords.unknown : state.values[guard.id] ?? guardValues.on,
-  source: state?.sources[guard.id] ?? 'missing',
+  source: state === null ? 'notLoaded' : state.sources[guard.id] ?? 'missing',
   since: state?.since[guard.id] ?? null,
 });
 
@@ -84,7 +84,7 @@ export const runGuardList = async (
   const home = located.value.home;
   const loaded = await loadConfig(deps, home, registry);
   const recipe = loaded.ok ? loaded.value.entry : recipeOf(await inspectSharedConfig(deps, home, registry), registry);
-  const state = loaded.ok ? await readGuardState(deps, home, loaded.value, 'when-off') : null;
+  const state = loaded.ok ? (await guardReadOf(deps, home, loaded.value, 'when-off')).state : null;
   const guards = guardsFor(recipe).map((guard) => listedGuard(guard, state));
   const rows = guardRowsFor(recipe);
   const family = options.family;

@@ -501,7 +501,7 @@ export const runReceived = async (
   const { shared } = root.value;
   const id = shared.core.node.id;
   const points = shared.entry.approvalPoints;
-  const flagged = approvalsFromFlags(deps, options.yes, points, options.approval);
+  const flagged = await approvalsFromFlags(deps, home, options.yes, points, options.approval);
   if (!flagged.ok) return flagged;
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
   if (!outside.ok) return outside;

@@ -74,6 +74,7 @@ const make = async (world: World = {}): Promise<Made> => {
   if (world.settings === undefined) {
     const hooks = await ensureHookSettings(deps, {
       folder: COPY,
+      home: HOME,
       session: hookSessions.workCopy,
       yes: true,
       dryRun: false,

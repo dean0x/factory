@@ -14,7 +14,7 @@ import { effectiveModes } from '../../src/core/owner-record.js';
 import { readGuardStore } from '../../src/core/guard-records.js';
 import { ok } from '../../src/core/result.js';
 import { acceptanceState, manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { commands, env, files as fileNames, guardRecordWords, hookNames, setupAcceptance, stateGuard, values } from '../../src/names.js';
+import { commands, env, files as fileNames, guardIds, guardRecordWords, hookNames, setupAcceptance, stateGuard, values } from '../../src/names.js';
 import { SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { loadState } from '../../src/state/load.js';
@@ -35,8 +35,9 @@ import {
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { gitHandler, STATE_GIT, STATE_READ, type GitFixture } from '../helpers/git-fake.js';
+import { GUARD_STORE, GUARDED_HOME, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { oldWordsIn } from '../helpers/old-words.js';
-import { sampleConfig } from '../helpers/sample-config.js';
+import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 
 const HOME = '/w/node';
@@ -3561,6 +3562,32 @@ describe('init: the approval points', () => {
       const lines = upgraded.ok ? upgraded.value.lines.map((line) => line.text).join('\n') : '';
       expect(lines).toContain('block safety: version 2 is current');
     });
+  });
+});
+
+describe('init: the guard values of a new folder', () => {
+  /** A node that the factory list holds, with the guard of approval delegation off and the matching owner record. */
+  const seedGuardedNode = (deps: FakeDeps): void => {
+    const node = sampleConfig();
+    const off = [guardIds.approvalDelegation];
+    seedConfig(deps, GUARDED_HOME, withGuardsOff(node, off));
+    registerRoot(deps, GUARDED_HOME, node.core.node.id);
+    deps.seed(GUARD_STORE, guardStoreText(node.core.node.id, GUARDED_HOME, off, deps.now()));
+  };
+
+  it.each([
+    ['the home flag of the new folder, run in the node', ['--home', HOME], { cwd: GUARDED_HOME }],
+    ['no home flag, while FACTORY_HOME names the node', [], { cwd: HOME, env: { ...ENV, [env.home]: GUARDED_HOME } }],
+    ['no home flag, in a new folder inside the node', [], { cwd: `${GUARDED_HOME}/new` }],
+  ])('keeps every guard on for a folder that is not a node yet, with %s', async (_name, words, extra: FakeOptions) => {
+    const { deps } = setup({}, extra);
+    seedGuardedNode(deps);
+    deps.seedDir(extra.cwd ?? HOME);
+    const sink = captureSink();
+    const argv = ['init', ...words, '--yes', '--owner-name', 'Test Owner', '--approval', 'merge=delegated'];
+    expect(await runCli(argv, deps, sink)).toBe(2);
+    expect(sink.errors.join('')).toContain('--yes cannot set the approval point merge to delegated');
+    expect([...deps.files.keys()].filter((path) => path.endsWith(fileNames.config))).toEqual([`${GUARDED_HOME}/${fileNames.config}`]);
   });
 });
 

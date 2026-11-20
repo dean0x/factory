@@ -1,22 +1,59 @@
+import { resolve } from 'node:path';
 import type { ProxyConfig } from '../config/schema.js';
+import type { Deps } from '../core/deps.js';
 import { guardStartWords, guardValues, keys } from '../names.js';
-import type { Guard, GuardState, GuardValue, GuardValues } from './types.js';
+import type { Guard, GuardContext, GuardSource, GuardState, GuardValue, GuardValues } from './types.js';
 
 /** An absent value means on. This constant has no file or environment dependency. */
 export const allOn: GuardValues = Object.freeze({});
+
+/** The values when no node home was read: every guard is on for every home, and no read was made. */
+export const noGuardHome: GuardContext = Object.freeze({ home: null, values: allOn, state: null });
+
+/** A source that gives one read to every site that asks. A command that read the guard state itself gives its sites that read. */
+export const guardSourceOf = (context: GuardContext): GuardSource => Object.freeze({ read: async () => context });
+
+/** The source of every command that finds no home, and of every deps that no pre-read changed. It reads no file. */
+export const allGuardsOn: GuardSource = guardSourceOf(noGuardHome);
+
+/**
+ * True when the read is of the node home that a site acts on. The paths compare exactly, with no letter case fold: on a volume that
+ * tells letter case apart, two homes that differ only in letter case are two folders.
+ */
+export const isReadOf = (deps: Deps, read: GuardContext, home: string): boolean =>
+  read.home !== null && resolve(deps.cwd, read.home) === resolve(deps.cwd, home);
+
+/**
+ * The effective values for the node home that a site acts on: the values of the pre-read when the site names its home, else every
+ * guard on. A caller that has the deps gives these values as a parameter to a site that has none.
+ */
+export const guardValuesFor = async (deps: Deps, home: string): Promise<GuardValues> => {
+  const read = await deps.guards.read();
+  return isReadOf(deps, read, home) ? read.values : allOn;
+};
+
+/** True unless the values hold the guard off. A site with no deps reads the values that its nearest caller with the deps gives. */
+export const isGuardOn = (values: GuardValues, id: string): boolean => values[id] !== guardValues.off;
+
+/** True unless the pre-read found the guard off for the node home that the site acts on. Only a wired guard can be off there. */
+export const guardOn = async (deps: Deps, id: string, home: string): Promise<boolean> =>
+  isGuardOn(await guardValuesFor(deps, home), id);
 
 export interface RecordedGuardValue {
   readonly value: GuardValue;
   readonly at: string;
 }
 
-/** A record key uses the real root, in the compared form of the platform. */
+/** A record key uses the real root, exactly as the file system gives it. */
 export interface GuardRecord {
   readonly node: string;
   readonly root: string;
   readonly values: Readonly<Record<string, RecordedGuardValue>>;
   readonly prefix: { readonly hash: string; readonly at: string } | null;
 }
+
+/** The proxies of a node, as the list of loosened guards names them. */
+export type GuardProxies = readonly Pick<ProxyConfig, typeof keys.proxy.id | typeof keys.proxy.onFail>[];
 
 export interface GuardFacts {
   readonly node: string;
@@ -26,7 +63,7 @@ export interface GuardFacts {
   readonly record?: GuardRecord | null;
   readonly loadError?: boolean;
   readonly fault?: string | null;
-  readonly proxies?: readonly Pick<ProxyConfig, typeof keys.proxy.id | typeof keys.proxy.onFail>[];
+  readonly proxies?: GuardProxies;
 }
 
 export interface GuardRules {
@@ -52,6 +89,8 @@ export const guardRulesOf = (guards: readonly Guard[], facts: GuardFacts): Guard
       if (shared) source = 'shared';
       else if (matched) source = 'local';
       else if (local === guardValues.off) source = 'noRecord';
+    } else if (guard.wired && facts.local?.[guard.id] !== undefined) {
+      source = 'unread';
     }
     return {
       id: guard.id,

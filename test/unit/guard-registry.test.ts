@@ -6,6 +6,7 @@ import { glossary } from '../../src/glossary.js';
 import { isRecord } from '../../src/migrate/inspect.js';
 import { recipes } from '../../src/recipes/index.js';
 import { workerSectionLines } from '../../src/recipes/software/roles/coordinator.js';
+import { softwareGuardIds } from '../../src/recipes/software/guards.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
 import { guardOf, wiredGuard } from '../../src/guards/build.js';
 import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
@@ -52,6 +53,9 @@ const recordDeps: Readonly<Record<string, RowSite>> = {
   writeStdout: nodeSite('createNodeDeps.writeStdout'),
 };
 
+/** The reason of a row site that the proof of an off value reaches when it loads the full config. */
+const proofReason = 'The proof loads the config with every guard on; its local file checks always run.';
+
 const recordExceptions = [
   { path: 'src/core/home.ts', symbol: 'locateHome', reason: 'Finds the registered config home, not the guard store.' },
   { path: 'src/core/home.ts', symbol: 'chosenHome', reason: 'Chooses the config home, not the guard store.' },
@@ -80,6 +84,62 @@ const recordExceptions = [
   { path: 'src/core/clone-url.ts', symbol: 'parseCloneUrl', reason: 'Parses local source config URLs only, not the guard store.' },
   { path: 'src/core/clone-url.ts', symbol: 'checkedPath', reason: 'Checks local source config paths only, not the guard store.' },
   { path: 'src/core/clone-url.ts', symbol: 'reasons', reason: 'Lists source config fault text, not guard values.' },
+  { path: 'src/config/load.ts', symbol: 'localFileAccess', reason: proofReason },
+  { path: 'src/core/root-paths.ts', symbol: 'requireNoLinks', reason: proofReason },
+  { path: 'src/core/access.ts', symbol: 'accessFaultFor', reason: proofReason },
+];
+
+/** The reason of a pure helper of the settings check: `judgeSettings` reads the value and drops its findings when the guard is off. */
+const analyzerReason = 'A pure analysis of one settings text; judgeSettings reads the value and keeps only the permission stop when the guard is off.';
+/** The reason for the work copy sites that pass the guard value to the check of the file contents. */
+const workCopyReason = 'Reaches judgeSettings, which uses the guard value for optional checks of the file contents.';
+/** The reason of a command step that writes the hook settings through the one writer. */
+const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
+
+/**
+ * The listed sites of a code row of a wired guard whose own declaration does not name the guard id. Each one has its reason: the
+ * value is read by its caller or its callee, or the site holds a stop that the guard shares with a guard that this version cannot
+ * set, so the stop stays on.
+ */
+const unreadSiteExceptions: readonly { readonly row: string; readonly path: string; readonly symbol: string; readonly reason: string }[] = [
+  { row: 'delegation-record', path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Merges the mode of the local file; delegationReport reads the value and gives the mode that counts.' },
+  { row: 'delegation-store-fallback', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
+  { row: 'delegation-move', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
+  { row: 'delegation-move', path: 'src/commands/init-existing.ts', symbol: 'approvalsOf', reason: 'Requires registration before the approval flag can set a point. An off value needs a valid list entry.' },
+  { row: 'delegation-move', path: 'src/commands/init-existing.ts', symbol: 'delegationWarnings', reason: 'Reports the end of delegations during registration. An off value needs a valid list entry.' },
+  { row: 'delegation-owner-channel', path: 'src/commands/init-approval.ts', symbol: 'ownerCanSet', reason: 'Decides only whether init asks and which points it records; recordApprovals reads the value and counts an off point with no record.' },
+  { row: 'delegation-no-flag', path: 'src/commands/init-approval.ts', symbol: 'ownerCanSet', reason: 'Decides only whether init asks and which points it records; recordApprovals reads the value and counts an off point with no record.' },
+  { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'requireOwnerChannel', reason: 'The channel check of every owner record; approvalsFromFlags reads the value before it calls it, and the release scope records share it.' },
+  { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'putRecord', reason: 'The one writer of owner records, which the release scope records share; recordApprovals reads the value and writes no record for an off point.' },
+  { row: 'delegation-warning', path: 'src/commands/root-content.ts', symbol: 'delegationFindings', reason: 'Lists the unmatched points of delegationReport, which reads the value and gives none when the guard is off.' },
+  { row: 'delete-hook', path: 'src/state/head-board.ts', symbol: 'earlierReadableBoard', reason: 'A helper of runStateGuard, which reads the value and lets the commit pass when the guard is off.' },
+  { row: 'delete-hook-install', path: 'src/commands/init-state.ts', symbol: 'makeStateFolder', reason: 'Calls guardPlanOf, which reads the value and plans no install when the guard is off.' },
+  { row: 'delete-hook-install', path: 'src/state/guard.ts', symbol: 'folderRefusal', reason: 'A refusal text of installGuard, which runs only when guardPlanOf, which reads the value, plans an install.' },
+  { row: 'delete-hook-install', path: 'src/state/guard.ts', symbol: 'gitFolderRefusal', reason: 'A refusal text of installGuard, which runs only when guardPlanOf, which reads the value, plans an install.' },
+  { row: 'delete-hook-required', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Calls requireGuardOn, which reads the value.' },
+  { row: 'delete-hook-required', path: 'src/state/board-commit.ts', symbol: 'commitLocked', reason: 'Calls requireGuardOn and requireNoLostIds, which read the value.' },
+  { row: 'delete-hook-warning', path: 'src/commands/start.ts', symbol: 'runStart', reason: 'Calls guardWarning, which reads the value.' },
+  { row: 'delete-hook-warning', path: 'src/state/guard.ts', symbol: 'guardPlanWarnings', reason: 'A pure text of the plan of guardPlanOf, which reads the value and gives no warning when the guard is off.' },
+  { row: 'no-lost-item-ids', path: 'src/commands/upgrade.ts', symbol: 'runUpgrade', reason: 'Reaches requireNoLostIds through lockedBoardText, and requireNoLostIds reads the value.' },
+  { row: 'no-lost-item-ids', path: 'src/state/item-ids.ts', symbol: 'lostItemIds', reason: 'A pure comparison of two board texts; requireNoLostIds reads the value.' },
+  { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
+  { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'envPrefixIn', reason: analyzerReason },
+  { row: 'settings-env-traffic', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
+  { row: 'settings-env-state', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
+  { row: 'settings-hooks-kept', path: 'src/safety/settings.ts', symbol: 'disablesHooks', reason: analyzerReason },
+  { row: 'settings-commands', path: 'src/safety/settings.ts', symbol: 'runsCommands', reason: analyzerReason },
+  { row: 'settings-wide-allow', path: 'src/safety/settings.ts', symbol: 'allowsAnyLockRunCommand', reason: analyzerReason },
+  { row: 'settings-wide-allow', path: 'src/safety/settings.ts', symbol: 'allowsEveryUse', reason: analyzerReason },
+  { row: 'settings-default-mode', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
+  { row: 'settings-mcp-approval', path: 'src/safety/settings.ts', symbol: 'approvesMcp', reason: analyzerReason },
+  { row: 'settings-cross-session', path: 'src/safety/settings.ts', symbol: 'heldCrossSession', reason: analyzerReason },
+  { row: 'settings-work-copy', path: 'src/commands/root-content.ts', symbol: 'checkTrackedSettings', reason: workCopyReason },
+  { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanSettings', reason: workCopyReason },
+  { row: 'settings-work-copy', path: 'src/workers/launch.ts', symbol: 'requireCleanTrackedSettings', reason: workCopyReason },
+  { row: 'settings-write-consent', path: 'src/commands/init-hook.ts', symbol: 'checkHookConsent', reason: consentCallerReason },
+  { row: 'settings-write-consent', path: 'src/commands/start.ts', symbol: 'settleHook', reason: consentCallerReason },
+  { row: 'settings-write-consent', path: 'src/upgrade/hook-settings.ts', symbol: 'applyHookSettings', reason: consentCallerReason },
+  { row: 'settings-write-changed', path: 'src/core/claude-settings.ts', symbol: 'ensureHookSettings', reason: 'Calls askConsent and planAfterConsent, which read the value.' },
 ];
 
 const software = {
@@ -174,10 +234,32 @@ describe('the guards of a recipe', () => {
     expect(idsOf(software.guards).filter((id) => taken.has(id))).toEqual([]);
   });
 
-  it('wires only the four text guards of the software recipe', () => {
+  it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.resumeRoutines, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
+  });
+
+  it('reads the value of a wired guard in each listed site of each of its code rows, or names the reason of a site that does not', () => {
+    const codeRows = software.rows.filter((row) =>
+      row.kind === guardKinds.code && software.guards.some((guard) => guard.id === row.guard && guard.wired));
+    const paths = [...new Set(codeRows.flatMap((row) => row.sites.map((site) => site.path)))];
+    const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
+    const idNameOf = (id: string): string => {
+      const core = Object.entries(guardIds).find(([, value]) => value === id);
+      return core === undefined ? `softwareGuardIds.${Object.entries(softwareGuardIds).find(([, value]) => value === id)?.[0] ?? id}` : `guardIds.${core[0]}`;
+    };
+    expect(codeRows.length).toBeGreaterThan(0);
+    const unread = codeRows.flatMap((row) => {
+      const texts = sourceScan.declarationTextsOf(sources, row.sites);
+      return row.sites.filter((_site, index) => texts[index]?.includes(idNameOf(row.guard)) !== true)
+        .map((site) => `${row.id} ${site.path} ${site.symbol}`);
+    });
+    const excepted = unreadSiteExceptions.map((site) => `${site.row} ${site.path} ${site.symbol}`);
+    expect(duplicatesOf(excepted)).toEqual([]);
+    expect(unreadSiteExceptions.filter((site) => site.reason.trim() === '')).toEqual([]);
+    expect(unread.filter((site) => !excepted.includes(site))).toEqual([]);
+    expect(excepted.filter((site) => !unread.includes(site))).toEqual([]);
   });
 
   it('marks a guard as wired without a change to its definition', () => {
@@ -204,6 +286,14 @@ describe('the guards of a recipe', () => {
     expect(result.faults).toEqual([]);
     const renders = ['linesFor', 'approvalLines', 'blockTemplatesFor'];
     expect(result.sites.filter((site) => renders.includes(site.symbol))).toEqual([]);
+  });
+
+  it('reads the guard state only in the one owner of the guard decision, the value of a site and the record command', () => {
+    const readers = allSourceFiles(join(REPO, 'src'))
+      .filter((path) => /\breadGuardState\(|\.guards\.read\(\)/.test(readFileSync(path, 'utf8')))
+      .map((path) => path.slice(REPO.length + 1));
+    // The record command reads only the store fields of the state: the prefix record and the fault.
+    expect(readers.sort()).toEqual(['src/commands/guard-set.ts', 'src/core/guard-source.ts', 'src/guards/effective.ts']);
   });
 
   it('retires no guard id yet', () => {
@@ -385,15 +475,11 @@ describe('the rows of the registry', () => {
         'settings-mcp-approval',
         'settings-cross-session',
         'settings-other-warnings',
-        'settings-check-fails-closed',
         'settings-work-copy',
       ],
       'settings-write': [
         'settings-write-consent',
         'settings-write-terminal',
-        'settings-write-no-link',
-        'settings-write-inside-folder',
-        'settings-write-user-folder',
         'settings-write-changed',
       ],
       'clone-rules': [
@@ -436,6 +522,8 @@ describe('the rows of the registry', () => {
       ],
       'file-link-safety': [
         'user-folder-never',
+        'settings-write-no-link',
+        'settings-write-inside-folder',
         'private-file-mode',
         'local-file-mode',
         'safe-write',
@@ -587,7 +675,7 @@ describe('the rows of the registry', () => {
         'resume-owned-session',
         'worker-idle-text',
       ],
-      'permission-mode': ['auto-permission-mode', 'no-permission-skip-setting', 'permission-mode-text'],
+      'permission-mode': ['auto-permission-mode', 'no-permission-skip-setting', 'settings-check-fails-closed', 'permission-mode-text'],
       proxy: [
         'proxy-from-config',
         'proxy-url-form',
@@ -704,7 +792,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(209);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(208);
     expect(softwareRecipe.guardRows).toHaveLength(103);
   });
 
@@ -1052,12 +1140,15 @@ describe('the text rows of the registry', () => {
       expect(onTexts.length, site.path).toBeGreaterThan(0);
       expect(offTexts, site.path).toHaveLength(onTexts.length);
       for (const text of onTexts) {
-        for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).toContain(piece);
+        expect(pieces.some((piece) => text.includes(piece)), `${row.id}: ${site.path}`).toBe(true);
       }
       for (const text of offTexts) {
         for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).not.toContain(piece);
         if (point !== undefined) expect(text, site.path).toContain(fillTemplate([point.offText]));
       }
+    }
+    for (const piece of pieces) {
+      expect(row.sites.some((site) => (on[site.path] ?? []).some((text) => text.includes(piece))), `${row.id}: ${piece}`).toBe(true);
     }
   });
 

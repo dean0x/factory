@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
-import type { Deps, RunOutput } from '../../src/core/deps.js';
+import { withGuards, type Deps, type RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
-import { commandText, commands, files as fileNames, maxFileBytes, stateLock } from '../../src/names.js';
+import type { GuardSource } from '../../src/guards/types.js';
+import { commandText, commands, files as fileNames, guardIds, guardValues, maxFileBytes, stateLock } from '../../src/names.js';
 import {
   commitBoardChange,
   readBoardFiles,
@@ -224,6 +225,15 @@ describe('the board commit helper: a change that loses an item id', () => {
     expect(stateFiles(deps)).toEqual(before);
     expect(writesOf(seen)).toEqual([]);
     expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('commits the change while the delete guard of the node is off, and stops it while the guard is on for another home', async () => {
+    const offFor = (home: string): GuardSource => ({ read: async () => ({ home, values: { [guardIds.deleteGuard]: guardValues.off }, state: null }) });
+    const { change } = changing(ok(texts({ 'board.json': board(['B-1']) })));
+    const off = await setup();
+    expect(await commitBoardChange(withGuards(off.deps, offFor(HOME)), LAYOUT, request({ change }))).toEqual({ ok: true, value: { committed: true } });
+    const other = await setup();
+    expect(exitCodeOf[errorOf(await commitBoardChange(withGuards(other.deps, offFor('/h/other')), LAYOUT, request({ change }))).kind]).toBe(4);
   });
 
   it('names every lost id', async () => {

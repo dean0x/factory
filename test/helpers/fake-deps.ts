@@ -7,6 +7,7 @@ import { checkedFaultOf } from '../../src/core/access.js';
 import type { AttachedEnd, AttachedOptions, Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
 import { isSameOrInside } from '../../src/core/paths.js';
 import { ok } from '../../src/core/result.js';
+import { allGuardsOn } from '../../src/guards/effective.js';
 import { dirs, env, files as fileNames, homeIndex, privateFile, program, stateKeys } from '../../src/names.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 
@@ -500,6 +501,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     pid: options.pid ?? 4242,
     programArgv: options.programArgv ?? FAKE_PROGRAM_ARGV,
     uid,
+    guards: allGuardsOn,
   };
   fake.seedDir(fake.cwd);
   return fake;

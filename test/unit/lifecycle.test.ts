@@ -4,7 +4,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { activeMachine, env, marker, roleText, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
+import { activeMachine, env, guardIds, marker, roleText, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -19,6 +19,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
+import { GUARD_STORE, guardStoreText, withGuardsOff, withStoreReadFault } from '../helpers/guarded-node.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
 import { ownSettingsWithRules, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -888,6 +889,16 @@ describe('restart', () => {
   });
 
   describe('the settings of the work copy', () => {
+    it('starts the worker with the prepared guard decision when a second store read would fail', async () => {
+      const off = [guardIds.settingsCheck];
+      const made = await make({ config: withGuardsOff(sampleConfig(), off), workers: { alpha: {} } });
+      made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+      made.deps.seed(`${COPIES}/alpha/.claude/settings.json`, BAD_SETTINGS);
+      const result = await runRestart(withStoreReadFault(made.deps, 2), { home: HOME, words: ['alpha'] });
+      expect(result.ok, result.ok ? undefined : result.error.message).toBe(true);
+      expect(resumesOf(made)).toEqual({ alpha: SESSION.alpha });
+    });
+
     it('exits 4 with one remedy and stops nothing for a wrong settings file', async () => {
       const made = await make({ workers: { alpha: { settings: BAD_SETTINGS }, beta: {} } });
       const error = await failed(restart(made, 'alpha'));

@@ -5,7 +5,8 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { loadConfig, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { readGuardState, type GuardReadState } from '../core/guard-records.js';
+import type { GuardReadState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
@@ -254,6 +255,8 @@ export const requireLaunchReady = async (
 export interface Prepared {
   readonly config: FactoryConfig;
   readonly guards: GuardReadState;
+  /** The deps for every later step of the launch: they give each site the guard values of `guards`, from the one read of the checks. */
+  readonly deps: Deps;
   /** Notes for a launch that does not render the blocks. A render supplies its own notices. */
   readonly launchNotes: readonly string[];
   readonly notes: readonly string[];
@@ -264,18 +267,19 @@ export interface Prepared {
  * config, the local mode, the root and the tools (exit 4, and nothing changes). A command that has no session to check yet
  * (`reboot` with no session) uses this one, and `prepareLaunch` adds the session check.
  */
-export const prepareRoot = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CliResult<Prepared>> => {
+export const prepareRoot = async (base: Deps, home: string, registry: RecipeRegistry): Promise<CliResult<Prepared>> => {
   // The warning about instruction files comes before any change or launch, and it never stops the command.
-  await warnInstructionFiles(deps, home);
-  const loaded = await loadConfig(deps, home, registry);
+  await warnInstructionFiles(base, home);
+  const loaded = await loadConfig(base, home, registry);
   if (!loaded.ok) return loaded;
   const config = loaded.value;
-  const notes = await settleLocalMode(deps, home, true);
+  const notes = await settleLocalMode(base, home, true);
   if (!notes.ok) return notes;
-  const guards = await readGuardState(deps, home, config, 'always');
+  // One read of the guard values serves the checks, the role text and every later step of the launch.
+  const { deps, state: guards } = await guardReadOf(base, home, config, 'always');
   const ready = await requireLaunchReady(deps, home, config, guards);
   if (!ready.ok) return ready;
-  return ok({ config, guards, launchNotes: ready.value, notes: notes.value });
+  return ok({ config, guards, deps, launchNotes: ready.value, notes: notes.value });
 };
 
 /**

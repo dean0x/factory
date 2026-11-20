@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { sha256Hex, renderBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import { collectSetup } from '../../src/commands/init-received.js';
 import { renderStartFiles, type StartOptions } from '../../src/commands/start.js';
 import { runStart } from '../helpers/package-registry.js';
@@ -12,7 +13,9 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { activeMachine, commands, env, files, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
+import {
+  activeMachine, commands, env, files, guardIds, guardStartWords, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles,
+} from '../../src/names.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { allOn } from '../../src/guards/effective.js';
@@ -36,10 +39,14 @@ import {
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, withStoreReadFault,
+} from '../helpers/guarded-node.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 import { chainOf, tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
 
@@ -976,6 +983,25 @@ describe('start:--dry-run', () => {
 });
 
 describe('start:the guard summary', () => {
+  it('stops and names the record commands when the node has only an earlier guard record', async () => {
+    const config = withGuardsOff(sampleConfig(), [guardIds.installRules]);
+    const { deps } = make({ config });
+    const at = deps.now().toISOString();
+    deps.seed(GUARD_STORE, JSON.stringify({ schema: 1, records: [{ node: config.core.node.id, root: HOME,
+      values: { [guardIds.installRules]: { value: 'off', at } },
+      prefix: { hash: sha256Hex('Earlier owner prefix'), at },
+    }] }));
+    const darwin = { ...deps, platform: { ...deps.platform, os: 'darwin' as const },
+      fs: { ...deps.fs, realpath: (path: string) => path === HOME ? Promise.resolve(ok('/w/Node')) : deps.fs.realpath(path) },
+    };
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], darwin, sink), sink.errors.join('')).toBe(4);
+    expect(sink.errors.join('')).toContain('factory guard confirm');
+    expect(sink.errors.join('')).toContain('factory guard set');
+    const state = await readGuardState(darwin, HOME, config, 'always');
+    expect(new Set(Object.values(state.values))).toEqual(new Set(['on']));
+  });
+
   it('names each unmatched value and the absent prefix record in one line', async () => {
     const config = sampleConfig();
     const { deps } = make({ config: { ...config, core: { ...config.core, guards: { 'install-rules': 'off' } } } });
@@ -1017,6 +1043,99 @@ describe('start:the guard summary', () => {
     expect(lines[0]).toContain('1 off; 1 with H');
     expect(lines[0]).toContain('direct proxy relay');
     expectShortOutput(plainText(output));
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the line about the hook of the delete guard', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.deleteGuard))('shows the line only while the delete guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ guard: 'off', origin, config });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(0);
+    expect(deps.warned.filter((line) => line.includes('The delete guard of .factory is off'))).toHaveLength(on ? 1 : 0);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of the Claude Code settings check', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.settingsCheck))('stops for a settings file that sets a program variable only while the guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { FACTORY_ANYTHING: '1' } }));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('coordinator/.claude/settings.json')).toBe(on);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the path checks of the guard of the Claude Code settings write', (_folder, origin) => {
+  const CHANGED = JSON.stringify({ model: 'opus', statusLine: { type: 'command', command: 'my-line' } });
+
+  /** A started node with the guard of the settings write on, or off with the matching record. */
+  const node = (on: boolean, setup: Setup = {}) => {
+    const off = on ? [] : [guardIds.settingsWrite];
+    const config = withGuardsOff(sampleConfig(), off);
+    const made = make({ origin, config, ...setup });
+    made.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, made.deps.now()));
+    return made;
+  };
+
+  const startOf = async (deps: Parameters<typeof runCli>[1]) => {
+    const sink = captureSink();
+    const code = await runCli([commands.start, '--yes', '--home', HOME], deps, sink);
+    return { code, err: sink.errors.join('') };
+  };
+
+  it.each([true, false])('stops at a settings file in the user folder of Claude Code, and the write stays refused with the guard off (guard on: %s)', async (on) => {
+    const { deps } = node(on, { hookSettings: false, env: { [env.userHome]: COORDINATOR } });
+    const result = await startOf(deps);
+    expect(result.code, result.err).toBe(4);
+    expect(result.err).toContain('settings folder of Claude Code');
+    expect(deps.files.has(SETTINGS_FILE)).toBe(false);
+  });
+
+  it.each([true, false])('stops when the settings file changed after the change was shown only while the guard is on (guard on: %s)', async (on) => {
+    const { deps } = node(on, { hookSettings: '{"model":"opus"}' });
+    const changing: Parameters<typeof runCli>[1] = {
+      ...deps,
+      warn: (text) => {
+        if (text.includes(SETTINGS_FILE)) deps.seed(SETTINGS_FILE, CHANGED);
+        deps.warn(text);
+      },
+    };
+    const result = await startOf(changing);
+    expect(result.code, result.err).toBe(on ? 1 : 0);
+    expect(result.err.includes('changed while the question waited')).toBe(on);
+    expect(deps.files.get(SETTINGS_FILE) === CHANGED).toBe(on);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: one guard decision for the summary and the root checks', (_folder, origin) => {
+  it.each([
+    ['every read of the guard store passes', 0, 0, true],
+    ['the first read of the guard store fails', 1, 4, false],
+  ])('acts on one read of the guard values, and shows the off guard only when that read holds it: %s', async (_name, faulted, code, shown) => {
+    const off = [guardIds.settingsCheck];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config });
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], withStoreReadFault(deps, faulted), sink), sink.errors.join('')).toBe(code);
+    expect(sink.out.join('').includes(`${guardStartWords.prefix} ${guardStartWords.off(1)}`)).toBe(shown);
+  });
+
+  it('shows no off guard when only the proof finds that the factory list names another node id', async () => {
+    const off = [guardIds.settingsCheck];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps } = make({ origin, config, registered: false });
+    registerRoot(deps, HOME, OTHER_NODE_ID, [], origin);
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--dry-run', '--home', HOME], withFirstConfigReadFault(deps, HOME), sink), sink.errors.join('')).toBe(0);
+    expect(sink.out.join('')).not.toContain(`${guardStartWords.prefix} ${guardStartWords.off(1)}`);
   });
 });
 

@@ -22,7 +22,8 @@ import {
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
-import { commandLines, commands, hookNames, hookSessions, maxFileBytes, ownHookCommand } from '../../src/names.js';
+import { guardSourceOf } from '../../src/guards/effective.js';
+import { commandLines, commands, guardIds, guardValues, hookNames, hookSessions, maxFileBytes, ownHookCommand } from '../../src/names.js';
 import { createFakeDeps, withFsWatch, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 
 const FOLDER = '/h/factory/coordinator';
@@ -82,6 +83,11 @@ const makeDeps = ({ tty = false, answer = 'y', inSession = false, home = USER_HO
   return deps;
 };
 
+const withoutConsentGuard = (deps: FakeDeps): FakeDeps => ({
+  ...deps,
+  guards: guardSourceOf({ home: FOLDER, values: { [guardIds.settingsWrite]: guardValues.off }, state: null }),
+});
+
 /** The same deps, with each call that changes the file system logged as `write:<call>` and each warning as `warn`. */
 const logged = <T extends Deps>(deps: T, log: string[]): T => ({
   ...withFsWatch(deps, (method) => {
@@ -95,6 +101,7 @@ const logged = <T extends Deps>(deps: T, log: string[]): T => ({
 
 const request = (overrides: Partial<HookSettingsRequest> = {}): HookSettingsRequest => ({
   folder: FOLDER,
+  home: FOLDER,
   session: 'coordinator',
   yes: false,
   dryRun: false,
@@ -792,6 +799,20 @@ describe('hook settings: the check before the first write of a command', () => {
     expect(error.hint).toContain('outside the factory session');
   });
 
+  it.each([
+    { name: 'the precheck', run: requireHookConsent },
+    { name: 'the writer', run: ensureHookSettings },
+  ])('$name refuses the yes flag inside a factory session with exit 2, even with the consent guard off', async ({ run }) => {
+    const deps = withoutConsentGuard(makeDeps({ inSession: true }));
+    const before = snapshot(deps);
+    expect(await run(deps, request({ yes: true }))).toMatchObject({
+      ok: false,
+      error: { kind: 'usage', hint: expect.stringContaining('gives no consent inside a factory session') },
+    });
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.prompts).toEqual([]);
+  });
+
   it('with the yes flag inside a factory session, and the entries in place: goes on', async () => {
     const deps = makeDeps({ inSession: true });
     deps.seed(FILE, JSON.stringify(EXPECTED_ENTRIES));
@@ -1034,7 +1055,27 @@ describe('hook settings: no file system call on the user Claude folder', () => {
     expect(calls).toEqual([]);
   });
 
-  it('refuses a session folder that reaches the user Claude folder through a link, with no call on the user Claude folder and no write', async () => {
+  it('refuses a .claude folder that is a link to the user Claude folder with the guard off, before a read or write', async () => {
+    const deps = withoutConsentGuard(createFakeDeps({ links: { [CLAUDE]: `${USER_HOME}/.claude` }, env: { HOME: USER_HOME } }));
+    deps.seed(FILE, '{}');
+    const calls: Call[] = [];
+    const watched = withFsWatch(deps, (method, path) => calls.push({ method, path }));
+    const result = await ensureHookSettings(watched, request({ yes: true }));
+    expect(calls.filter(({ method, path }) => method.startsWith('read') || inUserFolder(path) || WRITE_CALLS.includes(method))).toEqual([]);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety', message: expect.stringContaining(`${CLAUDE} is a link`) } });
+  });
+
+  it('refuses a linked settings file in the precheck with the guard off, before a read', async () => {
+    const deps = withoutConsentGuard(createFakeDeps({ links: { [FILE]: '/other/settings.json' }, env: { HOME: USER_HOME } }));
+    deps.seed(FILE, '{}');
+    const calls: Call[] = [];
+    const watched = withFsWatch(deps, (method, path) => calls.push({ method, path }));
+    const result = await requireHookConsent(watched, consentRequest({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety', message: expect.stringContaining(`the settings file ${FILE} is a link`) } });
+    expect(calls.filter(({ method }) => method.startsWith('read') || WRITE_CALLS.includes(method))).toEqual([]);
+  });
+
+  it.each([true, false])('refuses a session folder that reaches the user Claude folder through a link, with no call on the user Claude folder and no write (guard on: %s)', async (on) => {
     const deps = createFakeDeps({
       links: { '/via': `${USER_HOME}/.claude` },
       env: { HOME: USER_HOME },
@@ -1044,10 +1085,9 @@ describe('hook settings: no file system call on the user Claude folder', () => {
     });
     deps.seedDir('/via/proj');
     const calls: Call[] = [];
-    const watched = withFsWatch(deps, (method, path) => calls.push({ method, path }));
-    const error = errorOf(await ensureHookSettings(watched, request({ folder: '/via/proj', yes: true })));
-    expect(error.kind).toBe('safety');
-    expect(error.message).toContain('settings folder of Claude Code');
+    const watched = withFsWatch(on ? deps : withoutConsentGuard(deps), (method, path) => calls.push({ method, path }));
+    const result = await ensureHookSettings(watched, request({ folder: '/via/proj', yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety', message: expect.stringContaining('settings folder of Claude Code') } });
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.filter(({ path }) => inUserFolder(path))).toEqual([]);
     expect(calls.filter(({ method }) => WRITE_CALLS.includes(method))).toEqual([]);

@@ -18,7 +18,7 @@ import {
 import { entryProblemOf, markerProblemOf, reasonOf, rootRefusalOf } from '../core/home.js';
 import { recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { readGuardState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import type { GuardValues } from '../guards/types.js';
 import { err, ok } from '../core/result.js';
 import {
@@ -221,7 +221,7 @@ const checkExisting = async (
   return ok({
     root: root.value,
     config: config.value,
-    guards: (await readGuardState(deps, home, config.value, 'when-off')).values,
+    guards: (await guardReadOf(deps, home, config.value, 'when-off')).state.values,
     standing: standing.value,
     repair: repair.value,
     guardDue,
@@ -283,16 +283,16 @@ const approvalsOf = async (
   checked: Checked,
 ): Promise<CliResult<ApprovalChoice>> => {
   const { config, points, standing } = checked;
+  const home = checked.root.layout.home;
   const current = { modes: config.core.approval, set: [] };
   if (standing.registration !== 'registered') {
-    return options.approval.length === 0
-      ? ok(current)
-      : usageError(
-          `${flagText(flags.approval)}: the points are set in a second run, after the ${places.folder} is registered`,
-          `Run "${commandText(commands.init)}" again without ${flagText(flags.approval)}, then once more with it.`,
-        );
+    if (options.approval.length === 0) return ok(current);
+    return usageError(
+      `${flagText(flags.approval)}: the points are set in a second run, after the ${places.folder} is registered`,
+      `Run "${commandText(commands.init)}" again without ${flagText(flags.approval)}, then once more with it.`,
+    );
   }
-  const flagged = approvalsFromFlags(deps, options.yes, points, options.approval, config.core.approval);
+  const flagged = await approvalsFromFlags(deps, home, options.yes, points, options.approval, config.core.approval);
   return flagged.ok ? askApprovals(deps, options.yes, points, flagged.value) : flagged;
 };
 

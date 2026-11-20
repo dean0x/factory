@@ -101,7 +101,7 @@ const newLine = (id: string, project: string): string =>
 const hookRequestOf = async (deps: Deps, home: string, workCopy: string, yes: boolean, idleCompaction: boolean): Promise<CliResult<HookConsentRequest>> => {
   const deny = await ownDenyRulesOf(deps, home, workCopy);
   return deny.ok
-    ? ok({ folder: workCopy, session: hookSessions.workCopy, yes, command: commandLines.workerNew, idleCompaction, deny: { rules: deny.value.rules, add: true } })
+    ? ok({ folder: workCopy, home, session: hookSessions.workCopy, yes, command: commandLines.workerNew, idleCompaction, deny: { rules: deny.value.rules, add: true } })
     : deny;
 };
 
@@ -343,7 +343,7 @@ const makeWorker = async (
 };
 
 const runNew = async (
-  deps: Deps,
+  base: Deps,
   options: WorkerOptions,
   args: readonly string[],
   registry: RecipeRegistry,
@@ -359,12 +359,13 @@ const runNew = async (
     );
   }
 
-  const located = await locateNode(deps, options, registry);
+  const located = await locateNode(base, options, registry);
   if (!located.ok) return located;
   const home = located.value;
-  const prepared = await prepareLaunch(deps, home, registry, commandText(commandLines.workerNew));
+  const prepared = await prepareLaunch(base, home, registry, commandText(commandLines.workerNew));
   if (!prepared.ok) return prepared;
-  const { config, notes } = prepared.value;
+  // Every later step acts on the guard values of the launch checks.
+  const { config, notes, deps } = prepared.value;
 
   const plan = await planNew(deps, home, config, id, options.project);
   if (!plan.ok) return plan;
@@ -537,7 +538,7 @@ const requireNoLivePane = (panes: readonly BoundPane[], id: string): CliResult<v
  *    settings files of the work copy).
  */
 const runResume = async (
-  deps: Deps,
+  base: Deps,
   options: WorkerOptions,
   args: readonly string[],
   registry: RecipeRegistry,
@@ -546,12 +547,13 @@ const runResume = async (
   if (args.length !== 1 || id === undefined) {
     return needsUsage(`${workerCommands.resume} takes one argument: the id of the ${roles.worker}`);
   }
-  const located = await locateNode(deps, options, registry);
+  const located = await locateNode(base, options, registry);
   if (!located.ok) return located;
   const home = located.value;
-  const prepared = await prepareLaunch(deps, home, registry, commandText(resumeLine(id)));
+  const prepared = await prepareLaunch(base, home, registry, commandText(resumeLine(id)));
   if (!prepared.ok) return prepared;
-  const { config, notes } = prepared.value;
+  // Every later step acts on the guard values of the launch checks.
+  const { config, notes, deps } = prepared.value;
 
   const record = await requireRecord(deps, home, id, commandText(commandLines.workerResume));
   if (!record.ok) return record;

@@ -17,9 +17,10 @@ import { fileTransport } from '../comms/transport.js';
 import { inspectConfig, localFileAccess, readNodeIdentity, wideModeNote } from '../config/load.js';
 import { folderKey } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
-import type { Deps } from '../core/deps.js';
+import { withGuards, type Deps } from '../core/deps.js';
 import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
-import { guardStorePathOf, readGuardState, type GuardReadState } from '../core/guard-records.js';
+import { guardStorePathOf, type GuardReadState } from '../core/guard-records.js';
+import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { folderKeyOf } from '../core/paths.js';
@@ -37,7 +38,7 @@ import {
   tmuxVersionOf,
   toolNames,
 } from '../core/tools.js';
-import { allOn } from '../guards/effective.js';
+import { allGuardsOn, allOn, guardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import { isRecord, type DocState } from '../migrate/inspect.js';
@@ -51,6 +52,7 @@ import {
   commandLines,
   guardDenyWords,
   guardDoctorWords,
+  guardIds,
   guardRecordWords,
   guardRecords,
   guardStartWords,
@@ -794,12 +796,14 @@ export const checkStateRepo = async (deps: Deps, home: string): Promise<CheckRes
 /**
  * The delete guard of the state repo. An off guard is a warning with the remedy, never a failure: a factory with the guard off keeps
  * working, and only the commands that change the board refuse. The state-repo check names a folder that is no repo, and a missing git.
+ * With the delete guard of the node off, the line says that the check did not run, at the ok level.
  */
 export const checkStateGuard = async (deps: Deps, home: string): Promise<CheckResult> => {
   const stateDir = layoutOf(home).stateDir;
   const repo = await deps.fs.stat(join(stateDir, GIT_ENTRY));
   if (!repo.ok || repo.value === null) return notChecked(checkIds.stateGuard, `${dirs.state} is not a git repository`);
   if (!(await onPath(deps, 'git'))) return notChecked(checkIds.stateGuard, 'git is missing');
+  if (!(await guardOn(deps, guardIds.deleteGuard, home))) return check(checkIds.stateGuard, 'ok', guardDoctorWords.notChecked(guardIds.deleteGuard));
   const warning = await guardWarning(deps, stateDir);
   return warning === null
     ? check(checkIds.stateGuard, 'ok', `the delete guard of ${dirs.state} is on`)
@@ -914,7 +918,7 @@ const checkGuards = async (
   if (isRecord(config.raw) && !Object.hasOwn(config.raw, guardKeys.local)) parts.push(guardDoctorWords.noKey);
   for (const guard of state.unmatched) warnings.push(`${guardStartWords.unmatched(guard)}: run "${commandText(commandLines.guardSet)} ${guard} on"`);
   for (const guard of definitions) {
-    if (!guard.wired && config.value.core.guards[guard.id] === 'off') warnings.push(`${guard.id} is not wired; its value stays on`);
+    if (!guard.wired && config.value.core.guards[guard.id] === 'off') warnings.push(guardDoctorWords.unsettableOff(guard.id));
   }
   const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
   if (state.recordCount !== null) {
@@ -925,6 +929,7 @@ const checkGuards = async (
       (full ? failures : warnings).push(`${notice} ${path}: ${guardRecordWords.unreadableRemedy}`);
     }
   }
+  if (state.proof !== null) warnings.push(state.proof);
   if (state.fault !== null) {
     failures.push(`${path}: ${state.fault}${state.remedy === null ? '' : `; ${state.remedy}`}`);
   } else if (state.prefix === null) {
@@ -967,9 +972,12 @@ interface CheckRun {
 const skippedProxyCheck = (): CheckResult =>
   notChecked(checkIds.proxy, `a check of the ${places.folder} failed, so no health check went to a proxy`);
 
-const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CheckRun> => {
-  const config = await inspectConfig(deps, home, registry);
-  const guards = config.kind === 'valid' ? await readGuardState(deps, home, config.value, 'always') : null;
+const runChecks = async (base: Deps, home: string, registry: RecipeRegistry): Promise<CheckRun> => {
+  const config = await inspectConfig(base, home, registry);
+  const read = config.kind === 'valid' ? await guardReadOf(base, home, config.value, 'always') : null;
+  const guards = read?.state ?? null;
+  // Every check acts on the guard values that the report shows: one read gives both. A config that does not load keeps every guard on.
+  const deps = read?.deps ?? withGuards(base, allGuardsOn);
   const state = await inspectState(deps, home);
   const rootScan = await scanRoot(deps, home, config.kind === 'valid' ? config.value : null);
   const [

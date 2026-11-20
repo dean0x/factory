@@ -1,4 +1,5 @@
 import type { CliResult } from '../cli/errors.js';
+import type { GuardSource } from '../guards/types.js';
 
 export type PathKind = 'file' | 'dir' | 'other';
 
@@ -318,4 +319,13 @@ export interface Deps {
   readonly programArgv: readonly string[];
   /** The id of the user that runs this process, or null on a platform that has no user ids. */
   readonly uid: number | null;
+  /**
+   * The effective guard values of this command line and the node home that they belong to. `runCli` gives each command that finds
+   * its home with the home flag, and the hook route, its own pre-read. Every other command, and every test deps, has every guard on.
+   * A code site reads a value with `guardOn`.
+   */
+  readonly guards: GuardSource;
 }
+
+/** A copy of the deps with this guard source. */
+export const withGuards = <T extends Deps>(deps: T, guards: GuardSource): T => ({ ...deps, guards });

@@ -10,9 +10,8 @@ import { listWorkerRecords, workCopyOf } from '../workers/registry.js';
 /**
  * The step of `upgrade` that brings the hook settings up to date (design 4.6): the settings file of the coordinator folder and of
  * each recorded work copy gets the events that the file lacks. A folder whose settings file holds no own hook command is left as
- * it is, because its owner said no to the hook. The step plans first, with no write, so that a stop of a check comes before the
- * first write of `upgrade`. It applies after the state is written, with the consent rule of `ensureHookSettings`: a terminal yes,
- * or the yes flag outside a factory session.
+ * it is, because its owner said no to the hook. The plan checks the current paths before the first write. After `upgrade` writes
+ * the state, `ensureHookSettings` checks the paths again and applies the consent rule.
  */
 
 /** A session folder whose settings file holds an own hook command. */
@@ -26,6 +25,8 @@ interface HookTarget {
  * that the plan used. The apply step writes the same value and does not read the config again.
  */
 export interface HookChange extends HookTarget {
+  /** The node home of the session folder. */
+  readonly home: string;
   readonly file: string;
   readonly change: string;
   readonly rules: readonly string[];
@@ -69,7 +70,7 @@ export const planHookSettings = async (
   if (!targets.ok) return targets;
   const changes: HookChange[] = [];
   for (const target of targets.value) {
-    const request = { ...target, yes, command: commands.upgrade, idleCompaction };
+    const request = { ...target, home, yes, command: commands.upgrade, idleCompaction };
     const holds = await holdsOwnHook(deps, request);
     if (!holds.ok) return holds;
     if (!holds.value) continue;
@@ -78,7 +79,7 @@ export const planHookSettings = async (
     const outcome = await ensureHookSettings(deps, { ...request, dryRun: true, deny: { rules: deny.value.rules, add: true } });
     if (!outcome.ok) return outcome;
     if (outcome.value.kind === 'would-write') {
-      changes.push({ ...target, file: outcome.value.file, change: outcome.value.change, rules: deny.value.rules, idleCompaction });
+      changes.push({ ...target, home, file: outcome.value.file, change: outcome.value.change, rules: deny.value.rules, idleCompaction });
     }
   }
   return ok(changes);
@@ -112,6 +113,7 @@ export const applyHookSettings = async (deps: Deps, changes: readonly HookChange
   for (const [index, change] of changes.entries()) {
     const outcome = await ensureHookSettings(deps, {
       folder: change.folder,
+      home: change.home,
       session: change.session,
       yes,
       dryRun: false,

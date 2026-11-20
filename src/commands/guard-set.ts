@@ -130,7 +130,7 @@ const askGuardOff = async (deps: Deps, guards: readonly Guard[], excluded: numbe
   const lines = [
     ...guards.map((guard) => `${guard.id}${guard.harm ? ` ${harmMark}` : ''}`),
     ...(excluded === null ? [] : [guardSetWords.skipped(excluded)]),
-    guardSetWords.nextStart,
+    guardSetWords.effectTime,
   ];
   const shown = await deps.writeStdout(`${lines.join('\n')}\n`);
   if (!shown.ok) return shown;
@@ -183,7 +183,7 @@ export const runGuardSet = async (deps: Deps, options: GuardSetOptions, registry
   const output = guardWriteOutput(schemaIds.guardSet, guardSetWords.set(guards.length, value), recorded.value);
   return ok({ ...output, lines: [
     ...output.lines,
-    ...(value === guardValues.on ? [{ level: 'text' as const, text: guardSetWords.nextStart }] : []),
+    ...(value === guardValues.on ? [{ level: 'text' as const, text: guardSetWords.effectTime }] : []),
     ...(value === guardValues.on && excluded !== null ? [{ level: 'text' as const, text: guardSetWords.skipped(excluded) }] : []),
   ] });
 };

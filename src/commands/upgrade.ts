@@ -9,9 +9,10 @@ import {
 } from '../blocks/status.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { printable, type CommandOutput, type OutLine } from '../cli/output.js';
-import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
+import { ACCEPT_ANSWER, withGuards, type Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
+import type { FactoryConfig } from '../config/schema.js';
 import {
   commitPaths,
   GIT_ENTRY,
@@ -25,10 +26,10 @@ import { locateHomeFolder, type NodeIdReader } from '../core/home.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { readGuardState } from '../core/guard-records.js';
+import { guardReadOf, type GuardRead } from '../core/guard-source.js';
 import { requireConfirmedPrefix } from './launch-checks.js';
 import { isRecord } from '../migrate/inspect.js';
-import { allOn } from '../guards/effective.js';
+import { allGuardsOn, allOn } from '../guards/effective.js';
 import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { blockRenamesOf } from '../migrate/files.js';
@@ -298,58 +299,63 @@ const plannedSetupTexts = async (
 };
 
 export const runUpgrade = async (
-  deps: Deps,
+  base: Deps,
   options: UpgradeOptions,
   registry: RecipeRegistry,
   upgrade: UpgradeSpec = specFor(registry),
 ): Promise<CliResult<CommandOutput>> => {
   // The safety rules are a security boundary, so only the owner replaces the block, outside a session, also with yes.
-  if (inFactorySession(deps) && options.overwrite.includes(blockNames.safety)) {
+  if (inFactorySession(base) && options.overwrite.includes(blockNames.safety)) {
     return safetyRefusal(
       `a ${places.session} can not replace the ${blockNames.safety} block`,
       `Run "${overwriteCommand(blockNames.safety)}" in a terminal window outside a ${places.session}.`,
     );
   }
   const readIdentity: NodeIdReader = (readDeps, folder) => readNodeIdentity(readDeps, folder, registry);
-  const located = await locateHomeFolder(deps, options.home, readIdentity, commands.upgrade, { allowUnregisteredSchema1: true });
+  const located = await locateHomeFolder(base, options.home, readIdentity, commands.upgrade, { allowUnregisteredSchema1: true });
   if (!located.ok) return located;
   const home = located.value.home;
   if (located.value.unregistered) {
-    const consent = await requireRegistrationConsent(deps, home, options, registry);
+    const consent = await requireRegistrationConsent(base, home, options, registry);
     if (!consent.ok) return consent;
   }
-  const origin = await originBeforeRun(deps, home, located.value.unregistered);
+  const origin = await originBeforeRun(base, home, located.value.unregistered);
   const layout = layoutOf(home);
   // The link rule comes first, also in a dry run: no read or write below goes through a link.
-  const plain = await requireNoRootLinks(deps, layout);
+  const plain = await requireNoRootLinks(base, layout);
   if (!plain.ok) return plain;
-  const setupPlan = await plannedSetupTexts(deps, home, located.value.unregistered, options.dryRun, registry);
+  const setupPlan = await plannedSetupTexts(base, home, located.value.unregistered, options.dryRun, registry);
   if (!setupPlan.ok) return setupPlan;
 
-  const config = await planFile(deps, layout.configFile, upgrade.config);
+  const config = await planFile(base, layout.configFile, upgrade.config);
   if (!config.ok) return config;
-  const local = await planLocal(deps, layout, config.value, upgrade);
+  const local = await planLocal(base, layout, config.value, upgrade);
   if (!local.ok) return local;
-  const state = await planFile(deps, layout.nodeJson, upgrade.state);
+  const state = await planFile(base, layout.nodeJson, upgrade.state);
   if (!state.ok) return state;
-  const stateFiles = await planFiles(deps, layout, state.value, upgrade.files);
+  const stateFiles = await planFiles(base, layout, state.value, upgrade.files);
   if (!stateFiles.ok) return stateFiles;
-  const rootMoved = await planRootMoves(deps, layout, upgrade.rootMoves);
+  const rootMoved = await planRootMoves(base, layout, upgrade.rootMoves);
   if (!rootMoved.ok) return rootMoved;
   // The moves outside the state folder come first. A block file is read at its old place until the move is done.
   const files: FilesPlan = { ...stateFiles.value, moves: [...rootMoved.value, ...stateFiles.value.moves] };
-  const root = await planRoot(deps, layout);
+  const root = await planRoot(base, layout);
   if (!root.ok) return root;
-  const stateGitignore = await planStateGitignore(deps, layout);
+  const stateGitignore = await planStateGitignore(base, layout);
   if (!stateGitignore.ok) return stateGitignore;
   let allOnPackage: readonly BlockTemplate[] | undefined;
+  // One read of the guard values serves the approval modes, the render, the prefix gate and every later step of the run. An off
+  // value counts only from the config on disk that loads now, never from the config after the migrations.
+  const guardRead: { value: GuardRead | null } = { value: null };
+  const guardReadFor = async (parsed: FactoryConfig): Promise<GuardRead> =>
+    (guardRead.value ??= await guardReadOf(base, home, parsed, 'always'));
   const prefix: { result: CliResult<void> | null } = { result: null };
   const blockSet = await planBlockSet(
     config.value, local.value, upgrade, setupPlan.value.texts,
-    (parsed) => effectiveModes(deps, home, parsed),
+    async (parsed) => effectiveModes((await guardReadFor(parsed)).deps, home, parsed),
     async (parsed) => {
       allOnPackage = workerFileTemplatesFor(parsed, null, allOn);
-      const guards = await readGuardState(deps, home, parsed, 'always');
+      const guards = (await guardReadFor(parsed)).state;
       prefix.result = requireConfirmedPrefix(parsed, guards);
       return guards.values;
     },
@@ -358,6 +364,7 @@ export const runUpgrade = async (
   // The same guard read supplies the render and the gate, before acceptance writes or mode changes.
   if (prefix.result === null) return failure(guardConfirmWords.checkIncomplete);
   if (!prefix.result.ok) return prefix.result;
+  const deps = guardRead.value?.deps ?? withGuards(base, allGuardsOn);
   const setup = await setupPlan.value.accept();
   if (!setup.ok) return setup;
   const modeNotes = await settleLocalMode(deps, home, !options.dryRun);
@@ -392,7 +399,7 @@ export const runUpgrade = async (
   const boardKey = await planBoardQueueKey(deps, layout, blockSet.value.queueKey);
   if (!boardKey.ok) return boardKey;
 
-  // The hook settings are planned with no write, so a stop of a check comes before the first write of the run.
+  // Check the current hook settings paths before the first write. The apply step checks them again.
   const hooks = await planHookSettings(deps, home, options.yes, blockSet.value.idleCompaction);
   if (!hooks.ok) return hooks;
   // The guard is read last among the plans: it runs git, and a plan that stops the command runs no git command.

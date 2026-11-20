@@ -61,7 +61,7 @@ const approvalDelegationRows: readonly GuardRow[] = [
     name: `The ${owner} sees a delegation that no approval record backs`,
     applies: 'Scan of the folder',
     harm: false,
-    sites: at('src/commands/root-content.ts', 'delegationFindings'),
+    sites: [...at('src/commands/root-content.ts', 'delegationFindings'), ...at('src/core/owner-record.ts', 'delegationReport')],
   }),
 ];
 
@@ -211,7 +211,7 @@ const settingsCheckRows: readonly GuardRow[] = [
     name: 'A settings file gets a warning when it lowers the permission mode of a session',
     applies: 'Scan of the folder, start and the launch of a session',
     harm: true,
-    sites: at('src/safety/settings.ts', 'analyzeSettings'),
+    sites: [...at('src/safety/settings.ts', 'analyzeSettings'), ...at('src/commands/root-content.ts', 'judgeSettings')],
   }),
   codeRow({
     id: 'settings-mcp-approval',
@@ -227,7 +227,7 @@ const settingsCheckRows: readonly GuardRow[] = [
     name: 'A settings file gets a warning when it lets other sessions send input to a session',
     applies: 'Scan of the folder, start and the launch of a session',
     harm: true,
-    sites: at('src/safety/settings.ts', 'heldCrossSession'),
+    sites: [...at('src/safety/settings.ts', 'heldCrossSession'), ...at('src/commands/root-content.ts', 'judgeSettings')],
   }),
   codeRow({
     id: 'settings-other-warnings',
@@ -238,20 +238,9 @@ const settingsCheckRows: readonly GuardRow[] = [
     sites: at('src/commands/root-content.ts', 'judgeSettings'),
   }),
   codeRow({
-    id: 'settings-check-fails-closed',
-    guard: guardIds.settingsCheck,
-    name: 'A settings check that cannot finish fails, and it never reads the settings of the user',
-    applies: 'Start, doctor and scan of the folder',
-    harm: true,
-    sites: [
-      ...at('src/commands/root-content.ts', 'inUserFolder', 'tooManySettings', 'settingsOfFolder', 'requireNoFailures'),
-      ...at('src/commands/setup-check.ts', 'trackedSetOfRoot'),
-    ],
-  }),
-  codeRow({
     id: 'settings-work-copy',
     guard: guardIds.settingsCheck,
-    name: 'The settings that a project tracks are checked before the work copy of a session exists',
+    name: 'The contents of tracked settings files are checked before the work copy of a session exists',
     applies: `${commandLines.workerNew}, ${commandLines.workerResume} and scan of the folder`,
     harm: true,
     sites: [
@@ -271,7 +260,7 @@ const settingsWriteRows: readonly GuardRow[] = [
     sites: [
       ...at('src/core/claude-settings.ts', 'askConsent', 'requireHookConsent'),
       ...at('src/commands/start.ts', 'settleHook'),
-      ...at('src/upgrade/hook-settings.ts', 'planHookSettings', 'applyHookSettings'),
+      ...at('src/upgrade/hook-settings.ts', 'applyHookSettings'),
       ...at('src/commands/init-hook.ts', 'checkHookConsent'),
     ],
   }),
@@ -282,30 +271,6 @@ const settingsWriteRows: readonly GuardRow[] = [
     applies: 'Every write of the hook settings',
     harm: true,
     sites: at('src/core/claude-settings.ts', 'askConsent'),
-  }),
-  codeRow({
-    id: 'settings-write-no-link',
-    guard: guardIds.settingsWrite,
-    name: 'A write of the settings follows no link in any part of the path',
-    applies: 'Every write of the hook settings',
-    harm: true,
-    sites: at('src/core/claude-settings.ts', 'checkParts'),
-  }),
-  codeRow({
-    id: 'settings-write-inside-folder',
-    guard: guardIds.settingsWrite,
-    name: 'A write of the settings stays inside the session folder',
-    applies: 'Every write of the hook settings',
-    harm: true,
-    sites: at('src/core/claude-settings.ts', 'requireInsideSession'),
-  }),
-  codeRow({
-    id: 'settings-write-user-folder',
-    guard: guardIds.settingsWrite,
-    name: 'A write of the settings never goes into the user folder of Claude Code',
-    applies: 'Every write of the hook settings',
-    harm: true,
-    sites: at('src/core/claude-settings.ts', 'requireOutsideUserFolder'),
   }),
   codeRow({
     id: 'settings-write-changed',
@@ -377,7 +342,7 @@ const deleteGuardRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/commands/init-state.ts', 'makeStateFolder'),
-      ...at('src/state/guard.ts', 'gitFolderRefusal', 'folderRefusal'),
+      ...at('src/state/guard.ts', 'gitFolderRefusal', 'folderRefusal', 'guardPlanOf'),
     ],
   }),
   codeRow({
@@ -508,7 +473,25 @@ const fileLinkSafetyRows: readonly GuardRow[] = [
       ...at('src/core/paths.ts', 'requireOutsideUserClaudeFolder'),
       ...at('src/core/home.ts', 'chosenHome', 'locateHome'),
       ...at('src/core/private-file.ts', 'userStatePathOf'),
+      ...at('src/core/claude-settings.ts', 'requireOutsideUserFolder', 'readTarget', 'requireHookConsent'),
+      ...at('src/commands/root-content.ts', 'inUserFolder'),
     ],
+  }),
+  codeRow({
+    id: 'settings-write-no-link',
+    guard: guardIds.fileLinkSafety,
+    name: 'The session folder, its settings folder and its settings file must have the correct kind and must not be links',
+    applies: 'Every read and write of the hook settings',
+    harm: true,
+    sites: at('src/core/claude-settings.ts', 'checkParts', 'readTarget'),
+  }),
+  codeRow({
+    id: 'settings-write-inside-folder',
+    guard: guardIds.fileLinkSafety,
+    name: 'The real path of the settings file stays inside the session folder',
+    applies: 'Every read and write of the hook settings',
+    harm: true,
+    sites: at('src/core/claude-settings.ts', 'requireInsideSession', 'readTarget'),
   }),
   codeRow({
     id: 'private-file-mode',

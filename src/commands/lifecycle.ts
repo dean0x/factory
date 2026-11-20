@@ -199,7 +199,7 @@ const restartOutput = (input: {
  * starts again (`resumeWorker`), with the answer of the proxy check. A fault of a check stops no worker.
  */
 export const runRestart = async (
-  deps: Deps,
+  base: Deps,
   options: RestartOptions,
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
@@ -210,13 +210,14 @@ export const runRestart = async (
       `Run "${commandText(commands.restart)} ${flagText(flags.help)}".`,
     );
   }
-  const located = await locate(deps, options.home, commands.restart, registry);
+  const located = await locate(base, options.home, commands.restart, registry);
   if (!located.ok) return located;
   const home = located.value;
   const again = `${commands.restart} ${id}`;
-  const prepared = await prepareLaunch(deps, home, registry, commandText(again));
+  const prepared = await prepareLaunch(base, home, registry, commandText(again));
   if (!prepared.ok) return prepared;
-  const { config, notes } = prepared.value;
+  // Every later step acts on the guard values of the launch checks.
+  const { config, notes, deps } = prepared.value;
   const record = await requireRecord(deps, home, id, commandText(commands.restart));
   if (!record.ok) return record;
   const session = config.core.node.id;
@@ -360,16 +361,17 @@ const rebootOutside = async (
  * and the exit code is 1, or 3 when the new pane of each such worker waits on a folder trust question (`failedExit`).
  */
 export const runReboot = async (
-  deps: Deps,
+  base: Deps,
   options: LifecycleOptions,
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
-  const located = await locate(deps, options.home, commands.reboot, registry);
+  const located = await locate(base, options.home, commands.reboot, registry);
   if (!located.ok) return located;
   const home = located.value;
-  const prepared = await prepareRoot(deps, home, registry);
+  const prepared = await prepareRoot(base, home, registry);
   if (!prepared.ok) return prepared;
-  const { config, notes } = prepared.value;
+  // Every later step acts on the guard values of the launch checks.
+  const { config, notes, deps } = prepared.value;
   const session = config.core.node.id;
   const panes = await readPanes(deps, session, home, commandText(commands.reboot));
   if (!panes.ok) return panes;

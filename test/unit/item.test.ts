@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { exitCodeOf, failure, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { localBoardOf } from '../../src/commands/board-open.js';
 import { runItem, type ItemOptions } from '../../src/commands/item.js';
@@ -10,7 +11,7 @@ import { recordGuards } from '../../src/core/guard-records.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { toolNames } from '../../src/core/tools.js';
-import { approvalOptions, boardKeys, commandLines, commands, commandText, files as fileNames, maxFileBytes, program, stateLock } from '../../src/names.js';
+import { approvalOptions, boardKeys, commandLines, commands, commandText, files as fileNames, guardIds, maxFileBytes, program, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import type { CheckedRecord, RecipeRegistry, RecordCheck, RecordCheckInput } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
@@ -21,11 +22,15 @@ import { APPROVAL_ID, APPROVAL_LINK, approvalAnswer, approvalRelay, approvalRequ
 import { boardNode, boardText, itemRecord, type BoardNodeOptions } from '../helpers/board-node.js';
 import { inPane } from '../helpers/coordinator-pane.js';
 import { BOARD_PATH, LAYOUT, LOG_PATH, WAITING_PATH, type BoardRepo } from '../helpers/board-repo.js';
-import { exited, missingProgram, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
-import { HOME } from '../helpers/guard-fixture.js';
+import { exited, missingProgram, registerRoot, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import { HOME, HOOK } from '../helpers/guard-fixture.js';
+import {
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff,
+} from '../helpers/guarded-node.js';
 import { publishBoard, publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
 import { sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 
 const BASE: ItemOptions = {
   home: HOME,
@@ -79,6 +84,39 @@ const expectUntouched = (repo: BoardRepo, board: string): void => {
   expect(repo.textOf(fileNames.board)).toBe(board);
   expect(repo.deps.files.has(join(LOCKS, `${stateLock.name}${stateLock.lock.suffix}`))).toBe(false);
 };
+
+describe.each(FOLDER_ORIGINS)('item add in %s while the hook of the delete guard is missing', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.deleteGuard))('stops with exit 4 and no commit only while the delete guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfigWithBoard(), off);
+    const repo = await boardNode({ board: START, config });
+    registerRoot(repo.deps, HOME, config.core.node.id, [], origin);
+    if (setup.record !== false) repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, repo.deps.now()));
+    repo.deps.files.delete(HOOK);
+    const sink = captureSink();
+    const code = await runCli(['item', 'add', '--title', 'New', '--field', 'priority=P1', '--home', HOME], repo.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(repo.commits).toHaveLength(on ? 0 : 1);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('item add in %s on a board file that lost an item id since the last commit', (_folder, origin) => {
+  const HEAD = boardText([itemRecord('B-1', { stage: 'ticket' }), itemRecord('B-2', { stage: 'ticket' })], TRACKS);
+  const LOST = boardText([itemRecord('B-2', { stage: 'ticket' })], TRACKS);
+
+  it.each(guardStatesOf(guardIds.deleteGuard))('stops with exit 4 and no commit only while the delete guard counts as on: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfigWithBoard(), off);
+    const repo = await boardNode({ board: LOST, head: HEAD, config });
+    registerRoot(repo.deps, HOME, config.core.node.id, [], origin);
+    if (setup.record !== false) repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, repo.deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['item', 'add', '--title', 'New', '--field', 'priority=P1', '--home', HOME], repo.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('this change removes the item id B-1')).toBe(on);
+    expect(repo.commits).toHaveLength(on ? 0 : 1);
+  });
+});
 
 describe('item: each write is one state commit of the local files', () => {
   const WRITES: readonly (readonly [string, Partial<ItemOptions>])[] = [
@@ -734,6 +772,22 @@ describe('item record: linked approval', () => {
     expect(await runMerge(world)).toMatchObject(missingApproval);
     expect(world.gh.calls).toEqual([]);
     expectUntouched(world.repo, MERGE_BOARD);
+  });
+
+  describe.each(FOLDER_ORIGINS)('in %s', (_folder, origin) => {
+    it('requires a linked approval when only the proof finds that the factory list names another node id', async () => {
+      const off = ['approval-merge'];
+      const config = withGuardsOff(sampleConfigWithBoard(), off);
+      const world = await mergeWorld({ config, decisionLog: logOf() });
+      registerRoot(world.repo.deps, HOME, OTHER_NODE_ID, [], origin);
+      world.repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, world.repo.deps.now()));
+      const sink = captureSink();
+      const code = await runCli(['item', 'record', 'B-1', '--ref', '12', '--home', HOME], withFirstConfigReadFault(world.gh.deps, HOME), sink);
+      expect(code, sink.errors.join('')).toBe(1);
+      expect(sink.errors.join('')).toContain(missingApproval.error.message);
+      expect(world.gh.calls).toEqual([]);
+      expectUntouched(world.repo, MERGE_BOARD);
+    });
   });
 
   it('requires a linked approval after it accepts the project and before it calls gh', async () => {

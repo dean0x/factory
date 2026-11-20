@@ -1,5 +1,11 @@
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { foundHomeOption } from '../../src/cli/home-option.js';
+import type { Deps } from '../../src/core/deps.js';
+import { guardOn } from '../../src/guards/effective.js';
+import {
+  GUARD_STORE, GUARDED_HOME, guardedNode, guardStoreText, OFF_GUARD, OTHER_HOME, OTHER_NODE_ID, PRE_READ_FAULTS, withFirstConfigReadFault,
+} from '../helpers/guarded-node.js';
 import {
   createStyle,
   detectStyle,
@@ -15,6 +21,7 @@ import { commandTable, commandTableFor, globalOptions, parseFlags, type Command 
 import { ok } from '../../src/core/result.js';
 import {
   commands,
+  files,
   flags,
   itemCommands,
   queueCommands,
@@ -36,6 +43,44 @@ import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE } from '../helpers/slot-fixture.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
+
+/**
+ * A test-only hook event: the hook prints the guard value that its deps give for the install rules guard of the guarded node. An
+ * init with the test-only node name prints that value for the home of the init, then for the guarded node.
+ */
+const guardProbe = vi.hoisted(() => ({ event: 'GuardProbe', home: '/h/guarded', initName: 'guard-probe' }));
+
+vi.mock('../../src/commands/init.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/commands/init.js')>();
+  const effective = await import('../../src/guards/effective.js');
+  const { guardIds } = await import('../../src/names.js');
+  const { ok: okOf } = await import('../../src/core/result.js');
+  const { resolve } = await import('node:path');
+  return {
+    ...actual,
+    runInit: async (...args: Parameters<typeof actual.runInit>) => {
+      const [deps, options] = args;
+      if (options.name !== guardProbe.initName) return actual.runInit(...args);
+      const homes = [resolve(deps.cwd, options.home ?? '.'), guardProbe.home];
+      const text = (await Promise.all(homes.map((home) => effective.guardOn(deps, guardIds.installRules, home)))).join(' ');
+      return okOf({ lines: [{ level: 'text' as const, text }], json: { schema: 'test/v1' }, warnings: [], failed: false });
+    },
+  };
+});
+
+vi.mock('../../src/hooks/hook.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/hooks/hook.js')>();
+  const effective = await import('../../src/guards/effective.js');
+  const { guardIds } = await import('../../src/names.js');
+  return {
+    ...actual,
+    runHook: async (...args: Parameters<typeof actual.runHook>) => {
+      const [deps, words] = args;
+      if (words[0] !== guardProbe.event) return actual.runHook(...args);
+      return { ok: true as const, value: { context: String(await effective.guardOn(deps, guardIds.installRules, guardProbe.home)), problems: [] } };
+    },
+  };
+});
 
 const run = async (argv: string[]) => {
   const sink = captureSink();
@@ -1305,5 +1350,107 @@ describe('the command seam of a recipe', () => {
     expect(new Set(names).size).toBe(names.length);
     expect(names.filter((name) => coreNames.includes(name))).toEqual([]);
     expect(namesOf(commandTable)).toEqual([...coreNames, ...names]);
+  });
+});
+
+describe('the guard values of a command line', () => {
+  /** The guarded node in other letter case: on a volume that tells letter case apart, another folder. */
+  const CASE_HOME = '/h/Guarded';
+  const CONFIG_FILE = `${GUARDED_HOME}/${files.config}`;
+
+  /** A row that prints the install rules guard value for the guarded node and for another home. */
+  const probeRow = (name: string, options: Command['options'], other: string = OTHER_HOME): Command => ({
+    name,
+    summary: 'A row for the test.',
+    usage: `factory ${name}`,
+    options,
+    run: async (_given, deps) => {
+      const text = `${await guardOn(deps, OFF_GUARD, GUARDED_HOME)} ${await guardOn(deps, OFF_GUARD, other)}`;
+      return ok({ lines: [{ level: 'text', text }], json: { schema: 'test/v1' }, warnings: [], failed: false });
+    },
+  });
+  const [software] = recipes;
+  const registry: RecipeRegistry = [{
+    ...software,
+    commands: (host) => [
+      ...(software.commands?.(host) ?? []),
+      probeRow('probe', { [flags.home]: foundHomeOption }),
+      probeRow('probe-plain', {}),
+      probeRow('probe-case', { [flags.home]: foundHomeOption }, CASE_HOME),
+    ],
+  }];
+
+  const runProbe = async (argv: readonly string[], deps: Deps) => {
+    const sink = captureSink();
+    const code = await runCli([...argv], deps, sink, registry);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  it('keeps the test home of the hook in step with the guarded node', () => {
+    expect(guardProbe.home).toBe(GUARDED_HOME);
+  });
+
+  it.each([
+    ['the home flag', ['--home', GUARDED_HOME], '/w'],
+    ['the nearest config', [], GUARDED_HOME],
+  ])('gives a command that finds its home by %s the values of that home, and every guard on for another home', async (_name, words, cwd) => {
+    expect(await runProbe(['probe', ...words], guardedNode({ cwd }))).toEqual({ code: 0, out: 'false true\n', err: '' });
+  });
+
+  it('gives every guard on to a command with no home flag, and reads no file for it', async () => {
+    const calls: string[] = [];
+    const deps = withFsWatch(guardedNode({ cwd: GUARDED_HOME }), (method) => calls.push(method));
+    expect(await runProbe(['probe-plain'], deps)).toEqual({ code: 0, out: 'true true\n', err: '' });
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    ['a new folder by the home flag, run in the node', ['--home', '/h/new'], GUARDED_HOME, 'true true'],
+    ['a new folder inside the node, with no home flag', [], `${GUARDED_HOME}/new`, 'true false'],
+    ['the node by the home flag', ['--home', GUARDED_HOME], '/w', 'false false'],
+  ])('gives init of %s the values of its home, and every guard on for a folder that is not a node yet', async (_name, words, cwd, shown) => {
+    const result = await runProbe(['init', '--name', guardProbe.initName, ...words], guardedNode({ cwd }));
+    expect(result).toEqual({ code: 0, out: `${shown}\n`, err: '' });
+  });
+
+  it.each(PRE_READ_FAULTS)('gives every guard on to the command and prints nothing more with %s', async (_name, fault) => {
+    expect(await runProbe(['probe', '--home', GUARDED_HOME], fault(guardedNode()))).toEqual({ code: 0, out: 'true true\n', err: '' });
+  });
+
+  it.each([
+    ['a shared file that only the full parse refuses', (deps: FakeDeps): Deps => {
+      deps.seed(CONFIG_FILE, `${deps.files.get(CONFIG_FILE) ?? ''}unknown_key: 1\n`);
+      return deps;
+    }],
+    ['a read fault of the node id, for a list entry with another node id', (deps: FakeDeps): Deps => {
+      registerRoot(deps, GUARDED_HOME, OTHER_NODE_ID);
+      return withFirstConfigReadFault(deps);
+    }],
+  ])('gives every guard on when the registration check can not read the node id: %s', async (_name, fault) => {
+    expect(await runProbe(['probe', '--home', GUARDED_HOME], fault(guardedNode()))).toEqual({ code: 0, out: 'true true\n', err: '' });
+  });
+
+  it('gives no effect to a record whose root differs from the home only in letter case', async () => {
+    const deps = guardedNode({ os: 'darwin' });
+    deps.seed(GUARD_STORE, guardStoreText(sampleConfig().core.node.id, CASE_HOME, [OFF_GUARD], deps.now()));
+    expect(await runProbe(['probe', '--home', GUARDED_HOME], deps)).toEqual({ code: 0, out: 'true true\n', err: '' });
+  });
+
+  it('gives every guard on to a home that differs from the home of the command only in letter case', async () => {
+    expect(await runProbe(['probe-case', '--home', GUARDED_HOME], guardedNode({ os: 'darwin' }))).toEqual({ code: 0, out: 'false true\n', err: '' });
+  });
+
+  it('gives the hook the values of the home that FACTORY_HOME names', async () => {
+    const result = await runProbe(['hook', guardProbe.event], guardedNode({ env: { FACTORY_HOME: GUARDED_HOME } }));
+    expect(result.code).toBe(0);
+    expect(result.err).toBe('');
+    expect(JSON.parse(result.out)).toMatchObject({ hookSpecificOutput: { additionalContext: 'false' } });
+  });
+
+  it('gives the hook every guard on, and reads no file for it, with no FACTORY_HOME', async () => {
+    const calls: string[] = [];
+    const result = await runProbe(['hook', guardProbe.event], withFsWatch(guardedNode({ cwd: GUARDED_HOME }), (method) => calls.push(method)));
+    expect(JSON.parse(result.out)).toMatchObject({ hookSpecificOutput: { additionalContext: 'true' } });
+    expect(calls).toEqual([]);
   });
 });

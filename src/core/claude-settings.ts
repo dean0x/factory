@@ -2,6 +2,7 @@ import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { printable } from '../cli/output.js';
+import { guardOn } from '../guards/effective.js';
 import { isRecord } from '../migrate/inspect.js';
 import {
   capitalize,
@@ -13,6 +14,7 @@ import {
   flags,
   flagText,
   guardDenyWords,
+  guardIds,
   hookCommandOf,
   hookNames,
   hookSessions,
@@ -154,6 +156,8 @@ export const isOwnSettingsTextAt = async (deps: Deps, text: string, rules: reado
 export interface HookSettingsRequest {
   /** The session folder. The settings file is below it. */
   readonly folder: string;
+  /** The node home of the session folder. Its guard values decide the checks of the write. */
+  readonly home: string;
   /** The kind of the session folder: the coordinator, or the work copy of a worker. */
   readonly session: HookSession;
   /** True when the person gave the yes flag. */
@@ -254,7 +258,7 @@ type Settings = Readonly<Record<string, unknown>>;
 
 const NO_SETTINGS: Settings = {};
 
-/** The link, the kind and the existence of the three parts of the path, from the session folder down. */
+/** Check the kind of each part from the session folder down. Refuse a link at any of these parts. */
 const checkParts = async (deps: Deps, target: Target, command: CommandText): Promise<CliResult<{ readonly exists: boolean }>> => {
   const parts = [
     { path: target.folder, what: 'the session folder', kind: 'dir', name: 'folder' },
@@ -570,7 +574,8 @@ const consentRoute = (deps: Deps, request: HookConsentRequest, fileExists: boole
   return deps.stdinIsTTY && deps.stdoutIsTTY ? 'ask-terminal' : 'no-terminal';
 };
 
-/** The change is shown before consent. No terminal is distinct from a refused flag or a no to the question. */
+/** The change is shown before consent. No terminal is distinct from a refused flag or a no to the question. With the guard of the
+ * settings write off, the change needs no consent: it is shown as with the yes flag. A yes flag in a session still stops. */
 const askConsent = async (
   deps: Deps,
   request: HookConsentRequest,
@@ -578,6 +583,10 @@ const askConsent = async (
   fileExists: boolean,
 ): Promise<CliResult<'accepted' | 'declined' | 'no-terminal'>> => {
   const route = consentRoute(deps, request, fileExists);
+  if (route !== 'refused-yes' && !(await guardOn(deps, guardIds.settingsWrite, request.home))) {
+    deps.warn(shown);
+    return ok('accepted');
+  }
   switch (route) {
     case 'flag':
       deps.warn(shown);
@@ -614,7 +623,7 @@ interface TargetRead {
 /**
  * The checks of the target, then the read of the file. A path in the user settings folder, a link, a real path outside the
  * session folder or a file that is no object stops it. The first check compares the written path of the file and makes no call
- * of the file system, so it comes before any call on the target.
+ * of the file system, so it comes before any call on the target. These checks apply with every guard value.
  */
 const readTarget = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<TargetRead>> => {
   const target = targetOf(request.folder);
@@ -626,7 +635,7 @@ const readTarget = async (deps: Deps, request: HookConsentRequest): Promise<CliR
   if (!real.ok) return real;
   const resolved = requireOutsideUserFolder(deps, target, request.command, real.value);
   if (!resolved.ok) return resolved;
-  const content = parts.value.exists ? await readSettings(deps, target.file, request.command) : ok(null);
+  const content = parts.value.exists ? await readSettings(deps, real.value, request.command) : ok(null);
   return content.ok ? ok({ target, content: content.value }) : content;
 };
 
@@ -682,12 +691,13 @@ const futureFilePlan = (request: HookConsentRequest, fileText: string | null): C
  * The plan to write after the consent. The file may have changed while the person answered: Claude Code saves its permission
  * rules in this file. So the call plans again from the file as it is now, with one read and no loop. It writes the new plan
  * when the file has the same text, or when the new change has the same lines that the person saw: the write adds only content
- * that the person saw, and it keeps what the other program saved. Any other change stops the call before the write.
+ * that the person saw, and it keeps what the other program saved. Any other change stops the call before the write. With the guard of the settings write off, the call writes the new plan.
  */
 const planAfterConsent = async (deps: Deps, request: HookConsentRequest, seen: Plan): Promise<CliResult<Plan>> => {
   const now = await planChange(deps, request);
   if (!now.ok) return now;
   if (now.value.text === seen.text || isDeepStrictEqual(now.value.change.lines, seen.change.lines)) return now;
+  if (!(await guardOn(deps, guardIds.settingsWrite, request.home))) return now;
   return failure(`cannot write ${seen.target.file}: it changed while the question waited`, `Check the file. ${again(request.command)}`);
 };
 
@@ -743,6 +753,8 @@ export const ensureHookSettings = async (
  * consent rule and a file that is no JSON object stop the command before the folder exists.
  * The call asks nothing and writes nothing. A session folder written inside the user settings folder stops it before any call
  * of the file system.
+ * With the guard of the settings write off, a missing consent does not stop the command. The path checks and the refusal of
+ * the yes flag inside a factory session still apply.
  */
 export const requireHookConsent = async (
   deps: Deps,
@@ -760,5 +772,6 @@ export const requireHookConsent = async (
   if (change.lines.length === 0) return ok(undefined);
   const route = consentRoute(deps, request, text !== null);
   if (route === 'flag' || route === 'ask-terminal') return ok(undefined);
+  if (route === 'no-terminal' && !(await guardOn(deps, guardIds.settingsWrite, request.home))) return ok(undefined);
   return usageError(shownChange(target.file, change.lines), noConsentRemedy(deps, request, text !== null));
 };

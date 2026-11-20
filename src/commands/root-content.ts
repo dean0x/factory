@@ -19,6 +19,8 @@ import { delegationReport, type DelegationReport } from '../core/owner-record.js
 import { comparable, isSameOrInside, isWrittenInside, userClaudeFolderOf } from '../core/paths.js';
 import { describeProjectPathIssue, projectFolderKey, projectPathIssue } from '../core/project-path.js';
 import { ok } from '../core/result.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import {
   describeTrackedProblems,
   ignoreProbesOf,
@@ -45,6 +47,8 @@ import {
   dirs,
   env,
   files,
+  guardDoctorWords,
+  guardIds,
   homeIndex,
   localSettingsFile,
   places,
@@ -87,6 +91,8 @@ export interface RootScan {
   readonly setupFinding: RootFinding | null;
   /** The mode of each approval point and the active delegations, or null when the config is not valid. */
   readonly delegations: DelegationReport | null;
+  /** False when the guard of the settings check is off. The scan stops and the permission mode check still apply. */
+  readonly settingsChecked: boolean;
 }
 
 export interface RootCheckResult {
@@ -574,15 +580,24 @@ const settingsOfFolder = async (
  * itself. A setting that turns off every hook, and a variable of the state folder or the home folder in the env values, are
  * failures where the session must keep its hooks (`requiresHooks` is set). The
  * warning that a settings file is there is not given for a file that holds exactly the entries that the program writes
- * (`isOwnSettingsTextAt`); every other finding stays for such a file.
+ * (`isOwnSettingsTextAt`); every other finding stays for such a file. With the settings check off, only the failure of a setting
+ * that skips the permission prompts stays, because the permission check owns it.
  */
-const judgeSettings = async (deps: Deps, source: SettingsSource, text: string, rules: readonly string[] = []): Promise<readonly RootFinding[]> => {
+const judgeSettings = async (
+  deps: Deps,
+  source: SettingsSource,
+  text: string,
+  rules: readonly string[],
+  guards: GuardValues,
+): Promise<readonly RootFinding[]> => {
   const id = checkIds.permissionMode;
+  const checked = isGuardOn(guards, guardIds.settingsCheck);
   const facts = analyzeSettings(text);
   const shown = shownPath(source.display);
   const commandNames = facts.runsCommands.join(', ');
-  const reasons = [
-    ...(facts.skips.length === 0 ? [] : [`skips the permission checks (${facts.skips.join('; ')})`]),
+  const skips = facts.skips.length === 0 ? [] : [`skips the permission checks (${facts.skips.join('; ')})`];
+  const reasons = !checked ? skips : [
+    ...skips,
     ...(facts.changesFactoryEnv ? [`sets or clears a variable with the prefix ${env.factoryPrefix} in its env values`] : []),
     ...(facts.movesTraffic.length === 0
       ? []
@@ -596,13 +611,15 @@ const judgeSettings = async (deps: Deps, source: SettingsSource, text: string, r
       : []),
   ];
   const keepStatusLine =
-    source.presence !== null && facts.runsCommands.includes(claudeSettingKeys.statusLine) ? KEEP_STATUS_LINE : '';
+    checked && source.presence !== null && facts.runsCommands.includes(claudeSettingKeys.statusLine) ? KEEP_STATUS_LINE : '';
   const wholeTool = facts.wholeToolRules.map(shownPath);
   const narrow = facts.narrowRules.map(shownPath);
+  const stop = reasons.length === 0
+    ? []
+    : [finding(id, 'fail', `${shown} ${reasons.join(' and ')}`, `${keepStatusLine}Remove the setting from ${shown}, then ${doctorAgain}.`)];
+  if (!checked) return stop;
   return [
-    ...(reasons.length === 0
-      ? []
-      : [finding(id, 'fail', `${shown} ${reasons.join(' and ')}`, `${keepStatusLine}Remove the setting from ${shown}, then ${doctorAgain}.`)]),
+    ...stop,
     ...(facts.valid ? [] : [finding(id, 'warn', `${shown} is not valid JSON, so Claude Code does not read it`, `Fix or remove ${shown}.`)]),
     ...(source.presence === null || await isOwnSettingsTextAt(deps, text, rules)
       ? []
@@ -659,7 +676,7 @@ interface JudgedSources {
 }
 
 /** Reads each source once and judges it. A link is never followed: it is not read. */
-const judgeSources = async (deps: Deps, home: string, sources: Iterable<SettingsSource>): Promise<JudgedSources> => {
+const judgeSources = async (deps: Deps, home: string, sources: Iterable<SettingsSource>, guards: GuardValues): Promise<JudgedSources> => {
   const findings: RootFinding[] = [];
   const unread: string[] = [];
   for (const source of sources) {
@@ -672,7 +689,7 @@ const judgeSources = async (deps: Deps, home: string, sources: Iterable<Settings
     if (text.ok) {
       const deny = source.presence !== null && text.value.includes('"deny"')
         ? await ownDenyRulesOf(deps, home, dirname(dirname(source.absolute))) : null;
-      findings.push(...await judgeSettings(deps, source, text.value, deny?.ok === true ? deny.value.rules : []));
+      findings.push(...await judgeSettings(deps, source, text.value, deny?.ok === true ? deny.value.rules : [], guards));
     } else unread.push(`${shownPath(source.display)} (cannot be read)`);
   }
   return { findings, unread };
@@ -696,7 +713,7 @@ const unreadFindings = (unread: readonly string[]): readonly RootFinding[] =>
  * same judgment as the scan of the root, with the same stops for a link and for a file that can not be read. `home` is the
  * factory folder that the shown paths are relative to, and `presence` names the place for the warning that a settings file is
  * there. The settings file that the program writes itself gives no warning. A file that turns off every hook is a failure here
- * and not in the scan of the root. The check only reads.
+ * and not in the scan of the root. The check only reads. A scan that cannot finish always stops the launch.
  */
 export const checkFolderSettings = async (
   deps: Deps,
@@ -704,8 +721,9 @@ export const checkFolderSettings = async (
   folder: string,
   presence: string,
 ): Promise<readonly RootFinding[]> => {
+  const guards = await guardValuesFor(deps, home);
   const found = await settingsOfFolder(deps, home, userClaudeFolderOf(deps), { path: folder, presence, requiresHooks: true });
-  const judged = await judgeSources(deps, home, found.sources);
+  const judged = await judgeSources(deps, home, found.sources, guards);
   return withoutRepeats([...found.findings, ...judged.findings, ...unreadFindings(judged.unread)]);
 };
 
@@ -738,6 +756,7 @@ export const checkTrackedSettings = async (
   folder: { readonly path: string; readonly presence: string },
 ): Promise<CliResult<TrackedSettings>> => {
   const id = checkIds.permissionMode;
+  const guards = await guardValuesFor(deps, home);
   const settingsFolder = join(folder.path, dirs.claude);
   const shown = shownPath(homeRelative(home, settingsFolder));
   const own = await headEntriesAt(deps, clone, dirs.claude);
@@ -770,7 +789,7 @@ export const checkTrackedSettings = async (
       continue;
     }
     const deny = text.includes('"deny"') ? await ownDenyRulesOf(deps, home, folder.path) : null;
-    findings.push(...await judgeSettings(deps, { absolute, display, presence: folder.presence, requiresHooks: true }, text, deny?.ok === true ? deny.value.rules : []));
+    findings.push(...await judgeSettings(deps, { absolute, display, presence: folder.presence, requiresHooks: true }, text, deny?.ok === true ? deny.value.rules : [], guards));
     if (name === localSettingsFile) localText = text;
   }
   return ok({ findings: withoutRepeats([...findings, ...unreadFindings(unread)]), localText });
@@ -788,6 +807,7 @@ export const scanSettings = async (
   projectPaths: readonly string[],
   tracked: readonly string[],
 ): Promise<readonly RootFinding[]> => {
+  const guards = await guardValuesFor(deps, home);
   const userFolder = userClaudeFolderOf(deps);
   const folders = [
     { path: home, presence: null, requiresHooks: false },
@@ -813,8 +833,9 @@ export const scanSettings = async (
     if (kind.value === 'link') unreadTracked.push(`${shownPath(path)} (a link)`);
     else if (kind.value === 'file') sources.set(absolute, { absolute, display: path, presence: null, requiresHooks: false });
   }
-  const judged = await judgeSources(deps, home, sources.values());
-  return withoutRepeats([...findings, ...judged.findings, ...unreadFindings([...unreadTracked, ...judged.unread])]);
+  const judged = await judgeSources(deps, home, sources.values(), guards);
+  const unread = unreadFindings([...unreadTracked, ...judged.unread]);
+  return withoutRepeats([...findings, ...judged.findings, ...unread]);
 };
 
 // ---- The approval points ----
@@ -875,6 +896,7 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
     setup: setup.check,
     setupFinding: setup.finding,
     delegations,
+    settingsChecked: isGuardOn(await guardValuesFor(deps, home), guardIds.settingsCheck),
   };
 };
 
@@ -900,6 +922,13 @@ const OK_TEXT: Readonly<Record<string, string>> = {
   [checkIds.permissionMode]: 'no settings file skips the permission checks, runs a command, or sets the proxy or the credential of the session',
 };
 
+/** The ok text of the permission check when the settings check is off. */
+const PERMISSION_ONLY_TEXT = guardDoctorWords.partlyChecked(
+  'no settings file skips the permission checks',
+  'the commands, the proxy and the credential in the settings are',
+  guardIds.settingsCheck,
+);
+
 const RESULT_ORDER = [checkIds.rootRepo, checkIds.rootFiles, checkIds.projectPaths, checkIds.permissionMode, checkIds.delegations];
 
 const resultOf = (scan: RootScan, id: string): RootCheckResult => {
@@ -909,7 +938,8 @@ const resultOf = (scan: RootScan, id: string): RootCheckResult => {
     if (scan.delegations === null) return { id, level: 'warn', text: `not checked: ${NOT_VALID}` };
     return { id, level, text: [modesLine(scan.delegations), ...own.map(sentence)].join('. ') };
   }
-  return { id, level, text: own.length === 0 ? (OK_TEXT[id] ?? '') : own.map(sentence).join(' ') };
+  if (own.length > 0) return { id, level, text: own.map(sentence).join(' ') };
+  return { id, level, text: id === checkIds.permissionMode && !scan.settingsChecked ? PERMISSION_ONLY_TEXT : (OK_TEXT[id] ?? '') };
 };
 
 /** One result for each root check, in a fixed order, for `doctor`. */

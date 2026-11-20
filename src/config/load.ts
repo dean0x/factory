@@ -1,7 +1,9 @@
 import { LineCounter, parseDocument } from 'yaml';
+import { z } from 'zod';
 import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { accessFaultOf } from '../core/access.js';
 import type { Deps } from '../core/deps.js';
+import type { GuardConfig } from '../core/guard-records.js';
 import type { NodeIdentity } from '../core/home.js';
 import { err, ok, type Result } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
@@ -14,17 +16,19 @@ import {
   type DocState,
   type VersionSpec,
 } from '../migrate/inspect.js';
-import { commands, commandText, files, flags, flagText, keys, localFileModes, places, program, roles } from '../names.js';
-import type { RecipeRegistry } from '../recipes/index.js';
+import { commands, commandText, files, flags, flagText, guardKeys, keys, localFileModes, places, program, roles } from '../names.js';
+import { findRecipe, type RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { slug } from './primitives.js';
 import {
   CONFIG_SCHEMA_VERSION,
   LOCAL_SCHEMA_VERSION,
   localConfigSchema,
+  localGuardsSchema,
   mergeConfig,
   mixConfigValue,
   sharedConfigSchemaFor,
+  sharedGuardsSchema,
   type FactoryConfig,
   type LocalConfig,
   type SharedConfig,
@@ -233,3 +237,51 @@ export const inspectConfig = async (
 
 export const loadConfig = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CliResult<FactoryConfig>> =>
   configResult(await inspectConfig(deps, home, registry));
+
+/** The keys of the shared file that the guard values need. The parse drops every other key and runs no other check of it. */
+const guardSharedSchema = z.object({
+  [keys.root.node]: z.object({ [keys.node.id]: slug }),
+  [guardKeys.shared]: sharedGuardsSchema,
+  [keys.root.recipe]: z.object({ [keys.recipe.id]: z.string() }),
+});
+
+/** The key of the local file that the guard values need. */
+const guardLocalSchema = z.object({ [guardKeys.local]: localGuardsSchema });
+
+const GUARD_SHARED_SPEC: VersionSpec<z.infer<typeof guardSharedSchema>> = {
+  file: CONFIG_LABEL,
+  key: keys.root.schema,
+  supported: CONFIG_SCHEMA_VERSION,
+  schema: guardSharedSchema,
+};
+
+const GUARD_LOCAL_SPEC: VersionSpec<z.infer<typeof guardLocalSchema>> = {
+  file: files.localConfig,
+  key: keys.root.schema,
+  supported: LOCAL_SCHEMA_VERSION,
+  schema: guardLocalSchema,
+};
+
+const reasonOf = (state: Exclude<DocState<unknown>, { kind: 'valid' }>): string => (state.kind === 'missing' ? state.kind : state.message);
+
+/**
+ * The guard facts of a node for the pre-read of the guard values: the node id, the recipe and the two guard maps, with the same
+ * version checks, the same checks of the local file (link, owner and mode) and the same schemas of the guard maps as the full
+ * load. No other key is parsed, so a check of the full parse that a guard owns can follow the values. The error is the reason.
+ */
+export const inspectGuardConfig = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<Result<GuardConfig, string>> => {
+  const layout = layoutOf(home);
+  const shared = await inspectFile(deps, layout.configFile, parseYamlText, GUARD_SHARED_SPEC);
+  if (shared.kind !== 'valid') return err(reasonOf(shared));
+  const entry = findRecipe(registry, shared.value.recipe.id);
+  if (entry === undefined) return err(`${keys.root.recipe}.${keys.recipe.id} names no ${roles.recipe} of the registry`);
+  const access = await localFileAccess(deps, home);
+  if (!access.ok) return err(access.error.message);
+  if (access.value.kind === 'absent') return err(`${files.localConfig} not found`);
+  const local = await inspectFile(deps, layout.localConfigFile, parseYamlText, GUARD_LOCAL_SPEC);
+  if (local.kind !== 'valid') return err(reasonOf(local));
+  return ok({
+    entry,
+    core: { node: { id: shared.value.node.id }, guards: local.value.guards, shared_guards: shared.value.shared_guards, proxies: [] },
+  });
+};

@@ -26,6 +26,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { isatty } from 'node:tty';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
+import { allGuardsOn } from '../guards/effective.js';
 import { hookNames } from '../names.js';
 import { checkedFaultCore, checkedFaultOf } from './access.js';
 import { isSameOrInside } from './paths.js';
@@ -843,4 +844,5 @@ export const createNodeDeps = (): Deps => ({
   pid: process.pid,
   programArgv: programArgvOf(process.execPath, process.argv[1]),
   uid: typeof process.getuid === 'function' ? process.getuid() : null,
+  guards: allGuardsOn,
 });

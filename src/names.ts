@@ -2481,7 +2481,7 @@ export const guardSetWords = {
   argumentsError: `Use "${commandText(commandLines.guardSet)} ID on|off" or "${commandText(commandLines.guardSet)} ${flagText(flags.all)} on|off". Run "${commandText(commandLines.guardList)}" to see the guards.`,
   badValue: 'The guard value must be on or off.',
   idWithAll: `Do not name a guard with ${flagText(flags.all)}.`,
-  nextStart: 'The guard value takes effect at the next start.',
+  effectTime: `A code check follows the new value at the next command. The role text changes at the next "${commandText(commands.start)}" or "${commandText(commands.upgrade)}".`,
   offQuestion: 'Turn these guards off? [y/N] ',
   declined: 'Nothing changed: the answer was not yes.',
   skipped: (count: number): string => `${count} guards are not settable in this version.`,
@@ -2524,6 +2524,8 @@ export const guardRecordWords = {
   inside: 'The guard store must be outside the factory and Claude Code folders.',
   placeRemedy: `Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,
   duplicate: 'The guard store holds two records for one node and factory folder.',
+  caseMismatch: 'The guard record does not name the factory folder in its exact letter case.',
+  caseRemedy: `Run "${commandText(commandLines.guardConfirm)}" to record the prefix again. Run "${commandText(commandLines.guardSet)}" to record the guard values again.`,
   recordCap: `The guard store cannot exceed ${guardRecords.maxRecords} records. Run "${commandText(commands.doctor)}".`,
   byteCap: `The guard store cannot exceed ${guardRecords.maxBytes} bytes. Run "${commandText(commands.doctor)}".`,
   badPrefix: `The ${keys.root.owner}.${keys.owner.prefix} text must not contain a hidden character.`,
@@ -2540,6 +2542,8 @@ export const guardRecordWords = {
   writeFault: (reason: string): string => `The guard store cannot be changed: ${reason}. Run "${commandText(commands.doctor)}".`,
   invalidChange: 'The guard change has no valid node, factory folder or value.',
   unreadableRemedy: `move the file away to turn every guard on and remove the prefix records of every ${roles.node}`,
+  unproved: `Every guard is on: the config, the ${roles.node} id or the factory list entry of the ${places.folder} did not pass its check.`,
+  otherHome: `Every guard is on: the guard values of this command belong to another ${places.folder}.`,
 } as const;
 
 /** Parts of the one-line guard summary at start. */
@@ -2565,6 +2569,12 @@ export const guardDoctorWords = {
   recordCount: (count: number): string => `The guard store holds ${count} of ${guardRecords.maxRecords} records.`,
   nearCap: 'The guard store is near its record cap.',
   atCap: 'The guard store is at its record cap.',
+  /** The warning for an off value of a guard that this version cannot set. */
+  unsettableOff: (id: string): string => `${id} is ${guardListWords.notSettable}; its value stays on`,
+  /** The line of a check that did not run, because its guard is off. */
+  notChecked: (id: string): string => `not checked: the guard ${id} is off`,
+  /** The line of a check of which only a part ran, because its guard is off. */
+  partlyChecked: (done: string, skipped: string, id: string): string => `${done}; ${skipped} ${guardDoctorWords.notChecked(id)}`,
 } as const;
 
 /** The names and notice of the Edit rules for files that the program owns. */
@@ -2600,6 +2610,8 @@ export const guardListWords = {
     shared: files.config,
     local: `${files.localConfig} and record`,
     noRecord: `${files.localConfig} with no record`,
+    unread: `${files.localConfig}, records not read`,
+    notLoaded: 'config not loaded',
   },
   moreLine: (count: number): string => `and ${count} more: run with ${flagText(flags.all)} or ${flagText(flags.json)}`,
   countLine: (off: number, total: number, harm: number): string =>
