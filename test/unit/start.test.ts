@@ -39,7 +39,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
+import { DEFAULT_GIT_VERSION, NO_REPO_AT_MOUNT_POINT, withoutStateWords } from '../helpers/git-fake.js';
 import {
   FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, withStoreReadFault,
 } from '../helpers/guarded-node.js';
@@ -128,6 +128,8 @@ interface Setup {
   readonly origin?: 'own' | 'received';
   /** True: the home is the top folder of no git work tree, so git can not list its files. */
   readonly noRepo?: boolean;
+  /** What git prints on stderr for a folder that no work tree holds. Default: the plain line. */
+  readonly noRepoText?: string;
   /** The answer to a question. Default: no answer, so a question fails the command. */
   readonly prompt?: PromptHandler;
   /**
@@ -174,7 +176,7 @@ const gitAnswer = (setup: Setup) => (call: RunCall) => {
       return asked.every((path) => rules === undefined || rules.includes(path)) ? exited(0) : exited(1);
     }
   }
-  return exited(128, '', 'fatal: not a git repository\n');
+  return exited(128, '', setup.noRepoText ?? 'fatal: not a git repository\n');
 };
 
 const withProxy = (onFail: 'stop' | 'direct'): FactoryConfig => {
@@ -1087,31 +1089,57 @@ describe.each(FOLDER_ORIGINS)('start in %s: the guard of the Claude Code setting
 });
 
 describe.each(FOLDER_ORIGINS)('start in %s: the guard of folder trust', (_folder, origin) => {
-  it.each(guardStatesOf(guardIds.folderTrust))('warns about an agent instruction file and stops for a received folder that is not the top of a work tree only while the guard counts as on: %s', async (_state, setup, on) => {
-    const off = setup.off ?? [];
-    const config = withGuardsOff(sampleConfig(), off);
-    const { deps } = make({ origin, config, noRepo: true });
-    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
-    deps.seed(`${HOME}/${files.claudeMd}`, 'Rules.\n');
-    const sink = captureSink();
-    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on && origin === 'received' ? 4 : 0);
-    expect(deps.warned.some((line) => line.startsWith('Agent instruction files are in'))).toBe(on);
+  describe.each([
+    ['git gives the plain line', undefined],
+    ['git stops at a mount point', NO_REPO_AT_MOUNT_POINT],
+  ])('when %s', (_answer, noRepoText) => {
+    it.each(guardStatesOf(guardIds.folderTrust))('warns about an agent instruction file and stops for a received folder that is not the top of a work tree only while the guard counts as on: %s', async (_state, setup, on) => {
+      const off = setup.off ?? [];
+      const config = withGuardsOff(sampleConfig(), off);
+      const { deps } = make({ origin, config, noRepo: true, ...(noRepoText === undefined ? {} : { noRepoText }) });
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+      deps.seed(`${HOME}/${files.claudeMd}`, 'Rules.\n');
+      const sink = captureSink();
+      expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(on && origin === 'received' ? 4 : 0);
+      expect(deps.warned.some((line) => line.startsWith('Agent instruction files are in'))).toBe(on);
+      expect(sink.errors.join('')).not.toContain('cannot check the git work tree');
+    });
   });
 });
 
 describe.each(FOLDER_ORIGINS)('start in %s: the stop of the scan of the folder', (_folder, origin) => {
   it.each([
-    ['every guard on: a local config that git does not ignore stops', [], false, 4],
-    ['the scan guard off: a local config that git does not ignore does not stop', [guardIds.rootScan], false, 0],
-    ['the scan guard off: a fault of the settings check that is on still stops', [guardIds.rootScan], true, 4],
-    ['the scan guard and the settings check off: neither fault stops', [guardIds.rootScan, guardIds.settingsCheck], true, 0],
-  ] as const)('%s', async (_name, off, settingsFault, code) => {
+    ['every guard on: a local config that git does not ignore stops', [], true, false, 4],
+    ['the scan guard off: a local config that git does not ignore does not stop', [guardIds.rootScan], true, false, 0],
+    ['the scan guard off with no record: a local config that git does not ignore still stops', [guardIds.rootScan], false, false, 4],
+    ['the scan guard off: a fault of the settings check that is on still stops', [guardIds.rootScan], true, true, 4],
+    ['the scan guard and the settings check off: neither fault stops', [guardIds.rootScan, guardIds.settingsCheck], true, true, 0],
+  ] as const)('%s', async (_name, off, record, settingsFault, code) => {
     const config = withGuardsOff(sampleConfig(), off);
-    const { deps } = make({ origin, config, ignored: [] });
-    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const { deps, tmux } = make({ origin, config, ignored: [] });
+    if (record) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
     if (settingsFault) deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { FACTORY_ANYTHING: '1' } }));
     const sink = captureSink();
-    expect(await runCli([commands.start, '--dry-run', '--home', HOME], deps, sink), sink.errors.join('')).toBe(code);
+    expect(await runCli([commands.start, '--home', HOME], deps, sink), sink.errors.join('')).toBe(code);
+    expect(sink.errors.join('').includes('git does not ignore')).toBe(code === 4 && !settingsFault);
+    expect(tmux.calls.some((call) => call.args[0] === 'new-session')).toBe(code === 0);
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of secrets and output text', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.secrets))('stops for a token in a tracked file only while the guard counts as on, and never shows the value: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(sampleConfig(), off);
+    const { deps, tmux } = make({ origin, config, tracked: ['docs/notes.md'] });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    deps.seed(`${HOME}/docs/notes.md`, `key ${FAKE_GITHUB_TOKEN}\n`);
+    // The owner accepted the tracked files of the received folder, so the setup check does not decide the exit code.
+    if (origin === 'received') await acceptTracked(deps, HOME, config.core.node.id, ['docs/notes.md']);
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(sink.errors.join('').includes('docs/notes.md')).toBe(on);
+    expect(tmux.calls.some((call) => call.args[0] === 'new-session')).toBe(!on);
+    expect(JSON.stringify([sink.out, sink.errors, deps.warned])).not.toContain(FAKE_GITHUB_TOKEN);
   });
 });
 

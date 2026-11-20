@@ -90,7 +90,13 @@ export interface GitFixture {
   readonly otherLevelHooksPath?: Readonly<Record<string, string>>;
   /** What `git rev-parse --absolute-git-dir` prints, by folder. Default: the folder `.git` inside the folder. */
   readonly gitDirs?: Readonly<Record<string, string>>;
+  /** What git prints on stderr for a folder that no work tree holds. Default: the form that names the parent folders. */
+  readonly noRepoText?: string;
 }
+
+/** What git prints for a folder that no work tree holds when its search stops at a mount point: two lines. */
+export const NO_REPO_AT_MOUNT_POINT =
+  'fatal: not a git repository (or any parent up to mount point /h)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\n';
 
 export interface GitLog {
   readonly calls: RunCall[];
@@ -291,7 +297,9 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       case 'config remote.origin.url':
         return repo?.origin === undefined ? exited(1) : exited(0, `${repo.origin}\n`);
       case 'rev-parse --is-inside-work-tree --show-prefix':
-        return repo === undefined ? exited(128, '', 'fatal: not a git repository (or any of the parent directories): .git\n') : exited(0, repo.topLevel === false ? 'true\nsub/\n' : 'true\n\n');
+        return repo === undefined
+          ? exited(128, '', fixture.noRepoText ?? 'fatal: not a git repository (or any of the parent directories): .git\n')
+          : exited(0, repo.topLevel === false ? 'true\nsub/\n' : 'true\n\n');
       case 'rev-parse --show-toplevel': {
         const top = workTreeTopOf(repoAt, dir);
         return top === null ? exited(128) : exited(0, `${top}\n`);

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
 import { checkIds, commands, files, flags, flagText, guardDoctorWords, guardIds } from '../../src/names.js';
 import { exited } from '../helpers/fake-deps.js';
-import { gitHandler } from '../helpers/git-fake.js';
+import { gitHandler, NO_REPO_AT_MOUNT_POINT } from '../helpers/git-fake.js';
 import { FOLDER_ORIGINS, GUARDED_HOME, guardedNode, guardStatesOf } from '../helpers/guarded-node.js';
 import { captureSink } from '../helpers/sink.js';
 
@@ -23,13 +23,18 @@ const doctorChecksOf = async (deps: Parameters<typeof runCli>[1]): Promise<reado
 
 describe('the guard of folder trust', () => {
   describe.each(FOLDER_ORIGINS)('in %s', (_title, origin) => {
-    it.each(guardStatesOf(guardIds.folderTrust))('doctor checks a folder that is not the top of a git work tree only while the guard is on: %s', async (_state, setup, on) => {
-      const deps = guardedNode({ run: gitHandler({}).handler }, { ...setup, origin });
-      const checks = await doctorChecksOf(deps);
-      const check = checks.find((line) => line.id === checkIds.rootRepo);
-      expect(check?.level).toBe(on ? (origin === 'received' ? 'fail' : 'warn') : 'ok');
-      expect(check?.text.includes(NOT_CHECKED)).toBe(!on);
-      if (!on) expect(checks.find((line) => line.id === checkIds.rootFiles)?.text).toBe(NOT_CHECKED);
+    describe.each([
+      ['git names the parent folders', undefined],
+      ['git stops at a mount point', NO_REPO_AT_MOUNT_POINT],
+    ])('when %s', (_answer, noRepoText) => {
+      it.each(guardStatesOf(guardIds.folderTrust))('doctor checks a folder that is not the top of a git work tree only while the guard is on: %s', async (_state, setup, on) => {
+        const deps = guardedNode({ run: gitHandler(noRepoText === undefined ? {} : { noRepoText }).handler }, { ...setup, origin });
+        const checks = await doctorChecksOf(deps);
+        const check = checks.find((line) => line.id === checkIds.rootRepo);
+        expect(check?.level).toBe(on ? (origin === 'received' ? 'fail' : 'warn') : 'ok');
+        expect(check?.text.includes(NOT_CHECKED)).toBe(!on);
+        if (!on) expect(checks.find((line) => line.id === checkIds.rootFiles)?.text).toBe(NOT_CHECKED);
+      });
     });
 
     it('keeps a failed git read distinct from a folder without a work tree when folder trust is off', async () => {

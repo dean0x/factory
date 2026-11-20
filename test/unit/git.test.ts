@@ -43,12 +43,14 @@ import {
   trackedFilesOf,
   unstagePaths,
   withoutUserinfo,
+  workTreeRootOf,
 } from '../../src/core/git.js';
 import { commands, commandText, trackedFiles } from '../../src/names.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import {
   FILE_MONITOR_OFF_WORD,
   gitHandler,
+  NO_REPO_AT_MOUNT_POINT,
   STATE_GIT,
   STATE_GIT_WORDS,
   STATE_READ_WORDS,
@@ -1158,6 +1160,32 @@ describe('git: a folder is the top of its own work tree', () => {
 
   it('stops with exit 4 for a folder that no work tree holds', async () => {
     expect(await check({})).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+});
+
+describe('git: the read of the work tree of a folder', () => {
+  const DIR = '/r/node';
+  const rootOf = (exitCode: number, stderr: string) => workTreeRootOf(createFakeDeps({ run: () => exited(exitCode, '', stderr) }), DIR);
+
+  it.each([
+    ['the plain form', 'fatal: not a git repository\n'],
+    ['the form that names the parent folders', 'fatal: not a git repository (or any of the parent directories): .git\n'],
+    ['the form at a mount point, with its second line', NO_REPO_AT_MOUNT_POINT],
+  ])('reads %s of the message of git as a folder that no work tree holds', async (_form, stderr) => {
+    expect(await rootOf(128, stderr)).toEqual({ ok: true, value: false });
+  });
+
+  it('reads the mount point form from the git fake as a folder that no work tree holds', async () => {
+    const { handler } = gitHandler({ noRepoText: NO_REPO_AT_MOUNT_POINT });
+    expect(await workTreeRootOf(createFakeDeps({ run: handler }), DIR)).toEqual({ ok: true, value: false });
+  });
+
+  it.each([
+    ['a git file that names no repo', 128, `fatal: not a git repository: ${DIR}/.git/worktrees/a\n`],
+    ['another fault on the first line', 128, `fatal: detected dubious ownership in repository at '${DIR}'\n${NO_REPO_AT_MOUNT_POINT}`],
+    ['the message with an exit code other than 128', 1, NO_REPO_AT_MOUNT_POINT],
+  ])('keeps %s a failed read', async (_case, exitCode, stderr) => {
+    expect(await rootOf(exitCode, stderr)).toMatchObject({ ok: false });
   });
 });
 

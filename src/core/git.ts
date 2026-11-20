@@ -58,6 +58,13 @@ const gitOutput = async (deps: Deps, dir: string, args: readonly string[]): Prom
 export const configValue = (deps: Deps, dir: string, key: string): Promise<string | null> =>
   gitOutput(deps, dir, ['config', key]);
 
+/**
+ * The first line of the message of git for a folder that no work tree holds: the plain form, the form that names the parent
+ * folders, and the form at a mount point. The last form has a second line. Any other first line, also the line for a git file
+ * that names no repo, is a failed read.
+ */
+const NO_REPO_LINE = /^fatal: not a git repository(?: \(or any (?:of the )?parent directories\): \.git| \(or any parent up to mount point .+\))?$/;
+
 /** Keep a failed read distinct from a folder that git identifies as outside a work tree or below its top. */
 export const workTreeRootOf = async (deps: Deps, dir: string): Promise<CliResult<boolean>> => {
   const result = await deps.run('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree', '--show-prefix'], {
@@ -65,7 +72,7 @@ export const workTreeRootOf = async (deps: Deps, dir: string): Promise<CliResult
   });
   if (!result.ok) return result;
   const { exitCode, stdout, stderr } = result.value;
-  if (exitCode === 128 && /^fatal: not a git repository(?: \(or any (?:of the )?parent directories\): \.git)?$/.test(stderr.trim())) return ok(false);
+  if (exitCode === 128 && NO_REPO_LINE.test(stderr.trim().split('\n')[0] ?? '')) return ok(false);
   const [inside, prefix] = stdout.split('\n');
   if (exitCode !== 0 || (inside !== 'true' && inside !== 'false')) return failure(`cannot check the git work tree of ${dir}`);
   return ok(inside === 'true' && (prefix ?? '') === '');
