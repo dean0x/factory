@@ -2602,6 +2602,9 @@ export const harmMark = 'H';
 /** The default list leaves room for its heading, more line and count line. */
 export const maxGuardListLines = 17;
 
+/** The word for a guard or row that no value changes. It is also the source of a fixed guard in the JSON of `guard list`. */
+const fixedGuardWord = 'fixed';
+
 /**
  * The words of `guard list`: the titles of the columns, the value of a guard that the list can not read, the words of the
  * place of a value, the word for a guard or row that no value changes, the line that tells how many lines the view leaves out,
@@ -2618,8 +2621,9 @@ export const guardListWords = {
   familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
   unknown: 'unknown',
   notSettable: 'not settable in this version',
-  fixed: 'fixed',
+  fixed: fixedGuardWord,
   sources: {
+    fixed: fixedGuardWord,
     missing: 'no key',
     shared: files.config,
     local: `${files.localConfig} and record`,

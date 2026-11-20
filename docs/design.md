@@ -1461,7 +1461,7 @@ The default view has at most 20 lines, with at most 17 guard lines. A more line 
 | `--json` | Print every guard and every row under schema id `factory.guard-list/v1`, with no table cap. |
 | `--home DIR` | Read the node in this factory folder. |
 
-Each JSON guard gives its effective `value`, its `source`, its record time in `since`, and whether it is `settable`. The JSON `error` field is `null` when the config loads; otherwise, it holds the load error. The list reads the guard store only when a local value of a settable guard is off. An unreadable store gives one warning, keeps all guards on and leaves the exit code at 0.
+Each JSON guard gives its effective `value`, its `source`, its record time in `since`, and whether it is `settable`. The source of a fixed guard is always `fixed`, also when a file holds a key for it or the config does not load. The JSON `error` field is `null` when the config loads; otherwise, it holds the load error. The list reads the guard store only when a local value of a settable guard is off. An unreadable store gives one warning, keeps all guards on and leaves the exit code at 0.
 
 Doctor gives one `guards` check with the counts of off guards and off `H` guards. It also names each direct proxy and each unmatched local value. Its JSON output gives the record time of each off guard.
 

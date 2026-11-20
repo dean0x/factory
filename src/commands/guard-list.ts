@@ -23,6 +23,13 @@ interface ListedGuard extends Omit<GuardState, 'value'> {
   readonly value: GuardValue | typeof guardListWords.unknown;
 }
 
+/** A fixed guard has the fixed word as its source in every case, also with a key in a file or a config that does not load. */
+const sourceOf = (guard: Guard, state: GuardRules | null): GuardState['source'] => {
+  if (guard.fixed) return 'fixed';
+  if (state === null) return 'notLoaded';
+  return state.sources[guard.id] ?? 'missing';
+};
+
 /**
  * Registry facts and effective state share one row. A failed config load leaves the value unknown and names that fault as the
  * source. A fixed guard is on in every case, because no value changes it.
@@ -31,7 +38,7 @@ const listedGuard = (guard: Guard, state: GuardRules | null): ListedGuard => ({
   ...guard,
   settable: isSettable(guard),
   value: guard.fixed ? guardValues.on : state === null ? guardListWords.unknown : state.values[guard.id] ?? guardValues.on,
-  source: state === null ? 'notLoaded' : state.sources[guard.id] ?? 'missing',
+  source: sourceOf(guard, state),
   since: state?.since[guard.id] ?? null,
 });
 

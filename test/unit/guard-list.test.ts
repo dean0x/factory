@@ -52,12 +52,15 @@ const snapshot = (deps: FakeDeps): string => JSON.stringify([...deps.files, [...
 /** The place cell of a guard that no value names: a fixed guard, a guard with no key, or a guard that this version cannot set. */
 const placeOf = (guard: { readonly fixed: boolean; readonly wired: boolean }): string =>
   guard.fixed ? guardListWords.fixed : guard.wired ? 'no key' : 'not settable in this version';
-/** The JSON form of a guard when the config does not load: the value is unknown, except for a fixed guard, which is always on. */
+/**
+ * The JSON form of a guard when the config does not load: the value is unknown and the source names the fault, except for a fixed
+ * guard, which is always on with the fixed word as its source.
+ */
 const unloadedOf = (guard: Guard) => ({
   ...guard,
   settable: guard.wired,
   value: guard.fixed ? 'on' : 'unknown',
-  source: 'notLoaded',
+  source: guard.fixed ? guardListWords.fixed : 'notLoaded',
   since: null,
 });
 
@@ -144,7 +147,9 @@ describe('guard list', () => {
       schema: schemaIds.guardList,
       home: HOME,
       error: null,
-      guards: guardsFor(recipes[0]).map((guard) => ({ ...guard, settable: guard.wired, value: 'on', source: 'missing', since: null })),
+      guards: guardsFor(recipes[0]).map((guard) => ({
+        ...guard, settable: guard.wired, value: 'on', source: guard.fixed ? guardListWords.fixed : 'missing', since: null,
+      })),
       rows: guardRowsFor(recipes[0]),
       unmatched: [],
       loosened: [],
@@ -287,7 +292,7 @@ describe('guard list', () => {
       const row = all.find((line) => line.startsWith(`${id} `)) ?? '';
       expect(rowCells(all[0] ?? '', row)).toEqual([id, 'on', 'on', '', guardListWords.fixed]);
       expect(json).toMatchObject({ guards: expect.arrayContaining([
-        expect.objectContaining({ id, fixed: true, key: null, wired: false, settable: false, value: 'on' }),
+        expect.objectContaining({ id, fixed: true, key: null, wired: false, settable: false, value: 'on', source: guardListWords.fixed }),
       ]) });
       const family = linesOf((await run(make(), ['--family', id, '--all'])).out);
       expect(family.slice(1).map((line) => rowCells(family[0] ?? '', line)[1])).toEqual(
@@ -310,6 +315,10 @@ describe('guard list', () => {
     expect(rowCells(lines[0] ?? '', lines.find((line) => line.startsWith(`${id} `)) ?? '')).toEqual([id, 'on', 'on', '', guardListWords.fixed]);
     expect(lines.at(-1)).toBe(guardListWords.countLine(0, guardsFor(recipes[0]).length, 0));
     expect(result.err).toContain(guardConfigWords.fixedKey(file, key, id));
+    const json: unknown = JSON.parse((await run(deps, ['--json'])).out);
+    expect(json).toMatchObject({ guards: expect.arrayContaining([
+      expect.objectContaining({ id, value: 'on', source: guardListWords.fixed }),
+    ]) });
   });
 
   it('caps the rows of a large family and names the rest in a more line', async () => {
