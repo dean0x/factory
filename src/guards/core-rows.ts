@@ -80,7 +80,15 @@ const boardEditRows: readonly GuardRow[] = [
     name: `The ${worker} of an item changes only through the unassign command, and a check-in keeps it`,
     applies: 'Item update, item unassign and check-in',
     harm: false,
-    sites: at('src/board/edit.ts', 'changeItemIn', 'unassignIn'),
+    sites: at('src/board/edit.ts', 'changeItemIn'),
+  }),
+  alwaysOnRow({
+    id: 'board-former-worker-mark',
+    guard: guardIds.boardEdits,
+    name: `An item keeps the mark of its former ${worker} so the closed work check can find the item`,
+    applies: 'Item update and item unassign',
+    harm: true,
+    sites: at('src/board/edit.ts', 'markFormerWorker'),
   }),
   alwaysOnRow({
     id: 'board-reserved-names',

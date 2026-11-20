@@ -152,7 +152,6 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'putRecord', reason: 'The one writer of owner records, which the release scope records share; recordApprovals reads the value and writes no record for an off point.' },
   { row: 'delegation-warning', path: 'src/commands/root-content.ts', symbol: 'delegationFindings', reason: 'Lists the unmatched points of delegationReport, which reads the value and gives none when the guard is off.' },
   { row: 'board-flow-stages', path: 'src/board/edit.ts', symbol: 'checkMove', reason: boardValuesReason('requireSettableStage') },
-  { row: 'board-worker-field', path: 'src/board/edit.ts', symbol: 'unassignIn', reason: 'The one command that takes a worker off an item; its checks of the stored worker and of the cap of former workers bound the data and run with every value. changeItemIn reads the value.' },
   { row: 'board-hosted-refusal', path: 'src/commands/track.ts', symbol: 'execute', reason: localWriteReason },
   { row: 'board-hosted-refusal', path: 'src/commands/queue.ts', symbol: 'execute', reason: localWriteReason },
   { row: 'board-doc-place', path: 'src/board/edit.ts', symbol: 'checkDocPath', reason: boardValuesReason('docPathIssue') },
@@ -644,6 +643,7 @@ describe('the rows of the registry', () => {
       'board-edits': [
         'board-flow-stages',
         'board-worker-field',
+        'board-former-worker-mark',
         'board-reserved-names',
         'board-hosted-refusal',
         'board-file-links',
@@ -1012,19 +1012,19 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(236);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(237);
     expect(softwareRecipe.guardRows).toHaveLength(104);
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
-    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(169);
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(170);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
         .filter(([, ids]) => ids.length > 0),
     );
     expect(pinned).toEqual({
-      'board-edits': ['board-reserved-names', 'board-file-links', 'board-doc-local-config', 'board-commit-paths', 'board-reserved-names-text'],
+      'board-edits': ['board-former-worker-mark', 'board-reserved-names', 'board-file-links', 'board-doc-local-config', 'board-commit-paths', 'board-reserved-names-text'],
       'clone-rules': [
         'clone-source', 'clone-option-end', 'clone-inside-folder', 'clone-missing-folder', 'clone-received-local', 'clone-url',
         'clone-project-path', 'clone-unique-targets',

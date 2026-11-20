@@ -4,7 +4,7 @@ import { runCli } from '../../src/cli/run.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { withGuards, type Deps } from '../../src/core/deps.js';
 import { guardSourceFor } from '../../src/core/guard-source.js';
-import { activeMachine, commands, files, guardIds, maxFileBytes, reservedFieldNames, schemaIds } from '../../src/names.js';
+import { activeMachine, boardKeys, commands, files, guardIds, markLimits, maxFileBytes, reservedFieldNames, schemaIds } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { mergedStage } from '../../src/recipes/software/board.js';
 import { claimActiveMachine } from '../../src/state/active-machine.js';
@@ -78,8 +78,9 @@ describe('the guard of board edits', () => {
       expect(repo.textOf(files.board)?.includes(DOT_DOC)).toBe(!on);
     });
 
-    it.each(guardStatesOf(guardIds.boardEdits))('the item view shows a stored doc path with a part that starts with a dot only while the guard counts as off: %s', async (_state, setup, on) => {
-      const repo = await nodeOf(setup, origin, boardText([itemRecord('B-1', { stage: 'ticket', docs: [DOT_DOC] })], []));
+    it.each(guardStatesOf(guardIds.boardEdits))('the item view always hides the local config and shows the dot path only while the guard counts as off: %s', async (_state, setup, on) => {
+      const docs = [DOT_DOC, files.localConfig, files.localConfig.toUpperCase()];
+      const repo = await nodeOf(setup, origin, boardText([itemRecord('B-1', { stage: 'ticket', docs })], []));
       repo.deps.seed(join(HOME, DOC), '# Design\n');
       const result = await runOn(repo.deps, ['item', 'doc', 'B-1', DOC, '--json']);
       expect(result.code, result.err).toBe(0);
@@ -164,15 +165,40 @@ describe('the guard of board edits', () => {
       expect(result.code, result.err).toBe(2);
       expect(repo.commits).toEqual([]);
     });
-  });
 
-  it('keeps a refused step refused when the config holds a reserved field name: the config does not load, so the off value has no proof', async () => {
-    const board = sampleBoard();
-    const reserved = sampleConfigWithBoard({ ...board, fields: [...(board.fields ?? []), { name: reservedFieldNames[0] ?? '', target: 'item', kind: 'token', required: false }] });
-    const repo = await nodeOf(OFF, 'own', START, reserved);
-    const result = await runOn(repo.deps, ['item', 'move', 'B-1', '--stage', mergedStage]);
-    expect(result.code).not.toBe(0);
-    expect(repo.commits).toEqual([]);
-    expect(repo.textOf(files.board)).toBe(START);
+    const full = Array.from({ length: markLimits.maxFormerWorkers }, (_, i) => `worker-${i + 1}`);
+    it.each([
+      ['a full list', full, 2, `${markLimits.maxFormerWorkers} former workers`],
+      ['a list with a value that is not text', [7], 1, 'is not a list of text'],
+    ])('item update keeps the worker if the former-worker mark has %s', async (_name, former, code, reason) => {
+      const board = boardText([itemRecord('B-1', { lane: WORKER, [boardKeys.unassignedFrom]: former })], []);
+      const repo = await nodeOf(OFF, origin, board);
+      const result = await runOn(repo.deps, ['item', 'update', 'B-1', '--field', 'lane=beta']);
+      expect(result.code, result.err).toBe(code);
+      expect(result.err).toContain(reason);
+      expect(repo.commits).toEqual([]);
+      expect(repo.textOf(files.board)).toBe(board);
+    });
+
+    it('item update keeps an existing former-worker mark once when the list is full', async () => {
+      const former = [WORKER, ...full.slice(1)];
+      const board = boardText([itemRecord('B-1', { lane: WORKER, [boardKeys.unassignedFrom]: former })], []);
+      const repo = await nodeOf(OFF, origin, board);
+      const result = await runOn(repo.deps, ['item', 'update', 'B-1', '--field', 'lane=beta']);
+      expect(result.code, result.err).toBe(0);
+      const stored: unknown = JSON.parse(repo.textOf(files.board) ?? 'null');
+      expect(stored).toMatchObject({ items: [{ lane: 'beta', [boardKeys.unassignedFrom]: former }] });
+    });
+
+    it('item move stops with exit 1 and makes no change if the config has a reserved field name', async () => {
+      const board = sampleBoard();
+      const reserved = sampleConfigWithBoard({ ...board, fields: [...(board.fields ?? []), { name: reservedFieldNames[0] ?? '', target: 'item', kind: 'token', required: false }] });
+      const repo = await nodeOf(OFF, origin, START, reserved);
+      const result = await runOn(repo.deps, ['item', 'move', 'B-1', '--stage', mergedStage]);
+      expect(result.code, result.err).toBe(1);
+      expect(result.err).toContain('board.fields.4.name');
+      expect(repo.commits).toEqual([]);
+      expect(repo.textOf(files.board)).toBe(START);
+    });
   });
 });

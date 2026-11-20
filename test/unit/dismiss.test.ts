@@ -13,6 +13,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import { boardKeys, boardTextLimits, dismissWords, files, guardIds, requestDeciders, schemaIds, stateLock, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
+import { installGuard } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { withStateLock } from '../../src/state/state-lock.js';
 import { fetchClone, freeWorker, inboxFilesIn, planDismiss, unpushedReasons, type DismissPlan, type FreeRequest } from '../../src/workers/dismiss.js';
@@ -21,6 +22,7 @@ import { readPanes } from '../../src/workers/panes.js';
 import { readWorkerRecord, writeWorkerRecord } from '../../src/workers/registry.js';
 import type { WorkItem, WorkItemDisplay, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
+import { EMPTY_LOG, EMPTY_WAITING } from '../helpers/board-repo.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { FILE_MONITOR_OFF_WORD, gitHandler, type GitFixture, type GitLog } from '../helpers/git-fake.js';
@@ -2367,6 +2369,26 @@ describe('the guards of dismiss', () => {
   const isFreed = async (made: Made): Promise<boolean> => (await recordState(made, 'alpha')) === 'absent';
 
   describe.each(FOLDER_ORIGINS)('the dismiss guard in %s', (_folder, origin) => {
+    it('dismiss ID --closed keeps a former worker if its item is still open', async () => {
+      const { stateDir } = layoutOf(HOME);
+      const made = await guardedMake({ off: [guardIds.boardEdits] }, origin, { config: sampleConfigWithBoard(), ...AS_COORDINATOR });
+      made.deps.seedDir(join(stateDir, '.git'));
+      expect(await installGuard(made.deps, stateDir, stateDir)).toMatchObject({ ok: true });
+      made.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { lane: 'alpha' }), itemRecord('B-2', { status: 'done', lane: 'alpha' })]));
+      made.deps.seed(join(stateDir, files.waiting), EMPTY_WAITING);
+      made.deps.seed(DECISION_LOG, EMPTY_LOG);
+      const update = captureSink();
+      const code = await runCli(['item', 'update', 'B-1', '--field', 'lane=beta', '--home', HOME], made.deps, update);
+      expect(code, update.errors.join('')).toBe(0);
+      expect(made.deps.files.get(BOARD_FILE)).toContain('"lane": "beta"');
+
+      const result = await runOn(made, ['alpha', '--closed']);
+      expect(result.err).toContain('frees nothing: the open items B-1 carry the unassign mark of the worker alpha');
+      expect(result.code).toBe(4);
+      expect(made.deps.files.get(DECISION_LOG)).toBe(EMPTY_LOG);
+      await expectNothingChanged(made, ['alpha']);
+    });
+
     it.each(guardStatesOf(guardIds.dismiss))('dismiss ID --yes frees a worker whose branch is not on the remote only while the guard counts as off: %s', async (_state, setup, on) => {
       const made = await guardedMake(setup, origin, { git: { remotes: { [cloneOf('web')]: { copies: {} } } } });
       const result = await runOn(made, ['alpha', '--yes']);

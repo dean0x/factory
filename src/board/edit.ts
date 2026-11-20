@@ -532,8 +532,8 @@ export const addItemIn = (doc: BoardDoc, item: NewItem, at: string): CliResult<E
  * removes a worker. An empty value for an item with no worker key is refused as `checkPatch` held it back. An item with no worker key
  * takes a worker, and a patch with the stored value changes nothing. The guard reads the item that was
  * read under the lock, so a worker that arrived after the first look still stops the patch. A stored value of any kind counts, so
- * the guard does not lower for a value that is not text. While the guard of board edits is off in `guards`, a new value replaces the
- * stored worker; an empty value is still refused, because no write holds an empty value.
+ * the guard does not lower for a value that is not text. With the guard off, a replacement keeps the mark of the former worker.
+ * An empty value is still refused, because no write holds an empty value.
  */
 export const changeItemIn = (
   doc: BoardDoc,
@@ -544,22 +544,27 @@ export const changeItemIn = (
 ): CliResult<Edit<string>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
-  if (workerField !== undefined && Object.hasOwn(found.value.record, workerField) && isGuardOn(guards, guardIds.boardEdits)) {
-    const changed = Object.hasOwn(changes.fields, workerField) && changes.fields[workerField] !== found.value.record[workerField];
-    if (changed || changes.emptyWorker !== undefined) return usageError(workerFieldGuard.message(id), workerFieldGuard.remedy(id));
+  const { record } = found.value;
+  const hasWorker = workerField !== undefined && Object.hasOwn(record, workerField);
+  const worker = hasWorker ? record[workerField] : undefined;
+  const replacesWorker = hasWorker && Object.hasOwn(changes.fields, workerField) && changes.fields[workerField] !== worker;
+  if (hasWorker && (replacesWorker || changes.emptyWorker !== undefined) && isGuardOn(guards, guardIds.boardEdits)) {
+    return usageError(workerFieldGuard.message(id), workerFieldGuard.remedy(id));
   }
   if (changes.emptyWorker !== undefined) return changes.emptyWorker;
   if (changes.track !== undefined) {
     const track = requireTrack(doc, changes.track);
     if (!track.ok) return track;
   }
+  const marked = replacesWorker && typeof worker === 'string' ? markFormerWorker(record, id, worker, commandLines.itemUpdate) : ok(record);
+  if (!marked.ok) return marked;
   const entries: [string, unknown][] = [];
   if (changes.title !== undefined) entries.push([boardKeys.title, changes.title]);
   if (changes.track !== undefined) entries.push([boardKeys.track, changes.track]);
   if (changes.text !== undefined) entries.push([boardKeys.text, changes.text]);
   if (changes.epic !== undefined) entries.push([boardKeys.epic, changes.epic]);
   entries.push(...Object.entries(changes.fields));
-  const next = withKeys(found.value.record, entries);
+  const next = withKeys(marked.value, entries);
   return ok({ top: next.changed ? withItem(doc, id, next.record) : null, value: id });
 };
 
@@ -711,6 +716,20 @@ export const formerWorkersOf = (record: Stored, id: string, command: string, res
   );
 };
 
+/** Add the worker to the list once, if the list holds text and has room. */
+const markFormerWorker = (record: Stored, id: string, worker: string, command: string): CliResult<Stored> => {
+  const former = formerWorkersOf(record, id, command, ` ${id}`);
+  if (!former.ok) return former;
+  if (former.value.includes(worker)) return ok(record);
+  if (former.value.length >= markLimits.maxFormerWorkers) {
+    return usageError(
+      `the item ${id} names ${markLimits.maxFormerWorkers} former ${roles.worker}s already, so it takes no more`,
+      `Take a former ${roles.worker} out of the "${boardKeys.unassignedFrom}" of the item in ${files.board}, then run "${commandText(command)} ${id}" again.`,
+    );
+  }
+  return ok({ ...record, [boardKeys.unassignedFrom]: [...former.value, worker] });
+};
+
 /**
  * Take the worker off an item: delete the worker key and add the worker to the list of former workers of the item, once. The state,
  * the stage and every other key stay. A worker field that does not hold text is a usage error (exit 2), and so is a list of former
@@ -727,18 +746,10 @@ export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliR
   if (typeof worker !== 'string') {
     return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}, then run "${again}" again.`);
   }
-  const former = formerWorkersOf(record, id, commandLines.itemUnassign, ` ${id}`);
-  if (!former.ok) return former;
-  const named = former.value.includes(worker);
-  if (!named && former.value.length >= markLimits.maxFormerWorkers) {
-    return usageError(
-      `the item ${id} names ${markLimits.maxFormerWorkers} former ${roles.worker}s already, so it takes no more`,
-      `Take a former ${roles.worker} out of the "${boardKeys.unassignedFrom}" of the item in ${files.board}, then run "${again}" again.`,
-    );
-  }
-  const without = Object.fromEntries(Object.entries(record).filter(([key]) => key !== workerField));
-  const marked = named ? without : withKeys(without, [[boardKeys.unassignedFrom, [...former.value, worker]]]).record;
-  return ok({ top: withItem(doc, id, marked), value: worker });
+  const marked = markFormerWorker(record, id, worker, commandLines.itemUnassign);
+  if (!marked.ok) return marked;
+  const without = Object.fromEntries(Object.entries(marked.value).filter(([key]) => key !== workerField));
+  return ok({ top: withItem(doc, id, without), value: worker });
 };
 
 /**
