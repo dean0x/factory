@@ -105,6 +105,8 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'delegation-record', path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Merges the mode of the local file; delegationReport reads the value and gives the mode that counts.' },
   { row: 'delegation-store-fallback', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
   { row: 'delegation-move', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
+  { row: 'delegation-move', path: 'src/commands/init-existing.ts', symbol: 'approvalsOf', reason: 'Requires registration before the approval flag can set a point. An off value needs a valid list entry.' },
+  { row: 'delegation-move', path: 'src/commands/init-existing.ts', symbol: 'delegationWarnings', reason: 'Reports the end of delegations during registration. An off value needs a valid list entry.' },
   { row: 'delegation-owner-channel', path: 'src/commands/init-approval.ts', symbol: 'ownerCanSet', reason: 'Decides only whether init asks and which points it records; recordApprovals reads the value and counts an off point with no record.' },
   { row: 'delegation-no-flag', path: 'src/commands/init-approval.ts', symbol: 'ownerCanSet', reason: 'Decides only whether init asks and which points it records; recordApprovals reads the value and counts an off point with no record.' },
   { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'requireOwnerChannel', reason: 'The channel check of every owner record; approvalsFromFlags reads the value before it calls it, and the release scope records share it.' },
@@ -1144,6 +1146,9 @@ describe('the text rows of the registry', () => {
         for (const piece of pieces) expect(text, `${row.id}: ${site.path}`).not.toContain(piece);
         if (point !== undefined) expect(text, site.path).toContain(fillTemplate([point.offText]));
       }
+    }
+    for (const piece of pieces) {
+      expect(row.sites.some((site) => (on[site.path] ?? []).some((text) => text.includes(piece))), `${row.id}: ${piece}`).toBe(true);
     }
   });
 

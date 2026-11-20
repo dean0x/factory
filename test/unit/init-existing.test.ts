@@ -991,6 +991,17 @@ describe('init: a moved root, with no entry in the factory list', () => {
     expect(snapshot(deps)).toBe(before);
   });
 
+  it('requires a second run for approval with a matching guard record but no list entry', async () => {
+    const { deps } = moved({}, { ...terminal, prompt: person() });
+    const off = [guardIds.approvalDelegation];
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), off));
+    deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, off, deps.now()));
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', ROOT, '--approval', 'merge=delegated'], deps, sink);
+    expect(code, sink.errors.join('')).toBe(2);
+    expect(sink.errors.join('')).toContain('the points are set in a second run');
+  });
+
   it('refuses the approval flag, because the points are set in a second run', async () => {
     const { deps } = moved({}, terminal);
     const before = snapshot(deps);
