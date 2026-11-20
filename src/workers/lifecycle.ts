@@ -159,16 +159,18 @@ export const checkTargets = async (deps: Deps, request: TargetCheck): Promise<Cl
 /**
  * Asks the proxy of each launch that comes after the stop, before the first stop. A proxy that does not answer, and that the config
  * does not let go direct, would stop the launch after the stop: the check fails first (exit 1), and nothing stops. The answers go
- * into `answers`, so each proxy is asked once for the run, and the launches use the same answer.
+ * into `answers`, so each proxy is asked once for the run, and the launches use the same answer. `guards` are the values of the
+ * launch checks: the launches get the same values, so a proxy that this check does not ask is not asked at the launch either.
  */
 export const requireProxies = async (
   deps: Deps,
   config: FactoryConfig,
   wishes: readonly ProxyWish[],
   answers: ProxyAnswers,
+  guards: GuardValues,
 ): Promise<CliResult<void>> => {
   for (const wish of wishes) {
-    const chosen = await chooseProxy(deps, config, wish, answers);
+    const chosen = await chooseProxy(deps, config, wish, answers, guards);
     if (!chosen.ok) return chosen;
   }
   return ok(undefined);

@@ -19,7 +19,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
-import { GUARD_STORE, guardStoreText, withGuardsOff, withStoreReadFault } from '../helpers/guarded-node.js';
+import { GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, withStoreReadFault } from '../helpers/guarded-node.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
 import { ownSettingsWithRules, seedAcceptedSetup, seedUnacceptedSetup } from '../helpers/role-delivery.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -1699,5 +1699,18 @@ describe('restart: the proxy of the worker', () => {
     expect(error.hint).toContain('factory restart alpha');
     expectNothingStopped(made);
     expect(made.deps.fetched).toHaveLength(1);
+  });
+});
+
+describe.each(['own', 'received'] as const)('restart in an %s root: the guard of the proxy', (origin) => {
+  it.each(guardStatesOf(guardIds.proxy))('stops nothing for a proxy that does not answer only while the guard counts as on, and else starts the worker with that proxy: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const made = await make({ origin, config: withGuardsOff(withProxy(), off), fetch: () => failure('no answer') });
+    if (setup.record !== false) made.deps.seed(GUARD_STORE, guardStoreText(NODE, HOME, off, made.deps.now()));
+    const result = await restart(made, 'alpha');
+    expect(result.ok, result.ok ? undefined : result.error.message).toBe(!on);
+    expect(made.deps.fetched).toHaveLength(on ? 1 : 0);
+    expect(made.deps.terminated).toEqual(on ? [] : [PID.alpha]);
+    if (!on) expect(baseUrlsOf(made).alpha).toBe(PROXY_URL);
   });
 });

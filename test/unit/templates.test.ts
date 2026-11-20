@@ -118,6 +118,7 @@ const textGuardIds = [
   guardIds.deleteGuard,
   guardIds.fileLinkSafety,
   guardIds.permissionMode,
+  guardIds.proxy,
   guardIds.setupText,
 ] as const;
 
@@ -125,6 +126,8 @@ const textGuardIds = [
 const guardedLineStarts: readonly (readonly [string, string])[] = [
   [guardIds.fileLinkSafety, '- Claude Code loads the user rules itself.'],
   [guardIds.permissionMode, '- Run every session in auto permission mode.'],
+  [guardIds.proxy, '- If the proxy does not answer, the launch stops.'],
+  [guardIds.proxy, '- Show only the proxy id and its host and port.'],
   [guardIds.setupText, 'The role text of this session comes only from'],
   [guardIds.setupText, '- Your role text comes only from'],
   [guardIds.installRules, '- Do not install outside'],
@@ -140,8 +143,11 @@ const guardedLineStarts: readonly (readonly [string, string])[] = [
   [guardIds.contextLimits, '- Do not compact or clear yourself.'],
 ];
 
-/** The text at the end of a rendered line that the delete guard removes when it is off. */
-const deleteGuardTail = ' Mark an item closed. Never remove an item from it.';
+/** The text at the end of a rendered line that a guard removes when it is off. Each one ends one line of the layer 1 templates. */
+const guardedLineTails: readonly (readonly [string, string])[] = [
+  [guardIds.deleteGuard, ' Mark an item closed. Never remove an item from it.'],
+  [guardIds.proxy, ' Factory checks the proxy before each launch.'],
+];
 const guardRenderSets: readonly (readonly [string, GuardValues])[] = [
   ['all on', allOn],
   ['all off', Object.fromEntries(textGuardIds.map((id) => [id, guardValues.off]))],
@@ -162,8 +168,8 @@ const guardedBody = (body: string, guards: GuardValues): string =>
   body
     .split('\n')
     .filter((line) => !guardedLineStarts.some(([id, start]) => guards[id] === guardValues.off && line.startsWith(start)))
-    .map((line) =>
-      guards[guardIds.deleteGuard] === guardValues.off && line.endsWith(deleteGuardTail) ? line.slice(0, -deleteGuardTail.length) : line)
+    .map((line) => guardedLineTails.reduce(
+      (text, [id, tail]) => (guards[id] === guardValues.off && text.endsWith(tail) ? text.slice(0, -tail.length) : text), line))
     .map((line) => {
       const point = points.find((candidate) => line.startsWith(`- \`${candidate.id}\` (`));
       if (point === undefined || guards[point.guard] !== guardValues.off) return line;
@@ -175,7 +181,7 @@ it('finds each guarded line and the delete guard text in the layer 1 templates w
   const lines = blockTemplatesFor(blockInput(1, { modes: { ...softwareOwnerModes, merge: 'delegated' as const } }))
     .flatMap((block) => block.body.split('\n'));
   expect(guardedLineStarts.filter(([, start]) => !lines.some((line) => line.startsWith(start)))).toEqual([]);
-  expect(lines.filter((line) => line.endsWith(deleteGuardTail))).toHaveLength(1);
+  for (const [, tail] of guardedLineTails) expect(lines.filter((line) => line.endsWith(tail)), tail).toHaveLength(1);
 });
 
 describe.each([1, 2])('guard values in layer %i templates', (layer) => {

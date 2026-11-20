@@ -1346,6 +1346,31 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard of the machine limits in %s
   });
 });
 
+/** The sample config with a session proxy that stops the launch when it does not answer. */
+const withSessionProxy = (config: FactoryConfig): FactoryConfig => ({
+  ...config,
+  core: {
+    ...config.core,
+    proxies: [{ id: 'local', base_url: PROXY_URL, health: '/health', on_fail: 'stop' }],
+    session: { ...config.core.session, proxy: 'local' },
+  },
+});
+
+describe.each(FOLDER_ORIGINS)('worker new: the guard of the proxy in %s', (_title, origin) => {
+  it.each(guardStatesOf(guardIds.proxy))('stops for a named proxy that does not answer only while the guard counts as on, and else starts the worker with that proxy, with the guard %s', async (_state, setup, on) => {
+    const made = make({
+      ...settingsCheckSetup(setup), config: withSessionProxy(withGuardsOff(sampleConfig(), setup.off ?? [])), origin, fetch: () => failure('no answer'),
+    });
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 1 : 0);
+    expect(sink.errors.join('').includes('does not answer')).toBe(on);
+    expect(made.deps.fetched).toHaveLength(on ? 1 : 0);
+    const split = made.tmux.calls.find((call) => call.args[0] === 'split-window')?.args ?? [];
+    expect(split.some((arg) => arg.includes(`ANTHROPIC_BASE_URL=${PROXY_URL}`))).toBe(!on);
+  });
+});
+
 describe('worker new: a failure after the work copy exists', () => {
   it('keeps the copy and the record when the pane does not start, and names the steps that remove the worker by hand', async () => {
     const made = make({ tmux: { failing: 'split-window' } });

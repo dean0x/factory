@@ -145,11 +145,13 @@ const coreGuards: readonly GuardDefinition[] = [
       [`${keys.root.session}.${keys.session.permissionMode}`],
     ),
   ),
-  guardOf(
-    guardIds.proxy,
-    'Proxy',
-    'A session uses a proxy only when the config names one and the proxy answers.',
-    [`${keys.root.session}.${keys.session.proxy}`, `${keys.root.proxies}[].${keys.proxy.onFail}`],
+  wiredGuard(
+    guardOf(
+      guardIds.proxy,
+      'Proxy',
+      'A session uses a proxy only when the config names one and the proxy answers.',
+      [`${keys.root.session}.${keys.session.proxy}`, `${keys.root.proxies}[].${keys.proxy.onFail}`],
+    ),
   ),
   wiredGuard(
     guardOf(

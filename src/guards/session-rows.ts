@@ -558,7 +558,7 @@ const proxyRows: readonly GuardRow[] = [
     applies: `${commands.start}, ${commands.restart}, ${commands.reboot}, ${commandLines.workerNew}, ${commandLines.workerResume} and recovery`,
     harm: true,
     sites: [
-      ...at('src/workers/launch.ts', 'chooseProxy'),
+      ...at('src/workers/launch.ts', 'proxyHealthOf', 'chooseProxy'),
       ...at('src/safety/proxy.ts', 'checkProxyHealth'),
       ...at('src/workers/lifecycle.ts', 'requireProxies'),
       ...at('src/commands/lifecycle.ts', 'runRestart'),

@@ -197,6 +197,10 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'hold-file-removal', path: 'src/workers/hold.ts', symbol: 'writeHold', reason: 'Calls clearHold for the word none, and clearHold reads the value.' },
   { row: 'machine-warnings', path: 'src/workers/machine.ts', symbol: 'gatherMachine', reason: machineReason },
   { row: 'machine-warnings', path: 'src/workers/machine.ts', symbol: 'machineWarnings', reason: machineReason },
+  { row: 'proxy-down-stops', path: 'src/workers/launch.ts', symbol: 'chooseProxy', reason: 'Passes the values of its caller to proxyHealthOf, which reads the value; its refusal of a proxy id that the config does not define runs with every value.' },
+  { row: 'proxy-down-stops', path: 'src/safety/proxy.ts', symbol: 'checkProxyHealth', reason: 'The one health call of a proxy; proxyHealthOf reads the value and makes no call while the guard is off.' },
+  { row: 'proxy-down-stops', path: 'src/workers/lifecycle.ts', symbol: 'requireProxies', reason: 'Passes the values of its caller to chooseProxy, and proxyHealthOf reads the value.' },
+  { row: 'proxy-down-stops', path: 'src/commands/lifecycle.ts', symbol: 'runRestart', reason: 'Passes the values of its launch checks to requireProxies and to the launch, and proxyHealthOf reads the value.' },
   { row: 'machine-warnings', path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'The bounds of the limit values in the config parse, which reads no guard value; makeWorker reads the value.' },
 ];
 
@@ -301,7 +305,7 @@ describe('the guards of a recipe', () => {
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
       guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.permissionMode, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
       guardIds.setupText, guardIds.installRules, 'approval-merge', 'approval-release',
     ]);
   });
@@ -1269,7 +1273,7 @@ describe('the text rows of the registry', () => {
     'worker-idle-text': ['that the worker is idle.'],
     'permission-mode-text': ['Run every session in auto permission mode. Never skip permissions.'],
     'proxy-from-config-text': ['Use a proxy only when', 'clears a stray'],
-    'proxy-down-text': ['If the proxy does not answer, the launch stops.'],
+    'proxy-down-text': ['If the proxy does not answer, the launch stops.', 'checks the proxy before each launch.'],
     'proxy-display-text': ['Show only the proxy id and its host and port.'],
     'pr-watch-text': ['Exit 0 is not an approval.'],
     'record-after-merge-text': ['After the owner gives the go and the PR is merged, run'],

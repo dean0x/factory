@@ -1112,6 +1112,31 @@ describe.each(FOLDER_ORIGINS)('start in %s: the guard of the permission mode', (
   });
 });
 
+describe.each(FOLDER_ORIGINS)('start in %s: the guard of the proxy', (_folder, origin) => {
+  it.each(guardStatesOf(guardIds.proxy))('stops for a named proxy that does not answer only while the guard counts as on, and else starts with that proxy: %s', async (_state, setup, on) => {
+    const off = setup.off ?? [];
+    const config = withGuardsOff(withProxy('stop'), off);
+    const { deps, tmux } = make({ origin, config, fetch: silent });
+    if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--home', HOME], deps, sink), sink.errors.join('')).toBe(on ? 1 : 0);
+    expect(deps.fetched).toHaveLength(on ? 1 : 0);
+    const launch = tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
+    expect(launch.includes(`ANTHROPIC_BASE_URL=${PROXY_URL}`)).toBe(!on);
+  });
+
+  it('starts with the named proxy and asks it nothing while the guard is off, also when the config allows a direct launch', async () => {
+    const config = withGuardsOff(withProxy('direct'), [guardIds.proxy]);
+    const { deps, tmux } = make({ origin, config, fetch: silent });
+    deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, [guardIds.proxy], deps.now()));
+    const sink = captureSink();
+    expect(await runCli([commands.start, '--home', HOME], deps, sink), sink.errors.join('')).toBe(0);
+    expect(deps.fetched).toEqual([]);
+    expect(tmux.calls.find((call) => call.args[0] === 'new-session')?.args).toContain(`ANTHROPIC_BASE_URL=${PROXY_URL}`);
+    expect(deps.warned.filter((line) => line.includes('starts without a proxy'))).toEqual([]);
+  });
+});
+
 describe.each(FOLDER_ORIGINS)('start in %s: the guard of setup and role text', (_folder, origin) => {
   it.each(guardStatesOf(guardIds.setupText))('stops for setup text that the owner did not accept only while the guard counts as on: %s', async (_state, setup, on) => {
     const off = setup.off ?? [];

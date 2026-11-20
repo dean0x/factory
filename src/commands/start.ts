@@ -142,6 +142,7 @@ const planStart = async (
   home: string,
   config: FactoryConfig,
   answers: ProxyAnswers,
+  guards: GuardValues,
 ): Promise<CliResult<StartPlan>> => {
   const { coordinatorDir, stateDir } = layoutOf(home);
   // The slot pane starts this program. A path that is not known gives no pane that works, and a made-up path starts another program.
@@ -149,7 +150,7 @@ const planStart = async (
   if (programFile === undefined) {
     return failure(`${program} does not know the path of its own program, so it cannot start the board pane`);
   }
-  const proxy = await chooseProxy(deps, config, sessionProxyWish(config), answers);
+  const proxy = await chooseProxy(deps, config, sessionProxyWish(config), answers, guards);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
   const projects = await presentProjects(deps, home, recipe.projects);
@@ -265,7 +266,7 @@ export const startAgain = async (
   answers: ProxyAnswers,
   guards: GuardValues,
 ): Promise<CliResult<RestartedSession>> => {
-  const plan = await planStart(deps, home, config, answers);
+  const plan = await planStart(deps, home, config, answers, guards);
   if (!plan.ok) return plan;
   const started = await startSession(deps, config.core.node.id, plan.value.steps);
   if (!started.ok) return started;
@@ -606,7 +607,7 @@ export const runStart = async (
   }
   // A session that runs already starts nothing, so it needs no proxy check and no launch. The run asks each proxy once.
   const answers = newProxyAnswers();
-  const plan = exists ? null : await planStart(deps, home, loaded.value, answers);
+  const plan = exists ? null : await planStart(deps, home, loaded.value, answers, guards.values);
   if (plan !== null && !plan.ok) return plan;
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
