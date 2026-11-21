@@ -135,7 +135,7 @@ Every guard stays on. Run "factory guard set --all off" to turn the guards off.
 If the record write fails, `init` keeps the files, exits with code 1 and leaves every guard on. When all 29 local values are `off` with no matching records, the `doctor` guard check includes:
 
 ```text
-29 off values have no owner record. Run "factory guard set --all off" to turn the guards off.
+29 off values do not take effect. Run "factory guard set --all off" to turn the guards off.
 ```
 
 The first `factory start` with a matching record renders intact current blocks again to match the effective values. When all 29 settable guards are off, the notice and summary are:

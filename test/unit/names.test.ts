@@ -821,8 +821,6 @@ describe('the old words and the jargon words in the text of the source', () => {
     literalsOf(source)
       .filter((literal) => !PATH_LITERAL.test(literal))
       .filter((literal) => path !== NAMES_FILE || !(OLD_LAYOUT_NAMES.has(literal) || DISK_NAMES.has(literal)))
-      // The guard check uses this sentence for the one remedy that applies to all unmatched off values.
-      .filter((literal) => path !== NAMES_FILE || literal.trim() !== 'values have no owner record.')
       .flatMap((literal) => plainWordsIn(literal).map((word) => `${relative(SRC, path)}: "${literal}" holds ${word}`));
 
   it('scans every folder that prints text, and the top files of src', () => {

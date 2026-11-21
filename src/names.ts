@@ -2562,7 +2562,7 @@ export const guardStartWords = {
   directProxy: (key: string): string => `direct proxy ${key}`,
   unmatched: (id: string): string => `unmatched ${id}`,
   confirmOff: `Run "${commandText(commandLines.guardSet)} --all ${guardValues.off}" to turn the guards off.`,
-  unmatchedOff: (count: number): string => `${guardStartWords.off(count)} values have no owner record. ${guardStartWords.confirmOff}`,
+  unmatchedOff: (count: number): string => `${guardStartWords.off(count)} values do not take effect.`,
   init: (count: number, marked: readonly string[]): string => {
     const label = `${guardStartWords.prefix} ${guardStartWords.off(count)};`;
     const remedy = `Run "${commandText(commandLines.guardSet)} <id> ${guardValues.on}" to turn one on.`;

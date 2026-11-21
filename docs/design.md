@@ -1481,7 +1481,7 @@ The default view has at most 20 lines, with at most 17 guard lines. A more line 
 
 Each JSON guard gives its effective `value`, its `source`, its record time in `since`, and whether it is `settable`. The `settable` field is `true` for every guard that is not fixed. The source of a fixed guard is always `fixed`, also when a file holds a key for it or the config does not load. The JSON `error` field is `null` when the config loads; otherwise, it holds the load error. The list reads the guard store only when a local value of a settable guard is off. An unreadable store gives one warning, keeps all guards on and leaves the exit code at 0.
 
-Doctor gives one `guards` check with the counts of off guards and off `H` guards. It also names each direct proxy and unmatched local guard value. If every settable guard has an unmatched local `off`, doctor gives one warning and names `factory guard set --all off`. Its JSON output gives the record time of each off guard.
+Doctor gives one `guards` check with the counts of off guards and off `H` guards. It also names each direct proxy and unmatched local guard value. If every settable guard has an unmatched local `off`, doctor gives one warning. It names `factory guard set --all off` only after it can check the config and the store. Its JSON output gives the record time of each off guard.
 
 The check counts store records across all nodes. It warns at 900 records and fails at the cap of 1,000 records. The store keeps records of moved or removed folders; it has no automatic pruning. Doctor names the store file to move away to clear the cap. This step turns every guard on and removes the prefix records of every node. Start prints one summary line when it has a value or notice to show.
 

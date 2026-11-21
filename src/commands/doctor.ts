@@ -938,7 +938,8 @@ const checkGuards = async (
   const settable = definitions.filter((guard) => !guard.fixed);
   const unmatched = new Set(state.unmatched);
   if (unmatched.size > 0 && settable.every(({ id }) => unmatched.has(id) && config.value.core.guards[id] === 'off')) {
-    warnings.push(guardStartWords.unmatchedOff(unmatched.size));
+    const note = guardStartWords.unmatchedOff(unmatched.size);
+    warnings.push(state.fault === null && state.proof === null ? `${note} ${guardStartWords.confirmOff}` : note);
   } else {
     for (const guard of unmatched) warnings.push(`${guardStartWords.unmatched(guard)}: run "${commandText(commandLines.guardSet)} ${guard} on"`);
   }

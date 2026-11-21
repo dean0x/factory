@@ -188,11 +188,14 @@ describe('doctor: shared guard state', () => {
     return checks[0];
   };
 
-  it('gives one remedy for all off values left by init without a record', async () => {
+  it.each([false, true])('gives one remedy for all unmatched off values, with a prior on record: %s', async (prior) => {
     const deps = await initialized();
+    if (prior) deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: { 'install-rules': { value: 'on', at: deps.now().toISOString() } },
+    }] }));
     const found = await guardCheck(deps);
     expect(found).toMatchObject({ level: 'warn' });
-    expect(found?.text).toContain('29 off values have no owner record. Run "factory guard set --all off" to turn the guards off.');
+    expect(found?.text).toContain('29 off values do not take effect. Run "factory guard set --all off" to turn the guards off.');
     expect(found?.text.match(/factory guard set --all off/g) ?? []).toHaveLength(1);
     expect(found?.text).not.toMatch(/unmatched [a-z]+-/);
     expect(found?.text).toContain('0 off; 0 with H');
@@ -319,6 +322,8 @@ describe('doctor: shared guard state', () => {
     const found = await guardCheck(deps);
     expect(found?.level).toBe('fail');
     expect(found?.text).toContain(STORE);
+    expect(found?.text).toContain('29 off values do not take effect.');
+    expect(found?.text).not.toContain('factory guard set --all off');
     expect(found?.text).toContain('move the file away');
     expect(found?.text).toContain('every guard on');
     expect(found?.text).toContain('prefix records of every node');
