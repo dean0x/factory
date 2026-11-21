@@ -1404,11 +1404,11 @@ A missing guard key means `on`. For a new node in its own folder or a received f
 
 `init` does its checks and asks for hook consent as if every guard is on. It has no effective guard values for the new node yet. It also renders the all-on managed text. It writes the local values, saves the hook settings if the owner gives consent, then records every local guard value and the owner prefix in one write. The same rule applies with or without `--yes`. There is no additional guard question. The approval mode question stays.
 
-The record write needs the owner channel: terminal input and output outside factory and Claude Code sessions. This requirement helps prevent mistakes. It is not proof of who owns the terminal. In that channel, `init` removes any earlier record for the same node id and folder before it starts clones or writes node files. If `init` cannot read the store or remove the record, it stops with code 1 before it changes any node files.
+To write the record, use terminal input and output outside factory and Claude Code sessions. This requirement helps prevent mistakes. It does not prove who owns the terminal. In that terminal window, `init` removes any earlier record for the same node id and folder before it starts clones or writes node files. If `init` cannot read the store or remove the record, it stops with code 1 before it changes any node files.
 
 If the final record write fails, `init` keeps both config files and exits with code 1. Without a matching record, every guard stays on.
 
-Without that channel, `init` checks the store before the first clone. If it cannot open or read the store, it exits with code 1. If the store has a record for the same node id and folder, `init` exits with code 1. To replace that record, run `factory init` again in a terminal window outside a session.
+Without that terminal window, `init` checks the store before the first clone. If it cannot open or read the store, it exits with code 1. If the store has a record for the same node id and folder, `init` exits with code 1. To replace that record, run `factory init` again in a terminal window outside a session.
 
 If the check passes, `init` saves the local values but not the record. Every guard stays on, and `init` names `factory guard set --all off`. When no record matches the local values, `doctor` reports the unmatched values.
 
@@ -1456,7 +1456,7 @@ All integrity checks still run. The guards `clone-rules`, `hook-runtime` and `la
 - `hook-runtime`: the rows set the exit code of the hook and what it does with no factory folder. They choose the session that the hook acts for, and they bound the run and the output of the status line.
 - `launch-commands`: the rows build and bound the commands that factory runs. They set the fixed arguments, the clean environment and the accepted values of a launch, and the config accepts only Claude Code as the agent. They also run each child program with no shell, quote each word for tmux and limit the shell text of a summon timer. The launch folder checks refuse only folders that the record of a worker, the config and the fixed folders of the factory folder refuse too. The link stop of the work copy keeps each launch in a work copy with no link. A path that matches the record of the worker can still lead through a link.
 
-**Set a guard.** Run `factory guard set ID on|off` to change one guard. Run `factory guard set --all on|off` to change every guard that is not fixed. The command writes the selected local values and their owner records. It keeps all other values and records.
+**Set a guard.** Run `factory guard set ID on|off` to change one guard. Run `factory guard set --all on|off` to change every guard that is not fixed. The command writes the selected local values and updates the guard record for the node. It keeps all other values and records.
 
 Run the command in a terminal window outside factory and Claude Code sessions. Both input and output must be terminals. For `off`, the command lists the selected guards and their `H` marks, then asks for consent. The default answer is no. A code check follows the new value at the next command. The role text changes at the next `start` or `upgrade`. Neither `guard set` nor `guard confirm` accepts `--json`; `--family` applies to `guard list` only.
 
@@ -1588,7 +1588,7 @@ What the CLI must not assume:
 
 ## 6. Safety defaults
 
-A new node starts with the optional guards off if the local values have an owner record and no shared `on` applies (§4.16). Fixed guards and always-on rows still apply. A rule can have text in the managed blocks or role templates, a check in code, or both. The tables describe these rules when they apply, not the state of a new node. The first table holds rules for every factory. The second table holds rules for the software recipe.
+A new node starts with the optional guards off if the local values have a matching guard record and no shared `on` applies (§4.16). Fixed guards and always-on rows still apply. A rule can have text in the managed blocks or role templates, a check in code, or both. The tables describe these rules when they apply, not the state of a new node. The first table holds rules for every factory. The second table holds rules for the software recipe.
 
 **Rules for every factory**
 

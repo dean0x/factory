@@ -269,7 +269,7 @@ Pull requests and the role lines
 
 Guards
 
-- **Breaking change:** A new node starts with every guard that is not fixed off, subject to shared `on` values and a matching owner record. An existing node keeps its values.
+- **Breaking change:** A new node starts with every guard that is not fixed off if the values have a matching guard record. Shared `on` values still apply. An existing node keeps its values.
 - `factory guard list` shows 32 guards: 29 settable, 3 fixed and 28 with `H`. The registry has 177 rows that always apply. `--all` shows every guard. `--family NAME` shows the rows of one guard. `--json` prints every guard and row, with record times and the `settable` field. The list only reads.
 - The local key `guards` in `factory.local.yaml` accepts `on` or `off`. The shared key `shared_guards` in `factory.yaml` accepts `on` only. A shared `on` keeps the guard on. A missing key means `on`.
 - For a new node, `init` writes `off` with one comment for each guard that is not fixed. It saves those values and the owner prefix in one record after the files and hook settings. The record needs terminal input and output outside factory and Claude Code sessions. In that channel, `init` removes any earlier record for the same node id and folder before clones or node file writes. If `init` cannot read the store or remove the record, it stops before it changes node files. `init` uses all guards for its checks, hook consent and managed blocks. It asks no extra guard question.
