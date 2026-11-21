@@ -173,7 +173,7 @@ factory init
 
 In a terminal window, `factory init` shows the factory folder that it proposes and asks you to confirm. For a project repo, the proposal is a folder beside the repo, for example `~/work/web-factory`. The command clones the project repo into that folder.
 
-The command also asks for the mode of each approval point. Keep the default, `owner`. Then the work waits for you. After its last write, the command shows a change to the Claude Code settings of the coordinator and asks. Read the change, then answer.
+The command also asks for the mode of each approval point. Keep the default, `owner`. This mode makes the work wait for you if you turn on the guard for that point. The command shows a change to the Claude Code settings of the coordinator and asks for consent. Read the change, then answer. A new factory starts with the guards off unless they are fixed. Read [Guards](../README.md#guards) to decide which guards to turn on.
 
 Place: the factory folder.
 
