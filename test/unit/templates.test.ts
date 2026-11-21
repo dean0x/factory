@@ -239,67 +239,41 @@ it.each([1, 2])('removes the resume and routine instructions from layer %i when 
   expect(role).toContain('The context limits are in');
 });
 
-it('keeps the base text and block versions when every guard is on', () => {
-  expect(
-    [1, 2].map((layer) =>
-      blockTemplatesFor(withGuards(layer, allOn)).map(({ name, version, target, body }) => ({
-        name,
-        version,
-        target,
-        hash: createHash('sha256').update(body).digest('hex'),
-      })),
-    ),
-  ).toMatchInlineSnapshot(`
-    [
+// The coordinator and safety hashes follow the merge and release modes.
+it.each([
+  [owner, owner,
+    '6f211fb5bc46792a3bcb7914ef7a47ae10003df6077049042d5733dc75fbdfd3',
+    '03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41'],
+  [delegated, owner,
+    '90505aa1c74c725ec602d8ce2442139faca3fbb9c6a5d2b5a1c23b13d7ca341d',
+    'e9ac704b9a1d2d27a1383df7510d755705ca7910d1fab2518a1ed5c7ed53973c'],
+  [owner, delegated,
+    'caee2bb290fb592955669d50e09f7095f3bb1a47578ec695d7563e4e2b26238a',
+    '43142523d806d9c7634e6a482661f055ae420e4406312fe93924ed4de187c59d'],
+  [delegated, delegated,
+    '1907692355165569ed67020659eed9929e58f08d663cda95a508ffaeea33b7f2',
+    '951bcfac48d42deb37a270018c26164a233b8fa7eeb7314238336f4db18dad59'],
+] as const)('keeps the base text and block versions with merge %s and release %s when every guard is on',
+  (merge, release, coordinatorHash, safetyHash) => {
+    const blocks = [1, 2].map((layer) =>
+      blockTemplatesFor(blockInput(layer, { modes: { merge, release }, guards: allOn }))
+        .map(({ name, version, target, body }) => [name, version, target, createHash('sha256').update(body).digest('hex')]),
+    );
+    expect(blocks).toEqual([
       [
-        {
-          "hash": "6f211fb5bc46792a3bcb7914ef7a47ae10003df6077049042d5733dc75fbdfd3",
-          "name": "coordinator",
-          "target": "claudeFile",
-          "version": 9,
-        },
-        {
-          "hash": "03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41",
-          "name": "safety",
-          "target": "claudeFile",
-          "version": 2,
-        },
-        {
-          "hash": "3eeed8b66b1b2fa0d093e01fb1cfc7acf24cd1cc1357adad2ae141666fe30261",
-          "name": "work-rules",
-          "target": "claudeFile",
-          "version": 1,
-        },
-        {
-          "hash": "efd421639502a2c494bf8f5a4b40adb739b7a20517b3446845d0184c198c78cf",
-          "name": "worker",
-          "target": "workerFile",
-          "version": 5,
-        },
+        ['coordinator', 9, 'claudeFile', coordinatorHash],
+        ['safety', 2, 'claudeFile', safetyHash],
+        ['work-rules', 1, 'claudeFile', '3eeed8b66b1b2fa0d093e01fb1cfc7acf24cd1cc1357adad2ae141666fe30261'],
+        ['worker', 5, 'workerFile', 'efd421639502a2c494bf8f5a4b40adb739b7a20517b3446845d0184c198c78cf'],
       ],
       [
-        {
-          "hash": "1fc751e1a1500e3673b8c7056c0ba9b8f6592f3da039bc19784ca7d164bf489b",
-          "name": "manager",
-          "target": "claudeFile",
-          "version": 4,
-        },
-        {
-          "hash": "03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41",
-          "name": "safety",
-          "target": "claudeFile",
-          "version": 2,
-        },
-        {
-          "hash": "55d529e35e679f212fe67dc5b934b9c938b74130ff07f6c13ae88ecf1b6f0214",
-          "name": "worker",
-          "target": "workerFile",
-          "version": 5,
-        },
+        ['manager', 4, 'claudeFile', '1fc751e1a1500e3673b8c7056c0ba9b8f6592f3da039bc19784ca7d164bf489b'],
+        ['safety', 2, 'claudeFile', safetyHash],
+        ['worker', 5, 'workerFile', '55d529e35e679f212fe67dc5b934b9c938b74130ff07f6c13ae88ecf1b6f0214'],
       ],
-    ]
-  `);
-});
+    ]);
+  },
+);
 
 it('keeps the exported all-on lines for the worker and work rules', () => {
   const templates = blockTemplatesFor(withGuards(1, allOn));
