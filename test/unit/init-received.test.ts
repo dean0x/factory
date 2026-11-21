@@ -168,6 +168,17 @@ describe('init: the owner prefix of a received factory', () => {
     expect((await readGuardState(deps, ROOT, loaded.value, 'always')).values).toMatchObject({ proxy: 'on', 'install-rules': 'off' });
   });
 
+  it('prints a count even when only one guard with H is off', async () => {
+    const sample = sampleConfig();
+    const shared_guards = Object.fromEntries(guardsFor(sample.entry)
+      .filter(({ fixed, id }) => !fixed && id !== 'install-rules').map(({ id }) => [id, 'on' as const]));
+    const { deps } = received({ config: { ...sample, core: { ...sample.core, shared_guards } } }, terminal);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(linesOf(result).split('\n').filter((line) => line.startsWith('Guards:'))).toEqual([
+      'Guards: 1 off; 1 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
+    ]);
+  });
+
   it('keeps every guard on and keeps both config files when the record lacks the prefix field', async () => {
     const { deps } = received({}, terminal);
     const before = JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT,

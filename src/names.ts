@@ -2563,13 +2563,9 @@ export const guardStartWords = {
   unmatched: (id: string): string => `unmatched ${id}`,
   confirmOff: `Run "${commandText(commandLines.guardSet)} --all ${guardValues.off}" to turn the guards off.`,
   unmatchedOff: (count: number): string => `${guardStartWords.off(count)} values do not take effect.`,
-  init: (count: number, marked: readonly string[]): string => {
-    const label = `${guardStartWords.prefix} ${guardStartWords.off(count)};`;
-    const remedy = `Run "${commandText(commandLines.guardSet)} <id> ${guardValues.on}" to turn one on.`;
-    const names = `${label} ${harmMark}: ${marked.join(', ')}. ${remedy}`;
-    if (marked.length > 0 && names.length <= maxDisplayWidth) return names;
-    return `${label} ${guardStartWords.harm(marked.length)} (see "${commandText(commandLines.guardList)}"). ${remedy}`;
-  },
+  init: (count: number, marked: number): string =>
+    `${guardStartWords.prefix} ${guardStartWords.off(count)}; ${guardStartWords.harm(marked)} ` +
+    `(see "${commandText(commandLines.guardList)}"). Run "${commandText(commandLines.guardSet)} <id> ${guardValues.on}" to turn one on.`,
   noPrefixRecord: 'owner prefix has no record',
   prefixMismatch: 'owner prefix differs from its record',
 } as const;

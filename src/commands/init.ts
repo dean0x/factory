@@ -1041,7 +1041,7 @@ export const recordInitGuards = async (deps: Deps, plan: InitPlan): Promise<CliR
   if (!written.ok) return failure(`The files stay, but the guard record could not be written: ${written.error.message}`, `${confirm} ${offRemedy}`);
   const off = guards.filter(({ id }) => core.shared_guards[id] !== guardValues.on);
   return ok({
-    lines: [{ level: 'text', text: guardStartWords.init(off.length, off.filter(({ harm }) => harm).map(({ id }) => id)) }],
+    lines: [{ level: 'text', text: guardStartWords.init(off.length, off.filter(({ harm }) => harm).length) }],
     warnings: written.value.warning === null ? [] : [written.value.warning],
   });
 };
