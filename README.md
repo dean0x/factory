@@ -126,9 +126,9 @@ Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id
 
 If only `setup-text` stays on, the line shows `28 off; 27 with H`.
 
-In that terminal channel, `init` removes any earlier record for the same node id and folder before it starts clones or writes node files. If `init` cannot read the store or remove the record, it stops with code 1 before it changes any node files.
+In that terminal channel, `init` removes any earlier record for the same node id and folder. It includes paths in other letter case that name the same folder. It does this before it starts clones or writes node files. If `init` cannot read the store, remove the record or remove the store lock, it exits with code 1.
 
-Without that terminal channel, `init` checks the guard store before the first clone. If it cannot open or read the store, it exits with code 1. If the store has a record for the same node id and folder, `init` exits with code 1. To replace that record, run `factory init` again in a terminal window outside a session.
+Without that terminal channel, `init` checks the guard store before the first clone. If it cannot open or read the store, it exits with code 1. It also exits with code 1 if the store has a record for the same node id and folder. If neither path exists and they differ only in letter case, `init` also stops. Run `factory init` again in a terminal window outside a session.
 
 If the check passes, `init` writes the local values but no record. It prints this warning:
 

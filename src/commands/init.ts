@@ -1107,11 +1107,17 @@ export const runInit = async (
   const idleCompaction = values.defaultIdleCompaction;
   const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;
-  const cleared = await clearInitGuardRecord(deps, { root: home, node: checked.value.id });
-  if (!cleared.ok) return cleared;
-  // Git makes the folders above a clone by itself. This run makes the root and its parents first, so that the undo can
-  // remove them.
-  const parents = projects.value.some((project) => !project.present) ? await makeRootFolders(deps, home) : ok([]);
+  let madeForClear: readonly string[] = [];
+  const cleared = await clearInitGuardRecord(deps, { root: home, node: checked.value.id }, files.config, async () => {
+    const made = await makeRootFolders(deps, home);
+    if (!made.ok) return made;
+    madeForClear = made.value;
+    return ok(undefined);
+  });
+  if (!cleared.ok) return undoClones(deps, [], madeForClear, cleared.error);
+  // Make the folders before git clones, so the undo can remove them.
+  const parents = madeForClear.length === 0 && projects.value.some((project) => !project.present)
+    ? await makeRootFolders(deps, home) : ok(madeForClear);
   if (!parents.ok) return parents;
   const cloned = await runClones(deps, projects.value, parents.value);
   if (!cloned.ok) return cloned;
@@ -1127,11 +1133,7 @@ export const runInit = async (
   const guards = await recordInitGuards(deps, plan.value);
   if (!guards.ok) return guards;
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
-  const clearWarning = cleared.value?.warning ?? null;
-  const warnings = [
-    ...plan.value.warnings, ...(clearWarning === null ? [] : [clearWarning]),
-    ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings, ...notes,
-  ];
+  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings, ...notes];
 
   const written = [
     files.config,

@@ -282,6 +282,39 @@ describe('init in an own folder: the owner prefix record', () => {
     expect(snapshot(deps)).toBe(before);
   });
 
+  it('stops before clones when the clear leaves the store lock', async () => {
+    const { deps, log } = setup(source, terminal);
+    deps.seedDir(project);
+    deps.seed(store, guardStoreText('node', HOME, [guardIds.installRules], deps.now()));
+    const used = withFailingRemoves(deps, (path) => path === `${store}.lock`);
+    const sink = captureSink();
+    const args = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--yes', '--project', project];
+    expect(await runCli(args, used, sink)).toBe(1);
+    expect(sink.errors.join('')).toBe('error: The earlier guard record was removed, but the guard store lock remains.\nRun "factory doctor".\n');
+    expect(log.clones()).toEqual([]);
+    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
+    expect(await readGuardStore(deps, store)).toEqual(ok([]));
+    expect(deps.files.has(`${store}.lock`)).toBe(true);
+  });
+
+  it('keeps the completed node record when a second init reaches the clear', async () => {
+    const { deps } = setup({}, terminal);
+    deps.seed(store, guardStoreText('node', HOME, [guardIds.installRules], deps.now()));
+    let completedRecord: string | undefined;
+    const second: Deps = { ...deps, fs: { ...deps.fs, writeTextExclusive: async (path, text, mode) => {
+      if (path === `${store}.lock` && completedRecord === undefined) {
+        expect((await runInit(deps, options())).ok).toBe(true);
+        completedRecord = deps.files.get(store);
+      }
+      return deps.fs.writeTextExclusive(path, text, mode);
+    } } };
+    const result = await runInit(second, options());
+    expect(completedRecord).toBeDefined();
+    expect(deps.files.get(store)).toBe(completedRecord);
+    expect(messageOf(result)).toContain('factory.yaml already exists');
+    expect(messageOf(result)).toContain('factory doctor');
+  });
+
   it('exits zero and prints the warning when the prefix record is saved but its lock stays', async () => {
     const { deps } = setup({}, terminal);
     const sink = captureSink();

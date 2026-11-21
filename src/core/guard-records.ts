@@ -1,4 +1,4 @@
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { sha256Hex } from '../blocks/managed.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
@@ -191,17 +191,48 @@ const guardPlaceOf = async (deps: Deps, root: string, newRoot = false): Promise<
   return ok({ root: real.value, path: place.path });
 };
 
+interface InitRecordMatches {
+  readonly matches: ReadonlySet<GuardRecord>;
+  readonly needsFolder: boolean;
+}
+
+const initRecordsOf = async (
+  deps: Deps, { node, root }: RecordPlaceInput, records: readonly GuardRecord[],
+): Promise<CliResult<InitRecordMatches>> => {
+  const key = recordKey(node, root);
+  const matches = new Set(records.filter((record) => recordKey(record.node, record.root) === key));
+  const folded = foldedRecordsOf(records, node, root).filter((record) => record.root.toLowerCase() === root.toLowerCase());
+  if (folded.length === 0) return ok({ matches, needsFolder: false });
+  const target = await deps.fs.lstat(root);
+  if (!target.ok) return target;
+  let needsFolder = false;
+  for (const record of folded) {
+    const entry = await deps.fs.lstat(record.root);
+    if (!entry.ok) return entry;
+    if (entry.value === 'dir') {
+      const real = await deps.fs.realpath(record.root);
+      if (!real.ok) return real;
+      if (real.value === root) matches.add(record);
+    }
+    if (entry.value === null && target.value === null) needsFolder = true;
+  }
+  return ok({ matches, needsFolder });
+};
+
 const initGuardStoreOf = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<{
   readonly path: string;
-  readonly key: string;
-  readonly records: readonly GuardRecord[];
+  readonly root: string;
+  readonly hasPrior: boolean;
+  readonly needsFolder: boolean;
 }>> => {
   const place = await guardPlaceOf(deps, input.root, true);
   if (!place.ok) return place;
   const { path, root } = place.value;
   if (path === null) return failure(guardRecordWords.noPlace);
   const records = await readGuardStore(deps, path);
-  return records.ok ? ok({ path, key: recordKey(input.node, root), records: records.value }) : failure(records.error);
+  if (!records.ok) return failure(records.error);
+  const prior = await initRecordsOf(deps, { node: input.node, root }, records.value);
+  return prior.ok ? ok({ path, root, hasPrior: prior.value.matches.size > 0, needsFolder: prior.value.needsFolder }) : prior;
 };
 
 /** Without an owner channel, init needs a readable store with no record for the new node. */
@@ -209,21 +240,42 @@ export const checkInitGuardRecord = async (deps: Deps, input: RecordPlaceInput):
   if (requireGuardChannel(deps, commands.init).ok) return ok(undefined);
   const store = await initGuardStoreOf(deps, input);
   if (!store.ok) return store;
-  const { key, records } = store.value;
-  return records.some(({ root, node }) => recordKey(node, root) === key)
+  return store.value.hasPrior || store.value.needsFolder
     ? failure(guardRecordWords.priorRecord, guardRecordWords.priorRecordRemedy) : ok(undefined);
 };
 
 /** In the owner channel, remove an earlier record before init saves any node files. */
-export const clearInitGuardRecord = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<GuardRecordWrite | null>> => {
-  if (!requireGuardChannel(deps, commands.init).ok) return ok(null);
-  const store = await initGuardStoreOf(deps, input);
+export const clearInitGuardRecord = async (
+  deps: Deps, input: RecordPlaceInput, config: typeof files.config | typeof files.localConfig,
+  makeHome?: () => Promise<CliResult<void>>,
+): Promise<CliResult<void>> => {
+  if (!requireGuardChannel(deps, commands.init).ok) return ok(undefined);
+  let store = await initGuardStoreOf(deps, input);
   if (!store.ok) return store;
-  const { path, key, records } = store.value;
-  const matches = (record: GuardRecord): boolean => recordKey(record.node, record.root) === key;
-  if (!records.some(matches)) return ok(null);
-  const written = await changeGuardStore(deps, path, (current) => ok(current.filter((record) => !matches(record))));
-  return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
+  // The file system must resolve both spellings before init removes a record in other letter case.
+  if (store.value.needsFolder && makeHome !== undefined) {
+    const made = await makeHome();
+    if (!made.ok) return made;
+    store = await initGuardStoreOf(deps, input);
+    if (!store.ok) return store;
+  }
+  const { path, root, hasPrior, needsFolder } = store.value;
+  if (needsFolder) return failure(`The folder ${input.root} does not exist. Run "${commandText(commands.init)}" again.`);
+  if (!hasPrior) return ok(undefined);
+  const written = await changeGuardStore(deps, path, async (current) => {
+    const existing = await deps.fs.lstat(join(input.root, config));
+    if (!existing.ok) return err(existing.error.message);
+    if (existing.value !== null) return err(`${config} already exists in ${input.root}`);
+    const prior = await initRecordsOf(deps, { node: input.node, root }, current);
+    if (!prior.ok) return err(prior.error.message);
+    if (prior.value.needsFolder) return err(`The folder ${input.root} does not exist.`);
+    return ok(current.filter((record) => !prior.value.matches.has(record)));
+  });
+  if (!written.ok) return failure(guardRecordWords.writeFault(written.error));
+  return written.value.warning === null ? ok(undefined) : failure(
+    'The earlier guard record was removed, but the guard store lock remains.',
+    `Run "${commandText(commands.doctor)}".`,
+  );
 };
 
 export interface GuardChange {

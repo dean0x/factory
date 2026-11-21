@@ -546,7 +546,7 @@ export const runReceived = async (
     ],
   });
   if (!planned.ok) return planned;
-  const cleared = await clearInitGuardRecord(deps, { root: home, node: id });
+  const cleared = await clearInitGuardRecord(deps, { root: home, node: id }, files.localConfig);
   if (!cleared.ok) return cleared;
 
   const cloned = await runClones(deps, projects.value.planned, []);
@@ -559,11 +559,7 @@ export const runReceived = async (
   const guards = await recordInitGuards(deps, planned.value);
   if (!guards.ok) return guards;
 
-  const clearWarning = cleared.value?.warning ?? null;
-  const warnings = [
-    ...planned.value.warnings, ...(clearWarning === null ? [] : [clearWarning]),
-    ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings,
-  ];
+  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings];
   const written = [files.localConfig, join(dirs.coordinator, files.claudeMd), `${dirs.state}/`, ...hook.value.written];
   const kept = decision.value.kind === 'declined' ? declinedLines() : [];
   return ok({

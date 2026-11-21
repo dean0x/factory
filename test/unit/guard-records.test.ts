@@ -381,17 +381,62 @@ describe('guard store reads and writes', () => {
   });
 });
 
-describe('the letter case rewrite of a record root', () => {
-  const folded = root.toUpperCase();
-  /** A volume that ignores letter case: the real path and the entry of the root in any letter case are those of the root. */
-  const caseBlind = (deps: ReturnType<typeof fixture>) => {
-    const exact = (target: string): string => (target.toLowerCase() === root ? root : target);
-    return { ...deps, fs: { ...deps.fs,
-      realpath: async (target: string) => deps.fs.realpath(exact(target)),
-      lstatInfo: async (target: string) => deps.fs.lstatInfo(exact(target)),
-    } };
-  };
+const folded = root.toUpperCase();
 
+/** The root and its parent use the same entry and real path in either letter case. */
+const caseBlind = (deps: ReturnType<typeof fixture>) => {
+  const exact = (target: string): string => target.startsWith('/WORK') ? target.toLowerCase() : target;
+  return { ...deps, fs: { ...deps.fs,
+    stat: (target: string) => deps.fs.stat(exact(target)),
+    realpath: (target: string) => deps.fs.realpath(exact(target)),
+    lstat: (target: string) => deps.fs.lstat(exact(target)),
+    lstatInfo: (target: string) => deps.fs.lstatInfo(exact(target)),
+  } };
+};
+
+describe('the guard record of a new folder', () => {
+  const input = { root, node: 'demo' };
+  const prior = { ...record({ [guard.id]: { value: 'off', at } }), root: folded };
+  const other = { ...prior, node: 'other' };
+
+  it('refuses an earlier record in other letter case without the owner channel', async () => {
+    const deps = fixture({ os: 'darwin', stdinIsTTY: false });
+    deps.dirs.delete(root);
+    const before = storeText([other, prior]);
+    deps.seed(path, before);
+    expect(await storeApi.checkInitGuardRecord(caseBlind(deps), input))
+      .toEqual(failure(guardRecordWords.priorRecord, guardRecordWords.priorRecordRemedy));
+    expect(deps.files.get(path)).toBe(before);
+  });
+
+  it('clears an earlier record in other letter case with the owner channel', async () => {
+    const deps = fixture({ os: 'darwin' });
+    deps.dirs.delete(root);
+    deps.seed(path, storeText([other, prior]));
+    expect((await storeApi.clearInitGuardRecord(caseBlind(deps), input, files.config, () => deps.fs.mkdir(root))).ok).toBe(true);
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([other]));
+  });
+
+  it('keeps the record of a distinct folder in other letter case', async () => {
+    const deps = fixture({ os: 'darwin' });
+    deps.seedDir(folded);
+    deps.seed(path, storeText([other, prior, record()]));
+    expect((await storeApi.clearInitGuardRecord(deps, input, files.config)).ok).toBe(true);
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([other, prior]));
+    expect(await storeApi.checkInitGuardRecord({ ...deps, stdinIsTTY: false }, input)).toEqual(ok(undefined));
+  });
+
+  it('keeps an earlier record for a different path when both folders were absent', async () => {
+    const deps = fixture({ os: 'darwin' });
+    deps.dirs.delete(root);
+    deps.seed(path, storeText([other, prior]));
+    const result = await storeApi.clearInitGuardRecord(deps, input, files.config, async () => deps.fs.mkdir(root));
+    expect(result.ok).toBe(true);
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([other, prior]));
+  });
+});
+
+describe('the letter case rewrite of a record root', () => {
   it('writes the one record of the node with the root in other letter case again with the real root, and keeps its values, its prefix and the other records', async () => {
     const deps = fixture();
     const values = { [guard.id]: { value: 'off' as const, at } };

@@ -1404,13 +1404,13 @@ A missing guard key means `on`. For a new node in its own folder or a received f
 
 `init` does its checks and asks for hook consent as if every guard is on. It has no effective guard values for the new node yet. It also renders the all-on managed text. It writes the local values and saves the hook settings if the owner gives consent. It then records the local `off` values and the owner prefix in one write. The same rule applies with or without `--yes`. There is no additional guard question. The approval mode question stays.
 
-To write the record, use terminal input and output outside factory and Claude Code sessions. This requirement helps prevent mistakes. It does not prove who owns the terminal. In that terminal window, `init` removes any earlier record for the same node id and folder before it starts clones or writes node files. If `init` cannot read the store or remove the record, it stops with code 1 before it changes any node files.
+To write the record, use terminal input and output outside factory and Claude Code sessions. This requirement helps prevent mistakes. It does not prove who owns the terminal. In that terminal window, `init` removes any earlier record for the same node id and folder. It includes paths in other letter case that name the same folder. Before it removes a record, `init` checks again that the node does not exist. It does this under the store lock. This step comes before clones or node file writes. If `init` cannot read the store, remove the record or remove the store lock, it exits with code 1.
 
 If the hook step fails after registration, `init` keeps its error and remedy. The hint states that every guard stays on. A repeat `init` can finish only the hook step. Use `factory guard confirm` to record the owner prefix. To turn the guards off, use `factory guard set --all off`.
 
 If the final record write fails, `init` keeps both config files and exits with code 1. Without a matching record, every guard stays on.
 
-Without that terminal window, `init` checks the store before the first clone. If it cannot open or read the store, it exits with code 1. If the store has a record for the same node id and folder, `init` exits with code 1. To replace that record, run `factory init` again in a terminal window outside a session.
+Without that terminal window, `init` checks the store before the first clone. If it cannot open or read the store, it exits with code 1. It also exits with code 1 if the store has a record for the same node id and folder. If neither path exists and they differ only in letter case, `init` also stops. Run `factory init` again in a terminal window outside a session.
 
 If the check passes, `init` saves the local values but not the record. Every guard stays on, and `init` names `factory guard set --all off`. When no record matches the local values, `doctor` reports the unmatched values.
 

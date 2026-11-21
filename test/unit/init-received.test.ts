@@ -19,6 +19,7 @@ import {
   exited,
   FAKE_PROGRAM_ARGV,
   registerRoot,
+  withFailingRemoves,
   withFailingWrites,
   withFsWatch,
   type FakeDeps,
@@ -212,6 +213,37 @@ describe('init: the owner prefix of a received factory', () => {
     expect(sink.errors.join('')).toContain(fault === 'remove' ? 'disk full' : 'The guard store does not match its schema.');
     expect(log.clones()).toEqual([]);
     expect(snapshot(deps)).toBe(before);
+  });
+
+  it('stops before clones when the clear leaves the store lock', async () => {
+    const { deps, log } = received({}, terminal);
+    deps.seed(store, guardStoreText('demo', ROOT, ['install-rules'], deps.now()));
+    const used = withFailingRemoves(deps, (path) => path === `${store}.lock`);
+    const sink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--owner-name', 'Test Owner', '--yes'], used, sink)).toBe(1);
+    expect(sink.errors.join('')).toBe('error: The earlier guard record was removed, but the guard store lock remains.\nRun "factory doctor".\n');
+    expect(log.clones()).toEqual([]);
+    expect(deps.files.has(`${ROOT}/factory.local.yaml`)).toBe(false);
+    expect(await readGuardStore(deps, store)).toEqual(ok([]));
+    expect(deps.files.has(`${store}.lock`)).toBe(true);
+  });
+
+  it('keeps the completed registration record when a second init reaches the clear', async () => {
+    const { deps } = received({}, terminal);
+    deps.seed(store, guardStoreText('demo', ROOT, ['install-rules'], deps.now()));
+    let completedRecord: string | undefined;
+    const second = { ...deps, fs: { ...deps.fs, writeTextExclusive: async (path: string, text: string, mode: number) => {
+      if (path === `${store}.lock` && completedRecord === undefined) {
+        expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+        completedRecord = deps.files.get(store);
+      }
+      return deps.fs.writeTextExclusive(path, text, mode);
+    } } };
+    const result = await runInit(second, options({ yes: true }));
+    expect(completedRecord).toBeDefined();
+    expect(deps.files.get(store)).toBe(completedRecord);
+    expect(messageOf(result)).toContain('factory.local.yaml already exists');
+    expect(messageOf(result)).toContain('factory doctor');
   });
 
   it.each([
