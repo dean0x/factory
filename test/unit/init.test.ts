@@ -37,7 +37,7 @@ import {
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { gitHandler, STATE_GIT, STATE_READ, type GitFixture } from '../helpers/git-fake.js';
-import { GUARD_STORE, GUARDED_HOME, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
+import { GUARD_STORE, GUARDED_HOME, guardStoreText, initGuardRecords, withGuardsOff } from '../helpers/guarded-node.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -111,18 +111,22 @@ describe('init in an own folder: the owner prefix record', () => {
   const store = `/state/factory/${fileNames.guardRecords}`;
   const terminal = { stdinIsTTY: true, stdoutIsTTY: true };
 
-  it.each([false, true])('records the off values and the prefix after the hook settings, with yes set to %s', async (yes) => {
-    const { deps } = setup({}, { ...terminal, prompt: (text) => ok(text.startsWith(HOOK_QUESTION) ? 'y' : '') });
-    const settings = `${HOME}/coordinator/.claude/settings.local.json`;
-    if (yes) deps.seed(store, JSON.stringify({ schema: 1, records: [{ node: 'node', root: HOME,
-      values: { 'old-guard': { value: 'off', at: deps.now().toISOString() } },
-      prefix: { hash: 'a'.repeat(64), at: deps.now().toISOString() },
-    }] }));
+  const acceptHooks = { ...terminal, prompt: (text: string) => ok(text.startsWith(HOOK_QUESTION) ? 'y' : '') };
+  const settings = `${HOME}/coordinator/.claude/settings.local.json`;
+
+  const expectNoGuardIds = (output: string, guards: ReturnType<typeof guardsFor>): void => {
+    for (const { id, fixed } of guards) {
+      if (!fixed) expect(output).not.toMatch(new RegExp(`\\b${id}\\b`));
+    }
+  };
+
+  it.each([false, true])('saves hook settings before it writes the first guard record, with yes set to %s', async (yes) => {
+    const { deps } = setup({}, acceptHooks);
     const hookAtStoreWrite: boolean[] = [];
     const result = await runInit(withFsWatch(deps, (method, path) => {
       if (method === 'writeTextAtomicCore' && path === store) hookAtStoreWrite.push(deps.files.has(settings));
     }), options({ yes }));
-    expect(hookAtStoreWrite).toEqual(yes ? [false, true] : [true]);
+    expect(hookAtStoreWrite).toEqual([true]);
     expect(result.ok).toBe(true);
     const config = await loadConfig(deps, HOME);
     if (!config.ok || !result.ok) throw new Error('init did not make a node');
@@ -132,7 +136,6 @@ describe('init in an own folder: the owner prefix record', () => {
       node: 'node', root: HOME, values: Object.fromEntries(guards.map(({ id }) => [id, { value: 'off', at }])),
       prefix: { hash: createHash('sha256').update(config.value.core.owner.prefix, 'utf8').digest('hex'), at },
     }]));
-    expect(deps.atomicWrites.filter((path) => path === store)).toHaveLength(yes ? 2 : 1);
     expect(deps.files.has(settings)).toBe(true);
     expect(deps.atomicWrites.at(-1)).toBe(store);
     expect(config.value.core.guards).toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'off'])));
@@ -145,7 +148,33 @@ describe('init in an own folder: the owner prefix record', () => {
     expect(lines.filter((line) => line.startsWith('Guards:'))).toEqual([
       'Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
     ]);
+    expectNoGuardIds([...lines, ...result.value.warnings, ...deps.warned].join('\n'), guards);
     expectShortOutput(lines.join('\n'));
+  });
+
+  it('clears only the matching record before the hook settings and writes its replacement after them', async () => {
+    const { deps } = setup({}, acceptHooks);
+    const records = initGuardRecords('node', HOME, deps.now());
+    deps.seed(store, JSON.stringify({ schema: 1, records }));
+    const hookAtStoreWrite: boolean[] = [];
+    const result = await runInit(withFsWatch(deps, (method, path) => {
+      if (method === 'writeTextAtomicCore' && path === store) hookAtStoreWrite.push(deps.files.has(settings));
+    }), options());
+    expect(result.ok, messageOf(result)).toBe(true);
+    expect(hookAtStoreWrite).toEqual([false, true]);
+    expect(await readGuardStore(deps, store)).toEqual(ok([records[0], records[2], expect.objectContaining({
+      node: 'node', root: HOME, prefix: expect.objectContaining({ hash: expect.stringMatching(/^[a-f0-9]{64}$/) }),
+    })]));
+  });
+
+  it('leaves records of other nodes and folders unchanged without an owner channel', async () => {
+    const { deps } = setup();
+    const [otherNode, , otherFolder] = initGuardRecords('node', HOME, deps.now());
+    const before = JSON.stringify({ schema: 1, records: [otherNode, otherFolder] }, null, 2);
+    deps.seed(store, before);
+    const result = await runInit(deps, options());
+    expect(result.ok, messageOf(result)).toBe(true);
+    expect(deps.files.get(store)).toBe(before);
   });
 
   it.each([
@@ -160,24 +189,27 @@ describe('init in an own folder: the owner prefix record', () => {
     const result = await runInit(withFsWatch(deps, (method, path) => {
       if (path === store && /^(write|remove|rename)/.test(method)) seen.push(`${method} ${path}`);
     }), options());
-    expect(result.ok).toBe(true);
-    expect(result.ok ? result.value.warnings.filter((text) => text.includes('factory guard confirm')) : []).toHaveLength(1);
+    if (!result.ok) throw new Error(result.error.message);
     expect(seen).toEqual([]);
     expect(deps.files.has(store)).toBe(false);
     expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
-    await expectUnrecordedGuards(deps);
-    const warnings = result.ok ? result.value.warnings : [];
+    const guards = await expectUnrecordedGuards(deps);
+    const { lines, warnings } = result.value;
+    expect(warnings.filter((text) => text.includes('factory guard confirm'))).toHaveLength(1);
     expect(warnings.filter((text) => text.includes('factory guard set --all off'))).toHaveLength(1);
-    expectShortOutput((result.ok ? [...result.value.lines.map((line) => line.text), ...warnings] : []).join('\n'));
+    const shown = [...lines.map((line) => line.text), ...warnings].join('\n');
+    expectNoGuardIds([shown, ...deps.warned].join('\n'), guards);
+    expectShortOutput(shown);
   });
 
-  const expectUnrecordedGuards = async (deps: Deps): Promise<void> => {
+  const expectUnrecordedGuards = async (deps: Deps): Promise<ReturnType<typeof guardsFor>> => {
     const config = await loadConfig(deps, HOME);
     if (!config.ok) throw new Error(config.error.message);
     const guards = guardsFor(config.value.entry);
     expect(config.value.core.guards).toEqual(Object.fromEntries(guards.filter(({ fixed }) => !fixed).map(({ id }) => [id, 'off'])));
     expect((await readGuardState(deps, HOME, config.value, 'always')).values)
       .toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'on'])));
+    return guards;
   };
 
   it.each([false, true])('keeps the files and guards on after a failed final write, with an earlier record: %s', async (earlier) => {
@@ -233,12 +265,12 @@ describe('init in an own folder: the owner prefix record', () => {
   const project = '/w/web';
   const source = { repos: { [project]: { origin: 'https://github.com/acme/web.git' } } };
 
-  it.each(['off value', 'prefix'] as const)('refuses a prior %s before any clone without an owner channel', async (part) => {
+  it.each(['off value', 'prefix'] as const)('refuses a matching %s after an unrelated record before any clone', async (part) => {
     const { deps, log } = setup(source);
     deps.seedDir(project);
-    const at = deps.now().toISOString();
-    const before = part === 'off value' ? guardStoreText('node', HOME, [guardIds.installRules], deps.now())
-      : JSON.stringify({ schema: 1, records: [{ node: 'node', root: HOME, values: {}, prefix: { hash: 'a'.repeat(64), at } }] });
+    const [otherNode, prior, otherFolder] = initGuardRecords('node', HOME, deps.now());
+    const matching = part === 'off value' ? prior : { ...prior, values: {}, prefix: { hash: 'a'.repeat(64), at: deps.now().toISOString() } };
+    const before = JSON.stringify({ schema: 1, records: [otherNode, matching, otherFolder] });
     deps.seed(store, before);
     const sink = captureSink();
     const code = await runCli(['init', '--home', HOME, '--owner-name', 'Test Owner', '--project', project, '--yes'], deps, sink);
@@ -251,7 +283,7 @@ describe('init in an own folder: the owner prefix record', () => {
     expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(false);
   });
 
-  it.each([false, true])('handles an unreadable store with owner channel %s', async (owner) => {
+  it.each([false, true])('stops before a clone or file change on an unreadable store, with owner channel %s', async (owner) => {
     const { deps, log } = setup(source, { stdinIsTTY: owner, stdoutIsTTY: owner });
     deps.seedDir(project);
     const before = guardStoreText('node', HOME, [guardIds.installRules], deps.now());
@@ -264,6 +296,7 @@ describe('init in an own folder: the owner prefix record', () => {
     const args = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--yes', '--project', project];
     expect(await runCli(args, used, sink)).toBe(1);
     expect(sink.errors.join('')).toContain('cannot open the store');
+    expect(sink.errors.join('')).toContain('Run "factory doctor"');
     expect(log.clones()).toEqual([]);
     expect(snapshot(deps)).toBe(state);
   });
@@ -273,11 +306,14 @@ describe('init in an own folder: the owner prefix record', () => {
     deps.seedDir(project);
     deps.seed(store, guardStoreText('node', HOME, [guardIds.installRules], deps.now()));
     const before = snapshot(deps);
-    const used = { ...deps, fs: { ...deps.fs, writeTextAtomicCore: async () => failure('disk full') } };
+    const used: Deps = { ...deps, fs: { ...deps.fs, writeTextAtomicCore: async (...args) =>
+      args[0] === store ? failure('disk full') : deps.fs.writeTextAtomic(...args),
+    } };
     const sink = captureSink();
     const args = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--yes', '--project', project];
     expect(await runCli(args, used, sink)).toBe(1);
     expect(sink.errors.join('')).toContain('disk full');
+    expect(sink.errors.join('')).toContain('Run "factory doctor"');
     expect(log.clones()).toEqual([]);
     expect(snapshot(deps)).toBe(before);
   });
@@ -3268,15 +3304,37 @@ describe('init: the setup texts and the link rule', () => {
     expect(deps.files.has(INDEX)).toBe(false);
   });
 
-  it('works for a factory folder that sits under a linked parent folder', async () => {
-    const links: Record<string, string> = { '/w/linked': '/w/real' };
-    // The person says no to the hook settings: the fake file system keeps no file under the real path of a link.
-    // Git prints the real path of its git folder, so the fixture names the real staging folder.
-    const gitDirs = { '/w/linked/node/.factory.tmp-4242': '/w/real/node/.factory.tmp-4242/.git' };
-    const { deps } = setup({ gitDirs }, { links, stdinIsTTY: true, stdoutIsTTY: true, prompt: answerHome('y') });
-    deps.seedDir('/w/real');
-    const result = await runInit(deps, asking({ home: '/w/linked/node' }));
-    expect(result.ok ? 'ok' : result.error.message).toBe('ok');
+  it('checks and replaces the record at the real path of a new home below a linked parent', async () => {
+    const home = '/w/linked/node';
+    const realHome = '/w/real/node';
+    const links = { [dirname(home)]: dirname(realHome) };
+    // The fake file system keeps files at the written path. Git reports the real path of its git folder.
+    const gitDirs = { [`${home}/.factory.tmp-4242`]: `${realHome}/.factory.tmp-4242/.git` };
+    const { deps } = setup({ gitDirs }, { links, prompt: answerHome('y') });
+    // Seed both paths so the fake stat finds the parent through the link.
+    deps.seedDir(dirname(realHome));
+    deps.seedDir(dirname(home));
+    const before = guardStoreText('node', realHome, [guardIds.installRules], deps.now());
+    deps.seed(GUARD_STORE, before);
+
+    const refused = await runInit(deps, options({ home }));
+    expect(refused).toMatchObject({ ok: false, error: {
+      message: 'A guard record already exists for this node and folder.',
+      hint: 'Run "factory init" again in a terminal window outside a session to replace the record.',
+    } });
+    expect(await deps.fs.lstat(home)).toEqual(ok(null));
+    expect(deps.files.get(GUARD_STORE)).toBe(before);
+
+    const owner = { ...deps, stdinIsTTY: true, stdoutIsTTY: true };
+    const result = await runInit(owner, asking({ home }));
+    expect(result.ok, messageOf(result)).toBe(true);
+    const config = await loadConfig(deps, home);
+    if (!config.ok) throw new Error(config.error.message);
+    const prefix = { hash: createHash('sha256').update(config.value.core.owner.prefix, 'utf8').digest('hex'), at: deps.now().toISOString() };
+    expect(await readGuardStore(deps, GUARD_STORE)).toEqual(ok([expect.objectContaining({ node: 'node', root: realHome, prefix })]));
+    expect(await readGuardState(deps, home, config.value, 'always')).toMatchObject({
+      record: true, prefix, fault: null, proof: null, values: { [guardIds.installRules]: 'off' },
+    });
   });
 });
 

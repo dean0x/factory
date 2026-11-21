@@ -1,6 +1,7 @@
 import { failure } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
+import type { GuardRecord } from '../../src/guards/effective.js';
 import { env, files, guardIds, guardRecords, guardValues, program, roles } from '../../src/names.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from './fake-deps.js';
 import { sampleConfig, seedConfig } from './sample-config.js';
@@ -42,6 +43,12 @@ export const unloadableConfig = (): FactoryConfig => {
 export const guardStoreText = (node: string, root: string, off: readonly string[], at: Date): string => {
   const values = Object.fromEntries(off.map((id) => [id, { value: guardValues.off, at: at.toISOString() }]));
   return JSON.stringify({ schema: guardRecords.schema, records: [{ node, root, prefix: null, values }] });
+};
+
+/** The prior init record, between records with a different node or a different folder. */
+export const initGuardRecords = (node: string, root: string, now: Date): readonly [GuardRecord, GuardRecord, GuardRecord] => {
+  const prior: GuardRecord = { node, root, prefix: null, values: { [OFF_GUARD]: { value: guardValues.off, at: now.toISOString() } } };
+  return [{ ...prior, node: 'other-node' }, prior, { ...prior, root: OTHER_HOME }];
 };
 
 /**
