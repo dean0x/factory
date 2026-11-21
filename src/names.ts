@@ -2517,7 +2517,7 @@ export const guardConfirmWords = {
 /** Guard record checks and their remedies have words of their own. */
 export const guardRecordWords = {
   priorRecord: `A guard record already exists for this ${roles.node} and folder.`,
-  priorRecordRemedy: `Use another ${roles.node} id or folder.`,
+  priorRecordRemedy: `Run "${commandText(commands.init)}" again in a terminal window outside a session to replace the record.`,
   sessionRefused: `A ${program} session cannot write a guard record.`,
   claudeRefused: 'A Claude Code session cannot write a guard record.',
   inputRequired: 'A guard record needs terminal input.',

@@ -191,16 +191,14 @@ const guardPlaceOf = async (deps: Deps, root: string, newRoot = false): Promise<
   return ok({ root: real.value, path: place.path });
 };
 
-/** A new node must have no earlier record for its id and root. */
-export const requireFreshGuardRecord = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<void>> => {
+/** Without an owner channel, init needs a readable store with no record for the new node. */
+export const checkInitGuardRecord = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<void>> => {
+  if (requireGuardChannel(deps, commands.init).ok) return ok(undefined);
   const place = await guardPlaceOf(deps, input.root, true);
   if (!place.ok) return place;
   if (place.value.path === null) return failure(guardRecordWords.noPlace);
-  const text = await readGuardStoreText(deps, place.value.path);
-  if (!text.ok) return failure(text.error);
-  const records = recordsOf(text.value);
-  // Malformed text supplies no records. The final write reports its fault and keeps the files.
-  if (!records.ok) return ok(undefined);
+  const records = await readGuardStore(deps, place.value.path);
+  if (!records.ok) return failure(records.error);
   const key = recordKey(input.node, place.value.root);
   return records.value.some(({ root, node }) => recordKey(node, root) === key)
     ? failure(guardRecordWords.priorRecord, guardRecordWords.priorRecordRemedy) : ok(undefined);
@@ -217,16 +215,15 @@ interface RecordPlaceInput {
 }
 
 const changeRecord = (
-  records: readonly GuardRecord[], input: RecordPlaceInput, mode: 'new' | 'set', change: (record: GuardRecord) => GuardRecord,
+  records: readonly GuardRecord[], input: RecordPlaceInput, change: (record: GuardRecord) => GuardRecord,
 ): GuardStoreResult => {
   const key = recordKey(input.node, input.root);
   const current = records.find((record) => recordKey(record.node, record.root) === key);
-  if (mode === 'new' && current !== undefined) return err(guardRecordWords.priorRecord);
   const next = change(current ?? { ...input, values: {}, prefix: null });
   return ok(current === undefined ? [...records, next] : records.map((record) => record === current ? next : record));
 };
 
-/** Init supplies the prefix to create one new record. A guard set changes only the named values. */
+/** Init replaces the values and prefix. A guard set changes only the named values. */
 export const recordGuards = async (
   deps: Deps, input: RecordPlaceInput & { readonly change: readonly GuardChange[]; readonly prefix?: string },
 ): Promise<CliResult<GuardRecordWrite>> => {
@@ -246,11 +243,12 @@ export const recordGuards = async (
   const at = deps.now().toISOString();
   const prefix = input.prefix === undefined ? null : { hash: sha256Hex(input.prefix), at };
   const written = await changeGuardStore(deps, place.value.path, (records) => changeRecord(
-    records, { node: input.node, root: place.value.root }, prefix === null ? 'set' : 'new', (current) => ({
-      ...current,
-      values: { ...current.values, ...Object.fromEntries(input.change.map((item) => [item.guard.id, { value: item.value, at }])) },
-      prefix: prefix ?? current.prefix,
-    }),
+    records, { node: input.node, root: place.value.root }, (current) => {
+      const values = Object.fromEntries(input.change.map((item) => [item.guard.id, { value: item.value, at }]));
+      return prefix === null
+        ? { ...current, values: { ...current.values, ...values } }
+        : { ...current, values, prefix };
+    },
   ));
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
 };
@@ -325,7 +323,7 @@ export const recordPrefix = async (
   if (place.value.path === null) return failure(guardRecordWords.noPlace);
   const prefix = { hash: sha256Hex(input.prefix), at: deps.now().toISOString() };
   const written = await changeGuardStore(deps, place.value.path, (records) => changeRecord(
-    records, { node: input.node, root: place.value.root }, 'set', (current) => ({ ...current, prefix }),
+    records, { node: input.node, root: place.value.root }, (current) => ({ ...current, prefix }),
   ));
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
 };

@@ -124,15 +124,17 @@ Run `init` in a terminal window outside factory and Claude Code sessions, with t
 Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.
 ```
 
-Before it creates a node, `init` checks for an earlier guard record for that node id and folder. If it cannot open the store for this check, it stops. If a record exists, use another node id or folder.
+In that terminal channel, the final write replaces any earlier record for the same node id and folder.
 
-Without that terminal channel, `init` writes the local values but no record. It prints this warning:
+Without that terminal channel, `init` checks the guard store before the first clone. If it cannot open or read the store, it exits with code 1. If the store has a record for the same node id and folder, `init` exits with code 1. To replace that record, run `factory init` again in a terminal window outside a session.
+
+If the check passes, `init` writes the local values but no record. It prints this warning:
 
 ```text
 Every guard stays on. Run "factory guard set --all off" to turn the guards off.
 ```
 
-If the record write fails, `init` keeps the files, exits with code 1 and leaves every guard on. When all 29 local values are `off` with no matching records, the `doctor` guard check includes:
+If the record write fails, `init` keeps both config files and exits with code 1. If the store cannot be read, every guard stays on. When all 29 local values are `off` with no matching records, the `doctor` guard check includes:
 
 ```text
 29 off values do not take effect. Run "factory guard set --all off" to turn the guards off.

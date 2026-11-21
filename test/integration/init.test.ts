@@ -588,10 +588,14 @@ describe('factory init: the home rules (built binary)', () => {
     expect(existsSync(join(box.root, 'web-factory'))).toBe(false);
   });
 
-  it('uses the current folder when it is in no work tree', async () => {
-    const result = await box.run(['init', '--yes', '--name', 'here', ...ownerArgs], { cwd: box.root });
+  it('uses the current folder outside a work tree without an owner channel or an earlier record', async () => {
+    const folder = join(box.root, 'plain');
+    await mkdir(folder);
+    const result = await box.run(['init', '--yes', '--name', 'here', ...ownerArgs], { cwd: folder });
     expect(result.code).toBe(0);
-    expect(existsSync(join(box.root, 'factory.yaml'))).toBe(true);
+    expect(existsSync(join(folder, 'factory.yaml'))).toBe(true);
+    expect(existsSync(join(folder, 'factory.local.yaml'))).toBe(true);
+    expect(result.stderr).toContain('Every guard stays on. Run "factory guard set --all off" to turn the guards off.');
   });
 
   it('accepts a home inside a git work tree: the root is a git repo of its own', async () => {

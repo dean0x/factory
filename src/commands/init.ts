@@ -23,7 +23,7 @@ import {
   parseGithubRepo,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
-import { recordGuards, requireFreshGuardRecord, requireGuardChannel } from '../core/guard-records.js';
+import { checkInitGuardRecord, recordGuards, requireGuardChannel } from '../core/guard-records.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
@@ -639,6 +639,8 @@ const checkOptions = async (
     registry,
   );
   if (!settings.ok) return settings;
+  const record = await checkInitGuardRecord(deps, { root: home, node: id });
+  if (!record.ok) return record;
   const root = await rootTextsOf(deps, layoutOf(home));
   if (!root.ok) return root;
   const modes = await effectiveModes(deps, home, settings.value);
@@ -767,8 +769,6 @@ const SHARED_FILE_MODE = 0o644;
  * `.gitignore`) is written back as it was.
  */
 export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<InitResult>> => {
-  const fresh = await requireFreshGuardRecord(deps, { root: plan.home, node: plan.config.core.node.id });
-  if (!fresh.ok) return fresh;
   const layout = layoutOf(plan.home);
   const staging = stagingDirOf(plan.home, deps.pid);
   const touched = {

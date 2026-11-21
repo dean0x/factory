@@ -7,6 +7,7 @@ import { renderConfig } from '../config/render.js';
 import { localConfigSchema, mergeConfig, type FactoryConfig, type SharedConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
+import { checkInitGuardRecord } from '../core/guard-records.js';
 import { configValue, ignoredPathsOf, isWorkTreeRoot, trackedFilesOf } from '../core/git.js';
 import { rootRefusalOf } from '../core/home.js';
 import { entryOfHome, readHomeIndex } from '../core/home-index.js';
@@ -505,6 +506,8 @@ export const runReceived = async (
   if (!flagged.ok) return flagged;
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
   if (!outside.ok) return outside;
+  const record = await checkInitGuardRecord(deps, { root: home, node: id });
+  if (!record.ok) return record;
   const leftover = await leftoverTempFolders(deps, home);
   if (!leftover.ok) return leftover;
   const projects = await planReceivedProjects(deps, home, shared.recipe.projects, commands.init);

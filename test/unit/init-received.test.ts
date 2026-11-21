@@ -25,6 +25,7 @@ import {
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { guardStoreText } from '../helpers/guarded-node.js';
 import { loadConfig, runDoctor, runInit, runStart } from '../helpers/package-registry.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
@@ -145,6 +146,7 @@ describe('init: the owner prefix of a received factory', () => {
     const sample = sampleConfig();
     const config: FactoryConfig = { ...sample, core: { ...sample.core, shared_guards: { proxy: 'on' } } };
     const { deps } = received({ config }, { ...terminal, prompt: person('y', [], 'y') });
+    if (yes) deps.seed(store, guardStoreText('demo', ROOT, ['old-guard'], deps.now()));
     const result = await runInit(withFsWatch(deps, (method, path) => {
       if (method === 'writeTextAtomicCore' && path === store) expect(deps.files.has(HOOK_FILE)).toBe(true);
     }), options({ yes }));
@@ -1061,6 +1063,21 @@ describe('init: the projects of a received factory', () => {
     });
     return { ...config, recipe: { ...config.recipe, projects } };
   };
+
+  it.each([
+    ['a prior record', 'A guard record already exists for this node and folder.'],
+    ['an unreadable store', 'The guard store does not match its schema.'],
+  ])('refuses %s before any clone without an owner channel', async (kind, message) => {
+    const { deps, log } = received({ config: withProjects('https://github.com/acme/api.git') });
+    const store = '/state/factory/guard-records.json';
+    deps.seed(store, kind === 'a prior record' ? guardStoreText('demo', ROOT, ['install-rules'], deps.now()) : '{}');
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain(message);
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
 
   it('clones a project with an https URL into the folder of its path', async () => {
     const { deps, log } = received({ config: withProjects('https://github.com/acme/api.git') }, terminal);
