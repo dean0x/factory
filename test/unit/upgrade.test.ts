@@ -333,7 +333,8 @@ describe('upgrade: effective guard values', () => {
 
   it.each(['missing', 'on', 'other-node', 'other-root', 'invalid', 'link', 'shared'] as const)(
     'writes nothing when the off value has no matching record: %s', async (fault) => {
-      const { deps } = await makeNode(fault === 'link' ? { links: { [STORE]: '/outside/store' } } : {});
+      const links: Record<string, string> = {};
+      const { deps } = await makeNode({ links });
       seedGuards(deps, { 'install-rules': 'off' });
       if (fault === 'missing') deps.files.delete(STORE);
       if (fault === 'on') deps.seed(STORE, text(deps, STORE).replace('"value":"off"', '"value":"on"'));
@@ -342,6 +343,8 @@ describe('upgrade: effective guard values', () => {
       if (fault === 'invalid') deps.seed(STORE, '{invalid');
       if (fault === 'shared') deps.seed(CONFIG, `${text(deps, CONFIG)}\nshared_guards: {install-rules: on}\n`);
       if (fault === 'link') {
+        deps.files.delete(STORE);
+        links[STORE] = '/outside/store';
         const folder = layoutOf(HOME).coordinatorDir;
         const deny = await ownDenyRulesOf(deps, HOME, folder);
         if (!deny.ok) throw new Error(deny.error.message);
