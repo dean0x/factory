@@ -4,13 +4,15 @@ import { runCli } from '../../src/cli/run.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { withGuards, type Deps } from '../../src/core/deps.js';
 import { guardSourceFor } from '../../src/core/guard-source.js';
-import { activeMachine, boardKeys, commands, files, guardIds, markLimits, maxFileBytes, reservedFieldNames, schemaIds } from '../../src/names.js';
+import { ok } from '../../src/core/result.js';
+import { activeMachine, boardKeys, commands, files, guardIds, markLimits, maxFileBytes, nodeSendReasons, reservedFieldNames, schemaIds } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { mergedStage } from '../../src/recipes/software/board.js';
 import { claimActiveMachine } from '../../src/state/active-machine.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import { BOARD_PATH, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
 import { registerRoot } from '../helpers/fake-deps.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { HOME, linkAt } from '../helpers/guard-fixture.js';
 import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, type GuardedSetup } from '../helpers/guarded-node.js';
 import { sampleBoard, sampleConfigWithBoard } from '../helpers/sample-config.js';
@@ -125,6 +127,39 @@ describe('the guard of board edits', () => {
       const repo = await nodeOf(OFF, origin);
       repo.deps.seed(join(HOME, DOC), '# Design\n');
       const result = await runOn(linkAt(repo.deps, join(HOME, 'docs')), ['item', 'doc', 'B-1', DOC]);
+      expect(result.code, result.err).toBe(4);
+      expect(repo.commits).toEqual([]);
+    });
+
+    it.each([
+      ['on', [guardIds.boardEdits], 4],
+      ['off', [guardIds.boardEdits, guardIds.secrets], 0],
+    ] as const)('item doc checks a file below a dot folder with secrets %s', async (_state, off, exit) => {
+      const repo = await nodeOf({ off: [...off] }, origin);
+      repo.deps.seed(join(HOME, DOT_DOC), `# Notes\n${FAKE_GITHUB_TOKEN}\n`);
+      const before = new Map(repo.deps.files);
+      const result = await runOn(repo.deps, ['item', 'doc', 'B-1', DOT_DOC]);
+      expect(result.code, result.err).toBe(exit);
+      expect(`${result.out}${result.err}`.includes(FAKE_GITHUB_TOKEN)).toBe(false);
+      if (exit === 4) {
+        expect(result.err).toContain(nodeSendReasons.token);
+        expect(repo.commits).toEqual([]);
+        expect(repo.deps.files).toEqual(before);
+      } else {
+        expect(repo.commits).toHaveLength(1);
+        expect(repo.textOf(files.board)).toContain(DOT_DOC);
+      }
+    });
+
+    it('item doc refuses a file that becomes a link before the read', async () => {
+      const repo = await nodeOf(OFF, origin);
+      const full = join(HOME, DOT_DOC);
+      repo.deps.seed(full, '# Notes\n');
+      const fs: Deps['fs'] = {
+        ...repo.deps.fs,
+        openChecked: async (path, request) => path === full ? ok({ state: 'link' }) : repo.deps.fs.openChecked(path, request),
+      };
+      const result = await runOn({ ...repo.deps, fs }, ['item', 'doc', 'B-1', DOT_DOC]);
       expect(result.code, result.err).toBe(4);
       expect(repo.commits).toEqual([]);
     });

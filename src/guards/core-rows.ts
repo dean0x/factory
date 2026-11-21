@@ -133,7 +133,7 @@ const boardEditRows: readonly GuardRow[] = [
   alwaysOnRow({
     id: 'board-doc-local-config',
     guard: guardIds.boardEdits,
-    name: `A doc link is never the local config of the ${folder}, so the ${owner} prefix never reaches a ${worker}`,
+    name: `A board doc link never names the local config of the ${folder}, with every guard value`,
     applies: commandLines.itemDoc,
     harm: true,
     sites: at('src/core/place-rule.ts', 'localConfigReason'),

@@ -175,6 +175,8 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'token-tracked-text', path: 'src/safety/secrets.ts', symbol: 'looksLikeToken', reason: tokenTestReason },
   { row: 'token-config-values', path: 'src/safety/secrets.ts', symbol: 'findTokenPaths', reason: 'A pure search of the config values; checkSecrets reads the value and does not search while the guard is off.' },
   { row: 'token-config-values', path: 'src/safety/secrets.ts', symbol: 'looksLikeTokenAt', reason: 'A pure helper of findTokenPaths; checkSecrets reads the value and does not search while the guard is off.' },
+  { row: 'task-file-token', path: 'src/commands/node.ts', symbol: 'checkedTask', reason: 'Passes the guard values to checkFileTokens.' },
+  { row: 'task-file-token', path: 'src/commands/worker.ts', symbol: 'runNew', reason: 'Passes the guard values to checkFileTokens.' },
   { row: 'child-inbox-ignored', path: 'src/comms/deliver.ts', symbol: 'requireIgnored', reason: 'The check of the ignore rule; deliverToHome reads the value and does not call it while the guard is off.' },
   { row: 'assignment-dot-place', path: 'src/core/place-rule.ts', symbol: 'dotRuleReason', reason: 'The shared place rule, which the board doc check also uses; placeOf reads the value and does not call it while the guard is off.' },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
@@ -1212,6 +1214,14 @@ describe('the rows of the registry', () => {
     expect(local?.applies).toContain(commandLines.itemDoc);
     const names = software.rows.find((row) => row.id === 'board-reserved-names');
     expect(names?.sites).toContainEqual({ path: 'src/names.ts', symbol: 'reservedFieldNames' });
+  });
+
+  it('lists the file token check under secrets at each command that uses it', () => {
+    const row = software.rows.find((candidate) => candidate.id === 'task-file-token');
+    expect(row).toMatchObject({ guard: guardIds.secrets, kind: guardKinds.code, harm: true });
+    expect(row?.applies).toContain(commandLines.nodeSend);
+    expect(row?.applies).toContain(commandLines.workerNew);
+    expect(row?.applies).toContain(commandLines.itemDoc);
   });
 
   it('cites the shared place rule for assignment files', () => {

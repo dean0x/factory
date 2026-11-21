@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
-import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { workTreeTop } from '../core/git.js';
 import { comparable, isSameOrInside } from '../core/paths.js';
@@ -7,7 +7,6 @@ import { dotRuleReason, localConfigReason } from '../core/place-rule.js';
 import { ok } from '../core/result.js';
 import { guardOn } from '../guards/effective.js';
 import { assignmentSource, commandText, guardIds, places } from '../names.js';
-import { readCheckedFile } from './registry.js';
 
 /**
  * The check of the source file of an assignment (`worker new --assignment FILE`). It runs before any write, and it hands back the text
@@ -167,14 +166,15 @@ export const readAssignment = async (deps: Deps, request: AssignmentRequest): Pr
   const place = await placeOf(deps, request, source, real.value);
   if (!place.ok) return place;
 
-  const read = await readCheckedFile(deps, [], { path: real.value, what: 'the assignment file' }, assignmentSource.maxBytes);
+  const maxBytes = assignmentSource.maxBytes;
+  const read = await deps.fs.openChecked(real.value, { uid: null, maxBytes, access: 'content' });
   if (!read.ok) return read;
-  if (read.value.state === 'absent') return changed(source, again);
-  if (read.value.state === 'invalid') {
-    return read.value.cause === 'link'
-      ? changed(source, again)
-      : usageError(`cannot use ${source}: ${read.value.reason}`, `Name a plain text file of at most ${assignmentSource.maxBytes} bytes. Then run "${line}".`);
+  if (read.value.state === 'absent' || read.value.state === 'link') return changed(source, again);
+  if (read.value.state === 'refused') {
+    const reason = read.value.fault === 'size' ? `larger than ${maxBytes} bytes` : 'the assignment file is not a file';
+    return usageError(`cannot use ${source}: ${reason}`, `Name a plain text file of at most ${maxBytes} bytes. Then run "${line}".`);
   }
+  if (read.value.state !== 'opened' || read.value.text === null) return failure(`cannot read ${source}`);
   const { text } = read.value;
   if (text.includes(NUL) || text.includes(REPLACEMENT)) {
     return usageError(

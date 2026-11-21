@@ -51,6 +51,8 @@ export interface CheckedOpenRequest {
   readonly uid: number | null;
   /** The most bytes of the file. A file with more bytes is refused. Null reads no byte: the call gives the facts of the file only. */
   readonly maxBytes: number | null;
+  /** A content read checks kind and size, but does not require a specific owner or mode. */
+  readonly access?: 'content';
   /** How the bytes become text. The default is `lenient`. */
   readonly decode?: TextDecode;
 }
@@ -114,8 +116,8 @@ export interface Fs {
   lstatInfo(path: string): Promise<CliResult<LinkInfo | null>>;
   /**
    * Open the file once, and check it on the open handle. The open follows no link and waits for no pipe, so a pipe at the path
-   * does not hold the call. The checks run on the facts of the handle, in this order: the kind (a regular file), the owner (the user
-   * of the request), the permission bits (no write bit for a group or for others), then the size (`maxBytes`). A file that passes
+   * does not hold the call. The checks use the facts of the handle: regular file, owner and mode unless `access` is `content`,
+   * then size (`maxBytes`). A file that passes
    * is read from the same handle, at most `maxBytes` plus one byte, and the handle is closed on every path. A path that changes
    * after the open can change none of the checks, and none of the bytes. A link at the path is `link`, and a path that does not
    * exist is `absent`. A failure to open the file or to look at the handle is a failure; a failure of the read is `unreadable`.

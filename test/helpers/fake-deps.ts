@@ -330,7 +330,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         if (!found.ok) return found;
         const info = found.value;
         if (info === null) return ok({ state: 'absent' });
-        const fault = checkedFaultOf(request.uid, info, maxBytes);
+        const fault = checkedFaultOf(request, info);
         if (fault !== null) return ok({ state: 'refused', fault, info, bytes: 0 });
         if (maxBytes === null) return ok({ state: 'opened', info, text: null, bytes: 0 });
         // The fake keeps decoded text, so the paths in `invalidUtf8` stand for bytes that only a lenient decode can read.

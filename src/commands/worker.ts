@@ -45,6 +45,7 @@ import {
   workerRecord,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
+import { checkFileTokens } from '../safety/secrets.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { dismissLine } from '../workers/dismiss.js';
 import { readAssignment } from '../workers/assignment.js';
@@ -379,11 +380,13 @@ const runNew = async (
   const plan = await planNew(deps, home, config, id, options.project);
   if (!plan.ok) return plan;
   // The source check reads the file once, before the first write, and the copy uses that text.
-  const assignment =
-    options.assignment === undefined
-      ? ok(null)
-      : await readAssignment(deps, { home, path: options.assignment, again: assignmentAgain(id, options.project) });
+  const again = assignmentAgain(id, options.project);
+  const assignment = options.assignment === undefined ? ok(null) : await readAssignment(deps, { home, path: options.assignment, again });
   if (!assignment.ok) return assignment;
+  if (assignment.value !== null) {
+    const tokens = checkFileTokens(assignment.value, prepared.value.guards.values, `Remove the token from the assignment file. Then run "${commandText(again)}" again.`);
+    if (!tokens.ok) return tokens;
+  }
   // Every refusal about the settings comes before the first write. The new branch starts at the last commit of the clone, so the
   // files that git puts into the work copy are known now: the settings checks and the consent run on them.
   // The question itself comes after the work copy exists, when a terminal can ask.

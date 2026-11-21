@@ -41,7 +41,7 @@ import {
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { walkTree, type TreeRow, type TreeWalk } from '../report/tree.js';
-import { textHasToken } from '../safety/secrets.js';
+import { checkFileTokens } from '../safety/secrets.js';
 import { layoutOf } from '../state/layout.js';
 import { readAssignment } from '../workers/assignment.js';
 import { workerHasId } from '../workers/registry.js';
@@ -473,10 +473,8 @@ const checkedTask = (text: string, id: string, guards: GuardValues): CliResult<s
   if (isGuardOn(guards, guardIds.taskFiles) && removedByDisplay(body)) {
     return usageError(nodeSendReasons.controlChars, `Remove the character from the task file. ${again}`);
   }
-  if (isGuardOn(guards, guardIds.secrets) && textHasToken(body)) {
-    return safetyRefusal(nodeSendReasons.token, `Remove the token from the task file. ${again}`);
-  }
-  return ok(body);
+  const tokens = checkFileTokens(body, guards, `Remove the token from the task file. ${again}`);
+  return tokens.ok ? ok(body) : tokens;
 };
 
 /** The line of each guard that is off in `guards`, with the checks of a send that it turned off. */

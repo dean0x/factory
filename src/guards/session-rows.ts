@@ -127,7 +127,7 @@ const taskFileRows: readonly GuardRow[] = [
   alwaysOnRow({
     id: 'assignment-local-config',
     guard: guardIds.taskFiles,
-    name: `An assignment file is never the local config of the ${folder}, so the ${owner} prefix never reaches another session`,
+    name: `A task file is never the local config of the ${folder}, with every guard value`,
     applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
     harm: true,
     sites: at('src/core/place-rule.ts', 'localConfigReason'),

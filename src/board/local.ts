@@ -27,6 +27,7 @@ import {
   type CommandName,
 } from '../names.js';
 import type { RecipeBoard } from '../recipes/entry.js';
+import { checkFileTokens } from '../safety/secrets.js';
 import { commitBoardChange, GIT_CHECK_LINE, readBoardFiles, type BoardCommitError, type BoardTexts, type CommitOutcome } from '../state/board-commit.js';
 import { requireGuardOn } from '../state/guard.js';
 import { stateRel, type Layout } from '../state/layout.js';
@@ -205,6 +206,22 @@ const requireDocFile = async (deps: Deps, layout: Layout, path: string): Promise
   const shownPath = JSON.stringify(displayLine(path, maxEchoChars));
   if (info.value === null || info.value.kind !== 'file') return usageError(`${shownPath} is not a file of the ${places.folder}`);
   return info.value.size > maxFileBytes ? usageError(`${shownPath} is larger than ${maxFileBytes} bytes`) : ok(undefined);
+};
+
+/** Read only for the token check. The open refuses a link at the file and checks the cap on the handle. */
+const checkDocTokens = async (deps: Deps, layout: Layout, path: string, guards: GuardValues): Promise<CliResult<void>> => {
+  if (!isGuardOn(guards, guardIds.secrets)) return ok(undefined);
+  const full = join(layout.home, path);
+  const read = await deps.fs.openChecked(full, { uid: null, maxBytes: maxFileBytes, access: 'content' });
+  if (!read.ok) return read;
+  const { value } = read;
+  const shownPath = shown(path);
+  if (value.state === 'link') return safetyRefusal(`${shownPath} is a link, so ${program} does not use it`, LINK_REMEDY);
+  if (value.state === 'refused' && value.fault === 'size') return usageError(`${shownPath} is larger than ${maxFileBytes} bytes`);
+  if (value.state !== 'opened' || value.text === null) return failure(`cannot read ${shownPath}`);
+  const linked = await requireNoLinks(deps, layout.home, [full]);
+  if (!linked.ok) return linked;
+  return checkFileTokens(value.text, guards, `Remove the token from the doc file. Then run "${commandText(commandLines.itemDoc)}" again.`);
 };
 
 export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoardOptions): LocalBoard => {
@@ -775,10 +792,13 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const valid = checkItemId(input.id);
       if (!valid.ok) return valid;
-      const path = checkDocPath(input.path, commandLines.itemDoc, await nodeGuards());
+      const guards = await nodeGuards();
+      const path = checkDocPath(input.path, commandLines.itemDoc, guards);
       if (!path.ok) return path;
       const file = await requireDocFile(deps, layout, path.value);
       if (!file.ok) return file;
+      const tokens = await checkDocTokens(deps, layout, path.value, guards);
+      if (!tokens.ok) return tokens;
       return boardWrite<boolean, DocLinked>({
         message: commitMessages.linkDoc(input.id),
         edit: (doc) => linkDocIn(doc, input.id, path.value),
