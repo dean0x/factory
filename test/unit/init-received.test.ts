@@ -7,7 +7,9 @@ import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
-import { readGuardStore } from '../../src/core/guard-records.js';
+import { readGuardState, readGuardStore } from '../../src/core/guard-records.js';
+import { guardsFor } from '../../src/guards/registry.js';
+import { expectShortOutput } from '../helpers/short-output.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { ok } from '../../src/core/result.js';
 import { env, stateGuard, trackedFiles } from '../../src/names.js';
@@ -18,11 +20,12 @@ import {
   FAKE_PROGRAM_ARGV,
   registerRoot,
   withFailingWrites,
+  withFsWatch,
   type FakeDeps,
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
-import { runDoctor, runInit, runStart } from '../helpers/package-registry.js';
+import { loadConfig, runDoctor, runInit, runStart } from '../helpers/package-registry.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
@@ -138,20 +141,29 @@ const coordinatorText = (deps: FakeDeps): string => deps.files.get(`${ROOT}/coor
 describe('init: the owner prefix of a received factory', () => {
   const store = '/state/factory/guard-records.json';
 
-  it.each([false, true])('records the prefix after the files, with yes set to %s', async (yes) => {
-    const { deps } = received({}, { ...terminal, prompt: () => ok('') });
-    expect((await runInit(deps, options({ yes }))).ok).toBe(true);
-    const records = await readGuardStore(deps, store);
-    expect(records).toMatchObject({ ok: true, value: [{
-      node: 'demo', root: ROOT, values: {}, prefix: {
-        hash: createHash('sha256').update(sampleConfig().core.owner.prefix, 'utf8').digest('hex'),
-        at: deps.now().toISOString(),
-      },
-    }] });
-    expect(deps.atomicWrites.indexOf(store)).toBeGreaterThan(deps.atomicWrites.indexOf(`${ROOT}/factory.local.yaml`));
-    for (const file of ['factory.yaml', 'factory.local.yaml']) {
-      expect(deps.files.get(`${ROOT}/${file}`)).not.toMatch(/^guards:/m);
-    }
+  it.each([false, true])('records the local off values and prefix but keeps a shared guard on, with yes set to %s', async (yes) => {
+    const sample = sampleConfig();
+    const config: FactoryConfig = { ...sample, core: { ...sample.core, shared_guards: { proxy: 'on' } } };
+    const { deps } = received({ config }, { ...terminal, prompt: person('y', [], 'y') });
+    const result = await runInit(withFsWatch(deps, (method, path) => {
+      if (method === 'writeTextAtomicCore' && path === store) expect(deps.files.has(HOOK_FILE)).toBe(true);
+    }), options({ yes }));
+    expect(result.ok).toBe(true);
+    const guards = guardsFor(sample.entry).filter((guard) => !guard.fixed);
+    const at = deps.now().toISOString();
+    expect(await readGuardStore(deps, store)).toEqual(ok([{
+      node: 'demo', root: ROOT, values: Object.fromEntries(guards.map(({ id }) => [id, { value: 'off', at }])),
+      prefix: { hash: createHash('sha256').update(sample.core.owner.prefix, 'utf8').digest('hex'), at },
+    }]));
+    expect(deps.files.has(HOOK_FILE)).toBe(true);
+    expect(deps.atomicWrites.filter((path) => path === store)).toHaveLength(1);
+    expect(deps.atomicWrites.at(-1)).toBe(store);
+    const loaded = await loadConfig(deps, ROOT);
+    if (!loaded.ok) throw new Error(loaded.error.message);
+    expect(loaded.value.core.guards).toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'off'])));
+    const local = deps.files.get(`${ROOT}/factory.local.yaml`) ?? '';
+    for (const guard of guards) expect(local).toContain(`  ${guard.id}: "off"    # ${guard.harm ? 'H: ' : ''}${guard.keepsSafe}`);
+    expect((await readGuardState(deps, ROOT, loaded.value, 'always')).values).toMatchObject({ proxy: 'on', 'install-rules': 'off' });
   });
 
   it.each([
@@ -164,7 +176,14 @@ describe('init: the owner prefix of a received factory', () => {
     expect(result.ok).toBe(true);
     expect(result.ok ? result.value.warnings.filter((text) => text.includes('factory guard confirm')) : []).toHaveLength(1);
     expect(deps.files.has(store)).toBe(false);
-    expect(deps.files.has(`${ROOT}/factory.local.yaml`)).toBe(true);
+    const loaded = await loadConfig(deps, ROOT);
+    if (!loaded.ok || !result.ok) throw new Error('init did not make a node');
+    const guards = guardsFor(loaded.value.entry);
+    expect(loaded.value.core.guards).toEqual(Object.fromEntries(guards.filter(({ fixed }) => !fixed).map(({ id }) => [id, 'off'])));
+    expect((await readGuardState(deps, ROOT, loaded.value, 'always')).values)
+      .toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'on'])));
+    expect(result.value.warnings.filter((text) => text.includes('factory guard set --all off'))).toHaveLength(1);
+    expectShortOutput([...result.value.lines.map((line) => line.text), ...result.value.warnings].join('\n'));
   });
 });
 
@@ -726,7 +745,9 @@ describe('init: the setup acceptance of a received root', () => {
 
     it('asks with plain init, writes no acceptance after a no, names init in a terminal window, and then start exits 4', async () => {
       const asked: string[] = [];
-      const { deps } = received({ tracked: LISTED, unaccepted: true }, { ...terminal, prompt: person('n', asked) });
+      const sample = sampleConfig();
+      const config: FactoryConfig = { ...sample, core: { ...sample.core, shared_guards: { 'setup-text': 'on' } } };
+      const { deps } = received({ config, tracked: LISTED, unaccepted: true }, { ...terminal, prompt: person('n', asked) });
       const result = await runInit(deps, options());
       expect(result.ok).toBe(true);
       const questions = asked.filter((text) => text.includes('Accept these files?'));

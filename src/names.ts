@@ -2516,6 +2516,8 @@ export const guardConfirmWords = {
 
 /** Guard record checks and their remedies have words of their own. */
 export const guardRecordWords = {
+  priorOff: `A guard record already exists for this ${roles.node} and folder.`,
+  priorOffRemedy: `Use another ${roles.node} id or folder.`,
   sessionRefused: `A ${program} session cannot write a guard record.`,
   claudeRefused: 'A Claude Code session cannot write a guard record.',
   inputRequired: 'A guard record needs terminal input.',
@@ -2559,6 +2561,14 @@ export const guardStartWords = {
   harm: (count: number): string => `${count} with ${harmMark}`,
   directProxy: (key: string): string => `direct proxy ${key}`,
   unmatched: (id: string): string => `unmatched ${id}`,
+  confirmOff: `Run "${commandText(commandLines.guardSet)} --all ${guardValues.off}" to turn the guards off.`,
+  unmatchedOff: (count: number): string => `${count} unmatched off values; ${guardStartWords.confirmOff}`,
+  init: (count: number, marked: readonly string[]): string => {
+    const label = `${guardStartWords.prefix} ${guardStartWords.off(count)};`;
+    const remedy = `Run "${commandText(commandLines.guardSet)} <id> ${guardValues.on}" to turn one on.`;
+    const names = `${label} ${harmMark}: ${marked.join(', ')}. ${remedy}`;
+    return marked.length > 0 && names.length <= maxDisplayWidth ? names : `${label} ${guardStartWords.harm(marked.length)}. ${remedy}`;
+  },
   noPrefixRecord: 'owner prefix has no record',
   prefixMismatch: 'owner prefix differs from its record',
 } as const;

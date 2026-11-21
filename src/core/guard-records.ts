@@ -19,7 +19,7 @@ import type { Deps, LinkInfo } from './deps.js';
 import { inFactorySession } from './factory-session.js';
 import { freeLock, holdsLock, takeAgeLock } from './file-lock.js';
 import { entryProblemOf } from './home.js';
-import { isSameOrInsideFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
+import { isSameOrInsideFolder, isWrittenInside, realPathOf, userClaudeFolderOf } from './paths.js';
 import { userFileLock, userFileLockPath, userStatePlaceOf, type StateFilePlace } from './private-file.js';
 import { err, ok, type Result } from './result.js';
 
@@ -168,10 +168,10 @@ interface GuardPlace {
 }
 
 /** Check both written and real places before any store access. The record key is the real root. */
-const guardPlaceOf = async (deps: Deps, root: string): Promise<CliResult<GuardPlace>> => {
+const guardPlaceOf = async (deps: Deps, root: string, newRoot = false): Promise<CliResult<GuardPlace>> => {
   const place = guardStorePathOf(deps, root);
   if (place.inside) return safetyRefusal(guardRecordWords.inside, guardRecordWords.placeRemedy);
-  const real = await deps.fs.realpath(root);
+  const real = await (newRoot ? realPathOf(deps, root) : deps.fs.realpath(root));
   if (!real.ok) return real;
   if (place.path !== null) {
     const claude = userClaudeFolderOf(deps);
@@ -182,6 +182,19 @@ const guardPlaceOf = async (deps: Deps, root: string): Promise<CliResult<GuardPl
     }
   }
   return ok({ root: real.value, path: place.path });
+};
+
+/** A new node must not inherit an off record of a prior node with the same id and root. */
+export const requireFreshGuardRecord = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<void>> => {
+  const place = await guardPlaceOf(deps, input.root, true);
+  // A store that cannot be read cannot supply an effective off value.
+  if (!place.ok || place.value.path === null) return ok(undefined);
+  const records = await readGuardStore(deps, place.value.path);
+  if (!records.ok) return ok(undefined);
+  const key = recordKey(input.node, place.value.root);
+  const record = records.value.find(({ root, node }) => recordKey(node, root) === key);
+  if (record === undefined || !Object.values(record.values).some(({ value }) => value === guardValues.off)) return ok(undefined);
+  return failure(guardRecordWords.priorOff, guardRecordWords.priorOffRemedy);
 };
 
 export interface GuardChange {
@@ -203,9 +216,9 @@ const replaceRecord = (
   return current === undefined ? [...records, next] : records.map((record) => recordKey(record.node, record.root) === key ? next : record);
 };
 
-/** The caller supplies guards from its recipe registry. Only their named values change. */
+/** Save the named values and, if supplied, the exact prefix hash in one write. */
 export const recordGuards = async (
-  deps: Deps, input: RecordPlaceInput & { readonly change: readonly GuardChange[] },
+  deps: Deps, input: RecordPlaceInput & { readonly change: readonly GuardChange[]; readonly prefix?: string },
 ): Promise<CliResult<GuardRecordWrite>> => {
   const channel = requireGuardChannel(deps, commandLines.guardSet);
   if (!channel.ok) return channel;
@@ -216,14 +229,17 @@ export const recordGuards = async (
     }
   }
   if (!slug.safeParse(input.node).success) return usageError(guardRecordWords.invalidChange);
+  if (input.prefix !== undefined && removedByDisplay(input.prefix)) return usageError(guardRecordWords.badPrefix);
   const place = await guardPlaceOf(deps, input.root);
   if (!place.ok) return place;
   if (place.value.path === null) return failure(guardRecordWords.noPlace);
   const at = deps.now().toISOString();
+  const prefix = input.prefix === undefined ? null : { hash: sha256Hex(input.prefix), at };
   const written = await changeGuardStore(deps, place.value.path, (records) => ok(replaceRecord(
     records, { node: input.node, root: place.value.root }, (current) => ({
       ...current,
       values: { ...current.values, ...Object.fromEntries(input.change.map((item) => [item.guard.id, { value: item.value, at }])) },
+      prefix: prefix ?? current.prefix,
     }),
   )));
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));

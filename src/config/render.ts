@@ -1,5 +1,6 @@
-import type { GuardValues } from '../guards/types.js';
-import { address, capitalize, files, guardConfigWords, guardKeys, keys, program, roles, values } from '../names.js';
+import { guardsFor } from '../guards/registry.js';
+import type { Guard, GuardValues } from '../guards/types.js';
+import { address, capitalize, files, guardConfigWords, guardKeys, harmMark, keys, program, roles, values } from '../names.js';
 import type { RecipeConfig, RecipeEntry, RecipeProject } from '../recipes/index.js';
 import {
   CONFIG_SCHEMA_VERSION,
@@ -146,11 +147,20 @@ const sourceLines = (sources: Readonly<Record<string, string>>): string[] => {
     : [`${keys.root.sources}:`, ...rows.map(([path, source]) => `${pad(1)}${quoted(path)}: ${quoted(source)}`)];
 };
 
-const guardLines = (key: typeof guardKeys.local | typeof guardKeys.shared, values: GuardValues, comment: string): string[] => {
+const guardLines = (
+  key: typeof guardKeys.local | typeof guardKeys.shared,
+  values: GuardValues,
+  commentOf: (id: string) => string,
+): string[] => {
   const saved = Object.entries(values);
   return saved.length === 0
     ? []
-    : ['', `${key}:`, ...saved.map(([id, value]) => entry(1, scalar(id), scalar(value), comment))];
+    : ['', `${key}:`, ...saved.map(([id, value]) => entry(1, scalar(id), scalar(value), commentOf(id)))];
+};
+
+const localGuardComment = (guard: Guard | undefined): string => {
+  if (guard === undefined) return guardConfigWords.localComment;
+  return `${guard.harm ? `${harmMark}: ` : ''}${guard.keepsSafe.replace(/\s+/g, ' ')}`;
 };
 
 /** The text of the shared file, with comments. Git tracks the file, and it travels to every machine. */
@@ -197,13 +207,13 @@ export const renderSharedConfig = (shared: SharedConfig): string => {
     '',
     ...(core.board === undefined ? [] : [...boardLines(core.board), '']),
     ...recipeLines(recipeEntry, recipe),
-    ...guardLines(guardKeys.shared, core.shared_guards, guardConfigWords.sharedComment),
+    ...guardLines(guardKeys.shared, core.shared_guards, () => guardConfigWords.sharedComment),
   ];
   return `${lines.join('\n')}\n`;
 };
 
 /** The text of the local file, with comments. Git ignores the file, and it has mode 600. */
-export const renderLocalConfig = (local: LocalConfig): string => {
+export const renderLocalConfig = (local: LocalConfig, guards: readonly Guard[] = []): string => {
   const workers = Object.entries(local.workers);
   const approval = Object.entries(local.approval);
   const lines: string[] = [
@@ -257,7 +267,7 @@ export const renderLocalConfig = (local: LocalConfig): string => {
     ...parentLines(local.parent),
     '',
     ...section(0, keys.root.children, local.children.map(childLines)),
-    ...guardLines(guardKeys.local, local.guards, guardConfigWords.localComment),
+    ...guardLines(guardKeys.local, local.guards, (id) => localGuardComment(guards.find((guard) => guard.id === id))),
   ];
   return `${lines.join('\n')}\n`;
 };
@@ -265,5 +275,5 @@ export const renderLocalConfig = (local: LocalConfig): string => {
 /** The texts of the two config files for a typed config. */
 export const renderConfig = (config: FactoryConfig): { readonly shared: string; readonly local: string } => ({
   shared: renderSharedConfig(sharedOf(config)),
-  local: renderLocalConfig(localOf(config)),
+  local: renderLocalConfig(localOf(config), guardsFor(config.entry)),
 });

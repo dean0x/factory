@@ -458,11 +458,11 @@ describe('the guards of a recipe', () => {
     expect(retiredGuardIds).toEqual([]);
   });
 
-  it('gives each guard that is not fixed the key below the guards key, a missing key that means on, and no other value yet', () => {
+  it('defaults new nodes to off for settable guards and on for fixed guards', () => {
     for (const guard of software.guards) {
       expect(guard.key).toBe(guard.fixed ? null : `${guardKeys.local}.${guard.id}`);
       expect(guard.whenMissing).toBe(guardValues.on);
-      expect(guard.newNode).toBe(guardValues.on);
+      expect(guard.newNode, guard.id).toBe(guard.fixed ? guardValues.on : guardValues.off);
     }
   });
 

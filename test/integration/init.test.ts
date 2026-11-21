@@ -3,6 +3,8 @@ import { mkdir, readdir, realpath, rename, rm, stat, utimes, writeFile } from 'n
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
+import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
+import { expectShortOutput } from '../helpers/short-output.js';
 import { runInTerminal, scriptGate, type Exchange } from './fake-terminal.js';
 import { DIST, makeSandbox, removeOpenSandboxes, PREFIX_RECORD_NOTICE, withoutHookNotice, type Sandbox } from './harness.js';
 import { scaled } from './load.js';
@@ -56,6 +58,36 @@ const dropSetupText = async (): Promise<void> => {
 };
 
 describe('factory init (built binary)', () => {
+  it.skipIf(gate !== 'run')('writes ten guard records and leaves the approval store free for ten later decisions', async () => {
+    const nodes = Array.from({ length: 10 }, (_, index) => `demo-${index}`);
+    const store = join(box.root, 'home', '.local', 'state', 'factory');
+    for (const node of nodes) {
+      const home = join(box.root, node);
+      const args = ['--home', home, '--name', node, '--owner-name', 'Test Owner', '--owner-github', 'test-owner'];
+      const result = await runInTerminal(box, [process.execPath, DIST, 'init', '--yes', ...args]);
+      expect(result.code, result.screen).toBe(0);
+      expectShortOutput(result.screen.slice(result.screen.indexOf('Created the node')).trim());
+      const role = await box.read(join(home, 'coordinator', 'CLAUDE.md'));
+      const blocks = parseBlocks(role);
+      expect(blocks.ok && blocks.value.every((block) => verifyBlock(block) === 'intact')).toBe(true);
+      expect(role).toContain('Never let two workers share a work copy.');
+      expect(result.screen).toContain('factory guard set <id> on');
+      const saved = JSON.parse(await box.read(join(store, 'guard-records.json'))) as { records: { node: string }[] };
+      expect(saved.records.at(-1)?.node).toBe(node);
+    }
+    const guards = JSON.parse(await box.read(join(store, 'guard-records.json'))) as { records: { node: string }[] };
+    expect(guards.records.map(({ node }) => node)).toEqual(nodes);
+    for (const node of nodes) {
+      const home = ['--home', join(box.root, node)];
+      const enabled = await runInTerminal(box, [process.execPath, DIST, 'guard', 'set', 'approval-delegation', 'on', ...home]);
+      expect(enabled.code, enabled.screen).toBe(0);
+      const later = await runInTerminal(box, [process.execPath, DIST, 'init', ...home, '--approval', 'merge=delegated', '--approval', 'release=owner']);
+      expect(later.code, later.screen).toBe(0);
+    }
+    const approvals = JSON.parse(await box.read(join(store, 'owner-records.json'))) as { records: { node: string; mode: string }[] };
+    expect(approvals.records.filter(({ mode }) => mode === 'delegated').map(({ node }) => node)).toEqual(nodes);
+  }, CASE_MS);
+
   it('creates the node and exits 0', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     const result = await box.run(initArgs(['--project', web]));

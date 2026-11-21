@@ -23,7 +23,7 @@ import {
   parseGithubRepo,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
-import { recordPrefix, requireGuardChannel } from '../core/guard-records.js';
+import { recordGuards, requireFreshGuardRecord, requireGuardChannel } from '../core/guard-records.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
@@ -31,7 +31,8 @@ import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { entryOfText, recordSetupAcceptance, type AcceptanceInput, type ManifestEntry } from '../core/setup-acceptance.js';
 import { describeIssues } from '../core/zod.js';
-import { allOn } from '../guards/effective.js';
+import { allOn, isSettable } from '../guards/effective.js';
+import { guardsFor } from '../guards/registry.js';
 import {
   commandLines,
   commands,
@@ -43,6 +44,9 @@ import {
   flags,
   flagText,
   ghTimeoutMs,
+  guardKeys,
+  guardStartWords,
+  guardValues,
   keys,
   localFileModes,
   maxFileBytes,
@@ -539,6 +543,7 @@ export const localSettingsOf = (
   owner: { readonly ownerName: string; readonly approvals: ApprovalChoice },
   github: string | undefined,
   sources: Readonly<Record<string, string>>,
+  recipe: RecipeEntry,
 ): unknown => ({
   [keys.root.schema]: LOCAL_SCHEMA_VERSION,
   [keys.root.owner]: {
@@ -553,6 +558,7 @@ export const localSettingsOf = (
   [keys.root.parent]: null,
   [keys.root.children]: [],
   [keys.root.sources]: sources,
+  [guardKeys.local]: Object.fromEntries(guardsFor(recipe).filter(isSettable).map(({ id }) => [id, guardValues.off])),
 });
 
 /** The settings of the two config files. The projects are the described projects of the command. */
@@ -577,7 +583,7 @@ const settingsOf = (
       [keys.recipe.projects]: projects,
     },
   },
-  local: localSettingsOf(checked, github, sources),
+  local: localSettingsOf(checked, github, sources, checked.recipe),
 });
 
 const parseSettings = (
@@ -761,6 +767,8 @@ const SHARED_FILE_MODE = 0o644;
  * `.gitignore`) is written back as it was.
  */
 export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<InitResult>> => {
+  const fresh = await requireFreshGuardRecord(deps, { root: plan.home, node: plan.config.core.node.id });
+  if (!fresh.ok) return fresh;
   const layout = layoutOf(plan.home);
   const staging = stagingDirOf(plan.home, deps.pid);
   const touched = {
@@ -1014,16 +1022,28 @@ export const recordAcceptance = async (
       };
 };
 
-/** Record only after all init files are saved. A failure keeps the files and clones for a later confirmation. */
-export const recordInitPrefix = async (deps: Deps, plan: InitPlan): Promise<CliResult<readonly string[]>> => {
-  const remedy = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the ${roles.owner} prefix.`;
-  const channel = requireGuardChannel(deps, commands.init);
-  if (!channel.ok) return ok([`No ${roles.owner} prefix record was written. ${remedy}`]);
-  const written = await recordPrefix(deps, {
-    root: plan.home, node: plan.config.core.node.id, prefix: plan.config.core.owner.prefix,
+/** Record after all init files and hook settings are saved. A failure keeps the files and clones. */
+export const recordInitGuards = async (deps: Deps, plan: InitPlan): Promise<CliResult<{
+  readonly lines: CommandOutput['lines']; readonly warnings: readonly string[];
+}>> => {
+  const { core, entry } = plan.config;
+  const guards = guardsFor(entry).filter(isSettable);
+  const confirm = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the ${roles.owner} prefix.`;
+  const offRemedy = guardStartWords.confirmOff;
+  if (!requireGuardChannel(deps, commands.init).ok) return ok({ lines: [], warnings: [
+    `No ${roles.owner} prefix record was written. ${confirm}`,
+    `Every guard stays on. ${offRemedy}`,
+  ] });
+  const written = await recordGuards(deps, {
+    root: plan.home, node: core.node.id, prefix: core.owner.prefix,
+    change: guards.map((guard) => ({ guard, value: guardValues.off })),
   });
-  if (!written.ok) return failure(`The files stay, but the ${roles.owner} prefix record could not be written: ${written.error.message}`, remedy);
-  return ok(written.value.warning === null ? [] : [written.value.warning]);
+  if (!written.ok) return failure(`The files stay, but the guard record could not be written: ${written.error.message}`, `${confirm} ${offRemedy}`);
+  const off = guards.filter(({ id }) => core.shared_guards[id] !== guardValues.on);
+  return ok({
+    lines: [{ level: 'text', text: guardStartWords.init(off.length, off.filter(({ harm }) => harm).map(({ id }) => id)) }],
+    warnings: written.value.warning === null ? [] : [written.value.warning],
+  });
 };
 
 /** The projects of the command: the git work trees that the command found come first, when the home is proposed. */
@@ -1088,10 +1108,10 @@ export const runInit = async (
   // The node is made and listed. A failure of the hook settings leaves it, and a second run of init finishes the step.
   const hook = await writeHookSettings(deps, plan.value.home, options.yes, idleCompaction);
   if (!hook.ok) return hook;
-  const prefix = await recordInitPrefix(deps, plan.value);
-  if (!prefix.ok) return prefix;
+  const guards = await recordInitGuards(deps, plan.value);
+  if (!guards.ok) return guards;
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
-  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...prefix.value, ...notes];
+  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings, ...notes];
 
   const written = [
     files.config,
@@ -1111,6 +1131,7 @@ export const runInit = async (
       ...skipped.map((folder) => ({ level: 'text' as const, text: `Skipped ${folder.path}: ${folder.reason}.` })),
       ...approvalLines(plan.value.home, applied.value.approval),
       ...(plan.value.acceptance === null ? [] : acceptanceLines(plan.value.acceptance, applied.value.accepted)),
+      ...guards.value.lines,
       {
         level: 'text',
         text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${plan.value.home}".`,

@@ -62,7 +62,7 @@ import {
   blockTexts,
   detectGithubLogin,
   localSettingsOf,
-  recordInitPrefix,
+  recordInitGuards,
   stateFilesOf,
   type InitOptions,
   type InitPlan,
@@ -414,7 +414,7 @@ const requireFlagsThatApply = (options: InitOptions): CliResult<void> => {
 
 /** The final config: the shared file of the root and the local values of this machine. */
 const configOf = (shared: SharedConfig, owner: OwnerFields, approvals: ApprovalChoice): CliResult<FactoryConfig> => {
-  const local = localConfigSchema.safeParse(localSettingsOf({ ownerName: owner.name, approvals }, owner.github, {}));
+  const local = localConfigSchema.safeParse(localSettingsOf({ ownerName: owner.name, approvals }, owner.github, {}, shared.entry));
   if (!local.success) return usageError(`invalid settings: ${describeIssues(local.error)}`, CHECK_FLAGS_REMEDY);
   const merged = mergeConfig(shared, local.data);
   return merged.success ? ok(merged.data) : usageError(`invalid settings: ${describeIssues(merged.error)}`, CHECK_FLAGS_REMEDY);
@@ -549,10 +549,10 @@ export const runReceived = async (
   // The root is registered. A failure of the hook settings leaves it, and a second run of init finishes the step.
   const hook = await writeHookSettings(deps, home, options.yes, idleCompaction);
   if (!hook.ok) return hook;
-  const prefix = await recordInitPrefix(deps, planned.value);
-  if (!prefix.ok) return prefix;
+  const guards = await recordInitGuards(deps, planned.value);
+  if (!guards.ok) return guards;
 
-  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...prefix.value];
+  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings];
   const written = [files.localConfig, join(dirs.coordinator, files.claudeMd), `${dirs.state}/`, ...hook.value.written];
   const kept = decision.value.kind === 'declined' ? declinedLines() : [];
   return ok({
@@ -564,6 +564,7 @@ export const runReceived = async (
       ...approvalLines(home, applied.value.approval),
       ...(planned.value.acceptance === null ? [] : acceptanceLines(planned.value.acceptance, applied.value.accepted)),
       ...kept,
+      ...guards.value.lines,
       { level: 'text', text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${home}".` },
     ],
     json: {

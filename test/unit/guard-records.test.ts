@@ -117,6 +117,16 @@ describe('guard store reads and writes', () => {
     expect(deps.files.get(path)).not.toContain('\n');
   });
 
+  it('saves the prefix and guard values in one store write', async () => {
+    const deps = fixture();
+    const input = { root, node: 'demo', change, prefix: 'Owner text' };
+    expect(await storeApi.recordGuards(deps, input)).toEqual(ok({ warning: null }));
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([
+      record({ [guard.id]: { value: 'off', at } }, { hash: sha256Hex(input.prefix), at }),
+    ]));
+    expect(deps.atomicWrites.filter((file) => file === path)).toHaveLength(1);
+  });
+
   it('refuses a liveness policy in the age-only lock path', async () => {
     const deps = fixture();
     const result = await lockApi.takeAgeLock(deps, `${path}.lock`, {

@@ -935,7 +935,13 @@ const checkGuards = async (
   const warnings: string[] = [];
   const failures: string[] = [];
   if (isRecord(config.raw) && !Object.hasOwn(config.raw, guardKeys.local)) parts.push(guardDoctorWords.noKey);
-  for (const guard of state.unmatched) warnings.push(`${guardStartWords.unmatched(guard)}: run "${commandText(commandLines.guardSet)} ${guard} on"`);
+  const settable = definitions.filter((guard) => !guard.fixed);
+  const unmatched = new Set(state.unmatched);
+  if (unmatched.size > 0 && settable.every(({ id }) => unmatched.has(id) && config.value.core.guards[id] === 'off')) {
+    warnings.push(guardStartWords.unmatchedOff(unmatched.size));
+  } else {
+    for (const guard of unmatched) warnings.push(`${guardStartWords.unmatched(guard)}: run "${commandText(commandLines.guardSet)} ${guard} on"`);
+  }
   warnings.push(...fixedGuardKeyWarnings(config.value));
   const path = guardStorePathOf(deps, home).path ?? files.guardRecords;
   if (state.recordCount !== null) {

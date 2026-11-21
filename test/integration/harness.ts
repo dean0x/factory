@@ -97,7 +97,8 @@ const HOOK_NOTICE = /warning: This changes the settings of Claude Code in [^\n]*
 export const withoutHookNotice = (stderr: string): string => stderr.replace(HOOK_NOTICE, '');
 
 /** Init has no owner terminal channel in a piped sandbox. */
-export const PREFIX_RECORD_NOTICE = 'warning: No owner prefix record was written. Run "factory guard confirm" in your terminal window to confirm the owner prefix.\n';
+export const PREFIX_RECORD_NOTICE = 'warning: No owner prefix record was written. Run "factory guard confirm" in your terminal window to confirm the owner prefix.\n' +
+  'warning: Every guard stays on. Run "factory guard set --all off" to turn the guards off.\n';
 
 /** The exact own rules for the written sandbox paths and their real paths. */
 export const ownDenyRules = async (box: Sandbox, folder: string): Promise<readonly string[]> => {

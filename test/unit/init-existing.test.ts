@@ -604,6 +604,17 @@ describe.each(FOLDER_ORIGINS)('init: the guard values of a state folder that is 
     expect(await runCli(['init', '--home', ROOT, '--yes'], deps, sink), sink.errors.join('')).toBe(0);
     expect(deps.files.get(WORKER_FILE)).toBe(allOnWorker);
   });
+
+  it('keeps local guard values and the store byte for byte on a second init', async () => {
+    const { deps } = existing({ state: 'absent', origin });
+    seedConfig(deps, ROOT, withGuardsOff(configOf({}), [OFF_GUARD]));
+    deps.seed(GUARD_STORE, guardStoreText('demo', ROOT, [OFF_GUARD], deps.now()));
+    const before = [deps.files.get(LOCAL), deps.files.get(GUARD_STORE)];
+    const sink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--yes'], { ...deps, ...terminal }, sink), sink.errors.join('')).toBe(0);
+    expect([deps.files.get(LOCAL), deps.files.get(GUARD_STORE)]).toEqual(before);
+    expect(deps.atomicWrites).not.toContain(GUARD_STORE);
+  });
 });
 
 describe('init: the approval points of a registered root', () => {

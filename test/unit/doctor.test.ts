@@ -188,8 +188,18 @@ describe('doctor: shared guard state', () => {
     return checks[0];
   };
 
+  it('gives one remedy for all off values left by init without a record', async () => {
+    const deps = await initialized();
+    const found = await guardCheck(deps);
+    expect(found).toMatchObject({ level: 'warn' });
+    expect(found?.text.match(/factory guard set --all off/g) ?? []).toHaveLength(1);
+    expect(found?.text).not.toMatch(/unmatched [a-z]+-/);
+    expect(found?.text).toContain('0 off; 0 with H');
+  });
+
   it('reports zero off guards and the no-key notice at the ok level', async () => {
     const deps = await initialized();
+    writeConfig(deps, sampleConfig());
     deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
       prefix: { hash: sha256Hex(sampleConfig().core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
     }] }));
@@ -269,6 +279,7 @@ describe('doctor: shared guard state', () => {
     'reports %s guard records at the %s level with the reset step', async (count, level) => {
       const deps = await initialized();
       const config = sampleConfig();
+      writeConfig(deps, config);
       const records = Array.from({ length: count }, (_, index) => ({
         node: index === 0 ? 'demo' : `node-${index}`, root: index === 0 ? HOME : `/old/node-${index}`, values: {},
         prefix: { hash: sha256Hex(config.core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },

@@ -92,11 +92,14 @@ describe('guard list', () => {
     expectShortOutput(result.out);
   });
 
-  it('shows every guard with all, without a more line', async () => {
+  it('shows every guard and its new-node default with all, without a more line', async () => {
     const result = await run(make(), ['--all']);
     const lines = linesOf(result.out);
     expect(result.code).toBe(0);
-    expect(lines.slice(1, -1).map((line) => cellsOf(line)[0])).toEqual(guardsFor(recipes[0]).map((guard) => guard.id));
+    expect(lines.slice(1, -1).map((line) => {
+      const [id, , newNode] = rowCells(lines[0] ?? '', line);
+      return [id, newNode];
+    })).toEqual(guardsFor(recipes[0]).map((guard) => [guard.id, guard.fixed ? 'on' : 'off']));
     expect(lines.at(-1)).toBe(guardListWords.countLine(0, guardsFor(recipes[0]).length, 0));
   });
 

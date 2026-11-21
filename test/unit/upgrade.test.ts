@@ -116,7 +116,7 @@ const makingGitFolders =
 const NODE_GUARD_FOLDER = `${HOME}/.factory/.git/factory-guard`;
 
 const makeNode = async (
-  options: { repo?: boolean; run?: (inner: RunHandler) => RunHandler; links?: Record<string, string> } = {},
+  options: { repo?: boolean; run?: (inner: RunHandler) => RunHandler; links?: Record<string, string>; newLocalGuards?: true } = {},
 ): Promise<Node> => {
   const { handler } = gitHandler({ hooksPath: { [`${HOME}/.factory`]: NODE_GUARD_FOLDER } });
   const deps = createFakeDeps({
@@ -140,6 +140,10 @@ const makeNode = async (
     },
   );
   expect(init.ok).toBe(true);
+  if (!options.newLocalGuards) {
+    // Most cases start with the local file of an older node, with no guard keys.
+    deps.seed(LOCAL, text(deps, LOCAL).split('\nguards:\n')[0] ?? '');
+  }
   if (options.repo === false) expect((await deps.fs.remove(`${HOME}/.factory/.git`)).ok).toBe(true);
   const first = deps.calls.length;
   return { deps, gitSince: () => deps.calls.slice(first).map((call) => withoutStateWords(call.args).slice(2).join(' ')) };
@@ -520,6 +524,22 @@ describe('upgrade: effective guard values', () => {
     // The migrated config is not on disk when the upgrade reads its guard values, so an off value has no proof yet: every guard is on.
     const templates = blockTemplatesFor(blockInputOf(config.value, { coordinator: null, worker: null }, config.value.core.approval, allOn));
     expect((await inspectBlocks(deps, HOME, templates)).every((block) => planBlock(block, false).action === 'current')).toBe(true);
+  });
+
+  it('keeps every new local guard value and comment through an upgrade rewrite, with no record change', async () => {
+    const { deps } = await makeNode({ newLocalGuards: true });
+    const config = await loadConfig(deps, HOME);
+    if (!config.ok) throw new Error(config.error.message);
+    const guards = guardsFor(config.value.entry).filter((guard) => !guard.fixed);
+    const before = text(deps, LOCAL);
+    for (const guard of guards) expect(before).toContain(`  ${guard.id}: "off"    # ${guard.harm ? 'H: ' : ''}${guard.keepsSafe}`);
+    deps.seed(STORE, guardStoreText('demo', HOME, guards.map(({ id }) => id), deps.now()));
+    const saved = text(deps, STORE);
+    deps.seed(LOCAL, `${before}  ${guardIds.cloneRules}: off # remove this key\n`);
+    success(await upgrade(deps));
+    expect(text(deps, LOCAL)).toBe(before);
+    expect(text(deps, STORE)).toBe(saved);
+    expect(deps.atomicWrites).not.toContain(STORE);
   });
 
   it('prints one notice when the local rewrite drops retired guard ids and keeps other values', async () => {
