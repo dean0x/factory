@@ -355,17 +355,21 @@ describe('the guards of a recipe', () => {
     expect(idsOf(software.guards).filter((id) => taken.has(id))).toEqual([]);
   });
 
-  it('lists a guard read or an explained exception at each configurable code site', () => {
+  it('lists a guard read for each configurable code row and explains each other site', () => {
     const codeRows = software.rows.filter((row) =>
       row.kind === guardKinds.code && !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && !guard.fixed));
     const paths = [...new Set(codeRows.flatMap((row) => row.sites.map((site) => site.path)))];
     const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
     expect(codeRows.length).toBeGreaterThan(0);
-    const unread = codeRows.flatMap((row) => {
+    const sitesByRow = codeRows.map((row) => {
       const texts = sourceScan.declarationTextsOf(sources, row.sites);
-      return row.sites.filter((_site, index) => texts[index]?.includes(idNameOf(row.guard)) !== true)
-        .map((site) => `${row.id} ${site.path} ${site.symbol}`);
+      const guardName = idNameOf(row.guard);
+      const unread = row.sites.filter((_site, index) => texts[index]?.includes(guardName) !== true);
+      return { row, unread };
     });
+    const rowsWithoutRead = sitesByRow.filter(({ row, unread }) => unread.length === row.sites.length).map(({ row }) => row.id);
+    expect(rowsWithoutRead).toEqual([]);
+    const unread = sitesByRow.flatMap(({ row, unread }) => unread.map((site) => `${row.id} ${site.path} ${site.symbol}`));
     const excepted = unreadSiteExceptions.map((site) => `${site.row} ${site.path} ${site.symbol}`);
     expect(duplicatesOf(excepted)).toEqual([]);
     expect(unreadSiteExceptions.filter((site) => site.reason.trim() === '')).toEqual([]);
