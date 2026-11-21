@@ -31,7 +31,6 @@ import {
   checkTempFolders,
   checkTools,
   checkTracker,
-  runDoctor as runDoctorOf,
   type CheckResult,
 } from '../../src/commands/doctor.js';
 import { renderConfig } from '../../src/config/render.js';
@@ -59,7 +58,6 @@ import { OWN_SETTINGS_TEXT, seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup
 import { checkChildren, inspectConfig, runDoctor, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { UNWIRED_GUARD, unwiredRegistry } from '../helpers/unwired-guard.js';
 import { GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
@@ -190,8 +188,22 @@ describe('doctor: shared guard state', () => {
     return checks[0];
   };
 
+  it.each([false, true])('gives one remedy for all unmatched off values, with a prior on record: %s', async (prior) => {
+    const deps = await initialized();
+    if (prior) deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, prefix: null,
+      values: { 'install-rules': { value: 'on', at: deps.now().toISOString() } },
+    }] }));
+    const found = await guardCheck(deps);
+    expect(found).toMatchObject({ level: 'warn' });
+    expect(found?.text).toContain('29 off values do not take effect. Run "factory guard set --all off" to turn the guards off.');
+    expect(found?.text.match(/factory guard set --all off/g) ?? []).toHaveLength(1);
+    expect(found?.text).not.toMatch(/unmatched [a-z]+-/);
+    expect(found?.text).toContain('0 off; 0 with H');
+  });
+
   it('reports zero off guards and the no-key notice at the ok level', async () => {
     const deps = await initialized();
+    writeConfig(deps, sampleConfig());
     deps.seed(STORE, JSON.stringify({ schema: 1, records: [{ node: 'demo', root: HOME, values: {},
       prefix: { hash: sha256Hex(sampleConfig().core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
     }] }));
@@ -228,19 +240,6 @@ describe('doctor: shared guard state', () => {
     expect(found?.text).toContain('unmatched install-rules');
     expect(found?.text).toContain('factory guard set install-rules on');
     expect(found?.text).toContain('factory guard confirm');
-  });
-
-  it('warns for an unwired off value and absent deny rules', async () => {
-    const deps = await initialized();
-    writeConfig(deps, withGuards({ [UNWIRED_GUARD]: 'off' }));
-    deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(ownSettingsEntries));
-    const output = await runDoctorOf(deps, { home: HOME }, unwiredRegistry);
-    if (!output.ok) throw new Error(output.error.message);
-    const found = (output.value.json['checks'] as CheckResult[]).find((entry) => entry.id === checkIds.guards);
-    expect(found?.level).toBe('warn');
-    expect(found?.text).toContain(`${UNWIRED_GUARD} is not settable in this version; its value stays on`);
-    expect(found?.text).not.toContain('wired');
-    expect(found?.text).toContain('Own file Edit rules are incomplete.');
   });
 
   it.each(['local', 'shared'] as const)('warns for a key of a fixed guard in the %s file and keeps the guard on', async (file) => {
@@ -284,6 +283,7 @@ describe('doctor: shared guard state', () => {
     'reports %s guard records at the %s level with the reset step', async (count, level) => {
       const deps = await initialized();
       const config = sampleConfig();
+      writeConfig(deps, config);
       const records = Array.from({ length: count }, (_, index) => ({
         node: index === 0 ? 'demo' : `node-${index}`, root: index === 0 ? HOME : `/old/node-${index}`, values: {},
         prefix: { hash: sha256Hex(config.core.owner.prefix), at: '2030-01-02T03:04:05.678Z' },
@@ -322,6 +322,8 @@ describe('doctor: shared guard state', () => {
     const found = await guardCheck(deps);
     expect(found?.level).toBe('fail');
     expect(found?.text).toContain(STORE);
+    expect(found?.text).toContain('29 off values do not take effect.');
+    expect(found?.text).not.toContain('factory guard set --all off');
     expect(found?.text).toContain('move the file away');
     expect(found?.text).toContain('every guard on');
     expect(found?.text).toContain('prefix records of every node');

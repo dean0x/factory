@@ -3216,7 +3216,9 @@ describe('start:the safety block', () => {
     expect(output.json).toMatchObject({ started: true });
     expect(deps.files.get(CLAUDE_FILE)).toContain(safetyOf(softwareOwnerModes));
     expect(deps.files.get(CLAUDE_FILE)).not.toContain(safetyOf(delegatedModes));
-    expect(deps.warned).toContain(RENDERED_NOTICE);
+    expect(deps.warned.filter((line) => line.startsWith('Rendered '))).toEqual([
+      'Rendered the role blocks again after a guard change or a package change: 0 guards off.',
+    ]);
   });
 
   it('renders the block again, with a notice, when the package renders another text', async () => {

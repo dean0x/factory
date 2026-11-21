@@ -5,13 +5,15 @@ import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
-import { applyInit, recordInitPrefix, type InitOptions } from '../../src/commands/init.js';
+import { applyInit, recordInitGuards, type InitOptions } from '../../src/commands/init.js';
 import { collectSetup, decideAcceptance } from '../../src/commands/init-received.js';
 import { declinedHookText, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
-import { readGuardStore } from '../../src/core/guard-records.js';
+import { readGuardState, readGuardStore } from '../../src/core/guard-records.js';
+import { guardsFor } from '../../src/guards/registry.js';
+import { expectShortOutput } from '../helpers/short-output.js';
 import { ok } from '../../src/core/result.js';
 import { acceptanceState, manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { commands, env, files as fileNames, guardIds, guardRecordWords, hookNames, setupAcceptance, stateGuard, values } from '../../src/names.js';
@@ -104,28 +106,45 @@ const homeQuestions = (deps: FakeDeps): string[] => deps.prompts.filter(isOtherQ
 /** The questions of the approval points that deps asked. */
 const approvalQuestions = (deps: FakeDeps): string[] => deps.prompts.filter((question) => question.startsWith(APPROVAL_QUESTION));
 
-describe('init: the owner prefix record', () => {
+describe('init in an own folder: the owner prefix record', () => {
   const store = `/state/factory/${fileNames.guardRecords}`;
   const terminal = { stdinIsTTY: true, stdoutIsTTY: true };
 
-  it.each([false, true])('records the exact prefix after the files, with yes set to %s', async (yes) => {
-    const { deps } = setup({}, { ...terminal, prompt: () => ok('') });
-    expect((await runInit(deps, options({ yes }))).ok).toBe(true);
+  it.each([false, true])('records the off values and the prefix after the hook settings, with yes set to %s', async (yes) => {
+    const { deps } = setup({}, { ...terminal, prompt: (text) => ok(text.startsWith(HOOK_QUESTION) ? 'y' : '') });
+    const settings = `${HOME}/coordinator/.claude/settings.local.json`;
+    if (yes) deps.seed(store, JSON.stringify({ schema: 1, records: [{ node: 'node', root: HOME,
+      values: { 'old-guard': { value: 'off', at: deps.now().toISOString() } },
+      prefix: { hash: 'a'.repeat(64), at: deps.now().toISOString() },
+    }] }));
+    const hookAtStoreWrite: boolean[] = [];
+    const result = await runInit(withFsWatch(deps, (method, path) => {
+      if (method === 'writeTextAtomicCore' && path === store) hookAtStoreWrite.push(deps.files.has(settings));
+    }), options({ yes }));
+    expect(hookAtStoreWrite).toEqual(yes ? [false, true] : [true]);
+    expect(result.ok).toBe(true);
     const config = await loadConfig(deps, HOME);
-    expect(config.ok).toBe(true);
-    if (!config.ok) return;
+    if (!config.ok || !result.ok) throw new Error('init did not make a node');
+    const guards = guardsFor(config.value.entry).filter((guard) => !guard.fixed);
+    const at = deps.now().toISOString();
     expect(await readGuardStore(deps, store)).toEqual(ok([{
-      node: 'node', root: HOME, values: {}, prefix: {
-        hash: createHash('sha256').update(config.value.core.owner.prefix, 'utf8').digest('hex'),
-        at: deps.now().toISOString(),
-      },
+      node: 'node', root: HOME, values: Object.fromEntries(guards.map(({ id }) => [id, { value: 'off', at }])),
+      prefix: { hash: createHash('sha256').update(config.value.core.owner.prefix, 'utf8').digest('hex'), at },
     }]));
-    expect(deps.atomicWrites.indexOf(store)).toBeGreaterThan(deps.atomicWrites.indexOf(`${HOME}/factory.yaml`));
-    for (const file of ['factory.yaml', 'factory.local.yaml']) {
-      expect(deps.files.get(`${HOME}/${file}`)).not.toMatch(/^guards:/m);
-    }
-    expect(config.value.core.guards).toEqual({});
+    expect(deps.atomicWrites.filter((path) => path === store)).toHaveLength(yes ? 2 : 1);
+    expect(deps.files.has(settings)).toBe(true);
+    expect(deps.atomicWrites.at(-1)).toBe(store);
+    expect(config.value.core.guards).toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'off'])));
     expect(config.value.core.shared_guards).toEqual({});
+    const local = deps.files.get(`${HOME}/factory.local.yaml`) ?? '';
+    for (const guard of guards) {
+      expect(local).toContain(`  ${guard.id}: "off"    # ${guard.harm ? 'H: ' : ''}${guard.keepsSafe}`);
+    }
+    const lines = result.value.lines.map((line) => line.text);
+    expect(lines.filter((line) => line.startsWith('Guards:'))).toEqual([
+      'Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
+    ]);
+    expectShortOutput(lines.join('\n'));
   });
 
   it.each([
@@ -138,19 +157,33 @@ describe('init: the owner prefix record', () => {
     deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(OWN_SETTINGS_WITH_DENY));
     const seen: string[] = [];
     const result = await runInit(withFsWatch(deps, (method, path) => {
-      if (path === store && method !== 'stat' && method !== 'realpath') seen.push(`${method} ${path}`);
+      if (path === store && /^(write|remove|rename)/.test(method)) seen.push(`${method} ${path}`);
     }), options());
     expect(result.ok).toBe(true);
     expect(result.ok ? result.value.warnings.filter((text) => text.includes('factory guard confirm')) : []).toHaveLength(1);
     expect(seen).toEqual([]);
     expect(deps.files.has(store)).toBe(false);
     expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
-    expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(true);
+    await expectUnrecordedGuards(deps);
+    const warnings = result.ok ? result.value.warnings : [];
+    expect(warnings.filter((text) => text.includes('factory guard set --all off'))).toHaveLength(1);
+    expectShortOutput((result.ok ? [...result.value.lines.map((line) => line.text), ...warnings] : []).join('\n'));
   });
 
-  it('keeps the files and clones, exits one and names guard confirm after a failed prefix write', async () => {
+  const expectUnrecordedGuards = async (deps: Deps): Promise<void> => {
+    const config = await loadConfig(deps, HOME);
+    if (!config.ok) throw new Error(config.error.message);
+    const guards = guardsFor(config.value.entry);
+    expect(config.value.core.guards).toEqual(Object.fromEntries(guards.filter(({ fixed }) => !fixed).map(({ id }) => [id, 'off'])));
+    expect((await readGuardState(deps, HOME, config.value, 'always')).values)
+      .toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'on'])));
+  };
+
+  it.each([false, true])('keeps the files and guards on after a failed final write, with an earlier record: %s', async (earlier) => {
     const { deps } = setup({ repos: { '/w/web': { origin: 'https://github.com/acme/web.git' } } }, terminal);
     deps.seedDir('/w/web');
+    const guards = guardsFor(sampleConfig().entry).filter(({ fixed }) => !fixed).map(({ id }) => id);
+    if (earlier) deps.seed(store, guardStoreText('node', HOME, guards, deps.now()));
     const used: Deps = {
       ...deps,
       run: async (command, args, runOptions) => {
@@ -158,7 +191,9 @@ describe('init: the owner prefix record', () => {
         if (command === 'git' && args[0] === 'clone' && result.ok && result.value.exitCode === 0) deps.seedDir(`${HOME}/web`);
         return result;
       },
-      fs: { ...deps.fs, writeTextAtomicCore: async () => failure('disk full') },
+      fs: { ...deps.fs, writeTextAtomicCore: async (...args) =>
+        args[0] === store && deps.files.has(`${HOME}/factory.local.yaml`) ? failure('disk full') : deps.fs.writeTextAtomic(...args),
+      },
     };
     const sink = captureSink();
     const code = await runCli(['init', '--home', HOME, '--owner-name', 'Test Owner', '--project', '/w/web', '--yes'], used, sink);
@@ -169,7 +204,8 @@ describe('init: the owner prefix record', () => {
     }
     expect(deps.dirs.has(`${HOME}/web`)).toBe(true);
     expect(deps.files.has(INDEX)).toBe(true);
-    expect(deps.files.has(store)).toBe(false);
+    await expectUnrecordedGuards(deps);
+    expect(await readGuardStore(deps, store)).toEqual(ok([]));
   });
 
   it('keeps the written files and names guard confirm when the init prefix has a hidden character', async () => {
@@ -184,7 +220,7 @@ describe('init: the owner prefix record', () => {
       localConfigText: plan.value.localConfigText.replace(JSON.stringify(config.core.owner.prefix), JSON.stringify(prefix)),
     };
     expect((await applyInit(deps, hidden)).ok).toBe(true);
-    const result = await recordInitPrefix(deps, hidden);
+    const result = await recordInitGuards(deps, hidden);
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(messageOf(result)).toContain('factory guard confirm');
     expect(messageOf(result)).toContain('owner.prefix');
@@ -193,15 +229,56 @@ describe('init: the owner prefix record', () => {
     expect(deps.files.has(store)).toBe(false);
   });
 
-  it('keeps an unreadable store and the new files, exits one and names guard confirm', async () => {
-    const { deps } = setup({}, terminal);
-    deps.seed(store, 'invalid store');
-    const result = await runInit(deps, options());
-    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
-    expect(messageOf(result)).toContain('factory guard confirm');
-    expect(deps.files.get(store)).toBe('invalid store');
-    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
-    expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(true);
+  const project = '/w/web';
+  const source = { repos: { [project]: { origin: 'https://github.com/acme/web.git' } } };
+
+  it.each(['off value', 'prefix'] as const)('refuses a prior %s before any clone without an owner channel', async (part) => {
+    const { deps, log } = setup(source);
+    deps.seedDir(project);
+    const at = deps.now().toISOString();
+    const before = part === 'off value' ? guardStoreText('node', HOME, [guardIds.installRules], deps.now())
+      : JSON.stringify({ schema: 1, records: [{ node: 'node', root: HOME, values: {}, prefix: { hash: 'a'.repeat(64), at } }] });
+    deps.seed(store, before);
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', HOME, '--owner-name', 'Test Owner', '--project', project, '--yes'], deps, sink);
+    expect(code).toBe(1);
+    expect(sink.errors.join('')).toBe('error: A guard record already exists for this node and folder.\n' +
+      'Run "factory init" again in a terminal window outside a session to replace the record.\n');
+    expect(log.clones()).toEqual([]);
+    expect(deps.files.get(store)).toBe(before);
+    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
+    expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(false);
+  });
+
+  it.each([false, true])('handles an unreadable store with owner channel %s', async (owner) => {
+    const { deps, log } = setup(source, { stdinIsTTY: owner, stdoutIsTTY: owner });
+    deps.seedDir(project);
+    const before = guardStoreText('node', HOME, [guardIds.installRules], deps.now());
+    deps.seed(store, before);
+    const used: Deps = { ...deps, fs: { ...deps.fs, openCheckedCore: (path, request) =>
+      path === store ? Promise.resolve(failure('cannot open the store')) : deps.fs.openChecked(path, request),
+    } };
+    const sink = captureSink();
+    const state = snapshot(deps);
+    const args = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--yes', '--project', project];
+    expect(await runCli(args, used, sink)).toBe(1);
+    expect(sink.errors.join('')).toContain('cannot open the store');
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(state);
+  });
+
+  it('stops before a clone or file change when removal of the earlier record fails', async () => {
+    const { deps, log } = setup(source, terminal);
+    deps.seedDir(project);
+    deps.seed(store, guardStoreText('node', HOME, [guardIds.installRules], deps.now()));
+    const before = snapshot(deps);
+    const used = { ...deps, fs: { ...deps.fs, writeTextAtomicCore: async () => failure('disk full') } };
+    const sink = captureSink();
+    const args = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--yes', '--project', project];
+    expect(await runCli(args, used, sink)).toBe(1);
+    expect(sink.errors.join('')).toContain('disk full');
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
   });
 
   it('exits zero and prints the warning when the prefix record is saved but its lock stays', async () => {
@@ -3555,12 +3632,12 @@ describe('init: the approval points', () => {
       expect(lines).toContain('block safety: render the text again');
     });
 
-    it('is current for upgrade when every point is owner', async () => {
+    it('plans to render the safety text for the new guard values even when every point is owner', async () => {
       const { deps } = setup({}, typing([owner, owner]));
       expect((await runInit(deps, options())).ok).toBe(true);
       const upgraded = await runUpgrade(deps, { home: HOME, dryRun: true, overwrite: [], yes: false });
       const lines = upgraded.ok ? upgraded.value.lines.map((line) => line.text).join('\n') : '';
-      expect(lines).toContain('block safety: version 2 is current');
+      expect(lines).toContain('block safety: render the text again');
     });
   });
 });

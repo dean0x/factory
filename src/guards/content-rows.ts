@@ -311,6 +311,7 @@ const setupTextRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/commands/init-received.ts', 'collectSetup'),
+      ...at('src/commands/setup-check.ts', 'checkSetupSet'),
       ...at('src/core/setup-acceptance.ts', 'acceptSetup'),
     ],
   }),
@@ -329,6 +330,7 @@ const setupTextRows: readonly GuardRow[] = [
     applies: `${commands.upgrade}, ${commands.init} and every render`,
     harm: true,
     sites: [
+      ...at('src/commands/setup-check.ts', 'checkSetupSet'),
       ...at('src/upgrade/render.ts', 'renderCoordinatorText', 'renderSetupText'),
       ...at('src/templates/index.ts', 'setupBlock', 'blockTemplatesFor'),
     ],

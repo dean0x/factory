@@ -1092,7 +1092,7 @@ describe('request close: approval links', () => {
     const config: FactoryConfig = { ...base, core: { ...base.core, guards: { 'approval-merge': 'off' } } };
     const repo = await boardNode({ config, waiting: waitingText([linkedEntry()]) });
     valueOf(await recordGuards({ ...repo.deps, stdinIsTTY: true, stdoutIsTTY: true }, {
-      root: HOME, node: config.core.node.id, change: [{ guard: { id: 'approval-merge', wired: true }, value: 'off' }],
+      root: HOME, node: config.core.node.id, change: [{ guard: { id: 'approval-merge', fixed: false }, value: 'off' }],
     }));
     const before = filesOf(repo);
     const error = errorOf(await close(repo));

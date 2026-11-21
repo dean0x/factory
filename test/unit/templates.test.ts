@@ -903,6 +903,13 @@ describe('the coordinator text: workers, watch and reset', () => {
     );
   });
 
+  it.each([1, 2])('keeps the folder trust step clear for a layer %i with the optional rules off', (layer) => {
+    const guards: GuardValues = { [guardIds.taskFiles]: 'off', [guardIds.folderTrust]: 'off', [guardIds.ownerGo]: 'off' };
+    const role = blockTemplatesFor(withGuards(layer, guards)).find(({ name }) => name === (layer === 1 ? 'coordinator' : 'manager'));
+    expect(role?.body).toContain('If the command to start a new worker names a trust question, tell the owner at once which pane waits.');
+    expect(role?.body).toContain('Only the owner answers a folder trust question in the pane.');
+  });
+
   it('runs the watch as a background task, waits for a blocked worker with --ready, and runs the watch again after each end', () => {
     const text = coordinatorOf('acme');
     expect(text).toContain(`Run \`${watch}\` as a background task.`);

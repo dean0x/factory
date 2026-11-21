@@ -7,7 +7,9 @@ import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
-import { readGuardStore } from '../../src/core/guard-records.js';
+import { readGuardState, readGuardStore } from '../../src/core/guard-records.js';
+import { guardsFor } from '../../src/guards/registry.js';
+import { expectShortOutput } from '../helpers/short-output.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { ok } from '../../src/core/result.js';
 import { env, stateGuard, trackedFiles } from '../../src/names.js';
@@ -18,11 +20,13 @@ import {
   FAKE_PROGRAM_ARGV,
   registerRoot,
   withFailingWrites,
+  withFsWatch,
   type FakeDeps,
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
-import { runDoctor, runInit, runStart } from '../helpers/package-registry.js';
+import { guardStoreText } from '../helpers/guarded-node.js';
+import { loadConfig, runDoctor, runInit, runStart } from '../helpers/package-registry.js';
 import { ownSettingsWithRules } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
@@ -138,20 +142,76 @@ const coordinatorText = (deps: FakeDeps): string => deps.files.get(`${ROOT}/coor
 describe('init: the owner prefix of a received factory', () => {
   const store = '/state/factory/guard-records.json';
 
-  it.each([false, true])('records the prefix after the files, with yes set to %s', async (yes) => {
-    const { deps } = received({}, { ...terminal, prompt: () => ok('') });
-    expect((await runInit(deps, options({ yes }))).ok).toBe(true);
-    const records = await readGuardStore(deps, store);
-    expect(records).toMatchObject({ ok: true, value: [{
-      node: 'demo', root: ROOT, values: {}, prefix: {
-        hash: createHash('sha256').update(sampleConfig().core.owner.prefix, 'utf8').digest('hex'),
-        at: deps.now().toISOString(),
-      },
-    }] });
-    expect(deps.atomicWrites.indexOf(store)).toBeGreaterThan(deps.atomicWrites.indexOf(`${ROOT}/factory.local.yaml`));
-    for (const file of ['factory.yaml', 'factory.local.yaml']) {
-      expect(deps.files.get(`${ROOT}/${file}`)).not.toMatch(/^guards:/m);
-    }
+  it.each([false, true])('records the local off values and prefix but keeps a shared guard on, with yes set to %s', async (yes) => {
+    const sample = sampleConfig();
+    const config: FactoryConfig = { ...sample, core: { ...sample.core, shared_guards: { proxy: 'on' } } };
+    const { deps } = received({ config }, { ...terminal, prompt: person('y', [], 'y') });
+    if (yes) deps.seed(store, guardStoreText('demo', ROOT, ['old-guard'], deps.now()));
+    const hookAtStoreWrite: boolean[] = [];
+    const result = await runInit(withFsWatch(deps, (method, path) => {
+      if (method === 'writeTextAtomicCore' && path === store) hookAtStoreWrite.push(deps.files.has(HOOK_FILE));
+    }), options({ yes }));
+    expect(hookAtStoreWrite).toEqual(yes ? [false, true] : [true]);
+    expect(result.ok).toBe(true);
+    const guards = guardsFor(sample.entry).filter((guard) => !guard.fixed);
+    const at = deps.now().toISOString();
+    expect(await readGuardStore(deps, store)).toEqual(ok([{
+      node: 'demo', root: ROOT, values: Object.fromEntries(guards.map(({ id }) => [id, { value: 'off', at }])),
+      prefix: { hash: createHash('sha256').update(sample.core.owner.prefix, 'utf8').digest('hex'), at },
+    }]));
+    expect(deps.files.has(HOOK_FILE)).toBe(true);
+    expect(deps.atomicWrites.filter((path) => path === store)).toHaveLength(yes ? 2 : 1);
+    expect(deps.atomicWrites.at(-1)).toBe(store);
+    const loaded = await loadConfig(deps, ROOT);
+    if (!loaded.ok) throw new Error(loaded.error.message);
+    expect(loaded.value.core.guards).toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'off'])));
+    const local = deps.files.get(`${ROOT}/factory.local.yaml`) ?? '';
+    for (const guard of guards) expect(local).toContain(`  ${guard.id}: "off"    # ${guard.harm ? 'H: ' : ''}${guard.keepsSafe}`);
+    expect((await readGuardState(deps, ROOT, loaded.value, 'always')).values).toMatchObject({ proxy: 'on', 'install-rules': 'off' });
+  });
+
+  it('prints a count even when only one guard with H is off', async () => {
+    const sample = sampleConfig();
+    const shared_guards = Object.fromEntries(guardsFor(sample.entry)
+      .filter(({ fixed, id }) => !fixed && id !== 'install-rules').map(({ id }) => [id, 'on' as const]));
+    const { deps } = received({ config: { ...sample, core: { ...sample.core, shared_guards } } }, terminal);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(linesOf(result).split('\n').filter((line) => line.startsWith('Guards:'))).toEqual([
+      'Guards: 1 off; 1 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
+    ]);
+  });
+
+  it('keeps both config files and every guard on when the final record write fails', async () => {
+    const { deps } = received({}, terminal);
+    const guards = guardsFor(sampleConfig().entry);
+    deps.seed(store, guardStoreText('demo', ROOT, guards.filter(({ fixed }) => !fixed).map(({ id }) => id), deps.now()));
+    const shared = deps.files.get(`${ROOT}/factory.yaml`);
+    const used = { ...deps, fs: { ...deps.fs, writeTextAtomicCore: async (...args: Parameters<NonNullable<typeof deps.fs.writeTextAtomicCore>>) =>
+      args[0] === store && deps.files.has(`${ROOT}/factory.local.yaml`) ? failure('disk full') : deps.fs.writeTextAtomic(...args),
+    } };
+    const sink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--owner-name', 'Test Owner', '--yes'], used, sink)).toBe(1);
+    expect(sink.errors.join('')).toContain('factory guard confirm');
+    expect(deps.files.get(`${ROOT}/factory.yaml`)).toBe(shared);
+    const config = await loadConfig(deps, ROOT);
+    if (!config.ok) throw new Error(config.error.message);
+    const state = await readGuardState(deps, ROOT, config.value, 'always');
+    expect(state.values).toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'on'])));
+    expect(state.record).toBe(false);
+    expect(await readGuardStore(deps, store)).toEqual(ok([]));
+  });
+
+  it.each(['remove', 'read'])('stops before a clone or file change when init cannot %s the earlier record', async (fault) => {
+    const { deps, log } = received({}, terminal);
+    const prior = fault === 'remove' ? guardStoreText('demo', ROOT, ['install-rules'], deps.now()) : '{}';
+    deps.seed(store, prior);
+    const before = snapshot(deps);
+    const used = { ...deps, fs: { ...deps.fs, writeTextAtomicCore: async () => failure('disk full') } };
+    const sink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--owner-name', 'Test Owner', '--yes'], used, sink)).toBe(1);
+    expect(sink.errors.join('')).toContain(fault === 'remove' ? 'disk full' : 'The guard store does not match its schema.');
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
   });
 
   it.each([
@@ -164,7 +224,14 @@ describe('init: the owner prefix of a received factory', () => {
     expect(result.ok).toBe(true);
     expect(result.ok ? result.value.warnings.filter((text) => text.includes('factory guard confirm')) : []).toHaveLength(1);
     expect(deps.files.has(store)).toBe(false);
-    expect(deps.files.has(`${ROOT}/factory.local.yaml`)).toBe(true);
+    const loaded = await loadConfig(deps, ROOT);
+    if (!loaded.ok || !result.ok) throw new Error('init did not make a node');
+    const guards = guardsFor(loaded.value.entry);
+    expect(loaded.value.core.guards).toEqual(Object.fromEntries(guards.filter(({ fixed }) => !fixed).map(({ id }) => [id, 'off'])));
+    expect((await readGuardState(deps, ROOT, loaded.value, 'always')).values)
+      .toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'on'])));
+    expect(result.value.warnings.filter((text) => text.includes('factory guard set --all off'))).toHaveLength(1);
+    expectShortOutput([...result.value.lines.map((line) => line.text), ...result.value.warnings].join('\n'));
   });
 });
 
@@ -726,7 +793,9 @@ describe('init: the setup acceptance of a received root', () => {
 
     it('asks with plain init, writes no acceptance after a no, names init in a terminal window, and then start exits 4', async () => {
       const asked: string[] = [];
-      const { deps } = received({ tracked: LISTED, unaccepted: true }, { ...terminal, prompt: person('n', asked) });
+      const sample = sampleConfig();
+      const config: FactoryConfig = { ...sample, core: { ...sample.core, shared_guards: { 'setup-text': 'on' } } };
+      const { deps } = received({ config, tracked: LISTED, unaccepted: true }, { ...terminal, prompt: person('n', asked) });
       const result = await runInit(deps, options());
       expect(result.ok).toBe(true);
       const questions = asked.filter((text) => text.includes('Accept these files?'));
@@ -1022,6 +1091,21 @@ describe('init: the projects of a received factory', () => {
     });
     return { ...config, recipe: { ...config.recipe, projects } };
   };
+
+  it.each([
+    ['a prior record', 'A guard record already exists for this node and folder.'],
+    ['an unreadable store', 'The guard store does not match its schema.'],
+  ])('refuses %s before any clone without an owner channel', async (kind, message) => {
+    const { deps, log } = received({ config: withProjects('https://github.com/acme/api.git') });
+    const store = '/state/factory/guard-records.json';
+    deps.seed(store, kind === 'a prior record' ? guardStoreText('demo', ROOT, ['install-rules'], deps.now()) : '{}');
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain(message);
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
 
   it('clones a project with an https URL into the folder of its path', async () => {
     const { deps, log } = received({ config: withProjects('https://github.com/acme/api.git') }, terminal);

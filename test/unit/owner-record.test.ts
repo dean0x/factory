@@ -29,6 +29,9 @@ import { startSteps } from '../../src/launch/tmux.js';
 import { commands, env, ownerDecisions, ownerRecords, values } from '../../src/names.js';
 import type { ApprovalMode } from '../../src/recipes/index.js';
 import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
+import { readGuardStore } from '../../src/core/guard-records.js';
+import { gitHandler } from '../helpers/git-fake.js';
+import { runInit } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { stripComments } from '../helpers/source-scan.js';
 
@@ -84,6 +87,23 @@ const setMode = (deps: Deps, point: string, mode: ApprovalMode, root = ROOT, nod
   recordDelegation(deps, { root, node, point, mode });
 
 describe('approval records: who may write', () => {
+  it('accepts ten delegations after init records ten nodes in the guard store', async () => {
+    const deps = createFakeDeps({ cwd: '/w', env: { XDG_STATE_HOME: STATE }, stdinIsTTY: true, stdoutIsTTY: true,
+      run: gitHandler().handler });
+    const nodes = Array.from({ length: 10 }, (_, index) => `node-${index}`);
+    for (const node of nodes) {
+      const root = `/w/${node}`;
+      const init = await runInit(deps, { home: root, name: node, ownerName: 'Test Owner', ownerGithub: undefined,
+        yes: true, projects: [], recipe: undefined, layer: undefined, approval: [] });
+      expect(init.ok, init.ok ? undefined : init.error.message).toBe(true);
+      expect(await setMode(deps, 'merge', delegated, root, node)).toMatchObject({ ok: true });
+    }
+    const guards = await readGuardStore(deps, `${FOLDER}/guard-records.json`);
+    expect(guards.ok && guards.value.map(({ node }) => node)).toEqual(nodes);
+    expect(guards.ok && guards.value.every((record) => Object.keys(record.values).length === 29)).toBe(true);
+    expect(storedRecords(deps).map(({ node }) => node)).toEqual(nodes);
+  });
+
   it('writes a delegation for a person in a terminal window outside a factory session', async () => {
     const deps = person();
     expect(await setMode(deps, 'merge', delegated)).toEqual({ ok: true, value: undefined });

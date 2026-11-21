@@ -7,6 +7,7 @@ import { renderConfig } from '../config/render.js';
 import { localConfigSchema, mergeConfig, type FactoryConfig, type SharedConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
+import { checkInitGuardRecord, clearInitGuardRecord } from '../core/guard-records.js';
 import { configValue, ignoredPathsOf, isWorkTreeRoot, trackedFilesOf } from '../core/git.js';
 import { rootRefusalOf } from '../core/home.js';
 import { entryOfHome, readHomeIndex } from '../core/home-index.js';
@@ -62,7 +63,7 @@ import {
   blockTexts,
   detectGithubLogin,
   localSettingsOf,
-  recordInitPrefix,
+  recordInitGuards,
   stateFilesOf,
   type InitOptions,
   type InitPlan,
@@ -414,7 +415,7 @@ const requireFlagsThatApply = (options: InitOptions): CliResult<void> => {
 
 /** The final config: the shared file of the root and the local values of this machine. */
 const configOf = (shared: SharedConfig, owner: OwnerFields, approvals: ApprovalChoice): CliResult<FactoryConfig> => {
-  const local = localConfigSchema.safeParse(localSettingsOf({ ownerName: owner.name, approvals }, owner.github, {}));
+  const local = localConfigSchema.safeParse(localSettingsOf({ ownerName: owner.name, approvals }, owner.github, {}, shared.entry));
   if (!local.success) return usageError(`invalid settings: ${describeIssues(local.error)}`, CHECK_FLAGS_REMEDY);
   const merged = mergeConfig(shared, local.data);
   return merged.success ? ok(merged.data) : usageError(`invalid settings: ${describeIssues(merged.error)}`, CHECK_FLAGS_REMEDY);
@@ -505,6 +506,8 @@ export const runReceived = async (
   if (!flagged.ok) return flagged;
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
   if (!outside.ok) return outside;
+  const record = await checkInitGuardRecord(deps, { root: home, node: id });
+  if (!record.ok) return record;
   const leftover = await leftoverTempFolders(deps, home);
   if (!leftover.ok) return leftover;
   const projects = await planReceivedProjects(deps, home, shared.recipe.projects, commands.init);
@@ -520,7 +523,7 @@ export const runReceived = async (
   if (!answered.ok) return answered;
   const decision = await decideAcceptance(asking, { home, node: id, yes: options.yes, setup: setup.value });
   if (!decision.ok) return decision;
-  // The hook settings come after the last write. The check of their target and of the consent comes before the first write.
+  // Check the target and consent before the first write. Save the hook settings before the guard record.
   const idleCompaction = shared.core.session.idle_compaction;
   const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;
@@ -541,6 +544,8 @@ export const runReceived = async (
     ],
   });
   if (!planned.ok) return planned;
+  const cleared = await clearInitGuardRecord(deps, { root: home, node: id });
+  if (!cleared.ok) return cleared;
 
   const cloned = await runClones(deps, projects.value.planned, []);
   if (!cloned.ok) return cloned;
@@ -549,10 +554,14 @@ export const runReceived = async (
   // The root is registered. A failure of the hook settings leaves it, and a second run of init finishes the step.
   const hook = await writeHookSettings(deps, home, options.yes, idleCompaction);
   if (!hook.ok) return hook;
-  const prefix = await recordInitPrefix(deps, planned.value);
-  if (!prefix.ok) return prefix;
+  const guards = await recordInitGuards(deps, planned.value);
+  if (!guards.ok) return guards;
 
-  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...prefix.value];
+  const clearWarning = cleared.value?.warning ?? null;
+  const warnings = [
+    ...planned.value.warnings, ...(clearWarning === null ? [] : [clearWarning]),
+    ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings,
+  ];
   const written = [files.localConfig, join(dirs.coordinator, files.claudeMd), `${dirs.state}/`, ...hook.value.written];
   const kept = decision.value.kind === 'declined' ? declinedLines() : [];
   return ok({
@@ -564,6 +573,7 @@ export const runReceived = async (
       ...approvalLines(home, applied.value.approval),
       ...(planned.value.acceptance === null ? [] : acceptanceLines(planned.value.acceptance, applied.value.accepted)),
       ...kept,
+      ...guards.value.lines,
       { level: 'text', text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${home}".` },
     ],
     json: {

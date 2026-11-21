@@ -46,18 +46,12 @@ const text = (line: string): OutLine => ({ level: 'text', text: line });
 const fail = (line: string): OutLine => ({ level: 'fail', text: line });
 const cleanCells = (cells: readonly string[]): readonly string[] => cells.map((cell) => displayLine(cell));
 
-/** A fixed guard has no key, so its place is the fixed word. A guard that this version can not set has no place either. */
-const placeOf = (guard: ListedGuard): string => {
-  if (guard.fixed) return guardListWords.fixed;
-  return guard.settable ? guardListWords.sources[guard.source] : guardListWords.notSettable;
-};
-
 const guardCells = (guard: ListedGuard): readonly string[] => cleanCells([
   guard.id,
   guard.value,
   guard.newNode,
   guard.harm ? harmMark : '',
-  placeOf(guard),
+  guardListWords.sources[guard.source],
 ]);
 
 /** The kind of a row that no value changes carries the fixed word, so the family view shows what stays with the guard off. */

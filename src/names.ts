@@ -2489,7 +2489,6 @@ export const guardSetWords = {
   effectTime: `A code check follows the new value at the next command. The role text changes at the next "${commandText(commands.start)}" or "${commandText(commands.upgrade)}".`,
   offQuestion: 'Turn these guards off? [y/N] ',
   declined: 'Nothing changed: the answer was not yes.',
-  skipped: (count: number): string => `${count} ${count === 1 ? 'guard is' : 'guards are'} not settable in this version.`,
   changedFile: (file: string): string => `${file} changed after its read. Run the guard command again.`,
   unsafeFile: (file: string): string => `${file} must be a plain file of this user, with no group or other write access.`,
   unsafeFileRemedy: `Check the file and its access mode, then run "${commandText(commands.doctor)}".`,
@@ -2498,12 +2497,10 @@ export const guardSetWords = {
   recordFailedOn: `The local value is on, but the guard record could not be saved. Run "${commandText(commands.doctor)}".`,
   noJson: (command: string): string => `${commandText(command)} has no ${flagText(flags.json)} output.`,
   listOnly: (flag: string): string => `${flagText(flag)} applies to ${commandText(commandLines.guardList)} only.`,
-  allHelp: `With list: show every row. With set: set every guard that this version can set.`,
+  allHelp: `With list: show every row. With set: set every non-fixed guard.`,
   commandSummary: 'List, set and confirm guards.',
   listFlagsHelp: `${flagText(flags.family)} and ${flagText(flags.json)} apply to list only.`,
   unknownId: (id: string): string => `Unknown guard "${id}". Run "${commandText(commandLines.guardList)}".`,
-  notSettable: (id: string): string =>
-    `Guard "${id}" is not settable in this version. Run "${commandText(commandLines.guardList)}".`,
 } as const;
 
 /** The words of the owner prefix command. */
@@ -2519,6 +2516,8 @@ export const guardConfirmWords = {
 
 /** Guard record checks and their remedies have words of their own. */
 export const guardRecordWords = {
+  priorRecord: `A guard record already exists for this ${roles.node} and folder.`,
+  priorRecordRemedy: `Run "${commandText(commands.init)}" again in a terminal window outside a session to replace the record.`,
   sessionRefused: `A ${program} session cannot write a guard record.`,
   claudeRefused: 'A Claude Code session cannot write a guard record.',
   inputRequired: 'A guard record needs terminal input.',
@@ -2562,6 +2561,11 @@ export const guardStartWords = {
   harm: (count: number): string => `${count} with ${harmMark}`,
   directProxy: (key: string): string => `direct proxy ${key}`,
   unmatched: (id: string): string => `unmatched ${id}`,
+  confirmOff: `Run "${commandText(commandLines.guardSet)} --all ${guardValues.off}" to turn the guards off.`,
+  unmatchedOff: (count: number): string => `${guardStartWords.off(count)} values do not take effect.`,
+  init: (count: number, marked: number): string =>
+    `${guardStartWords.prefix} ${guardStartWords.off(count)}; ${guardStartWords.harm(marked)} ` +
+    `(see "${commandText(commandLines.guardList)}"). Run "${commandText(commandLines.guardSet)} <id> ${guardValues.on}" to turn one on.`,
   noPrefixRecord: 'owner prefix has no record',
   prefixMismatch: 'owner prefix differs from its record',
 } as const;
@@ -2578,8 +2582,6 @@ export const guardDoctorWords = {
   recordCount: (count: number): string => `The guard store holds ${count} of ${guardRecords.maxRecords} records.`,
   nearCap: 'The guard store is near its record cap.',
   atCap: 'The guard store is at its record cap.',
-  /** The warning for an off value of a guard that this version cannot set. */
-  unsettableOff: (id: string): string => `${id} is ${guardListWords.notSettable}; its value stays on`,
   /** The proxy check with the proxy guard off: a launch sends no health request and always uses the named proxy. */
   proxyOff: `The guard ${guardIds.proxy} is off, so sessions start with this proxy and no health check.`,
   /** The line of a check that did not run, because its guard is off. */
@@ -2621,7 +2623,6 @@ export const guardListWords = {
   columns: { guard: 'GUARD', value: 'VALUE', default: 'DEFAULT', harm: harmMark, setIn: 'SET IN' },
   familyColumns: { row: 'ROW', kind: 'KIND', harm: harmMark, keepsSafe: 'KEEPS SAFE' },
   unknown: 'unknown',
-  notSettable: 'not settable in this version',
   fixed: fixedGuardWord,
   sources: {
     fixed: fixedGuardWord,

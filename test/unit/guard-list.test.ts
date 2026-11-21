@@ -15,7 +15,6 @@ import { countReadsOf } from '../helpers/read-count.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
-import { UNWIRED_GUARD, unwiredRegistry } from '../helpers/unwired-guard.js';
 
 const HOME = '/w/node';
 const STORE = `/state/factory/${files.guardRecords}`;
@@ -50,16 +49,14 @@ const rowCells = (title: string, line: string): string[] => {
   return starts.map((start, index) => line.slice(start, starts[index + 1]).trim());
 };
 const snapshot = (deps: FakeDeps): string => JSON.stringify([...deps.files, [...deps.dirs], [...deps.modes]]);
-/** The place cell of a guard that no value names: a fixed guard, a guard with no key, or a guard that this version cannot set. */
-const placeOf = (guard: { readonly fixed: boolean; readonly wired: boolean }): string =>
-  guard.fixed ? guardListWords.fixed : guard.wired ? 'no key' : 'not settable in this version';
+const placeOf = (guard: Guard): string => guard.fixed ? guardListWords.fixed : 'no key';
 /**
  * The JSON form of a guard when the config does not load: the value is unknown and the source names the fault, except for a fixed
  * guard, which is always on with the fixed word as its source.
  */
 const unloadedOf = (guard: Guard) => ({
   ...guard,
-  settable: guard.wired,
+  settable: !guard.fixed,
   value: guard.fixed ? 'on' : 'unknown',
   source: guard.fixed ? guardListWords.fixed : 'notLoaded',
   since: null,
@@ -95,11 +92,14 @@ describe('guard list', () => {
     expectShortOutput(result.out);
   });
 
-  it('shows every guard with all, without a more line', async () => {
+  it('shows every guard and its new-node default with all, without a more line', async () => {
     const result = await run(make(), ['--all']);
     const lines = linesOf(result.out);
     expect(result.code).toBe(0);
-    expect(lines.slice(1, -1).map((line) => cellsOf(line)[0])).toEqual(guardsFor(recipes[0]).map((guard) => guard.id));
+    expect(lines.slice(1, -1).map((line) => {
+      const [id, , newNode] = rowCells(lines[0] ?? '', line);
+      return [id, newNode];
+    })).toEqual(guardsFor(recipes[0]).map((guard) => [guard.id, guard.fixed ? 'on' : 'off']));
     expect(lines.at(-1)).toBe(guardListWords.countLine(0, guardsFor(recipes[0]).length, 0));
   });
 
@@ -107,9 +107,9 @@ describe('guard list', () => {
     const recipe: RecipeEntry = {
       ...publishRecipe,
       guards: [
-        { id: 'unmarked-off', name: 'Unmarked', keepsSafe: 'Sample data stays safe.', wired: true, fixed: false, newNode: 'on', whenMissing: 'off', related: [] },
-        { id: 'sample-on', name: 'On', keepsSafe: 'Sample data stays safe.', wired: true, fixed: false, newNode: 'on', whenMissing: 'on', related: [] },
-        { id: 'marked-off', name: 'Marked', keepsSafe: 'Sample data stays private.', wired: true, fixed: false, newNode: 'on', whenMissing: 'off', related: [] },
+        { id: 'unmarked-off', name: 'Unmarked', keepsSafe: 'Sample data stays safe.', fixed: false, newNode: 'on', whenMissing: 'off', related: [] },
+        { id: 'sample-on', name: 'On', keepsSafe: 'Sample data stays safe.', fixed: false, newNode: 'on', whenMissing: 'on', related: [] },
+        { id: 'marked-off', name: 'Marked', keepsSafe: 'Sample data stays private.', fixed: false, newNode: 'on', whenMissing: 'off', related: [] },
       ],
       guardRows: [
         { id: 'unmarked-row', guard: 'unmarked-off', name: 'Sample data stays safe.', applies: 'Sample', kind: 'text', harm: false, alwaysOn: false, sites: [] },
@@ -149,7 +149,7 @@ describe('guard list', () => {
       home: HOME,
       error: null,
       guards: guardsFor(recipes[0]).map((guard) => ({
-        ...guard, settable: guard.wired, value: 'on', source: guard.fixed ? guardListWords.fixed : 'missing', since: null,
+        ...guard, settable: !guard.fixed, value: 'on', source: guard.fixed ? guardListWords.fixed : 'missing', since: null,
       })),
       rows: guardRowsFor(recipes[0]),
       unmatched: [],
@@ -157,42 +157,15 @@ describe('guard list', () => {
     });
   });
 
-  it('reports a recipe guard as settable only when it is wired', async () => {
+  it('reports every non-fixed guard as settable, also for a recipe with its own guard', async () => {
     const recipe: RecipeEntry = {
       ...publishRecipe,
-      guards: [{ ...guardOf('sample-guard', 'Sample', 'Sample data stays safe.'), wired: true }],
+      guards: [guardOf('sample-guard', 'Sample', 'Sample data stays safe.')],
     };
     const result = await run(make(publishingConfig()), ['--json'], [recipe]);
-    expect(result.code).toBe(0);
+    expect(result.code, result.err).toBe(0);
     const doc: unknown = JSON.parse(result.out);
-    expect(doc).toMatchObject({ guards: [
-      ...guardsFor({ ...recipe, guards: [] }).map((guard) => ({ id: guard.id, settable: guard.wired })),
-      { id: 'sample-guard', wired: true, settable: true, value: 'on', source: 'missing', since: null },
-    ] });
-  });
-
-  it('shows a guard that this version cannot set as on and not settable even with a local off value', async () => {
-    const config = sampleConfig();
-    const deps = make({ ...config, core: { ...config.core, guards: { [UNWIRED_GUARD]: 'off' } } });
-    const json = await run(deps, ['--json'], unwiredRegistry);
-    expect(json.code).toBe(0);
-    const doc: unknown = JSON.parse(json.out);
-    expect(doc).toMatchObject({ guards: expect.arrayContaining([
-      expect.objectContaining({ id: UNWIRED_GUARD, wired: false, settable: false, value: 'on' }),
-    ]) });
-    const text = await run(deps, ['--all'], unwiredRegistry);
-    expect(text.code).toBe(0);
-    const lines = linesOf(text.out);
-    const row = lines.find((line) => line.startsWith(UNWIRED_GUARD)) ?? '';
-    expect(rowCells(lines[0] ?? '', row)).toEqual([UNWIRED_GUARD, 'on', 'on', 'H', 'not settable in this version']);
-  });
-
-  it.each(['board-edits', 'merge-quality', 'dismiss', 'session-checks', 'owner-go', 'task-files', 'pr-rules', 'work-conduct'])('shows %s as settable', async (id) => {
-    const json = await run(make(sampleConfig()), ['--json']);
-    expect(json.code).toBe(0);
-    expect(JSON.parse(json.out)).toMatchObject({ guards: expect.arrayContaining([
-      expect.objectContaining({ id, wired: true, settable: true, value: 'on' }),
-    ]) });
+    expect(doc).toMatchObject({ guards: guardsFor(recipe).map((guard) => ({ id: guard.id, settable: !guard.fixed })) });
   });
 
   it('shows the effective value, source and time from one guard store read', async () => {
@@ -209,12 +182,12 @@ describe('guard list', () => {
     expect(counted.count()).toBe(1);
   });
 
-  it.each([{}, { [UNWIRED_GUARD]: 'off' as const }])('reads no guard store without a wired local off value: %j', async (guards) => {
+  it.each([{}, { [guardIds.cloneRules]: 'off' as const }])('reads no guard store without a non-fixed local off value: %j', async (guards) => {
     const config = sampleConfig();
     const deps = make({ ...config, core: { ...config.core, guards } });
     seedRecord(deps, { [guardIds.installRules]: 'off' });
     const counted = countReadsOf(deps, STORE);
-    expect((await run(counted.deps, [], unwiredRegistry)).code).toBe(0);
+    expect((await run(counted.deps)).code).toBe(0);
     expect(counted.count()).toBe(0);
   });
 
@@ -301,7 +274,7 @@ describe('guard list', () => {
       const row = all.find((line) => line.startsWith(`${id} `)) ?? '';
       expect(rowCells(all[0] ?? '', row)).toEqual([id, 'on', 'on', '', guardListWords.fixed]);
       expect(json).toMatchObject({ guards: expect.arrayContaining([
-        expect.objectContaining({ id, fixed: true, key: null, wired: false, settable: false, value: 'on', source: guardListWords.fixed }),
+        expect.objectContaining({ id, fixed: true, key: null, settable: false, value: 'on', source: guardListWords.fixed }),
       ]) });
       const family = linesOf((await run(make(), ['--family', id, '--all'])).out);
       expect(family.slice(1).map((line) => rowCells(family[0] ?? '', line)[1])).toEqual(
@@ -498,7 +471,7 @@ describe('guard list', () => {
   });
 
   it('shows hidden characters and line breaks in no table cell', async () => {
-    const recipe = { ...publishRecipe, guards: [{ id: 'sample\n\u001b[31m‮', name: 'Sample', keepsSafe: 'Sample data stays private.', wired: false, fixed: false, newNode: 'on' as const, whenMissing: 'on' as const, related: [] }], guardRows: [{ id: 'sample-row\t\u001b', guard: 'sample\n\u001b[31m‮', name: 'Data\n\t\u001b‮stays private.', applies: 'Sample', kind: 'text' as const, harm: true, alwaysOn: false, sites: [] }] };
+    const recipe = { ...publishRecipe, guards: [{ id: 'sample\n\u001b[31m‮', name: 'Sample', keepsSafe: 'Sample data stays private.', fixed: false, newNode: 'on' as const, whenMissing: 'on' as const, related: [] }], guardRows: [{ id: 'sample-row\t\u001b', guard: 'sample\n\u001b[31m‮', name: 'Data\n\t\u001b‮stays private.', applies: 'Sample', kind: 'text' as const, harm: true, alwaysOn: false, sites: [] }] };
     const registry: RecipeRegistry = [recipe];
     const deps = make(publishingConfig());
     for (const flags of [['--all'], ['--family', recipe.guards[0]?.id ?? '', '--all']]) {
