@@ -29,6 +29,7 @@ import {
   flagText,
   guardIds,
   guardRoleWords,
+  maxDisplayWidth,
   overwriteCommand,
   program,
   roles,
@@ -114,6 +115,11 @@ const conflictingRoleGuard = (
   return null;
 };
 
+interface RoleBlockCheck {
+  readonly notes: readonly string[];
+  readonly rendered: boolean;
+}
+
 /** Check role blocks against the effective guard values for every launch. Pane launches never write them. */
 export const requireRoleBlocks = async (
   deps: Deps,
@@ -123,7 +129,7 @@ export const requireRoleBlocks = async (
   modes: ApprovalModes,
   dryRun: boolean,
   renderedBy: string,
-): Promise<CliResult<readonly string[]>> => {
+): Promise<CliResult<RoleBlockCheck>> => {
   const templates = roleTemplates(config, modes, guards.values);
   const layout = layoutOf(home);
   const plain = await requireNoLinks(deps, home, [layout.claudeMd, layout.workerMd]);
@@ -156,14 +162,19 @@ export const requireRoleBlocks = async (
     }
   }
   const changes = plans.filter((plan) => plan.action === 'render');
-  if (changes.length === 0) return ok(notes);
-  if (dryRun) return ok([...notes, `The role blocks are out of date after a guard change or a package change. ${renderedBy}`]);
+  if (changes.length === 0) return ok({ notes, rendered: false });
+  if (dryRun) return ok({ notes: [...notes, `The role blocks are out of date after a guard change or a package change. ${renderedBy}`], rendered: false });
   const written = await writeBlockPlans(deps, home, changes, commands.start);
-  if (!written.ok) return written;
-  const values = guardsFor(config.entry).filter(isSettable)
-    .map((guard) => `${guard.id} ${guards.values[guard.id] ?? 'on'}`).join(', ');
-  deps.warn(`Rendered the role blocks again after a guard change or a package change: ${values}.`);
-  return ok(notes);
+  return written.ok ? ok({ notes, rendered: true }) : written;
+};
+
+const roleRenderNotice = (config: FactoryConfig, guards: GuardReadState): string => {
+  const settable = guardsFor(config.entry).filter(isSettable);
+  const values = settable.map(({ id }) => `${id} ${guards.values[id] ?? 'on'}`).join(', ');
+  const label = 'Rendered the role blocks again after a guard change or a package change:';
+  const notice = `${label} ${values}.`;
+  const off = settable.filter(({ id }) => guards.values[id] === 'off').length;
+  return notice.length <= maxDisplayWidth ? notice : `${label} ${off} guards off.`;
 };
 
 /**
@@ -208,20 +219,23 @@ export const requireSafetyBlock = async (
   const found = safetyStateOf(status);
   const state = found === 'different' || isGuardOn(guards.values, guardIds.safetyBlock) ? found : 'equal';
   const roleBlocks = state === 'equal' || state === 'different'
-    ? await requireRoleBlocks(deps, home, config, guards, modes, dryRun, renderedBy) : ok<readonly string[]>([]);
+    ? await requireRoleBlocks(deps, home, config, guards, modes, dryRun, renderedBy) : ok<RoleBlockCheck>({ notes: [], rendered: false });
   if (!roleBlocks.ok) return roleBlocks;
-  if (!dryRun) for (const note of roleBlocks.value) deps.warn(note);
+  const { notes, rendered } = roleBlocks.value;
+  if (!dryRun) for (const note of notes) deps.warn(note);
   switch (state) {
     case 'equal':
-      return roleBlocks;
+      if (rendered) deps.warn(roleRenderNotice(config, guards));
+      return ok(notes);
     case 'different': {
-      if (dryRun) return ok([...roleBlocks.value, `The block ${name} in ${file} is out of date. ${renderedBy}`]);
+      if (dryRun) return ok([...notes, `The block ${name} in ${file} is out of date. ${renderedBy}`]);
       const plan = planBlock(status, false);
       const refused = refusalOf([plan]);
       if (!refused.ok) return refused;
       const written = await writeBlockPlans(deps, home, [plan], commands.start);
       if (!written.ok) return written;
-      deps.warn(`Rendered the block ${name} in ${file} again, because the package or a setting changed its text.`);
+      deps.warn(rendered ? roleRenderNotice(config, guards)
+        : `Rendered the block ${name} in ${file} again, because the package or a setting changed its text.`);
       return ok([]);
     }
     case 'edited':

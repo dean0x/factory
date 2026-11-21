@@ -35,7 +35,7 @@ export const guardValuesFor = async (deps: Deps, home: string): Promise<GuardVal
 /** True unless the values hold the guard off. A site with no deps reads the values that its nearest caller with the deps gives. */
 export const isGuardOn = (values: GuardValues, id: string): boolean => values[id] !== guardValues.off;
 
-/** True unless the pre-read found the guard off for the node home that the site acts on. Only a wired guard can be off there. */
+/** True unless the pre-read found the guard off for the node home that the site acts on. */
 export const guardOn = async (deps: Deps, id: string, home: string): Promise<boolean> =>
   isGuardOn(await guardValuesFor(deps, home), id);
 
@@ -83,11 +83,8 @@ export interface GuardRules {
   readonly loosened: readonly string[];
 }
 
-/**
- * True when a value can turn the guard off: the guard is wired, and it is not fixed. A fixed guard has no setting, so every read of
- * the values keeps it on by its fixed mark, whatever its wired mark says.
- */
-export const isSettable = (guard: Pick<Guard, 'wired' | 'fixed'>): boolean => guard.wired && !guard.fixed;
+/** Only non-fixed guards have a setting. */
+export const isSettable = (guard: Pick<Guard, 'fixed'>): boolean => !guard.fixed;
 
 /** Only a matching owner record can allow a local off value. A failed load keeps every guard on. */
 export const guardRulesOf = (guards: readonly Guard[], facts: GuardFacts): GuardRules => {

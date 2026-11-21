@@ -13,6 +13,7 @@ import { ok } from '../../src/core/result.js';
 import { recipeGlossary } from '../../src/glossary.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { GUARD_STORE } from '../helpers/guarded-node.js';
 import { publishApprovalPoints, publishRecipe, publishRegistry, twoRecipeRegistry } from '../helpers/publish-recipe.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -160,13 +161,16 @@ describe('the fixture recipe: the blocks', () => {
     expect(wordsOfAllFiles(deps)).toEqual([]);
   });
 
-  it('names the delegation of a point in the text after upgrade renders it again', async () => {
+  it('renders the delegation after upgrade if the guard record is absent', async () => {
     const { deps } = await initialized(['', 'delegated']);
+    expect(deps.files.delete(GUARD_STORE)).toBe(true);
     const upgraded = succeeded(await runUpgrade(deps, { home: HOME, dryRun: false, overwrite: [], yes: false }, publishRegistry));
     expect(softwareWordsIn(textOf(upgraded))).toEqual([]);
     const claude = fileOf(deps, 'coordinator/CLAUDE.md');
     expect(claude).toContain('A letter to readers needs a list of the readers');
     expect(claude).toContain('A publication waits for the go of the');
+    expect(claude).toContain('## Commands');
+    expect(claude).not.toContain('No approval is needed');
     expect(softwareWordsIn(claude)).toEqual([]);
   });
 });
@@ -189,12 +193,23 @@ describe('the fixture recipe: doctor, upgrade and start', () => {
     expect(checks.find((check) => check.id === 'config')).toMatchObject({ level: 'fail' });
   });
 
-  it('upgrade has nothing to change in a node that init wrote, and prints no software word', async () => {
+  it('upgrade applies the recorded defaults after init and prints no software word', async () => {
     const { deps } = await initialized();
     const before = fileOf(deps, 'coordinator/CLAUDE.md');
-    const output = succeeded(await runUpgrade(deps, { home: HOME, dryRun: false, overwrite: [], yes: false }, publishRegistry));
+    expect(before).toContain('A publication waits for the go of the');
+    expect(before).toContain('## Commands');
+    const options = { home: HOME, dryRun: false, overwrite: [], yes: false };
+    const output = succeeded(await runUpgrade(deps, options, publishRegistry));
     expect(softwareWordsIn(textOf(output))).toEqual([]);
-    expect(fileOf(deps, 'coordinator/CLAUDE.md')).toBe(before);
+    const after = fileOf(deps, 'coordinator/CLAUDE.md');
+    expect(after).toContain('No approval is needed for a publication.');
+    expect(after).toContain('No approval is needed for a letter.');
+    expect(after).toContain('Proof copies and letters from readers are other sources too.');
+    expect(after).not.toContain('## Commands');
+    expect(softwareWordsIn(after)).toEqual([]);
+    const again = succeeded(await runUpgrade(deps, options, publishRegistry));
+    expect(again.json).toMatchObject({ changed: false });
+    expect(fileOf(deps, 'coordinator/CLAUDE.md')).toBe(after);
   });
 
   it('start --dry-run shows the calls and prints no software word', async () => {

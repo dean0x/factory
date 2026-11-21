@@ -68,7 +68,6 @@ export interface GuardRow extends RowFacts {
 /**
  * A guard as the registry data states it. The harm mark, the kinds, the key and the row ids come from the rows and from the id,
  * so the list never states a fact twice.
- * - `wired` is true only when all sites of the guard can follow its value. A fixed guard is never wired.
  * - `fixed` is true for a guard with no key: every row of it is always on, so no setting changes it.
  * - `newNode` is the value that `init` writes for a new node.
  * - `whenMissing` is the value of a node whose file has no key for the guard.
@@ -78,7 +77,6 @@ export interface GuardDefinition {
   readonly id: string;
   readonly name: string;
   readonly keepsSafe: string;
-  readonly wired: boolean;
   readonly fixed: boolean;
   readonly newNode: GuardValue;
   readonly whenMissing: GuardValue;

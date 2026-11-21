@@ -6,6 +6,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, ownDenyRules, PREFIX_RECORD_NOTICE, tmuxSocketOf, treeOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 import { expectLaunchRule } from './lifecycle-lab.js';
+import { runInTerminal, scriptGate } from './fake-terminal.js';
+import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
+import { expectShortOutput } from '../helpers/short-output.js';
 import { loadNote, scaled } from './load.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
@@ -174,6 +177,32 @@ const initNode = async ({ hookSettings = true }: { hookSettings?: boolean } = {}
 };
 
 describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', () => {
+  it.skipIf(scriptGate() !== 'run')('first start replaces intact init blocks with the off text and prints one notice', async () => {
+    const argv = ['--home', box.node];
+    const init = await runInTerminal(box, [process.execPath, DIST, 'init', '--yes', ...argv,
+      '--name', 'demo', '--owner-name', 'Test Owner', '--owner-github', 'test-owner']);
+    expect(init.code, init.screen).toBe(0);
+    const role = join(box.node, 'coordinator', 'CLAUDE.md');
+    const worker = join(box.node, '.factory', 'roles', 'worker.md');
+    const readBlocks = async () => {
+      const parsed = parseBlocks(`${await box.read(role)}\n${await box.read(worker)}`);
+      if (!parsed.ok) throw new Error(parsed.error.message);
+      expect(parsed.value.every((block) => verifyBlock(block) === 'intact')).toBe(true);
+      return parsed.value;
+    };
+    const before = await readBlocks();
+    expect(await box.read(role)).toContain('Never let two workers share a work copy.');
+    const started = await startFactory();
+    expect(started.code, started.stderr).toBe(0);
+    const after = await readBlocks();
+    expect(after.map(({ name, version }) => [name, version])).toEqual(before.map(({ name, version }) => [name, version]));
+    expect(await box.read(role)).not.toContain('Never let two workers share a work copy.');
+    expect(await box.read(role)).toContain('names a trust question');
+    expect(started.stderr.trim()).toBe('warning: Rendered the role blocks again after a guard change or a package change: 29 guards off.');
+    expect(started.stdout.match(/Guards: 29 off; \d+ with H/g)).toHaveLength(1);
+    expectShortOutput(`${started.stderr}${started.stdout}`);
+  }, scaled(60_000));
+
   it('prints the warning about an instruction file above the root on stderr, and still exits 0', async () => {
     await initNode();
     const above = join(box.root, 'GEMINI.md');

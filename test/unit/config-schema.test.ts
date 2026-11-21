@@ -40,6 +40,17 @@ describe('guard config values', () => {
   const guards = guardsFor(recipes[0]);
   const known = guards.filter((guard) => !guard.fixed).map((guard) => guard.id);
 
+  it('renders the local guard facts as comments without a change to the values', () => {
+    const sample = sampleConfig();
+    const desired = Object.fromEntries(known.map((id) => [id, 'off' as const]));
+    const { local } = renderConfig({ ...sample, core: { ...sample.core, guards: desired } });
+    for (const { id, fixed, harm, keepsSafe } of guards) {
+      if (!fixed) expect(local).toContain(`  ${id}: "off"    # ${harm ? 'H: ' : ''}${keepsSafe}`);
+      else expect(local).not.toContain(`  ${id}:`);
+    }
+    expect(parseYamlText(local)).toMatchObject({ ok: true, value: { guards: desired } });
+  });
+
   it('loads files with no guard keys as empty maps', () => {
     const { shared, local } = sampleFiles();
     delete shared['shared_guards'];
@@ -67,12 +78,11 @@ describe('guard config values', () => {
     expect(fixedGuardKeyWarnings(parsedOf(sampleObject()))).toEqual([]);
   });
 
-  it.each(['on', 'off'] as const)('accepts local %s for every guard that is not fixed, also when it is not wired', (value) => {
+  it.each(['on', 'off'] as const)('accepts local %s for every guard that is not fixed', (value) => {
     const { shared, local } = sampleFiles();
     const values = Object.fromEntries(known.map((id) => [id, value]));
     const parsed = parseConfig(shared, { ...local, guards: values });
     expect(parsed.success && parsed.data.core.guards).toEqual(values);
-    expect(guards.some((guard) => !guard.wired)).toBe(true);
   });
 
   it('accepts shared on for every guard that is not fixed', () => {

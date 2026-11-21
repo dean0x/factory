@@ -19,7 +19,7 @@ export const fixedTextRow = (input: RowFacts): GuardRow => ({ ...input, kind: gu
 
 /**
  * A guard definition. The facts that its rows give (the harm mark, the kinds and the row ids) are not stated here: `guardsFor`
- * reads them from the rows. A new node and a node whose file has no key both start with every guard on in this version.
+ * reads them from the rows. New nodes request off. A missing key means on.
  */
 export const guardOf = (
   id: string,
@@ -30,15 +30,11 @@ export const guardOf = (
   id,
   name,
   keepsSafe,
-  wired: false,
   fixed: false,
-  newNode: guardValues.on,
+  newNode: guardValues.off,
   whenMissing: guardValues.on,
   related,
 });
 
-/** Mark a definition whose sites can all follow its value. */
-export const wiredGuard = (definition: GuardDefinition): GuardDefinition => ({ ...definition, wired: true });
-
-/** Mark a definition whose rows are all always on: it has no key, and no setting changes it. A fixed guard is never wired. */
-export const fixedGuard = (definition: GuardDefinition): GuardDefinition => ({ ...definition, fixed: true, wired: false });
+/** Mark a definition whose rows are all always on: it has no key, and no setting changes it. */
+export const fixedGuard = (definition: GuardDefinition): GuardDefinition => ({ ...definition, fixed: true, newNode: guardValues.on });

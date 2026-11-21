@@ -23,7 +23,7 @@ import {
   parseGithubRepo,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
-import { recordPrefix, requireGuardChannel } from '../core/guard-records.js';
+import { checkInitGuardRecord, clearInitGuardRecord, recordGuards, requireGuardChannel } from '../core/guard-records.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
@@ -31,7 +31,8 @@ import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { entryOfText, recordSetupAcceptance, type AcceptanceInput, type ManifestEntry } from '../core/setup-acceptance.js';
 import { describeIssues } from '../core/zod.js';
-import { allOn } from '../guards/effective.js';
+import { allOn, isSettable } from '../guards/effective.js';
+import { guardsFor } from '../guards/registry.js';
 import {
   commandLines,
   commands,
@@ -43,6 +44,10 @@ import {
   flags,
   flagText,
   ghTimeoutMs,
+  guardIds,
+  guardKeys,
+  guardStartWords,
+  guardValues,
   keys,
   localFileModes,
   maxFileBytes,
@@ -539,6 +544,8 @@ export const localSettingsOf = (
   owner: { readonly ownerName: string; readonly approvals: ApprovalChoice },
   github: string | undefined,
   sources: Readonly<Record<string, string>>,
+  recipe: RecipeEntry,
+  keepSetupTextOn: boolean,
 ): unknown => ({
   [keys.root.schema]: LOCAL_SCHEMA_VERSION,
   [keys.root.owner]: {
@@ -553,6 +560,9 @@ export const localSettingsOf = (
   [keys.root.parent]: null,
   [keys.root.children]: [],
   [keys.root.sources]: sources,
+  [guardKeys.local]: Object.fromEntries(guardsFor(recipe).filter(isSettable).map(({ id }) => [
+    id, keepSetupTextOn && id === guardIds.setupText ? guardValues.on : guardValues.off,
+  ])),
 });
 
 /** The settings of the two config files. The projects are the described projects of the command. */
@@ -560,6 +570,7 @@ const settingsOf = (
   checked: CheckedValues,
   github: string | undefined,
   { projects, sources }: ProjectSettings,
+  keepSetupTextOn = false,
 ): { readonly shared: unknown; readonly local: unknown } => ({
   shared: {
     [keys.root.schema]: CONFIG_SCHEMA_VERSION,
@@ -577,7 +588,7 @@ const settingsOf = (
       [keys.recipe.projects]: projects,
     },
   },
-  local: localSettingsOf(checked, github, sources),
+  local: localSettingsOf(checked, github, sources, checked.recipe, keepSetupTextOn),
 });
 
 const parseSettings = (
@@ -633,6 +644,8 @@ const checkOptions = async (
     registry,
   );
   if (!settings.ok) return settings;
+  const record = await checkInitGuardRecord(deps, { root: home, node: id });
+  if (!record.ok) return record;
   const root = await rootTextsOf(deps, layoutOf(home));
   if (!root.ok) return root;
   const modes = await effectiveModes(deps, home, settings.value);
@@ -697,13 +710,14 @@ const planChecked = async (
   const projects = await describeProjects(deps, planned, checked.recipe);
   if (!projects.ok) return projects;
 
-  const config = parseSettings(settingsOf(checked, github, projects.value), registry);
+  const own = ownTextAcceptance(home, checked.id, root);
+  const keepSetupTextOn = own.acceptance === null;
+  const config = parseSettings(settingsOf(checked, github, projects.value, keepSetupTextOn), registry);
   if (!config.ok) return config;
   const stateFiles = stateFilesOf(templates, blocks.workerText, queueKeyOf(checked.recipe));
   if (!stateFiles.ok) return stateFiles;
 
   const texts = renderConfig(config.value);
-  const own = ownTextAcceptance(home, config.value.core.node.id, root);
   return ok({
     home,
     received: false,
@@ -1014,16 +1028,36 @@ export const recordAcceptance = async (
       };
 };
 
-/** Record only after all init files are saved. A failure keeps the files and clones for a later confirmation. */
-export const recordInitPrefix = async (deps: Deps, plan: InitPlan): Promise<CliResult<readonly string[]>> => {
-  const remedy = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the ${roles.owner} prefix.`;
-  const channel = requireGuardChannel(deps, commands.init);
-  if (!channel.ok) return ok([`No ${roles.owner} prefix record was written. ${remedy}`]);
-  const written = await recordPrefix(deps, {
-    root: plan.home, node: plan.config.core.node.id, prefix: plan.config.core.owner.prefix,
+const CONFIRM_INIT_PREFIX = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the ${roles.owner} prefix.`;
+const INIT_GUARDS_STAY_ON = 'Every guard stays on.';
+
+/** Keep the hook error and its remedy when init stops before the guard record write. */
+export const withInitGuardHint = (error: CliError): CliResult<never> => err({
+  ...error,
+  hint: [error.hint, INIT_GUARDS_STAY_ON, CONFIRM_INIT_PREFIX, `Optional: ${guardStartWords.confirmOff}`].filter(Boolean).join(' '),
+});
+
+/** Record after all init files and hook settings are saved. A failure keeps the files and clones. */
+export const recordInitGuards = async (deps: Deps, plan: InitPlan): Promise<CliResult<{
+  readonly lines: CommandOutput['lines']; readonly warnings: readonly string[];
+}>> => {
+  const { core, entry } = plan.config;
+  const localOff = guardsFor(entry).filter((guard) => isSettable(guard) && core.guards[guard.id] === guardValues.off);
+  const offRemedy = guardStartWords.confirmOff;
+  if (!requireGuardChannel(deps, commands.init).ok) return ok({ lines: [], warnings: [
+    `No ${roles.owner} prefix record was written. ${CONFIRM_INIT_PREFIX}`,
+    `${INIT_GUARDS_STAY_ON} ${offRemedy}`,
+  ] });
+  const written = await recordGuards(deps, {
+    root: plan.home, node: core.node.id, prefix: core.owner.prefix,
+    change: localOff.map((guard) => ({ guard, value: guardValues.off })),
   });
-  if (!written.ok) return failure(`The files stay, but the ${roles.owner} prefix record could not be written: ${written.error.message}`, remedy);
-  return ok(written.value.warning === null ? [] : [written.value.warning]);
+  if (!written.ok) return failure(`The files stay, but the guard record could not be written: ${written.error.message}`, `${CONFIRM_INIT_PREFIX} ${offRemedy}`);
+  const off = localOff.filter(({ id }) => core.shared_guards[id] !== guardValues.on);
+  return ok({
+    lines: [{ level: 'text', text: guardStartWords.init(off.length, off.filter(({ harm }) => harm).length) }],
+    warnings: written.value.warning === null ? [] : [written.value.warning],
+  });
 };
 
 /** The projects of the command: the git work trees that the command found come first, when the home is proposed. */
@@ -1073,9 +1107,17 @@ export const runInit = async (
   const idleCompaction = values.defaultIdleCompaction;
   const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;
-  // Git makes the folders above a clone by itself. This run makes the root and its parents first, so that the undo can
-  // remove them.
-  const parents = projects.value.some((project) => !project.present) ? await makeRootFolders(deps, home) : ok([]);
+  let madeForClear: readonly string[] = [];
+  const cleared = await clearInitGuardRecord(deps, { root: home, node: checked.value.id }, files.config, async () => {
+    const made = await makeRootFolders(deps, home);
+    if (!made.ok) return made;
+    madeForClear = made.value;
+    return ok(undefined);
+  });
+  if (!cleared.ok) return undoClones(deps, [], madeForClear, cleared.error);
+  // Make the folders before git clones, so the undo can remove them.
+  const parents = madeForClear.length === 0 && projects.value.some((project) => !project.present)
+    ? await makeRootFolders(deps, home) : ok(madeForClear);
   if (!parents.ok) return parents;
   const cloned = await runClones(deps, projects.value, parents.value);
   if (!cloned.ok) return cloned;
@@ -1085,13 +1127,13 @@ export const runInit = async (
   if (!plan.ok) return undoClones(deps, made, parents.value, plan.error);
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);
-  // The node is made and listed. A failure of the hook settings leaves it, and a second run of init finishes the step.
+  // A repeat init can finish the hook step only. Use guard confirm and guard set for the records.
   const hook = await writeHookSettings(deps, plan.value.home, options.yes, idleCompaction);
-  if (!hook.ok) return hook;
-  const prefix = await recordInitPrefix(deps, plan.value);
-  if (!prefix.ok) return prefix;
+  if (!hook.ok) return withInitGuardHint(hook.error);
+  const guards = await recordInitGuards(deps, plan.value);
+  if (!guards.ok) return guards;
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
-  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...prefix.value, ...notes];
+  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings, ...notes];
 
   const written = [
     files.config,
@@ -1111,6 +1153,7 @@ export const runInit = async (
       ...skipped.map((folder) => ({ level: 'text' as const, text: `Skipped ${folder.path}: ${folder.reason}.` })),
       ...approvalLines(plan.value.home, applied.value.approval),
       ...(plan.value.acceptance === null ? [] : acceptanceLines(plan.value.acceptance, applied.value.accepted)),
+      ...guards.value.lines,
       {
         level: 'text',
         text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${plan.value.home}".`,

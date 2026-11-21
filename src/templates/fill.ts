@@ -2,8 +2,8 @@ import type { GuardValues } from '../guards/types.js';
 import { capitalize, coordinatorTemplateValues, guardValues, layers, roles, templateValues } from '../names.js';
 import type { BlockInput } from './types.js';
 
-/** A piece of one line: plain text, or text that a guard keeps. */
-export type TextSegment = string | { readonly guards: readonly string[]; readonly text: string };
+/** A piece of one line, with optional text for when all its guards are off. */
+export type TextSegment = string | { readonly guards: readonly string[]; readonly text: string; readonly offText?: string };
 
 /** A line, a group of lines that a guard keeps, or one line made of segments. */
 export type TextPart =
@@ -17,7 +17,7 @@ const keeps = (guards: readonly string[], values: GuardValues): boolean =>
 
 const segmentText = (segment: TextSegment, values: GuardValues): string => {
   if (typeof segment === 'string') return segment;
-  return keeps(segment.guards, values) ? segment.text : '';
+  return keeps(segment.guards, values) ? segment.text : segment.offText ?? '';
 };
 
 /** Keep an unguarded group, or a group with at least one guard on. A line of segments keeps each segment by the same rule. */

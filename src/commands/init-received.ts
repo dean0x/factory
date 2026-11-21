@@ -7,6 +7,7 @@ import { renderConfig } from '../config/render.js';
 import { localConfigSchema, mergeConfig, type FactoryConfig, type SharedConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
+import { checkInitGuardRecord, clearInitGuardRecord } from '../core/guard-records.js';
 import { configValue, ignoredPathsOf, isWorkTreeRoot, trackedFilesOf } from '../core/git.js';
 import { rootRefusalOf } from '../core/home.js';
 import { entryOfHome, readHomeIndex } from '../core/home-index.js';
@@ -62,8 +63,9 @@ import {
   blockTexts,
   detectGithubLogin,
   localSettingsOf,
-  recordInitPrefix,
+  recordInitGuards,
   stateFilesOf,
+  withInitGuardHint,
   type InitOptions,
   type InitPlan,
   type PlannedAcceptance,
@@ -413,8 +415,8 @@ const requireFlagsThatApply = (options: InitOptions): CliResult<void> => {
 };
 
 /** The final config: the shared file of the root and the local values of this machine. */
-const configOf = (shared: SharedConfig, owner: OwnerFields, approvals: ApprovalChoice): CliResult<FactoryConfig> => {
-  const local = localConfigSchema.safeParse(localSettingsOf({ ownerName: owner.name, approvals }, owner.github, {}));
+const configOf = (shared: SharedConfig, owner: OwnerFields, approvals: ApprovalChoice, keepSetupTextOn: boolean): CliResult<FactoryConfig> => {
+  const local = localConfigSchema.safeParse(localSettingsOf({ ownerName: owner.name, approvals }, owner.github, {}, shared.entry, keepSetupTextOn));
   if (!local.success) return usageError(`invalid settings: ${describeIssues(local.error)}`, CHECK_FLAGS_REMEDY);
   const merged = mergeConfig(shared, local.data);
   return merged.success ? ok(merged.data) : usageError(`invalid settings: ${describeIssues(merged.error)}`, CHECK_FLAGS_REMEDY);
@@ -505,6 +507,8 @@ export const runReceived = async (
   if (!flagged.ok) return flagged;
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
   if (!outside.ok) return outside;
+  const record = await checkInitGuardRecord(deps, { root: home, node: id });
+  if (!record.ok) return record;
   const leftover = await leftoverTempFolders(deps, home);
   if (!leftover.ok) return leftover;
   const projects = await planReceivedProjects(deps, home, shared.recipe.projects, commands.init);
@@ -520,7 +524,7 @@ export const runReceived = async (
   if (!answered.ok) return answered;
   const decision = await decideAcceptance(asking, { home, node: id, yes: options.yes, setup: setup.value });
   if (!decision.ok) return decision;
-  // The hook settings come after the last write. The check of their target and of the consent comes before the first write.
+  // Check the target and consent before the first write. Save the hook settings before the guard record.
   const idleCompaction = shared.core.session.idle_compaction;
   const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;
@@ -533,6 +537,7 @@ export const runReceived = async (
     approvals: answered.value,
     rendered: renderedTexts(decision.value, setup.value),
     acceptance: plannedAcceptance(decision.value, { home, node: id, setup: setup.value }),
+    keepSetupTextOn: decision.value.kind === 'declined',
     warnings: [
       ...root.value.warnings,
       ...(await sameIdWarnings(deps, indexPath, home, id)),
@@ -541,18 +546,20 @@ export const runReceived = async (
     ],
   });
   if (!planned.ok) return planned;
+  const cleared = await clearInitGuardRecord(deps, { root: home, node: id }, files.localConfig);
+  if (!cleared.ok) return cleared;
 
   const cloned = await runClones(deps, projects.value.planned, []);
   if (!cloned.ok) return cloned;
   const applied = await applyInit(deps, planned.value);
   if (!applied.ok) return undoClones(deps, cloned.value, [], applied.error);
-  // The root is registered. A failure of the hook settings leaves it, and a second run of init finishes the step.
+  // A repeat init can finish the hook step only. Use guard confirm and guard set for the records.
   const hook = await writeHookSettings(deps, home, options.yes, idleCompaction);
-  if (!hook.ok) return hook;
-  const prefix = await recordInitPrefix(deps, planned.value);
-  if (!prefix.ok) return prefix;
+  if (!hook.ok) return withInitGuardHint(hook.error);
+  const guards = await recordInitGuards(deps, planned.value);
+  if (!guards.ok) return guards;
 
-  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...prefix.value];
+  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings];
   const written = [files.localConfig, join(dirs.coordinator, files.claudeMd), `${dirs.state}/`, ...hook.value.written];
   const kept = decision.value.kind === 'declined' ? declinedLines() : [];
   return ok({
@@ -564,6 +571,7 @@ export const runReceived = async (
       ...approvalLines(home, applied.value.approval),
       ...(planned.value.acceptance === null ? [] : acceptanceLines(planned.value.acceptance, applied.value.accepted)),
       ...kept,
+      ...guards.value.lines,
       { level: 'text', text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${home}".` },
     ],
     json: {
@@ -593,14 +601,15 @@ interface ReceivedInput {
   readonly approvals: ApprovalChoice;
   readonly rendered: SetupTexts;
   readonly acceptance: PlannedAcceptance | null;
+  readonly keepSetupTextOn: boolean;
   readonly warnings: readonly string[];
 }
 
 /** The plan for a received root: the local file, the state files and the text of the coordinator folder. Nothing is written. */
 const planReceived = async (deps: Deps, input: ReceivedInput): Promise<CliResult<InitPlan>> => {
-  const { home, root, owner, approvals } = input;
+  const { home, root, owner, approvals, keepSetupTextOn } = input;
   // The text of the blocks names the owner for each point until a recorded delegation is read by `upgrade`.
-  const forBlocks = configOf(root.shared, owner, NO_APPROVALS);
+  const forBlocks = configOf(root.shared, owner, NO_APPROVALS, keepSetupTextOn);
   if (!forBlocks.ok) return forBlocks;
   const modes = await effectiveModes(deps, home, forBlocks.value);
   const templates = blockTemplatesFor(blockInputOf(forBlocks.value, input.rendered, modes, allOn));
@@ -608,7 +617,7 @@ const planReceived = async (deps: Deps, input: ReceivedInput): Promise<CliResult
   if (!blocks.ok) return blocks;
   const stateFiles = stateFilesOf(templates, blocks.value.workerText, queueKeyOf(forBlocks.value.entry));
   if (!stateFiles.ok) return stateFiles;
-  const config = configOf(root.shared, owner, approvals);
+  const config = configOf(root.shared, owner, approvals, keepSetupTextOn);
   if (!config.ok) return config;
   const texts = renderConfig(config.value);
   const layer = config.value.core.node.layer;

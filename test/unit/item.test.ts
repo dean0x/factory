@@ -833,7 +833,7 @@ describe('item record: linked approval', () => {
     const config: FactoryConfig = { ...base, core: { ...base.core, guards: { 'approval-merge': 'off' } } };
     const world = await mergeWorld({ config, decisionLog: logOf(), ...(waiting === undefined ? {} : { waiting }) });
     valueOf(await recordGuards({ ...world.repo.deps, stdinIsTTY: true, stdoutIsTTY: true }, {
-      root: HOME, node: config.core.node.id, change: [{ guard: { id: 'approval-merge', wired: true }, value: 'off' }],
+      root: HOME, node: config.core.node.id, change: [{ guard: { id: 'approval-merge', fixed: false }, value: 'off' }],
     }));
     return world;
   };

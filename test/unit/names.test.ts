@@ -193,7 +193,6 @@ const WORD_NAMES = [
  */
 const TEXT_NAMES = [
   ...flat(files),
-  guardListWords.notSettable,
   schema1.protocolFile,
   dirs.state,
   dirs.claude,
@@ -1947,12 +1946,8 @@ describe('the names of the guards', () => {
     expect(schemaIds.guardConfirm).toBe(`${program}.guard-confirm/v1`);
   });
 
-  it('gives unknown and unsettable ids separate messages that name the list', () => {
+  it('names the list command for an unknown guard id', () => {
     expect(guardSetWords.unknownId('old-id')).toBe('Unknown guard "old-id". Run "factory guard list".');
-    expect(guardSetWords.notSettable(guardIds.workConduct)).toBe(
-      `Guard "${guardIds.workConduct}" is not settable in this version. Run "factory guard list".`,
-    );
-    expect(guardListWords.notSettable).toBe('not settable in this version');
     expect(guardSetWords.summary).toBe('Set guards in the local file.');
     expect(guardConfirmWords.summary).toBe('Confirm the owner prefix for this folder.');
   });
@@ -1989,12 +1984,11 @@ describe('the names of the guards', () => {
     expect(guardStartWords.prefixMismatch).toBe('owner prefix differs from its record');
   });
 
-  it('keeps the guard store file name and settable mark in names only', () => {
+  it('keeps the guard store file name in names only', () => {
     const path = join(SRC, 'sample.ts');
     expect(violationsInText("const a = 'guard-records.json';", path)).toContain(
       'sample.ts: "guard-records.json" holds the name guard-records.json',
     );
-    expect(violationsInText("const a = 'not settable in this version';", path)).toHaveLength(1);
   });
 
   it('words the more line and the count line of the list', () => {

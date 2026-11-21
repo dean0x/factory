@@ -5,7 +5,7 @@ import { failure } from '../../src/cli/errors.js';
 import { ok } from '../../src/core/result.js';
 import * as lockApi from '../../src/core/file-lock.js';
 import type { GuardRecord } from '../../src/guards/effective.js';
-import { guardOf, wiredGuard } from '../../src/guards/build.js';
+import { fixedGuard, guardOf } from '../../src/guards/build.js';
 import { guardRecords, privateFile } from '../../src/names.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { describe, expect, it } from 'vitest';
@@ -19,10 +19,9 @@ const stateHome = '/state';
 const path = `${stateHome}/factory/${files.guardRecords}`;
 const folder = `${stateHome}/factory`;
 const at = '2030-01-02T03:04:05.678Z';
-const guard = wiredGuard(guardOf('test-guard', 'Test guard', 'Test work stays safe.'));
-const otherGuard = wiredGuard(guardOf('other-guard', 'Other guard', 'Other work stays safe.'));
-/** A guard that this version cannot set: its local off never needs the store. */
-const unwiredGuard = guardOf('unwired-guard', 'Unwired guard', 'Unwired work stays safe.');
+const guard = guardOf('test-guard', 'Test guard', 'Test work stays safe.');
+const otherGuard = guardOf('other-guard', 'Other guard', 'Other work stays safe.');
+const fixed = fixedGuard(guardOf('fixed-guard', 'Fixed guard', 'Fixed work stays safe.'));
 const change = [{ guard, value: 'off' as const }];
 const record = (values: GuardRecord['values'] = {}, prefix: GuardRecord['prefix'] = null): GuardRecord => ({ node: 'demo', root, values, prefix });
 const storeText = (records: readonly GuardRecord[]): string => JSON.stringify({ schema: guardRecords.schema, records });
@@ -34,7 +33,7 @@ const fixture = (options: Parameters<typeof createFakeDeps>[0] = {}) => {
 };
 const config = (local: Readonly<Record<string, 'on' | 'off'>> = { [guard.id]: 'off' }) => {
   const sample = sampleConfig();
-  return { ...sample, core: { ...sample.core, guards: local }, entry: { ...sample.entry, guards: [guard, otherGuard] } };
+  return { ...sample, core: { ...sample.core, guards: local }, entry: { ...sample.entry, guards: [guard, otherGuard, fixed] } };
 };
 /** The fixture with the config on disk and the root in the factory list, so that a local off value has its proof. */
 const provedFixture = (options: Parameters<typeof createFakeDeps>[0] = {}) => {
@@ -116,6 +115,32 @@ describe('guard store reads and writes', () => {
     ]));
     expect(deps.modes.get(path)).toBe(0o600);
     expect(deps.files.get(path)).not.toContain('\n');
+  });
+
+  it('saves the prefix and guard values in one store write', async () => {
+    const deps = fixture();
+    const input = { root, node: 'demo', change, prefix: 'Owner text' };
+    expect(await storeApi.recordGuards(deps, input)).toEqual(ok({ warning: null }));
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([
+      record({ [guard.id]: { value: 'off', at } }, { hash: sha256Hex(input.prefix), at }),
+    ]));
+    expect(deps.atomicWrites.filter((file) => file === path)).toHaveLength(1);
+  });
+
+  it('does not replace a record that appears before the final init lock read', async () => {
+    const deps = fixture();
+    const other = { ...record(), node: 'other' };
+    const current = record({ [otherGuard.id]: { value: 'on', at } });
+    deps.seed(path, storeText([other]));
+    const raced = { ...deps, fs: { ...deps.fs, writeTextExclusive: async (target: string, text: string, mode: number) => {
+      const taken = await deps.fs.writeTextExclusive(target, text, mode);
+      if (target === userFileLockPath(path) && taken.ok && taken.value) deps.seed(path, storeText([other, current]));
+      return taken;
+    } } };
+    const result = await storeApi.recordGuards(raced, { root, node: 'demo', prefix: 'Owner text', change });
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining(guardRecordWords.priorRecord) } });
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([other, current]));
+    expect(deps.atomicWrites).toEqual([]);
   });
 
   it('refuses a liveness policy in the age-only lock path', async () => {
@@ -302,10 +327,11 @@ describe('guard store reads and writes', () => {
     expect((await storeApi.readGuardState(deps, root, config(), 'always')).values[guard.id]).toBe('off');
   });
 
-  it('refuses an unwired guard without a write', async () => {
+  it.each(['on', 'off'] as const)('refuses to record %s for a fixed guard without a write', async (value) => {
     const deps = fixture();
-    expect(await storeApi.recordGuards(deps, { root, node: 'demo', change: [{ guard: { ...guard, wired: false }, value: 'off' }] }))
-      .toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(await storeApi.recordGuards(deps, { root, node: 'demo', change: [...change, { guard: fixed, value }] }))
+      .toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining(`Unknown guard "${fixed.id}"`) } });
+    expect(deps.atomicWrites).toEqual([]);
     expect(deps.files.size).toBe(0);
   });
 
@@ -355,17 +381,62 @@ describe('guard store reads and writes', () => {
   });
 });
 
-describe('the letter case rewrite of a record root', () => {
-  const folded = root.toUpperCase();
-  /** A volume that ignores letter case: the real path and the entry of the root in any letter case are those of the root. */
-  const caseBlind = (deps: ReturnType<typeof fixture>) => {
-    const exact = (target: string): string => (target.toLowerCase() === root ? root : target);
-    return { ...deps, fs: { ...deps.fs,
-      realpath: async (target: string) => deps.fs.realpath(exact(target)),
-      lstatInfo: async (target: string) => deps.fs.lstatInfo(exact(target)),
-    } };
-  };
+const folded = root.toUpperCase();
 
+/** The root and its parent use the same entry and real path in either letter case. */
+const caseBlind = (deps: ReturnType<typeof fixture>) => {
+  const exact = (target: string): string => target.startsWith('/WORK') ? target.toLowerCase() : target;
+  return { ...deps, fs: { ...deps.fs,
+    stat: (target: string) => deps.fs.stat(exact(target)),
+    realpath: (target: string) => deps.fs.realpath(exact(target)),
+    lstat: (target: string) => deps.fs.lstat(exact(target)),
+    lstatInfo: (target: string) => deps.fs.lstatInfo(exact(target)),
+  } };
+};
+
+describe('the guard record of a new folder', () => {
+  const input = { root, node: 'demo' };
+  const prior = { ...record({ [guard.id]: { value: 'off', at } }), root: folded };
+  const other = { ...prior, node: 'other' };
+
+  it('refuses an earlier record in other letter case without the owner channel', async () => {
+    const deps = fixture({ os: 'darwin', stdinIsTTY: false });
+    deps.dirs.delete(root);
+    const before = storeText([other, prior]);
+    deps.seed(path, before);
+    expect(await storeApi.checkInitGuardRecord(caseBlind(deps), input))
+      .toEqual(failure(guardRecordWords.priorRecord, guardRecordWords.priorRecordRemedy));
+    expect(deps.files.get(path)).toBe(before);
+  });
+
+  it('clears an earlier record in other letter case with the owner channel', async () => {
+    const deps = fixture({ os: 'darwin' });
+    deps.dirs.delete(root);
+    deps.seed(path, storeText([other, prior]));
+    expect((await storeApi.clearInitGuardRecord(caseBlind(deps), input, files.config, () => deps.fs.mkdir(root))).ok).toBe(true);
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([other]));
+  });
+
+  it('keeps the record of a distinct folder in other letter case', async () => {
+    const deps = fixture({ os: 'darwin' });
+    deps.seedDir(folded);
+    deps.seed(path, storeText([other, prior, record()]));
+    expect((await storeApi.clearInitGuardRecord(deps, input, files.config)).ok).toBe(true);
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([other, prior]));
+    expect(await storeApi.checkInitGuardRecord({ ...deps, stdinIsTTY: false }, input)).toEqual(ok(undefined));
+  });
+
+  it('keeps an earlier record for a different path when both folders were absent', async () => {
+    const deps = fixture({ os: 'darwin' });
+    deps.dirs.delete(root);
+    deps.seed(path, storeText([other, prior]));
+    const result = await storeApi.clearInitGuardRecord(deps, input, files.config, async () => deps.fs.mkdir(root));
+    expect(result.ok).toBe(true);
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([other, prior]));
+  });
+});
+
+describe('the letter case rewrite of a record root', () => {
   it('writes the one record of the node with the root in other letter case again with the real root, and keeps its values, its prefix and the other records', async () => {
     const deps = fixture();
     const values = { [guard.id]: { value: 'off' as const, at } };
@@ -431,7 +502,7 @@ describe('the letter case rewrite of a record root', () => {
 });
 
 describe('one guard state read', () => {
-  it.each(['on', 'off', 'unwired'] as const)('reads the store only for a wired off in when-off mode: %s', async (value) => {
+  it.each(['on', 'off', 'fixed'] as const)('reads the store only for a non-fixed local off in when-off mode: %s', async (value) => {
     const deps = provedFixture();
     let opens = 0;
     deps.seed(path, storeText([record({ [guard.id]: { value: 'off', at } })]));
@@ -439,8 +510,7 @@ describe('one guard state read', () => {
       opens += 1;
       return deps.fs.openCheckedCore?.(...args) ?? failure('record core is absent');
     } } };
-    const base = config(value === 'unwired' ? { [unwiredGuard.id]: 'off' } : { [guard.id]: value });
-    const read = { ...base, entry: { ...base.entry, guards: [...base.entry.guards, unwiredGuard] } };
+    const read = config(value === 'fixed' ? { [fixed.id]: 'off' } : { [guard.id]: value });
     const state = await storeApi.readGuardState(watched, root, read, 'when-off');
     expect(opens).toBe(value === 'off' ? 1 : 0);
     expect(state.values[guard.id]).toBe(value === 'off' ? 'off' : 'on');

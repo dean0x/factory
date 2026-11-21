@@ -53,7 +53,7 @@ const approvalDelegationRows: readonly GuardRow[] = [
     name: `A delegation ends when the ${folder} moves, because the approval record names the real path`,
     applies: 'Init of an existing folder and every read of a mode',
     harm: true,
-    sites: [...at('src/core/owner-record.ts', 'newestModes'), ...at('src/commands/init-existing.ts', 'approvalsOf', 'delegationWarnings')],
+    sites: [...at('src/core/owner-record.ts', 'newestModes', 'delegationReport'), ...at('src/commands/init-existing.ts', 'approvalsOf', 'delegationWarnings')],
   }),
   codeRow({
     id: 'delegation-warning',
@@ -260,7 +260,7 @@ const settingsCheckRows: readonly GuardRow[] = [
     applies: `${commandLines.workerNew}, ${commandLines.workerResume} and scan of the folder`,
     harm: true,
     sites: [
-      ...at('src/commands/root-content.ts', 'checkTrackedSettings'),
+      ...at('src/commands/root-content.ts', 'checkTrackedSettings', 'judgeSettings'),
       ...at('src/workers/launch.ts', 'requireCleanSettings', 'requireCleanTrackedSettings'),
     ],
   }),
