@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { comparable } from '../../src/core/paths.js';
-import { dotRuleReason, type NameCompare, type PlaceRule } from '../../src/core/place-rule.js';
+import { dotRuleReason, localConfigReason, type NameCompare, type PlaceRule } from '../../src/core/place-rule.js';
 import { projectFolderKey } from '../../src/core/project-path.js';
 import { assignmentSource, files } from '../../src/names.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
@@ -47,6 +47,12 @@ describe('the local config of the factory folder', () => {
     expect(byPlatform('linux')(files.localConfig.toUpperCase(), files.localConfig)).toBe(false);
     expect(dotRuleReason([files.localConfig.toUpperCase()], docRule)).toContain('settings of one person');
     expect(dotRuleReason([mixed], docRule)).toContain('settings of one person');
+  });
+
+  it('has its own rule, which gives the same reason and lets a dot part pass to the dot rule', () => {
+    expect(localConfigReason([files.localConfig], rule())).toBe(dotRuleReason([files.localConfig], rule()));
+    expect(localConfigReason([files.localConfig], rule({ atFactoryTop: false }))).toBeNull();
+    expect(localConfigReason(['.drafts', 'task.md'], rule())).toBeNull();
   });
 });
 

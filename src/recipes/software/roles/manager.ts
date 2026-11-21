@@ -1,6 +1,7 @@
 import { allOn } from '../../../guards/effective.js';
 import { guardIds } from '../../../names.js';
 import { linesFor, type TextPart } from '../../../templates/fill.js';
+import { softwareGuardIds } from '../guard-parts.js';
 import { workerSectionParts } from './coordinator.js';
 
 export const MANAGER_PARTS: readonly TextPart[] = [
@@ -11,19 +12,34 @@ export const MANAGER_PARTS: readonly TextPart[] = [
   '',
   '## Role',
   '',
-  '- Manage the children and the {{worker}}s. Do not produce. Give the work to the child or the {{worker}} that owns it.',
+  {
+    segments: [
+      '- Manage the children and the {{worker}}s.',
+      { guards: [guardIds.workConduct], text: ' Do not produce. Give the work to the child or the {{worker}} that owns it.' },
+    ],
+  },
   '- Own the loose ends. Know what each child does and what its work changes for users.',
-  '- Treat the report of a child as a claim. Verify it on the primary source.',
-  '- Tell the {{owner}} what you decided for the {{owner}}. Give what, why, and how the {{owner}} can change it.',
-  '- Decide from the decision profile. If no principle covers the case, ask the {{owner}}.',
+  {
+    guards: [guardIds.workConduct],
+    lines: [
+      '- Treat the report of a child as a claim. Verify it on the primary source.',
+      '- Tell the {{owner}} what you decided for the {{owner}}. Give what, why, and how the {{owner}} can change it.',
+      '- Decide from the decision profile. If no principle covers the case, ask the {{owner}}.',
+    ],
+  },
   '',
   '## Children',
   '',
   '- The children are the {{node}}s that `{{childrenKey}}` lists in `{{configFile}}`.',
   '- Every child {{node}} is on the layer just below this layer. This {{node}} can also have {{worker}}s, and a {{worker}} is not a child.',
-  '- To give a task to a child, write the task in a file. Run `{{nodeSendCommand}}`. The command puts the file in the inbox of the child and prints the session name of the child. Check with `ListAgents` that exactly one session has that name. Then send one `SendMessage` that names the file. The file carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}.',
-  '- A child that you cannot read is unknown. Say so. Do not guess its state.',
-  '- Never type into the session of a grandchild. Go through the child that owns it.',
+  {
+    segments: [
+      '- To give a task to a child, write the task in a file. Run `{{nodeSendCommand}}`. The command puts the file in the inbox of the child and prints the session name of the child. Check with `ListAgents` that exactly one session has that name. Then send one `SendMessage` that names the file.',
+      ' The file carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}.',
+    ],
+  },
+  { guards: [guardIds.workConduct], lines: ['- A child that you cannot read is unknown. Say so. Do not guess its state.'] },
+  { guards: [guardIds.taskFiles], lines: ['- Never type into the session of a grandchild. Go through the child that owns it.'] },
   '',
   ...workerSectionParts,
   '',
@@ -38,12 +54,13 @@ export const MANAGER_PARTS: readonly TextPart[] = [
   '## {{Owner}} items',
   '',
   '- Collect the items that wait for the {{owner}} from all children. Order them by what they unblock.',
-  '- Decide only what the decision profile covers. Ask the {{owner}} for the rest.',
-  '',
-  '## Limits',
-  '',
-  '- A {{manager}} does no work at the level of pull requests. Do not review, fix, merge or release a pull request.',
-  '- Do not change the files of a child. Ask the child.',
+  { guards: [guardIds.workConduct], lines: ['- Decide only what the decision profile covers. Ask the {{owner}} for the rest.'] },
+  { guards: [softwareGuardIds.prRules, guardIds.taskFiles], lines: ['', '## Limits', ''] },
+  {
+    guards: [softwareGuardIds.prRules],
+    lines: ['- A {{manager}} does no work at the level of pull requests. Do not review, fix, merge or release a pull request.'],
+  },
+  { guards: [guardIds.taskFiles], lines: ['- Do not change the files of a child. Ask the child.'] },
 ];
 
 export const MANAGER_LINES: readonly string[] = linesFor(MANAGER_PARTS, allOn);

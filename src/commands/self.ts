@@ -27,7 +27,7 @@ import {
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { promptStateOf, readOwnCoordinatorSession } from '../workers/last-seen.js';
-import { requireCoordinatorCaller } from '../workers/panes.js';
+import { requireCoordinatorCaller, requireCoordinatorPane } from '../workers/panes.js';
 import { requireOwnHooks, requireResumeFile } from '../workers/session-checks.js';
 
 /**
@@ -44,7 +44,8 @@ import { requireOwnHooks, requireResumeFile } from '../workers/session-checks.js
  *  7. `typeLine`: the mode of the pane is read (exit 1 for a failed read, exit 3 for a pane in a mode of tmux), then the capture of the
  *     screen, which is the last read before the keys (exit 3 for a numbered list of choices).
  * A mode or a dialog that opens after its read and before the keys is not seen. The command does not wait for the compact: the output says
- * that the line is queued.
+ * that the line is queued. While the session-checks guard is off, steps 2 and 6 skip the env and the caller pane, and read only the
+ * coordinator pane, which is the target of the keys.
  */
 
 /** The command of a reset with its program name, for the words of a usage error. */
@@ -126,13 +127,23 @@ const requireResumeNotes = async (deps: Deps, home: string, nodeId: string): Pro
   return notes.ok ? ok(undefined) : notes;
 };
 
+/**
+ * The coordinator pane that the reset types into, by the caller rule. While the session-checks guard is off, the rule gives no pane,
+ * and the pane comes from the read of the coordinator pane alone: that read chooses the target, so it runs with every value.
+ */
+const requireTargetPane = async (deps: Deps, request: SelfResetRequest): Promise<CliResult<CoordinatorPane>> => {
+  const caller = await requireCoordinatorCaller(deps, request.home, request.config, commandLines.selfReset);
+  if (!caller.ok) return caller;
+  return caller.value === null ? requireCoordinatorPane(deps, request.home, request.config, commandLines.selfReset) : ok(caller.value);
+};
+
 /** The pane read again right before the keys, by the caller rule: it must still be the coordinator pane, and the same process. */
 const requireSamePane = async (
   deps: Deps,
   request: SelfResetRequest,
   pane: CoordinatorPane,
 ): Promise<CliResult<CoordinatorPane>> => {
-  const now = await requireCoordinatorCaller(deps, request.home, request.config, commandLines.selfReset);
+  const now = await requireTargetPane(deps, request);
   if (!now.ok) return now;
   if (now.value.pid === pane.pid) return now;
   return notReady(
@@ -148,11 +159,11 @@ const requireSamePane = async (
 export const selfReset = async (deps: Deps, request: SelfResetRequest): Promise<CliResult<SelfResetOutcome>> => {
   const { home, config } = request;
   const nodeId = config.core.node.id;
-  const caller = await requireCoordinatorCaller(deps, home, config, commandLines.selfReset);
+  const caller = await requireTargetPane(deps, request);
   if (!caller.ok) return caller;
   const guards = await guardValuesFor(deps, home);
-  // While pane safety is off, the hooks, the last-seen line and the resume notes do not stop the reset. The caller rule, the bind
-  // again and the line checks of `typeLine` run with every value.
+  // While pane safety is off, the hooks, the last-seen line and the resume notes do not stop the reset. The read of the target pane,
+  // the bind again and the line checks of `typeLine` run with every value.
   if (isGuardOn(guards, guardIds.paneSafety)) {
     const hooks = await requireCoordinatorHooks(deps, home);
     if (!hooks.ok) return hooks;

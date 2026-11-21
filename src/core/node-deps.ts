@@ -262,7 +262,7 @@ const checkOpenFile = async (
   handle: FileHandle, path: string, request: CheckedOpenRequest, faultOf: typeof checkedFaultCore,
 ): Promise<CheckedOpen> => {
   const info = infoOf(await handle.stat());
-  const fault = faultOf(request.uid, info, request.maxBytes);
+  const fault = faultOf(request, info);
   if (fault !== null) return { state: 'refused', fault, info, bytes: 0 };
   if (request.maxBytes === null) return { state: 'opened', info, text: null, bytes: 0 };
   const read = await readHandleBounded(handle, request.maxBytes);

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { answeredRequestOf } from '../../src/board/requests.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags, renderCommandHelp } from '../../src/cli/table.js';
 import { runDecide } from '../../src/commands/decide.js';
 import { runDecideRead } from '../../src/commands/decide-read.js';
@@ -20,6 +21,7 @@ import {
   decisionKeys,
   dirs,
   files as fileNames,
+  guardIds,
   program,
   relayedMarker,
   requestCommands,
@@ -31,10 +33,12 @@ import { layoutOf } from '../../src/state/layout.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
 import { inPane } from '../helpers/coordinator-pane.js';
-import { withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
+import { registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { HOME } from '../helpers/guard-fixture.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 
 const BASE: RequestOptions = {
   home: HOME,
@@ -985,6 +989,21 @@ describe('request close: approval links', () => {
     ...BASE, words: ['close', 'D-1'], relayed: true, decision: 'approve', ...change,
   }, recipes);
 
+  it.each(FOLDER_ORIGINS)('keeps a relay in the coordinator pane with both caller and owner checks off in %s', async (_folder, origin) => {
+    const off = [guardIds.sessionChecks, guardIds.ownerGo];
+    const config = withGuardsOff(sampleConfigWithBoard(), off);
+    const repo = await boardNode({ config, waiting: waitingText([linkedEntry()]) });
+    registerRoot(repo.deps, HOME, config.core.node.id, [], origin);
+    repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, repo.deps.now()));
+    const before = filesOf(repo);
+    const sink = captureSink();
+    const code = await runCli(['request', 'close', 'D-1', '--relayed', '--decision', 'approve', '--home', HOME], inPane(repo.deps, '%1'), sink);
+    expect(code).toBe(2);
+    expect(sink.errors.join('')).toContain('the caller is in the pane %1');
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
   it('refuses a linked relay outside the coordinator pane without a write', async () => {
     const repo = await boardNode({ waiting: waitingText([linkedEntry()]) });
     const before = filesOf(repo);
@@ -1105,6 +1124,45 @@ describe('request close: approval links', () => {
     });
     expect(filesOf(repo)).toEqual(before);
     expect(repo.commits).toEqual([]);
+  });
+
+  describe('with the guard owner-go off and its owner record', () => {
+    /** A node whose local file holds owner-go off, with the owner record, the waiting entries and the owner decision file. */
+    const ownerGoOff = async (waiting: string, store?: string): Promise<BoardRepo> => {
+      const off = [guardIds.ownerGo];
+      const config = withGuardsOff(sampleConfigWithBoard(), off);
+      const repo = await boardNode({ config, waiting });
+      if (store !== undefined) repo.deps.seed(STORE_PATH, store);
+      repo.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, repo.deps.now()));
+      return repo;
+    };
+
+    /** One run of `request close` with the words, from the pane of the coordinator. */
+    const closeLine = async (repo: BoardRepo, words: readonly string[]): Promise<{ readonly code: number; readonly err: string }> => {
+      const sink = captureSink();
+      const code = await runCli(['request', 'close', ...words, '--home', HOME], inPane(repo.deps, '%0'), sink);
+      return { code, err: sink.errors.join('') };
+    };
+
+    it('still refuses a relay for a point outside the relay scope with exit 2, and changes no file', async () => {
+      const repo = await ownerGoOff(waitingText([linkedEntry({ point: 'release' })]));
+      const before = filesOf(repo);
+      const result = await closeLine(repo, ['D-1', '--relayed', '--decision', 'approve']);
+      expect(result.code, result.err).toBe(2);
+      expect(result.err).toContain('approval point');
+      expect(filesOf(repo)).toEqual(before);
+      expect(repo.commits).toEqual([]);
+    });
+
+    it('still refuses to close a request that the owner answered with exit 1, and changes no file', async () => {
+      const repo = await ownerGoOff(waitingText([entry('D-1'), entry('D-2')]), storeText([storedRecord({ id: 'D-2' })]));
+      const before = filesOf(repo);
+      const result = await closeLine(repo, ['D-2']);
+      expect(result.code, result.err).toBe(1);
+      expect(result.err).toContain('answered');
+      expect(filesOf(repo)).toEqual(before);
+      expect(repo.commits).toEqual([]);
+    });
   });
 });
 

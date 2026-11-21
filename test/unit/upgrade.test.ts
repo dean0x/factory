@@ -2246,6 +2246,20 @@ describe('upgrade: a replaced block keeps its old text in a backup file', () => 
       const { deps } = await makeNode();
       expect(success(await upgrade(inSession(deps))).lines.at(-1)?.text).toBe('Nothing to upgrade.');
     });
+
+    it.each(FOLDER_ORIGINS)('still exits 4 inside a factory session for the safety block in %s, with the yes flag and the session-checks guard off with a matching record, and writes nothing', async (_folder, origin) => {
+      const { deps, gitSince } = await makeNode();
+      registerRoot(deps, HOME, 'demo', [], origin);
+      deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify({ [guardIds.sessionChecks]: 'off' })}\n`);
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, [guardIds.sessionChecks], deps.now()));
+      editSafety(deps);
+      const before = snapshot(deps);
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME, '--overwrite', 'safety', '--yes'], inSession(deps), sink)).toBe(4);
+      expect(sink.errors.join('')).toContain('can not replace the safety block');
+      expect(snapshot(deps)).toEqual(before);
+      expect(gitSince()).toEqual([]);
+    });
   });
 });
 
@@ -3514,6 +3528,16 @@ describe('upgrade: a node of schema 1', () => {
       }
       expect(snapshot(deps)).toEqual(before);
       expect(deps.prompts).toEqual([]);
+    });
+
+    it('still exits 4 and writes nothing with FACTORY_SESSION set and a guard record that holds the session-checks guard off, through the command', async () => {
+      const { deps } = makeOldNode();
+      deps.seed(GUARD_STORE, guardStoreText('demo', HOME, [guardIds.sessionChecks], deps.now()));
+      const before = snapshot(deps);
+      const sink = captureSink();
+      expect(await runCli(['upgrade', '--home', HOME, '--yes'], { ...deps, env: { ...deps.env, FACTORY_SESSION: 'demo' } }, sink)).toBe(4);
+      expect(sink.errors.join('')).toContain('a factory session can not register it');
+      expect(snapshot(deps)).toEqual(before);
     });
 
     it('exits 4 inside a factory session that has a terminal window, also with a yes answer, and asks nothing', async () => {
@@ -5611,6 +5635,21 @@ describe('upgrade: the hook settings of the work copies and of the coordinator',
     expect(snapshot(deps)).toEqual(before);
     expect(output.json).toMatchObject({ hookSettings: [] });
     expect(output.warnings.join('\n')).toContain('gives no consent inside a');
+  });
+
+  describe.each(FOLDER_ORIGINS)('in %s, through the command', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.sessionChecks))('inside a factory session the yes flag writes the hook settings only while the session-checks guard counts as off: %s', async (_state, setup, on) => {
+      const { deps } = await olderFactory();
+      const off = setup.off ?? [];
+      registerRoot(deps, HOME, 'demo', [], origin);
+      if (off.length > 0) deps.seed(LOCAL, `${text(deps, LOCAL)}\nguards: ${JSON.stringify(Object.fromEntries(off.map((id) => [id, 'off'])))}\n`);
+      if (setup.record !== false) deps.seed(GUARD_STORE, guardStoreText('demo', HOME, off, deps.now()));
+      const sink = captureSink();
+      const code = await runCli(['upgrade', '--home', HOME, '--yes', '--json'], { ...deps, env: { ...deps.env, [env.session]: 'demo' } }, sink);
+      expect(code, sink.errors.join('')).toBe(0);
+      expect(JSON.parse(sink.out.join(''))).toMatchObject({ hookSettings: on ? [] : ALL_FILES });
+      expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(on ? JSON.parse(OLD_TEXT) : ownSettingsAt(COORDINATOR_SETTINGS));
+    });
   });
 
   it('on a terminal, a yes writes the file, and a no leaves the file and warns with the remedy', async () => {

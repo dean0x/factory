@@ -1161,6 +1161,13 @@ describe('node deps: a checked open', () => {
     expect(await deps.fs.openChecked(file, request(null))).toMatchObject({ ok: true, value: { state: 'refused', fault: 'writableByOthers', bytes: 0 } });
   });
 
+  it('reads untrusted file content without an access check and keeps the byte cap', async () => {
+    const file = await fileWith('open-content.txt', 'abc', 0o664);
+    const content = { uid: null, maxBytes: 3, access: 'content' } as const;
+    expect(await deps.fs.openChecked(file, content)).toMatchObject({ ok: true, value: { state: 'opened', text: 'abc', bytes: 3 } });
+    expect(await deps.fs.openChecked(file, { ...content, maxBytes: 2 })).toMatchObject({ ok: true, value: { state: 'refused', fault: 'size', bytes: 0 } });
+  });
+
   it.runIf(uid !== null)('refuses a file of another account, and skips the owner check when the request has no user', async () => {
     const file = await fileWith('open-owner.txt', 'abc');
     const other = (uid ?? 0) + 1;

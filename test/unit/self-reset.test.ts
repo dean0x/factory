@@ -425,6 +425,38 @@ describe.each(FOLDER_ORIGINS)('self reset in %s: the guard of the pane safety th
   });
 });
 
+describe.each(FOLDER_ORIGINS)('self reset in %s: the guard of the session checks through the command', (_title, origin) => {
+  const runSelfReset = async (world: World): Promise<{ readonly code: number; readonly err: string }> => {
+    const sink = captureSink();
+    const code = await runCli(['self', 'reset', '--home', HOME], world.deps, sink);
+    return { code, err: sink.errors.join('') };
+  };
+
+  it.each(guardStatesOf(guardIds.sessionChecks))('types the line into the coordinator pane for a caller in a worker pane only while the guard counts as off: %s', async (_state, setup, on) => {
+    const world = await make({ env: { TMUX_PANE: '%3' }, tmux: { panes: [workerPane(WORKER)] } });
+    seedGuardedHome(world.deps, HOME, { ...setup, origin });
+    const result = await runSelfReset(world);
+    expect(result.code, result.err).toBe(on ? 2 : 0);
+    expect(world.tmux.typed()).toEqual(on ? [] : COMPACT_KEYS);
+  });
+
+  it('still stops with exit 4 for a coordinator pane that factory did not start, with the guard off and a matching record', async () => {
+    const world = await make({ env: { TMUX_PANE: '%3' }, tmux: { panes: [workerPane(WORKER)], coordinatorCommands: { [NODE]: ['sleep', '3000'] } } });
+    seedGuardedHome(world.deps, HOME, { off: [guardIds.sessionChecks], origin });
+    const result = await runSelfReset(world);
+    expect(result.code, result.err).toBe(4);
+    expectNothingTyped(world);
+  });
+
+  it('still stops with exit 3 when the session of the node does not run, with the guard off and a matching record', async () => {
+    const world = await make({ env: { TMUX_PANE: undefined, FACTORY_SESSION: undefined }, tmux: { sessions: {} } });
+    seedGuardedHome(world.deps, HOME, { off: [guardIds.sessionChecks], origin });
+    const result = await runSelfReset(world);
+    expect(result.code, result.err).toBe(3);
+    expectNothingTyped(world);
+  });
+});
+
 describe('the pane is bound again right before the keys', () => {
   const COORDINATOR_FIELDS = 4;
   const fieldsOf = (stdout: string): string[] => stdout.replace(/\n$/, '').split('|');

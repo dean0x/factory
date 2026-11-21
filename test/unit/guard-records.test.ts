@@ -6,7 +6,7 @@ import { ok } from '../../src/core/result.js';
 import * as lockApi from '../../src/core/file-lock.js';
 import type { GuardRecord } from '../../src/guards/effective.js';
 import { guardOf, wiredGuard } from '../../src/guards/build.js';
-import { guardIds, guardRecords, privateFile } from '../../src/names.js';
+import { guardRecords, privateFile } from '../../src/names.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { describe, expect, it } from 'vitest';
 import { userFileLock, userFileLockPath, userStatePathOf } from '../../src/core/private-file.js';
@@ -21,6 +21,8 @@ const folder = `${stateHome}/factory`;
 const at = '2030-01-02T03:04:05.678Z';
 const guard = wiredGuard(guardOf('test-guard', 'Test guard', 'Test work stays safe.'));
 const otherGuard = wiredGuard(guardOf('other-guard', 'Other guard', 'Other work stays safe.'));
+/** A guard that this version cannot set: its local off never needs the store. */
+const unwiredGuard = guardOf('unwired-guard', 'Unwired guard', 'Unwired work stays safe.');
 const change = [{ guard, value: 'off' as const }];
 const record = (values: GuardRecord['values'] = {}, prefix: GuardRecord['prefix'] = null): GuardRecord => ({ node: 'demo', root, values, prefix });
 const storeText = (records: readonly GuardRecord[]): string => JSON.stringify({ schema: guardRecords.schema, records });
@@ -437,7 +439,9 @@ describe('one guard state read', () => {
       opens += 1;
       return deps.fs.openCheckedCore?.(...args) ?? failure('record core is absent');
     } } };
-    const state = await storeApi.readGuardState(watched, root, config(value === 'unwired' ? { [guardIds.ownerGo]: 'off' } : { [guard.id]: value }), 'when-off');
+    const base = config(value === 'unwired' ? { [unwiredGuard.id]: 'off' } : { [guard.id]: value });
+    const read = { ...base, entry: { ...base.entry, guards: [...base.entry.guards, unwiredGuard] } };
+    const state = await storeApi.readGuardState(watched, root, read, 'when-off');
     expect(opens).toBe(value === 'off' ? 1 : 0);
     expect(state.values[guard.id]).toBe(value === 'off' ? 'off' : 'on');
     if (value === 'off') expect(state).toMatchObject({ sources: { [guard.id]: 'local' }, since: { [guard.id]: at }, record: true, fault: null });

@@ -6,7 +6,7 @@ import { softwareApprovalPoints } from './approval.js';
 import { softwareRecordCheck } from './record.js';
 import { coordinatorLines } from './roles/coordinator.js';
 import { MANAGER_PARTS } from './roles/manager.js';
-import { WORKER_PARTS } from './roles/worker.js';
+import { workerPartsFor } from './roles/worker.js';
 
 type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeof blockNames.manager;
 
@@ -21,7 +21,7 @@ const workerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.worker,
   version: 5,
   target: 'workerFile',
-  body: fillTemplate(linesFor(WORKER_PARTS, input.guards), workerValuesFor(input)),
+  body: fillTemplate(linesFor(workerPartsFor(input.guards), input.guards), workerValuesFor(input)),
 });
 
 /** The manager block lives in the coordinator folder, so its paths are written from that folder. */

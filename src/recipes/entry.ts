@@ -5,6 +5,7 @@ import type { Deps } from '../core/deps.js';
 import { allOn } from '../guards/effective.js';
 import type { GuardDefinition, GuardRow, GuardValues } from '../guards/types.js';
 import { boardKeys, guardValues, keys, values, type CommandName } from '../names.js';
+import type { TextPart } from '../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
 /** The mode of an approval point: `owner` or `delegated`. */
@@ -121,6 +122,14 @@ export interface RecordCheckInput {
    * matches no work, so a check refuses with it.
    */
   readonly branches: readonly string[] | undefined;
+  /** The guard values of the node, from the full load. The check reads the value of its own guard here. Absent: every guard on. */
+  readonly guards?: GuardValues;
+}
+
+/** The guard that the record checks of a recipe follow, and the line that names the checks that its off value skips. */
+export interface RecordGuard {
+  readonly id: string;
+  readonly offLine: string;
 }
 
 /**
@@ -135,10 +144,12 @@ export interface RecordCheckInput {
  * - `parseHead` checks the head form. A bad head on the command line is a usage error (exit 2).
  *   In the link reader, a bad stored head is a failure (exit 1).
  * - `check` reads the proof and gives a `CheckedRecord`, or a failure (exit 1) for every fault and every mismatch.
+ * - `guard` names the checks that the recipe skips when its guard is off. The core reports them after a successful write.
  */
 export interface RecordCheck {
   readonly stage: string;
   readonly point: string;
+  readonly guard?: RecordGuard;
   readonly summary: string;
   readonly refHelp: string;
   readonly parseRef: (text: string) => CliResult<string>;
@@ -172,7 +183,7 @@ export interface RecipeHost {
  * - `approvalPoints` lists the steps that need an approval.
  * - `words` lists the words that only this recipe uses. No core text holds one.
  * - `glossary` holds the plain description of each word of the recipe.
- * - `safetyLines` is the part of the safety block that belongs to the recipe.
+ * - `safetyLines` is the part of the safety block that belongs to the recipe. A part can name the guards that keep it.
  * - `projectKeys` names the keys that the recipe adds to a project, in the order of the file.
  * - `projectDefaults` gives the value of each of those keys for a new project.
  * - `initProjectKeys` names the keys of the core that `init` writes into a new project. A project of the recipe holds no other.
@@ -191,7 +202,7 @@ export interface RecipeEntry {
   readonly approvalPoints: readonly ApprovalPoint[];
   readonly words: readonly string[];
   readonly glossary: readonly GlossaryEntry[];
-  readonly safetyLines: readonly string[];
+  readonly safetyLines: readonly TextPart[];
   readonly projectKeys: readonly string[];
   readonly projectDefaults: Readonly<Record<string, string>>;
   readonly initProjectKeys: readonly InitProjectKey[];

@@ -1,4 +1,4 @@
-import { commandLines, commands, guardIds, places, requestWords, roles } from '../names.js';
+import { assignmentSource, commandLines, commands, flags, flagText, guardIds, places, program, requestWords, roles } from '../names.js';
 import { alwaysOnRow, at, codeRow, fixedTextRow, textRow } from './build.js';
 import type { GuardRow } from './types.js';
 
@@ -37,24 +37,40 @@ const machineLimitRows: readonly GuardRow[] = [
 ];
 
 const taskFileRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'child-inbox-delivery',
     guard: guardIds.taskFiles,
-    name: 'A task file goes only into the inbox of a child, as a new private file, and only when the state repo of the child ignores the inbox',
+    name: 'A task file goes only into the inbox of a child, as a new private file that replaces no file, and the inbox stays within its count and size',
     applies: commandLines.nodeSend,
     harm: true,
     sites: [
-      ...at('src/comms/deliver.ts', 'deliverToHome', 'inspectEntry', 'requireState', 'requireRoom', 'requireIgnored'),
+      ...at('src/comms/deliver.ts', 'inspectEntry', 'requireState', 'requireRoom', 'writeMessage'),
       ...at('src/commands/node.ts', 'refuseDelivery'),
     ],
   }),
   codeRow({
-    id: 'send-content-checks',
+    id: 'child-inbox-ignored',
     guard: guardIds.taskFiles,
-    name: 'A task file goes only to a child, holds no control or hidden character and no token, and does not fill the inbox',
+    name: 'A task file goes into the inbox of a child only when the state repo of the child ignores the inbox',
     applies: commandLines.nodeSend,
     harm: true,
-    sites: [...at('src/commands/node.ts', 'checkedTask', 'runSend'), ...at('src/comms/deliver.ts', 'holdsHiddenCharacter', 'requireRoom')],
+    sites: at('src/comms/deliver.ts', 'deliverToHome', 'requireIgnored'),
+  }),
+  alwaysOnRow({
+    id: 'send-target',
+    guard: guardIds.taskFiles,
+    name: 'A task file goes only to a child of the config, and the header of the file holds no control or hidden character',
+    applies: commandLines.nodeSend,
+    harm: true,
+    sites: [...at('src/commands/node.ts', 'runSend'), ...at('src/comms/deliver.ts', 'holdsHiddenCharacter')],
+  }),
+  codeRow({
+    id: 'send-content-checks',
+    guard: guardIds.taskFiles,
+    name: 'A task file holds no control or hidden character that the screen would show in another form',
+    applies: commandLines.nodeSend,
+    harm: true,
+    sites: at('src/commands/node.ts', 'checkedTask'),
   }),
   alwaysOnRow({
     id: 'child-address-form',
@@ -84,7 +100,7 @@ const taskFileRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/comms/report-schema.ts', 'reportSchema', 'parseReport'), ...at('src/report/build.ts', 'checkReport')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'report-file-write',
     guard: guardIds.taskFiles,
     name: `The report file is written only in the event file folder of the ${node}, and a link on its path is a security stop`,
@@ -92,17 +108,29 @@ const taskFileRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/report/outbox.ts', 'writeReportFile', 'tightenEventFolder'), ...at('src/commands/status.ts', 'refreshReport')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'assignment-file-check',
     guard: guardIds.taskFiles,
-    name: 'An assignment file is a plain text file inside the folder or the work tree, with no link, no dot part and no change during the read, and it is never the local config',
+    name: 'An assignment file is a plain text file inside the folder or the work tree, with no link and no change during the read',
     applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
     harm: true,
-    sites: [
-      ...at('src/workers/assignment.ts', 'readAssignment', 'placeOf'),
-      ...at('src/core/place-rule.ts', 'dotRuleReason'),
-      ...at('src/commands/node.ts', 'checkedTask'),
-    ],
+    sites: at('src/workers/assignment.ts', 'readAssignment', 'namesBelow'),
+  }),
+  codeRow({
+    id: 'assignment-dot-place',
+    guard: guardIds.taskFiles,
+    name: `An assignment file has no part that starts with a dot, except ${assignmentSource.ordersShown} of the ${folder}`,
+    applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
+    harm: true,
+    sites: [...at('src/workers/assignment.ts', 'placeOf'), ...at('src/core/place-rule.ts', 'dotRuleReason')],
+  }),
+  alwaysOnRow({
+    id: 'assignment-local-config',
+    guard: guardIds.taskFiles,
+    name: `A task file is never the local config of the ${folder}, with every guard value`,
+    applies: `${commandLines.workerNew} with an assignment, and ${commandLines.nodeSend}`,
+    harm: true,
+    sites: at('src/core/place-rule.ts', 'localConfigReason'),
   }),
 ];
 
@@ -138,9 +166,17 @@ const sessionCheckRows: readonly GuardRow[] = [
     id: 'yes-in-session',
     guard: guardIds.sessionChecks,
     name: 'In a session, the flag that answers every question gives no consent to the hook settings, except for a work copy that has no settings file',
-    applies: `${commands.init}, ${commands.upgrade} and ${commandLines.workerNew}`,
+    applies: `${commands.start}, ${commands.upgrade} and ${commandLines.workerNew}`,
     harm: true,
     sites: at('src/core/claude-settings.ts', 'yesCounts', 'yesRefused', 'askConsent'),
+  }),
+  alwaysOnRow({
+    id: 'init-yes-in-session',
+    guard: guardIds.sessionChecks,
+    name: `In a session, the flag that answers every question gives ${commands.init} no consent to the hook settings, except for a work copy that has no settings file`,
+    applies: commands.init,
+    harm: true,
+    sites: at('src/core/claude-settings.ts', 'consentGuards'),
   }),
   alwaysOnRow({
     id: 'received-init-outside-session',
@@ -158,7 +194,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/init-existing.ts', 'checkExisting'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'upgrade-registration-consent',
     guard: guardIds.sessionChecks,
     name: 'A session cannot register a folder again; an upgrade asks for consent unless it is a dry run or has the flag that answers every question',
@@ -166,7 +202,7 @@ const sessionCheckRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/upgrade.ts', 'requireRegistrationConsent'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'overwrite-safety-outside-session',
     guard: guardIds.sessionChecks,
     name: 'A session cannot rewrite the safety block, also with the flag that answers every question',
@@ -180,21 +216,31 @@ const sessionCheckRows: readonly GuardRow[] = [
     name: `In a session, the flag that answers every question gives no consent to remove the work copy of a ${worker}`,
     applies: commands.dismiss,
     harm: true,
-    sites: at('src/commands/dismiss.ts', 'requireOutsideSession', 'dismissOne'),
+    sites: at('src/commands/dismiss.ts', 'requireOutsideSession', 'freeStopsInSession', 'dismissOne'),
   }),
   codeRow({
     id: 'dismiss-idle-pick',
     guard: guardIds.sessionChecks,
-    name: `A session or a script cannot remove idle ${worker}s: the pick needs a terminal window, and each pick is read and checked again`,
+    name: `A session or a script cannot remove idle ${worker}s: the pick needs a terminal window outside a session`,
     applies: `${commands.dismiss} of idle ${worker}s`,
     harm: true,
-    sites: at('src/commands/dismiss.ts', 'requirePick', 'pickAndFree', 'dismissIdle'),
+    sites: at('src/commands/dismiss.ts', 'dismissIdle', 'freeStopsInSession'),
+  }),
+  alwaysOnRow({
+    id: 'dismiss-idle-pick-list',
+    guard: guardIds.sessionChecks,
+    name: `A piped pick has byte and time limits. The check after the pick keeps the ${worker} and project from the idle list`,
+    applies: `${commands.dismiss} of idle ${worker}s`,
+    harm: true,
+    sites: at('src/commands/dismiss.ts', 'readIdleAnswer', 'requirePick', 'pickAndFree'),
   }),
   codeRow({
     id: 'coordinator-caller',
     guard: guardIds.sessionChecks,
-    name: `A step for the ${coordinator} runs only for a caller that looks like the ${coordinator}; this stops a mistake and is no proof`,
-    applies: `${commandLines.workerReset}, ${commandLines.selfReset}, ${commandLines.itemUnassign}, ${commandLines.requestClose} and ${commandLines.workerWatch}`,
+    name: `A step for the ${coordinator} checks the caller pane to prevent a mistake; the check is no proof`,
+    applies:
+      `${commandLines.workerReset}, ${commandLines.selfReset}, ${commandLines.itemUnassign}, ` +
+      `${commandLines.requestDoc}, ${commandLines.workerWatch} and ${commands.dismiss} ${flagText(flags.closed)} with no decision row`,
     harm: false,
     sites: [
       ...at('src/workers/panes.ts', 'requireCoordinatorCaller'),
@@ -202,14 +248,30 @@ const sessionCheckRows: readonly GuardRow[] = [
       ...at('src/workers/watch.ts', 'requireWatchCaller'),
       ...at('src/workers/reset.ts', 'resetWorker'),
       ...at('src/commands/self.ts', 'selfReset'),
-      ...at('src/commands/request.ts', 'requireRelayer'),
-      ...at('src/commands/dismiss.ts', 'dismissClosed'),
+      ...at('src/commands/request.ts', 'execute'),
+      ...at('src/commands/dismiss.ts', 'freeUnproved', 'dismissAskOwner'),
     ],
+  }),
+  alwaysOnRow({
+    id: 'coordinator-decision-caller',
+    guard: guardIds.sessionChecks,
+    name: `A relay or a free that records the ${coordinator} as its decider needs the ${coordinator} pane`,
+    applies: `${commandLines.requestClose} and ${commands.dismiss} ${flagText(flags.closed)}`,
+    harm: true,
+    sites: at('src/workers/panes.ts', 'checkCoordinatorCaller'),
+  }),
+  alwaysOnRow({
+    id: 'coordinator-target-pane',
+    guard: guardIds.sessionChecks,
+    name: `A step that acts on the pane of the ${coordinator} reads that pane first: the session of the ${node} runs and belongs to this ${folder}, and ${program} started the pane`,
+    applies: commandLines.selfReset,
+    harm: true,
+    sites: [...at('src/workers/panes.ts', 'requireCoordinatorPane'), ...at('src/commands/self.ts', 'requireTargetPane')],
   }),
 ];
 
 const ownerGoRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'inbox-task-file-header',
     guard: guardIds.ownerGo,
     name: `A task file for a child starts with a fixed header that says it carries no authority of the ${owner}`,
@@ -225,15 +287,25 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: at('src/commands/decide.ts', 'runDecide', 'answerOf'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'decision-proof',
     guard: guardIds.ownerGo,
-    name: `An answer counts only when the hash of the ${requestWords.request} that the ${owner} saw matches, is checked again under the lock, and no earlier answer exists`,
+    name: `An answer counts only when the ${requestWords.request} is still the text that the ${owner} saw: its hash is checked again under the lock`,
+    applies: commands.decide,
+    harm: true,
+    sites: at('src/board/decide.ts', 'recheckRequest'),
+  }),
+  alwaysOnRow({
+    id: 'decision-one-answer',
+    guard: guardIds.ownerGo,
+    name:
+      `A ${requestWords.request} gets one answer of the ${owner}: an earlier answer, also one for another text, stops a new one, ` +
+      `the key of an answer names the ${node}, the ${folder} and the ${requestWords.request}, and the decision log stays within its size`,
     applies: `${commands.decide} and every read of a proof`,
     harm: true,
     sites: [
       ...at('src/core/owner-record.ts', 'readDecisionProof', 'putDecision', 'decisionKeyOf'),
-      ...at('src/board/decide.ts', 'recheckRequest', 'requireLogRoom'),
+      ...at('src/board/decide.ts', 'requireLogRoom', 'proofOf'),
     ],
   }),
   alwaysOnRow({
@@ -248,7 +320,7 @@ const ownerGoRows: readonly GuardRow[] = [
       ...at('src/core/owner-record.ts', 'readDecisionProof'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'answered-no-reclose',
     guard: guardIds.ownerGo,
     name: `An answered ${requestWords.request} cannot be closed again, so no answer is overwritten`,
@@ -265,10 +337,11 @@ const ownerGoRows: readonly GuardRow[] = [
     sites: [
       ...at('src/board/edit.ts', 'checkSettlement', 'settleRequestIn'),
       ...at('src/commands/request.ts', 'requireRelayer', 'parseSettlement', 'parseRelay', 'execute'),
+      ...at('src/workers/panes.ts', 'checkCoordinatorCaller'),
       ...at('src/board/decide.ts', 'closedBy'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'linked-relay-scope',
     guard: guardIds.ownerGo,
     name: `A linked ${requestWords.request} allows a relay only at the record point in ${owner} mode and only with an option key of that ${requestWords.request}`,
@@ -287,7 +360,7 @@ const ownerGoRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/commands/item.ts', 'recordChecked'),
-      ...at('src/board/local.ts', 'createLocalBoard'),
+      ...at('src/board/local.ts', 'createLocalBoard', 'recordNeedsApproval'),
       ...at('src/board/decide.ts', 'linkedApprovalsOf', 'approvalVerdict'),
     ],
   }),

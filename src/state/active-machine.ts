@@ -4,7 +4,9 @@ import type { Deps } from '../core/deps.js';
 import { commitPaths, requireStateRepoCommit, unstagePaths, type RepoPaths } from '../core/git.js';
 import { ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
-import { activeMachine, commands, commandText, files, places, schemaIds, type CommandName } from '../names.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
+import { activeMachine, commands, commandText, files, guardIds, places, schemaIds, type CommandName } from '../names.js';
 import { readCheckedFile } from '../workers/registry.js';
 import { layoutOf, type Layout } from './layout.js';
 import { parseJsonText } from './load.js';
@@ -187,15 +189,17 @@ const MARK_PATHS: RepoPaths = { present: [files.activeMachine], gone: [] };
 /**
  * The part of the claim that runs inside the state lock: the read of the mark, the ready check, the write and the commit. The
  * mark is read under the lock, so the text that a failed commit puts back is the text that was there when this run took the lock.
+ * The warning about another machine follows the guard of board edits in `guards`. The claim itself writes the mark of this machine
+ * with every value.
  */
-const claimLocked = async (deps: Deps, home: string, layout: Layout, machine: string): Promise<CliResult<ClaimOutcome>> => {
+const claimLocked = async (deps: Deps, home: string, layout: Layout, machine: string, guards: GuardValues): Promise<CliResult<ClaimOutcome>> => {
   const read = await readActiveMark(deps, home);
   if (!read.ok) {
     deps.warn(notMarkedBy(read.error));
     return ok({ claimed: false, other: null });
   }
   const other = read.value.state === 'valid' && read.value.mark.machine !== machine ? read.value.mark : null;
-  if (other !== null) deps.warn(otherMachineWarning(other));
+  if (other !== null && isGuardOn(guards, guardIds.boardEdits)) deps.warn(otherMachineWarning(other));
   if (read.value.state === 'invalid') {
     if (read.value.text === null) {
       deps.warn(notMarked(`${layout.activeMachineFile} can not be replaced: ${read.value.reason}`));
@@ -225,7 +229,8 @@ const claimLocked = async (deps: Deps, home: string, layout: Layout, machine: st
 
 /**
  * Mark this machine as the active one: write the mark with the id of this machine and the time, and commit that file only. A
- * mark of another machine is a warning, printed before the write, and the mark is replaced all the same. One fault stops the
+ * mark of another machine is a warning, printed before the write while the guard of board edits is on, and the mark is replaced all
+ * the same. The guard values are read before the lock. One fault stops the
  * caller (exit 1): a git that can not list its config scopes, which needs git 2.26. Every other fault is a warning, and the value
  * tells what happened. The call holds the state lock from the read of the mark to the commit; a lock that another writer holds for
  * the whole wait is a warning, and the call writes nothing. The state repo must be ready for the commit (a git repo with an
@@ -239,7 +244,8 @@ export const claimActiveMachine = async (deps: Deps, home: string): Promise<CliR
     deps.warn(notMarkedBy(id.error));
     return ok({ claimed: false, other: null });
   }
-  const claimed = await withStateLock(deps, layout, () => claimLocked(deps, home, layout, id.value));
+  const guards = await guardValuesFor(deps, home);
+  const claimed = await withStateLock(deps, layout, () => claimLocked(deps, home, layout, id.value, guards));
   if (claimed.ok || hasCode(claimed.error, gitConfigUnreadable)) return claimed;
   deps.warn(notMarkedBy(claimed.error));
   return ok({ claimed: false, other: null });

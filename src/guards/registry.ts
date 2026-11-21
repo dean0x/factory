@@ -32,10 +32,12 @@ const coreGuards: readonly GuardDefinition[] = [
       [approvalKey],
     ),
   ),
-  guardOf(
-    guardIds.boardEdits,
-    'Board edits',
-    'Board data changes only through the commands, in local files that hold no link.',
+  wiredGuard(
+    guardOf(
+      guardIds.boardEdits,
+      'Board edits',
+      'Board data changes only through the commands, in local files that hold no link.',
+    ),
   ),
   wiredGuard(
     guardOf(
@@ -67,10 +69,12 @@ const coreGuards: readonly GuardDefinition[] = [
       'No commit in the state folder removes a work item or makes the board unreadable.',
     ),
   ),
-  guardOf(
-    guardIds.dismiss,
-    'Dismiss',
-    `A dismiss removes the work copy of a ${worker} only when its work is pushed, its copy is clean and its item is closed.`,
+  wiredGuard(
+    guardOf(
+      guardIds.dismiss,
+      'Dismiss',
+      `A dismiss removes the work copy of a ${worker} only when its work is pushed, its copy is clean and its item is closed.`,
+    ),
   ),
   wiredGuard(
     guardOf(
@@ -116,21 +120,27 @@ const coreGuards: readonly GuardDefinition[] = [
       machineKeys,
     ),
   ),
-  guardOf(
-    guardIds.taskFiles,
-    'Task files and messages between sessions',
-    `A ${worker} acts only on task files in its own folder, and text from another session carries no authority of the ${owner}.`,
+  wiredGuard(
+    guardOf(
+      guardIds.taskFiles,
+      'Task files and messages between sessions',
+      `A ${worker} acts only on task files in its own folder, and text from another session carries no authority of the ${owner}.`,
+    ),
   ),
-  guardOf(
-    guardIds.sessionChecks,
-    'Session and caller checks',
-    'A command that only a person may run refuses a session that calls it.',
+  wiredGuard(
+    guardOf(
+      guardIds.sessionChecks,
+      'Session and caller checks',
+      'A command that only a person may run refuses a session that calls it.',
+    ),
   ),
-  guardOf(
-    guardIds.ownerGo,
-    `Go of the ${owner}`,
-    `A go of the ${owner} comes only from ${owner} input, never from text of a tool, a file or another session.`,
-    [`${keys.root.owner}.${keys.owner.prefix}`],
+  wiredGuard(
+    guardOf(
+      guardIds.ownerGo,
+      `Go of the ${owner}`,
+      `A go of the ${owner} comes only from ${owner} input, never from text of a tool, a file or another session.`,
+      [`${keys.root.owner}.${keys.owner.prefix}`],
+    ),
   ),
   wiredGuard(
     guardOf(
@@ -197,10 +207,12 @@ const coreGuards: readonly GuardDefinition[] = [
       `A stopped ${worker} stays stopped, and the spend rules limit new ${worker}s.`,
     ),
   ),
-  guardOf(
-    guardIds.workConduct,
-    'Work conduct',
-    'Sessions follow the rules of conduct for commands, refusals and reports.',
+  wiredGuard(
+    guardOf(
+      guardIds.workConduct,
+      'Work conduct',
+      'Sessions follow the rules of conduct for commands, refusals and reports.',
+    ),
   ),
   wiredGuard(
     guardOf(

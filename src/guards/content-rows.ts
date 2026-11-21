@@ -175,6 +175,19 @@ const secretRows: readonly GuardRow[] = [
     harm: true,
     sites: [...at('src/commands/doctor.ts', 'checkSecrets'), ...at('src/safety/secrets.ts', 'findTokenPaths', 'looksLikeTokenAt')],
   }),
+  codeRow({
+    id: 'task-file-token',
+    guard: guardIds.secrets,
+    name: 'A task file, assignment or item doc that holds text like a token is refused. The output never has the value.',
+    applies: `${commandLines.nodeSend}, ${commandLines.workerNew} with an assignment, and ${commandLines.itemDoc}`,
+    harm: true,
+    sites: [
+      ...at('src/safety/secrets.ts', 'checkFileTokens'),
+      ...at('src/commands/node.ts', 'checkedTask'),
+      ...at('src/commands/worker.ts', 'runNew'),
+      ...at('src/board/local.ts', 'checkDocTokens'),
+    ],
+  }),
   alwaysOnRow({
     id: 'token-keys-hidden',
     guard: guardIds.secrets,
@@ -388,7 +401,7 @@ const spendRows: readonly GuardRow[] = [
 ];
 
 const workConductRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'lessons-file-caps',
     guard: guardIds.workConduct,
     name: 'Doctor fails when the lessons file is a link or holds more entries or more bytes than its limits, so standing instructions do not grow without a bound',

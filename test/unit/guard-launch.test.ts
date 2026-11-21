@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderBlock } from '../../src/blocks/managed.js';
 import { exitCodeFor, failure, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { recordGuards, recordPrefix } from '../../src/core/guard-records.js';
@@ -21,6 +22,7 @@ import { guardStoreText } from '../helpers/guarded-node.js';
 import { runReboot, runRestart, runStart, runWorker } from '../helpers/package-registry.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { captureSink } from '../helpers/sink.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
 import { startsSessions, withProgram } from '../helpers/worker-program.js';
 
@@ -398,7 +400,10 @@ for (const origin of origins) {
     }
     it(`start warns once for a missing role block without on guard text in the ${origin} folder`, async () => {
       const base = sampleConfig();
-      const config = { ...base, core: { ...base.core, guards: { 'install-rules': 'off' as const, 'file-link-safety': 'off' as const, 'setup-text': 'off' as const } } };
+      const guards = Object.fromEntries([
+        guardIds.installRules, guardIds.fileLinkSafety, guardIds.setupText, guardIds.boardEdits, guardIds.workConduct, guardIds.ownerGo,
+      ].map((id) => [id, guardValues.off] as const));
+      const config = { ...base, core: { ...base.core, guards } };
       const { deps } = await make(origin, config);
       must(await recordValues(deps, config));
       const template = templates(config).find((block) => block.name === blockNames.workRules);
@@ -503,6 +508,20 @@ for (const origin of origins) {
         expect(result.ok ? 0 : exitCodeFor(result.error), result.ok ? '' : result.error.message).toBe(on ? 3 : 0);
         expect(paneStarts(tmux).length > 0).toBe(!on);
         if (!on) expect(deps.warned).toContain(`${guardDenyWords.missing} ${guardDenyWords.remedy}`);
+      });
+    }
+    for (const [id, rule] of [
+      ['merge-quality', 'Merge only at the full head SHA'],
+      [guardIds.workConduct, 'Decide from the decision profile.'],
+    ] as const) {
+      it.each(guardStates)(`start keeps the ${id} rule unless the owner record turns it off in the ${origin} folder: %s`, async (state) => {
+        const { deps, on, config } = await makeIn(origin, id, state, false);
+        if (!on) await confirm(deps, config);
+        const sink = captureSink();
+        expect(await runCli(['start', '--home', HOME, '--yes'], deps, sink), sink.errors.join('')).toBe(0);
+        const role = deps.files.get(layoutOf(HOME).claudeMd);
+        expect(role).toContain('## Role');
+        expect(role?.includes(rule)).toBe(on);
       });
     }
     it(`start keeps unmatched local off values on in the ${origin} folder`, async () => {

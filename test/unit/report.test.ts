@@ -16,7 +16,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
-import { childReasons, commands, files, reportKeys, reportLimits, schemaIds, values, workerRecord } from '../../src/names.js';
+import { childReasons, commands, files, guardIds, reportKeys, reportLimits, schemaIds, values, workerRecord } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { checkReport, readNodeFacts, reportDocOf, reportTextOf, type NodeFacts } from '../../src/report/build.js';
@@ -29,6 +29,7 @@ import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { EMPTY_WAITING } from '../helpers/board-repo.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { GUARD_STORE, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { sampleBoard, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
 import { knownItem, sampleDisplay } from '../helpers/work-item.js';
 import { captureSink } from '../helpers/sink.js';
@@ -1022,6 +1023,17 @@ describe('report: the command', () => {
     const fixture = await fixtureOf({ links: { [LAYOUT.outboxDir]: '/outside/place' } });
     const result = await run(fixture, '--json');
     expect(result.code).toBe(4);
+    expect(fileOf(fixture)).toBeUndefined();
+    expect([...fixture.deps.files.keys()].filter((path) => path.startsWith('/outside'))).toEqual([]);
+  });
+
+  it('still stops with exit 4 for an outbox folder that is a link while the guard task-files is off, because the report stays in its folder', async () => {
+    const off = [guardIds.taskFiles];
+    const config = withGuardsOff(sampleConfigWithBoard(), off);
+    const fixture = await fixtureOf({ config, links: { [LAYOUT.outboxDir]: '/outside/place' } });
+    fixture.deps.seed(GUARD_STORE, guardStoreText(config.core.node.id, HOME, off, fixture.deps.now()));
+    const result = await run(fixture, '--json');
+    expect(result.code, result.err).toBe(4);
     expect(fileOf(fixture)).toBeUndefined();
     expect([...fixture.deps.files.keys()].filter((path) => path.startsWith('/outside'))).toEqual([]);
   });

@@ -20,6 +20,7 @@ import { oldWordsIn } from '../helpers/old-words.js';
 import { jargonIn } from '../helpers/plain-words.js';
 import { publishRecipe } from '../helpers/publish-recipe.js';
 import { sampleObject } from '../helpers/sample-config.js';
+import { UNWIRED_GUARD, unwiredRecipe, unwiredRegistry } from '../helpers/unwired-guard.js';
 import * as sourceScan from '../helpers/source-scan.js';
 import { allSourceFiles, importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
 
@@ -117,8 +118,22 @@ const stoppedReason = 'Lists, names or resumes the workers with no live pane; ch
 const selfResetReason = 'A check of the reset of the coordinator; selfReset reads the value and does not call it while the guard is off.';
 const resetReason = 'A check of the reset of a worker; checkWorker reads the value and skips it, or passes its result, while the guard is off.';
 
+/** The reason of a board site that gets the values of the node from its caller and gives them to the check that reads the value. */
+const boardValuesReason = (check: string): string => `Passes the values of its caller to ${check}, which reads the value.`;
+/** The reason of a command step whose board write refuses a hosted tracker kind in the first step of the local board. */
+const localWriteReason = 'Calls a write of the local board, whose first step gives the values of the node to requireLocalKind, which reads the value.';
+
 /** The reason of a command step that writes the hook settings through the one writer. */
 const consentCallerReason = 'Calls requireHookConsent or ensureHookSettings, which can read the value for consent.';
+
+/** The reason of a step for the coordinator whose caller rule reads the value itself. */
+const coordinatorCallerReason = 'Calls requireCoordinatorCaller, which reads the value.';
+
+/** The reason of a pure part of the approval check of a record. */
+const recordApprovalReason = 'A pure part of the approval check of a record; recordNeedsApproval reads the value, and the check does not call it while the guard is off.';
+
+/** The reason of the checks of the closed path, which the owner request form shares with every guard on. */
+const closedProofReason = 'dismissClosed reads the value and does not call it while the guard is off; the owner request form calls it with every guard on.';
 
 /**
  * The listed sites of a code row of a wired guard whose own declaration does not name the guard id. Each one has its reason: the
@@ -136,6 +151,13 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'requireOwnerChannel', reason: 'The channel check of every owner record; approvalsFromFlags reads the value before it calls it, and the release scope records share it.' },
   { row: 'delegation-owner-channel', path: 'src/core/owner-record.ts', symbol: 'putRecord', reason: 'The one writer of owner records, which the release scope records share; recordApprovals reads the value and writes no record for an off point.' },
   { row: 'delegation-warning', path: 'src/commands/root-content.ts', symbol: 'delegationFindings', reason: 'Lists the unmatched points of delegationReport, which reads the value and gives none when the guard is off.' },
+  { row: 'board-flow-stages', path: 'src/board/edit.ts', symbol: 'checkMove', reason: boardValuesReason('requireSettableStage') },
+  { row: 'board-hosted-refusal', path: 'src/commands/track.ts', symbol: 'execute', reason: localWriteReason },
+  { row: 'board-hosted-refusal', path: 'src/commands/queue.ts', symbol: 'execute', reason: localWriteReason },
+  { row: 'board-doc-place', path: 'src/board/edit.ts', symbol: 'checkDocPath', reason: boardValuesReason('docPathIssue') },
+  { row: 'board-doc-place', path: 'src/core/place-rule.ts', symbol: 'dotRuleReason', reason: 'The shared place rule, which the check of an assignment file also uses; docPathIssue reads the value and does not call it while the guard is off.' },
+  { row: 'board-doc-view', path: 'src/commands/item.ts', symbol: 'docsOf', reason: boardValuesReason('docPathIssue') },
+  { row: 'active-machine-mark', path: 'src/state/active-machine.ts', symbol: 'otherMachineWarning', reason: 'The text of the warning; claimLocked reads the value and does not print it while the guard is off.' },
   { row: 'delete-hook', path: 'src/state/head-board.ts', symbol: 'earlierReadableBoard', reason: 'A helper of runStateGuard, which reads the value and lets the commit pass when the guard is off.' },
   { row: 'delete-hook-install', path: 'src/commands/init-state.ts', symbol: 'makeStateFolder', reason: 'Calls guardPlanOf, which reads the value and plans no install when the guard is off.' },
   { row: 'delete-hook-install', path: 'src/state/guard.ts', symbol: 'folderRefusal', reason: 'A refusal text of installGuard, which runs only when guardPlanOf, which reads the value, plans an install.' },
@@ -153,6 +175,10 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'token-tracked-text', path: 'src/safety/secrets.ts', symbol: 'looksLikeToken', reason: tokenTestReason },
   { row: 'token-config-values', path: 'src/safety/secrets.ts', symbol: 'findTokenPaths', reason: 'A pure search of the config values; checkSecrets reads the value and does not search while the guard is off.' },
   { row: 'token-config-values', path: 'src/safety/secrets.ts', symbol: 'looksLikeTokenAt', reason: 'A pure helper of findTokenPaths; checkSecrets reads the value and does not search while the guard is off.' },
+  { row: 'task-file-token', path: 'src/commands/node.ts', symbol: 'checkedTask', reason: 'Passes the guard values to checkFileTokens.' },
+  { row: 'task-file-token', path: 'src/commands/worker.ts', symbol: 'runNew', reason: 'Passes the guard values to checkFileTokens.' },
+  { row: 'child-inbox-ignored', path: 'src/comms/deliver.ts', symbol: 'requireIgnored', reason: 'The check of the ignore rule; deliverToHome reads the value and does not call it while the guard is off.' },
+  { row: 'assignment-dot-place', path: 'src/core/place-rule.ts', symbol: 'dotRuleReason', reason: 'The shared place rule, which the board doc check also uses; placeOf reads the value and does not call it while the guard is off.' },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
   { row: 'settings-env-program', path: 'src/safety/settings.ts', symbol: 'envPrefixIn', reason: analyzerReason },
   { row: 'settings-env-traffic', path: 'src/safety/settings.ts', symbol: 'analyzeSettings', reason: analyzerReason },
@@ -224,6 +250,24 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'shutdown-targets', path: 'src/workers/lifecycle.ts', symbol: 'checkTargets', reason: 'Calls checkWorker for each worker, and checkWorker reads the value.' },
   { row: 'shutdown-targets', path: 'src/commands/lifecycle.ts', symbol: 'runShutdown', reason: 'Calls checkTargets before the first stop, and checkWorker reads the value.' },
   { row: 'worker-resume-checks', path: 'src/commands/worker.ts', symbol: 'requireNoLivePane', reason: 'A pure test of the panes; runResume reads the value and does not call it while the guard is off.' },
+  { row: 'dismiss-pushed', path: 'src/commands/dismiss.ts', symbol: 'dismissOne', reason: 'Passes the values of its one guard read to readyOf and checkPushed, which reads the value; the dry run and the plain removal run with every value.' },
+  { row: 'dismiss-closed-proof', path: 'src/commands/dismiss.ts', symbol: 'closedWorkOf', reason: closedProofReason },
+  { row: 'dismiss-closed-proof', path: 'src/commands/dismiss.ts', symbol: 'closedChecks', reason: closedProofReason },
+  { row: 'yes-in-session', path: 'src/core/claude-settings.ts', symbol: 'yesRefused', reason: 'The negation of yesCounts, which reads the value.' },
+  { row: 'yes-in-session', path: 'src/core/claude-settings.ts', symbol: 'askConsent', reason: 'Passes the values that ensureHookSettings reads with consentGuards to yesCounts, which reads the value.' },
+  { row: 'dismiss-yes-in-session', path: 'src/commands/dismiss.ts', symbol: 'dismissOne', reason: 'Calls requireOutsideSession, which reads the value.' },
+  { row: 'dismiss-yes-in-session', path: 'src/commands/dismiss.ts', symbol: 'requireOutsideSession', reason: 'Reads the values of the node and gives them to freeStopsInSession, which reads the value.' },
+  { row: 'coordinator-caller', path: 'src/commands/item.ts', symbol: 'unassign', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/workers/watch.ts', symbol: 'requireWatchCaller', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/workers/reset.ts', symbol: 'resetWorker', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/commands/self.ts', symbol: 'selfReset', reason: 'Calls requireTargetPane, whose caller rule reads the value; the read of the target pane runs with every value.' },
+  { row: 'coordinator-caller', path: 'src/commands/request.ts', symbol: 'execute', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'freeUnproved', reason: coordinatorCallerReason },
+  { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'dismissAskOwner', reason: coordinatorCallerReason },
+  { row: 'item-record-approval', path: 'src/commands/item.ts', symbol: 'recordChecked', reason: 'Calls checkApproval and recordChecked of the board, whose approval check calls recordNeedsApproval, which reads the value.' },
+  { row: 'item-record-approval', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Its approval check of a record calls recordNeedsApproval, which reads the value.' },
+  { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'linkedApprovalsOf', reason: recordApprovalReason },
+  { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'approvalVerdict', reason: recordApprovalReason },
 ];
 
 const software = {
@@ -293,20 +337,23 @@ describe('the guards of a recipe', () => {
     }
   });
 
-  it('keeps merge quality separate from approval and on even with a recorded local off value', () => {
-    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { 'merge-quality': guardValues.off } });
-    const parsed = parseConfig(shared, local, recipes);
+  it('keeps merge quality separate from approval, with its one text row', () => {
+    expect(software.guards.find((guard) => guard.id === 'merge-quality')).toMatchObject({ wired: true, rows: ['merge-head-text'] });
+    expect(software.rows.find((row) => row.id === 'merge-head-text')?.guard).toBe('merge-quality');
+  });
+
+  it('keeps a guard that this version cannot set on even with a recorded local off value', () => {
+    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { [UNWIRED_GUARD]: guardValues.off } });
+    const parsed = parseConfig(shared, local, unwiredRegistry);
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
-    const state = guardRulesOf(software.guards, {
+    const guards = guardsFor(unwiredRecipe);
+    const state = guardRulesOf(guards, {
       node: 'demo', root: '/node', local: parsed.data.core.guards,
-      record: { node: 'demo', root: '/node', values: { 'merge-quality': { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
+      record: { node: 'demo', root: '/node', values: { [UNWIRED_GUARD]: { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
     });
-    expect(state.values['merge-quality']).toBe(guardValues.on);
-    expect(software.guards.find((guard) => guard.id === 'merge-quality')).toMatchObject({
-      wired: false, rows: ['merge-head-text'],
-    });
-    expect(software.rows.find((row) => row.id === 'merge-head-text')?.guard).toBe('merge-quality');
+    expect(state.values[UNWIRED_GUARD]).toBe(guardValues.on);
+    expect(guards.find((guard) => guard.id === UNWIRED_GUARD)).toMatchObject({ wired: false });
   });
 
   it('sets the harm mark for a recipe guard with no rows', () => {
@@ -326,9 +373,9 @@ describe('the guards of a recipe', () => {
 
   it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
     expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
-      guardIds.setupText, guardIds.spend, guardIds.installRules, 'approval-merge', 'approval-release',
+      guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.dismiss, guardIds.fileLinkSafety,
+      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.taskFiles, guardIds.sessionChecks, guardIds.ownerGo, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
+      guardIds.setupText, guardIds.spend, guardIds.workConduct, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality', 'pr-rules',
     ]);
   });
 
@@ -598,10 +645,12 @@ describe('the rows of the registry', () => {
       'board-edits': [
         'board-flow-stages',
         'board-worker-field',
+        'board-former-worker-mark',
         'board-reserved-names',
         'board-hosted-refusal',
         'board-file-links',
         'board-doc-place',
+        'board-doc-local-config',
         'board-doc-view',
         'board-commit-paths',
         'active-machine-mark',
@@ -754,12 +803,16 @@ describe('the rows of the registry', () => {
       ],
       'task-files': [
         'child-inbox-delivery',
+        'child-inbox-ignored',
+        'send-target',
         'send-content-checks',
         'child-address-form',
         'child-files-untrusted',
         'report-listed-fields',
         'report-file-write',
         'assignment-file-check',
+        'assignment-dot-place',
+        'assignment-local-config',
         'task-file-inbox-text',
         'long-task-file-text',
         'session-name-check-text',
@@ -772,13 +825,16 @@ describe('the rows of the registry', () => {
         'decide-channel',
         'setup-ask-channel',
         'yes-in-session',
+        'init-yes-in-session',
         'received-init-outside-session',
         'existing-init-outside-session',
         'upgrade-registration-consent',
         'overwrite-safety-outside-session',
         'dismiss-yes-in-session',
         'dismiss-idle-pick',
+        'dismiss-idle-pick-list',
         'coordinator-caller',
+        'coordinator-decision-caller', 'coordinator-target-pane',
         'decide-channel-text',
         'yes-in-session-text',
       ],
@@ -786,6 +842,7 @@ describe('the rows of the registry', () => {
         'inbox-task-file-header',
         'decide-prompt',
         'decision-proof',
+        'decision-one-answer',
         'answered-row-not-proof',
         'answered-no-reclose',
         'settle-relay-rules',
@@ -848,6 +905,7 @@ describe('the rows of the registry', () => {
         'pr-watch-text',
         'pr-watch-head-moved',
         'record-check-gate',
+        'record-item-target',
         'record-default-branch',
         'record-merged-state',
         'record-same-pr',
@@ -883,6 +941,7 @@ describe('the rows of the registry', () => {
       secrets: [
         'token-tracked-text',
         'token-config-values',
+        'task-file-token',
         'token-keys-hidden',
         'credential-strip',
         'printable-output',
@@ -955,25 +1014,26 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(225);
-    expect(softwareRecipe.guardRows).toHaveLength(103);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(237);
+    expect(softwareRecipe.guardRows).toHaveLength(104);
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(176);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
         .filter(([, ids]) => ids.length > 0),
     );
     expect(pinned).toEqual({
-      'board-edits': ['board-reserved-names', 'board-reserved-names-text'],
+      'board-edits': ['board-former-worker-mark', 'board-reserved-names', 'board-file-links', 'board-doc-local-config', 'board-commit-paths', 'board-reserved-names-text'],
       'clone-rules': [
         'clone-source', 'clone-option-end', 'clone-inside-folder', 'clone-missing-folder', 'clone-received-local', 'clone-url',
         'clone-project-path', 'clone-unique-targets',
       ],
       dismiss: [
-        'dismiss-dry-run', 'dismiss-paths', 'dismiss-no-force', 'dismiss-inbox-stop', 'dismiss-work-item-unknown', 'dismiss-ask-owner',
-        'dismiss-dry-run-text', 'dismiss-ask-owner-text', 'dismiss-copy-reviews-text', 'dismiss-review-results-text',
+        'dismiss-dry-run', 'dismiss-paths', 'dismiss-no-force', 'dismiss-inbox-stop', 'dismiss-inbox-ignored', 'dismiss-work-item-unknown',
+        'dismiss-ask-owner', 'dismiss-dry-run-text', 'dismiss-ask-owner-text', 'dismiss-copy-reviews-text', 'dismiss-review-results-text',
       ],
       'file-link-safety': [
         'user-folder-never', 'settings-write-no-link', 'settings-write-inside-folder', 'private-file-mode', 'local-file-mode', 'safe-write',
@@ -992,15 +1052,27 @@ describe('the rows of the registry', () => {
         'child-no-shell', 'agent-claude-only', 'tmux-quoting', 'run-shell-limits',
       ],
       'machine-limits': ['lock-bounds', 'lock-place'],
-      'task-files': ['child-address-form', 'child-files-untrusted', 'report-listed-fields'],
+      'task-files': [
+        'child-inbox-delivery',
+        'send-target',
+        'child-address-form',
+        'child-files-untrusted',
+        'report-listed-fields',
+        'report-file-write',
+        'assignment-file-check',
+        'assignment-local-config',
+      ],
       'session-checks': [
-        'owner-channel', 'decide-channel', 'setup-ask-channel', 'received-init-outside-session', 'existing-init-outside-session',
-        'decide-channel-text',
+        'owner-channel', 'decide-channel', 'setup-ask-channel', 'init-yes-in-session', 'received-init-outside-session',
+        'existing-init-outside-session', 'upgrade-registration-consent', 'overwrite-safety-outside-session', 'dismiss-idle-pick-list',
+        'coordinator-decision-caller', 'coordinator-target-pane', 'decide-channel-text',
       ],
       'owner-go': [
-        'decide-prompt', 'answered-row-not-proof', 'settle-relay-rules', 'owner-row-under-lock', 'decision-record-escape',
-        'approval-store-place', 'profile-owner-only-wait-text', 'profile-no-invented-decision-text', 'glossary-owner-approves-text',
-        'stage-not-approval-glossary-text', 'answered-row-not-proof-text', 'settle-relay-text',
+        'inbox-task-file-header', 'decide-prompt', 'decision-proof', 'decision-one-answer', 'answered-row-not-proof', 'answered-no-reclose',
+        'settle-relay-rules', 'linked-relay-scope', 'owner-row-under-lock', 'decision-record-escape', 'approval-store-place',
+        'profile-owner-only-wait-text', 'profile-no-invented-decision-text', 'glossary-owner-approves-text', 'stage-not-approval-glossary-text',
+        'prefix-relay-only-text', 'outside-text-no-authority-text', 'peer-text-data-text', 'inbox-file-text',
+        'answered-row-not-proof-text', 'settle-relay-text',
       ],
       'pane-safety': [
         'own-tmux-session', 'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'stop-term-only',
@@ -1008,7 +1080,7 @@ describe('the rows of the registry', () => {
       ],
       'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],
-      'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-default-branch'],
+      'pr-rules': ['pr-watch-reads-only', 'pr-watch-head-moved', 'record-check-gate', 'record-item-target', 'record-default-branch', 'record-same-pr', 'record-worker-branch'],
       'root-scan': ['root-scan-clean', 'ignore-lists', 'ignored-check-fails-closed', 'received-tracked-links'],
       'safety-block': ['role-block-render', 'safety-block-newer', 'safety-block-insert'],
       secrets: ['token-keys-hidden', 'credential-strip', 'printable-output'],
@@ -1018,8 +1090,8 @@ describe('the rows of the registry', () => {
       ],
       spend: ['new-worker-plan', 'new-worker-keeps-copy'],
       'work-conduct': [
-        'profile-strength-text', 'profile-no-overwrite-text', 'profile-conflict-text', 'roadmap-rules-text', 'read-profile-file-text',
-        'ste-writing-profile-text',
+        'lessons-file-caps', 'profile-strength-text', 'profile-no-overwrite-text', 'profile-conflict-text', 'roadmap-rules-text',
+        'read-profile-file-text', 'ste-writing-profile-text',
       ],
     });
   });
@@ -1134,7 +1206,8 @@ describe('the rows of the registry', () => {
 
   it('keeps doc file checks, local writes and reserved names in their existing rows', () => {
     const file = software.rows.find((row) => row.id === 'board-file-links');
-    expect(file?.sites).toContainEqual({ path: 'src/board/local.ts', symbol: 'createLocalBoard' });
+    expect(file?.sites).toContainEqual({ path: 'src/board/local.ts', symbol: 'requireDocFile' });
+    expect(file?.sites).toContainEqual({ path: 'src/board/edit.ts', symbol: 'plainPathFault' });
     expect(file?.applies).toContain(commandLines.itemDoc);
     const local = software.rows.find((row) => row.id === 'board-hosted-refusal');
     expect(local?.sites).toContainEqual({ path: 'src/board/local.ts', symbol: 'requireLocalKind' });
@@ -1143,8 +1216,16 @@ describe('the rows of the registry', () => {
     expect(names?.sites).toContainEqual({ path: 'src/names.ts', symbol: 'reservedFieldNames' });
   });
 
+  it('lists the file token check under secrets at each command that uses it', () => {
+    const row = software.rows.find((candidate) => candidate.id === 'task-file-token');
+    expect(row).toMatchObject({ guard: guardIds.secrets, kind: guardKinds.code, harm: true });
+    expect(row?.applies).toContain(commandLines.nodeSend);
+    expect(row?.applies).toContain(commandLines.workerNew);
+    expect(row?.applies).toContain(commandLines.itemDoc);
+  });
+
   it('cites the shared place rule for assignment files', () => {
-    const row = software.rows.find((candidate) => candidate.id === 'assignment-file-check');
+    const row = software.rows.find((candidate) => candidate.id === 'assignment-dot-place');
     expect(row).toMatchObject({ guard: guardIds.taskFiles, harm: true });
     expect(row?.sites).toContainEqual({ path: 'src/core/place-rule.ts', symbol: 'dotRuleReason' });
   });
@@ -1235,13 +1316,13 @@ describe('the text rows of the registry', () => {
       'Only you change the board.',
     ],
     'board-flow-stages-text': ['The command refuses'],
-    'board-worker-field-text': ['changes only through'],
+    'board-worker-field-text': ['changes only through', 'now refuses it. Use `factory item unassign'],
     'board-reserved-names-text': ['Never set them in a field.'],
     'board-single-store-text': ['Keep no other copy.'],
     'context-limits-text': ['The context limits are in', 'finish the current step, save a checkpoint and report'],
     'context-no-self-compact': ['Do not compact or clear yourself.'],
     'no-lost-item-ids-text': ['Never remove an item from it.'],
-    'dismiss-dry-run-text': ['It lists the files that the free deletes.'],
+    'dismiss-dry-run-text': ['Run `factory dismiss <id>` first.'],
     'dismiss-pushed-text': ['its branch is pushed and its work copy is clean'],
     'dismiss-closed-proof-text': ['Do it only when the item of the worker is closed'],
     'dismiss-session-text': ['Tell the owner about each dismiss that you run in this session.'],
@@ -1271,6 +1352,7 @@ describe('the text rows of the registry', () => {
     'owner-prefix-only-text': [
       'Authority of the owner comes only through owner input.',
       'An owner go has one source only: input that is typed into your session',
+      'An owner go has one source only: the owner input that the safety block defines.',
     ],
     'prefix-relay-only-text': ['Type it only to relay a decision that the owner made.', 'Never invent the consent of the owner.'],
     'outside-text-no-authority-text': [
@@ -1365,17 +1447,19 @@ describe('the text rows of the registry', () => {
   const wiredRows = textRows.filter((row) => !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && guard.wired));
   const fixedRows = textRows.filter((row) => row.alwaysOn);
   const allOff: GuardValues = Object.fromEntries(software.guards.map((guard) => [guard.id, guardValues.off]));
+  /** The texts of each cited file for the guard values. The coordinator text holds the merge rules of both modes of the merge point. */
   const wiredTextsOf = (guards: GuardValues): Readonly<Record<string, readonly string[]>> => {
     const blocks = blockTemplatesFor(blockInput(1, { guards }));
     const coordinator = bodyOf(blocks, blockNames.coordinator);
+    const delegated = bodyOf(blockTemplatesFor(blockInput(1, { guards, modes: { ...softwareOwnerModes, merge: 'delegated' } })), blockNames.coordinator);
     const safety = bodyOf(blocks, blockNames.safety);
     return {
-      'src/recipes/software/roles/coordinator.ts': [coordinator],
+      'src/recipes/software/roles/coordinator.ts': [`${coordinator}\n${delegated}`],
       'src/recipes/software/roles/manager.ts': [bodyOf(blockTemplatesFor(blockInput(2, { guards })), blockNames.manager)],
       'src/recipes/software/roles/worker.ts': [bodyOf(blocks, blockNames.worker)],
       'src/templates/work-rules.ts': [bodyOf(blocks, blockNames.workRules)],
       'src/templates/safety.ts': [safety],
-      'src/recipes/software/words.ts': [coordinator],
+      'src/recipes/software/words.ts': [`${coordinator}\n${safety}`],
       'src/recipes/software/approval.ts': [coordinator, safety],
       'src/recipes/entry.ts': [coordinator, safety],
     };

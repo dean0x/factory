@@ -3,9 +3,10 @@ import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { workTreeTop } from '../core/git.js';
 import { comparable, isSameOrInside } from '../core/paths.js';
-import { dotRuleReason } from '../core/place-rule.js';
+import { dotRuleReason, localConfigReason } from '../core/place-rule.js';
 import { ok } from '../core/result.js';
-import { assignmentSource, commandText, places } from '../names.js';
+import { guardOn } from '../guards/effective.js';
+import { assignmentSource, commandText, guardIds, places } from '../names.js';
 import { readCheckedFile } from './registry.js';
 
 /**
@@ -14,8 +15,9 @@ import { readCheckedFile } from './registry.js';
  * trust boundary. In this order:
  * 1. the real path of the file is inside the factory folder, or inside the git work tree of the working folder (exit 4);
  * 2. no part of the path from that top down is a link (exit 4);
- * 3. no part below the top starts with a dot, except the orders folder below the factory folder, and the local config of the factory
- *    folder is never read (exit 4);
+ * 3. the local config of the factory folder is never read (exit 4), with every guard value, because it holds the owner prefix; no part
+ *    below the top starts with a dot, except the orders folder below the factory folder (exit 4), while the task-files guard of the node
+ *    is on;
  * 4. the file is a plain file of at most `assignmentSource.maxBytes`, with valid UTF-8 text and no NUL (exit 2; a link is exit 4);
  * 5. the text is read once. After the read, the kind of the path and its real path are read again, and a change is exit 4.
  * The caller copies the text that this check returns, and never reads the file again. A message never holds a part of the text.
@@ -91,7 +93,10 @@ const namesBelow = async (
   return ok(null);
 };
 
-/** The check of the place of the file: the top that holds it, and the names below the top. A refusal is exit 4. */
+/**
+ * The check of the place of the file: the top that holds it, and the names below the top. A refusal is exit 4. The rule for a dot
+ * part follows the task-files guard of the node. The top, the link checks and the refusal of the local config run with every value.
+ */
 const placeOf = async (
   deps: Deps,
   request: AssignmentRequest,
@@ -106,16 +111,14 @@ const placeOf = async (
     );
   const tops = await topsOf(deps, request.home);
   if (!tops.ok) return tops;
+  const dotRule = await guardOn(deps, guardIds.taskFiles, request.home);
   for (const top of tops.value) {
     if (!isSameOrInside(comparable(deps, top.real), comparable(deps, real))) continue;
     const names = await namesBelow(deps, top, source, refuseLink);
     if (!names.ok) return names;
     if (names.value === null || !sameName(deps, join(top.real, ...names.value), real)) return refuseLink();
-    const reason = dotRuleReason(names.value, {
-      atFactoryTop: top.isFactory,
-      ordersException: true,
-      sameName: (a, b) => sameName(deps, a, b),
-    });
+    const rule = { atFactoryTop: top.isFactory, ordersException: true, sameName: (a: string, b: string) => sameName(deps, a, b) };
+    const reason = localConfigReason(names.value, rule) ?? (dotRule ? dotRuleReason(names.value, rule) : null);
     if (reason !== null) return safetyRefusal(`cannot use ${source}: ${reason}`, copy);
     return ok({ top, names: names.value });
   }
@@ -164,13 +167,14 @@ export const readAssignment = async (deps: Deps, request: AssignmentRequest): Pr
   const place = await placeOf(deps, request, source, real.value);
   if (!place.ok) return place;
 
-  const read = await readCheckedFile(deps, [], { path: real.value, what: 'the assignment file' }, assignmentSource.maxBytes);
+  const maxBytes = assignmentSource.maxBytes;
+  const read = await readCheckedFile(deps, [], { path: real.value, what: 'the assignment file' }, maxBytes);
   if (!read.ok) return read;
   if (read.value.state === 'absent') return changed(source, again);
   if (read.value.state === 'invalid') {
     return read.value.cause === 'link'
       ? changed(source, again)
-      : usageError(`cannot use ${source}: ${read.value.reason}`, `Name a plain text file of at most ${assignmentSource.maxBytes} bytes. Then run "${line}".`);
+      : usageError(`cannot use ${source}: ${read.value.reason}`, `Name a plain text file of at most ${maxBytes} bytes. Then run "${line}".`);
   }
   const { text } = read.value;
   if (text.includes(NUL) || text.includes(REPLACEMENT)) {

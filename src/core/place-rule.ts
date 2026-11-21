@@ -16,16 +16,25 @@ export interface PlaceRule {
 }
 
 /**
+ * The reason that the names of a path name the local config at the top of the factory folder, or null. The local config holds the
+ * owner prefix, so a caller that copies a file for another session refuses it with every guard value.
+ */
+export const localConfigReason = (names: readonly string[], rule: Pick<PlaceRule, 'atFactoryTop' | 'sameName'>): string | null => {
+  const [first] = names;
+  return rule.atFactoryTop && names.length === 1 && first !== undefined && rule.sameName(first, files.localConfig)
+    ? `${files.localConfig} holds the settings of one person on one machine`
+    : null;
+};
+
+/**
  * The reason that the names of a path refuse, or null when the fixed rule lets them pass. The names are the parts of the path from its
  * top down to the file. The rule refuses the local config at the top of the factory folder, and a part that starts with a dot, except
  * the orders folder below the factory folder when the exception is on. Each caller picks the exit code of its refusal.
  */
 export const dotRuleReason = (names: readonly string[], rule: PlaceRule): string | null => {
+  const local = localConfigReason(names, rule);
+  if (local !== null) return local;
   const { atFactoryTop, ordersException, sameName } = rule;
-  const [first] = names;
-  if (atFactoryTop && names.length === 1 && first !== undefined && sameName(first, files.localConfig)) {
-    return `${files.localConfig} holds the settings of one person on one machine`;
-  }
   const orders = assignmentSource.ordersParts;
   const inOrders =
     atFactoryTop && ordersException && names.length > orders.length && orders.every((part, index) => sameName(names[index] ?? '', part));

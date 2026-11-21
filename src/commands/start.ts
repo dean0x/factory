@@ -7,7 +7,7 @@ import { declinedHookText, ensureHookSettings, noConsentRemedy, ownDenyRulesOf, 
 import type { AttachedEnd, Deps } from '../core/deps.js';
 import type { GuardReadState } from '../core/guard-records.js';
 import { guardReadOf } from '../core/guard-source.js';
-import { isGuardOn } from '../guards/effective.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { guardsFor } from '../guards/registry.js';
 import { readHookSettings } from '../workers/session-checks.js';
@@ -435,9 +435,10 @@ const settleHook = async (
   const hook = await ensureHookSettings(deps, settings, 'return-outcome');
   if (!hook.ok) return hook;
   if (hook.value.kind === 'no-consent') {
+    const remedy = noConsentRemedy(deps, { ...settings, command: commands.upgrade }, true, await guardValuesFor(deps, settings.home));
     deps.warn(
       `The value of ${idleCompactionKeyPath} is not written to ${hook.value.file}, because no terminal window can ask. ` +
-        `${noConsentRemedy(deps, { ...settings, command: commands.upgrade }, true)} The session starts as before.`,
+        `${remedy} The session starts as before.`,
     );
   }
   if (hook.value.kind === 'declined') deps.warn(declinedHookText(hook.value, request.command));

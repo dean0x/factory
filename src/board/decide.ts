@@ -572,7 +572,7 @@ const DECIDE_AGAIN = `Run "${commandText(commands.decide)}" again to see the ${r
 
 /**
  * The recheck under the lock: the state is open, the strict read passes again, and the hash is the hash that the owner saw.
- * Any change after the prompt is exit 1, and the request that it gives is the one to record.
+ * A changed request is not the one that the owner answered. Leave it open and write no answer.
  */
 export const recheckRequest = (waiting: WaitingDoc, log: DecisionLogDoc, id: string, hash: string): CliResult<DecideRequest> => {
   const state = requestStateOf(waiting, log, id);

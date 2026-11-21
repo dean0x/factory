@@ -14,6 +14,8 @@ import { inFactorySession } from '../core/factory-session.js';
 import type { IgnoredList } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { shellWord } from '../core/shell-word.js';
+import { allOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import type { PaneRow } from '../launch/tmux.js';
 import {
   commands,
@@ -22,6 +24,7 @@ import {
   dismissWords,
   flags,
   flagText,
+  guardIds,
   lastSeen,
   places,
   requestDeciders,
@@ -49,7 +52,7 @@ import {
 } from '../workers/dismiss.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import { requireOtherPane } from '../workers/lifecycle.js';
-import { readPanes, requireCoordinatorCaller } from '../workers/panes.js';
+import { checkCoordinatorCaller, readPanes, requireCoordinatorCaller } from '../workers/panes.js';
 import { requireRecord, type WorkerRecord } from '../workers/registry.js';
 import { readStatus } from '../workers/status-read.js';
 import type { WorkerStatus } from '../workers/status.js';
@@ -74,6 +77,7 @@ const text = (line: string): OutLine => ({ level: 'text', text: line });
 const fail = (line: string): OutLine => ({ level: 'fail', text: line });
 
 const IDLE_LINE = `${commands.dismiss} ${flagText(flags.idle)}`;
+const MAX_IDLE_ANSWER_BYTES = 200;
 
 const usage = (what: string): CliResult<never> =>
   usageError(what, `Run "${commandText(commands.dismiss)} ${flagText(flags.help)}".`);
@@ -92,9 +96,20 @@ const checkWords = (options: DismissOptions): CliResult<void> => {
   return options.words.length === 1 ? ok(undefined) : usage(`${commands.dismiss} takes one argument: the id of the ${roles.worker}`);
 };
 
-/** The yes flag gives no consent inside a factory session: the stop comes before any read. */
-const requireOutsideSession = (deps: Deps, again: string): CliResult<void> =>
-  inFactorySession(deps)
+/**
+ * True when a free with no closed item as proof stops inside a factory session. The session-checks guard keeps the session stop,
+ * and the dismiss guard keeps the rule that a free in a session needs a closed item. So the free goes on only with both guards off.
+ */
+const freeStopsInSession = (guards: GuardValues): boolean =>
+  isGuardOn(guards, guardIds.sessionChecks) || isGuardOn(guards, guardIds.dismiss);
+
+/**
+ * The yes flag gives no consent inside a factory session: the stop comes before the first read of the worker. It follows the
+ * session-checks and dismiss guards of the node at `home`. With no node home (the search for the factory folder failed), the stop
+ * stays.
+ */
+const requireOutsideSession = async (deps: Deps, home: string | null, again: string): Promise<CliResult<void>> =>
+  inFactorySession(deps) && (home === null || freeStopsInSession(await guardValuesFor(deps, home)))
     ? safetyRefusal(
         `${flagText(flags.yes)} gives no consent inside a ${places.session}, so ${commands.dismiss} frees nothing`,
         `Run "${commandText(again)}" in a terminal window outside a ${places.session}.`,
@@ -107,11 +122,14 @@ interface Inspected {
   /** The one read of HEAD that the pushed test judged, or null when the work copy has no commit. */
   readonly head: string | null;
   readonly reasons: readonly string[];
+  /** False when the dismiss guard is off: the pushed test did not run. */
+  readonly checked: boolean;
 }
 
 /**
  * The checks of the path and of the pushed test for the workers of one run. Each clone is fetched once for the run: a later call for
  * a worker of the same clone uses the answer of the first fetch, so every worker of a clone is judged by one state of the remote.
+ * While the dismiss guard is off, the pushed test does not run, so the run fetches nothing. The checks of the path run with every value.
  */
 const inspectorOf = (
   deps: Deps,
@@ -119,17 +137,22 @@ const inspectorOf = (
   config: FactoryConfig,
   acceptedHeads: readonly string[] = [],
   words?: PlanWords,
+  guards: GuardValues = allOn,
 ): ((target: DismissTarget) => Promise<CliResult<Inspected>>) => {
   const fetched = new Map<string, CliResult<void>>();
   return async (target) => {
     const plan = await planDismiss(deps, home, config, target, words);
     if (!plan.ok) return plan;
-    const known = fetched.get(plan.value.clone);
-    const fetch = known ?? (await fetchClone(deps, plan.value));
-    fetched.set(plan.value.clone, fetch);
-    if (!fetch.ok) return fetch;
-    const checked = await checkPushed(deps, plan.value, acceptedHeads);
-    return checked.ok ? ok({ plan: plan.value, head: checked.value.head, reasons: checked.value.reasons }) : checked;
+    if (isGuardOn(guards, guardIds.dismiss)) {
+      const known = fetched.get(plan.value.clone);
+      const fetch = known ?? (await fetchClone(deps, plan.value));
+      fetched.set(plan.value.clone, fetch);
+      if (!fetch.ok) return fetch;
+    }
+    const checked = await checkPushed(deps, plan.value, acceptedHeads, guards);
+    if (!checked.ok) return checked;
+    const { head, reasons } = checked.value;
+    return ok({ plan: plan.value, head, reasons, checked: checked.value.checked });
   };
 };
 
@@ -149,8 +172,19 @@ const stuckLines = (plan: DismissPlan, reasons: readonly string[], again: string
 /** The ignored files that git does not hold: the removal of the work copy deletes them. */
 const NO_IGNORED: IgnoredList = { paths: [], reachedCap: false };
 
-/** The count of a list: "more than" the names that it holds when it reached the cap. */
-const countOf = ({ paths, reachedCap }: IgnoredList): string => (reachedCap ? `more than ${paths.length}` : `${paths.length}`);
+/** The count of a list: "more than" the names that it holds when it reached the cap. No count for a list that the run did not read. */
+const countOf = (list: IgnoredList | null): string => {
+  if (list === null) return dismissWords.noCount;
+  return list.reachedCap ? `more than ${list.paths.length}` : `${list.paths.length}`;
+};
+
+/** The checks that do not run while the dismiss guard is off. */
+const UNCHECKED_LINE = text(
+  `The guard ${guardIds.dismiss} is off, so this run did not check that the ${roles.worker} can end now or that its work is pushed and clean.`,
+);
+
+/** The line of a free of the closed path while the dismiss guard is off. */
+const UNPROVED_LINE = text(`The guard ${guardIds.dismiss} is off, so this free checked no closed item and logged no decision.`);
 
 /**
  * The count and the first names of the files of one kind that the removal of the work copy deletes: the dry run says that it
@@ -234,32 +268,66 @@ const factsOf = async (
   return ok({ home, config, session, panes: panes.value, entries: read.value.entries, warnings: read.value.warnings });
 };
 
-/** `dismiss ID`: the checks, then the dry run, or the free with the yes flag. */
-const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeRegistry, workItems: WorkItemPort): Promise<CliResult<CommandOutput>> => {
-  const [id = ''] = options.words;
-  const again = dismissLine(id);
-  if (options.yes) {
-    const outside = requireOutsideSession(deps, again);
-    if (!outside.ok) return outside;
-  }
-  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
-  if (!located.ok) return located;
-  const home = located.value.home;
-  const loaded = await loadConfig(deps, home, registry);
-  if (!loaded.ok) return loaded;
-  const config = loaded.value;
+/** The worker that a free names, in the node that the run read. */
+interface FreeTarget {
+  readonly home: string;
+  readonly config: FactoryConfig;
+  readonly id: string;
+  /** The command that a person runs again, without the program name. */
+  readonly again: string;
+}
+
+/** What a free reads before its first change: the facts of the run, the entry of the worker, and its plan with the pushed test. */
+interface Ready {
+  readonly facts: Facts;
+  readonly entry: WorkerStatus;
+  readonly inspected: Inspected;
+}
+
+/**
+ * The checks of a free before its first change: the record, the state of the worker, the paths of its work copy and the pushed test.
+ * The values decide the check of the state and the pushed test; the checks of the paths run with every value.
+ */
+const readyOf = async (deps: Deps, workItems: WorkItemPort, target: FreeTarget, guards: GuardValues): Promise<CliResult<Ready>> => {
+  const { home, config, id, again } = target;
   const record = await requireRecord(deps, home, id, commandText(commands.dismiss));
   if (!record.ok) return record;
   const facts = await factsOf(deps, workItems, home, config, again);
   if (!facts.ok) return facts;
   const entry = facts.value.entries.find((candidate) => candidate.id === id);
   if (entry === undefined) return failure(`cannot read the state of the ${roles.worker} ${id}`, `Run "${commandText(again)}" again.`);
-  const endable = requireEndable(entry, again);
+  const endable = requireEndable(entry, again, guards);
   if (!endable.ok) return endable;
-  const inspected = await inspectorOf(deps, home, config)({ id, project: record.value.project });
-  if (!inspected.ok) return inspected;
-  const { plan, reasons } = inspected.value;
-  const warnings = facts.value.warnings;
+  const inspected = await inspectorOf(deps, home, config, [], undefined, guards)({ id, project: record.value.project });
+  return inspected.ok ? ok({ facts: facts.value, entry, inspected: inspected.value }) : inspected;
+};
+
+/** The pushed mark of a worker in the JSON: true, or null when the pushed test did not run. */
+const pushedMark = (inspected: Inspected): true | null => (inspected.checked ? true : null);
+
+/** Give no advice to force a removal when the run did not check the work. */
+const ownerRemovalAdvice = (inspected: Inspected): { readonly removalRemedy?: string } =>
+  inspected.checked ? {} : { removalRemedy: `The ${guardIds.dismiss} guard is off. Check the work copy and its remote branch before you try again.` };
+
+/** `dismiss ID`: the checks, then the dry run, or the free with the yes flag. */
+const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeRegistry, workItems: WorkItemPort): Promise<CliResult<CommandOutput>> => {
+  const [id = ''] = options.words;
+  const again = dismissLine(id);
+  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
+  if (options.yes) {
+    const outside = await requireOutsideSession(deps, located.ok ? located.value.home : null, again);
+    if (!outside.ok) return outside;
+  }
+  if (!located.ok) return located;
+  const home = located.value.home;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const guards = await guardValuesFor(deps, home);
+  const ready = await readyOf(deps, workItems, { home, config: loaded.value, id, again }, guards);
+  if (!ready.ok) return ready;
+  const { facts, entry, inspected } = ready.value;
+  const { plan, reasons } = inspected;
+  const warnings = facts.warnings;
   const base = { schema: schemaIds.dismiss, home, idle: false, yes: options.yes };
   if (reasons.length > 0) {
     return ok({
@@ -272,15 +340,16 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
   }
   const ignored = await ignoredIn(deps, plan);
   if (!ignored.ok) return ignored;
+  const unchecked = inspected.checked ? [] : [UNCHECKED_LINE];
   if (!options.yes) {
     const inbox = await inboxFilesIn(deps, home, id);
     if (!inbox.ok) return inbox;
     return ok({
-      lines: dryRunLines(entry, plan, ignored.value, inbox.value),
+      lines: [...unchecked, ...dryRunLines(entry, plan, ignored.value, inbox.value)],
       json: {
         ...base,
         freed: false,
-        workers: [{ id, project: plan.project, pushed: true, stuck: [], ignored: ignored.value.paths, inbox: inbox.value.paths }],
+        workers: [{ id, project: plan.project, pushed: pushedMark(inspected), stuck: [], ignored: ignored.value.paths, inbox: inbox.value.paths }],
       },
       warnings,
       failed: false,
@@ -288,14 +357,16 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
   }
   const lineSession = await lineSessionOf(deps, home, id);
   if (!lineSession.ok) return lineSession;
-  const freed = await freeWorker(deps, { home, session: facts.value.session, plan, panes: facts.value.panes, lineSession: lineSession.value });
+  const freed = await freeWorker(deps, { home, session: facts.session, plan, panes: facts.panes, lineSession: lineSession.value, ...ownerRemovalAdvice(inspected) });
   if (!freed.ok) return freed;
   return ok({
-    lines: freedLines(plan, freed.value, ignored.value),
+    lines: [...unchecked, ...freedLines(plan, freed.value, ignored.value)],
     json: {
       ...base,
       freed: true,
-      workers: [{ id, project: plan.project, pushed: true, stuck: [], ended: freed.value.stopped.kind !== 'no-pane', ignored: ignored.value.paths }],
+      workers: [
+        { id, project: plan.project, pushed: pushedMark(inspected), stuck: [], ended: freed.value.stopped.kind !== 'no-pane', ignored: ignored.value.paths },
+      ],
     },
     warnings,
     failed: false,
@@ -359,7 +430,7 @@ type ClosedChecks =
   | { readonly kind: 'guard-not-met'; readonly guard: typeof CLOSED_GUARDS.endable; readonly reason: string; readonly stop: CliError }
   | { readonly kind: 'guard-not-met'; readonly guard: typeof CLOSED_GUARDS.proof | typeof CLOSED_GUARDS.unknown; readonly reason: string };
 
-/** Check the caller, the worker and the board before the git checks. */
+/** Check the worker and the board before the git checks. */
 const closedChecks = async (
   deps: Deps,
   options: { readonly words: DismissOptions['words'] },
@@ -369,8 +440,6 @@ const closedChecks = async (
   remedy: string,
 ): Promise<CliResult<ClosedChecks>> => {
   const [id = ''] = options.words;
-  const caller = await requireCoordinatorCaller(deps, home, config, remedy);
-  if (!caller.ok) return caller;
   const record = await requireRecord(deps, home, id, commandText(commands.dismiss));
   if (!record.ok) return record;
   const facts = await factsOf(deps, workItems, home, config, remedy);
@@ -501,8 +570,10 @@ const dismissAskOwner = async (
   const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return stopAsk(loaded.error);
   const config = loaded.value;
-  const local = requireLocalKind(config.core.tracker.kind, commands.dismiss);
+  const local = requireLocalKind(config.core.tracker.kind, commands.dismiss, await guardValuesFor(deps, home));
   if (!local.ok) return stopAsk(local.error);
+  const caller = await requireCoordinatorCaller(deps, home, config, again);
+  if (!caller.ok) return stopAsk(caller.error);
   const checkedAt = deps.now().toISOString();
   const checked = await closedChecks(deps, options, workItems, home, config, again);
   if (!checked.ok) return stopAsk(checked.error);
@@ -599,6 +670,10 @@ const dismissClosed = async (
   const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return loaded;
   const config = loaded.value;
+  const guards = await guardValuesFor(deps, home);
+  if (!isGuardOn(guards, guardIds.dismiss)) return freeUnproved(deps, workItems, { home, config, id, again }, guards);
+  const decider = await checkCoordinatorCaller(deps, home, config, again);
+  if (!decider.ok) return decider;
   const checked = await closedChecks(deps, options, workItems, home, config, again);
   if (!checked.ok) return checked;
   if (checked.value.kind === 'read-fault') return refuseClosed(checked.value.reason, id);
@@ -656,13 +731,71 @@ const dismissClosed = async (
   });
 };
 
-/** True when the checks passed and found no reason that the work is not pushed. A check that failed counts as not pushed. */
-const isPushed = (inspected: CliResult<Inspected> | undefined): boolean =>
-  inspected !== undefined && inspected.ok && inspected.value.reasons.length === 0;
+/**
+ * `dismiss ID --closed` while the dismiss guard is off: the caller rule, then the free as `dismiss ID --yes` frees, with no proof of a
+ * closed item, no decision row and no check again before the removal. The checks of the paths, the stop of the pane and the plain
+ * removal of the work copy run with every value, and a removal that git refuses gets the remedy of the closed path.
+ */
+const freeUnproved = async (deps: Deps, workItems: WorkItemPort, target: FreeTarget, guards: GuardValues): Promise<CliResult<CommandOutput>> => {
+  const { home, config, id, again } = target;
+  const caller = await requireCoordinatorCaller(deps, home, config, again);
+  if (!caller.ok) return caller;
+  const ready = await readyOf(deps, workItems, target, guards);
+  if (!ready.ok) return ready;
+  const { facts, inspected } = ready.value;
+  const { plan } = inspected;
+  const ignored = await ignoredIn(deps, plan);
+  if (!ignored.ok) return ignored;
+  const inbox = await inboxFilesIn(deps, home, id);
+  if (!inbox.ok) return inbox;
+  const lineSession = await lineSessionOf(deps, home, id);
+  if (!lineSession.ok) return lineSession;
+  const freed = await freeWorker(deps, {
+    home,
+    session: facts.session,
+    plan,
+    panes: facts.panes,
+    lineSession: lineSession.value,
+    removalRemedy: closedRemovalRemedy(id),
+  });
+  if (!freed.ok) return freed;
+  return ok({
+    lines: [UNPROVED_LINE, ...freedLines(plan, freed.value, ignored.value, inbox.value)],
+    json: {
+      schema: schemaIds.dismiss,
+      home,
+      idle: false,
+      yes: false,
+      closed: true,
+      freed: true,
+      decision: null,
+      workers: [
+        { id, project: plan.project, pushed: pushedMark(inspected), stuck: [], ended: freed.value.stopped.kind !== 'no-pane', ignored: ignored.value.paths, inbox: inbox.value.paths },
+      ],
+    },
+    warnings: facts.warnings,
+    failed: false,
+  });
+};
+
+/**
+ * True when the checks passed and found no reason that the work is not pushed, null when the pushed test did not run, and false
+ * else. A check that failed counts as not pushed.
+ */
+const pushedOf = (inspected: CliResult<Inspected> | undefined): boolean | null => {
+  if (inspected === undefined || !inspected.ok) return false;
+  return inspected.value.checked ? inspected.value.reasons.length === 0 : null;
+};
+
+/** The pushed cell of a listed worker: yes or no, or no word when the pushed test did not run. */
+const pushedCell = (pushed: boolean | null): string => {
+  if (pushed === null) return dismissWords.noCount;
+  return pushed ? dismissWords.pushed.yes : dismissWords.pushed.no;
+};
 
 /**
  * The ignored files that the free of each listed worker deletes, for the table. A worker whose work is not pushed is not freed, and
- * a read that fails is no reason to stop a list: neither has an entry. The read of the pick fails the run, as before.
+ * a read that fails leaves the count blank. A read fault for a picked worker stops the free.
  */
 const ignoredOf = async (
   deps: Deps,
@@ -689,8 +822,17 @@ const stateText = (entry: WorkerStatus): string => (entry.running ? entry.state 
 const listableOf = (entries: readonly WorkerStatus[]): readonly WorkerStatus[] =>
   entries.filter((entry) => entry.idle && entry.noOpenWork);
 
-/** The picked worker as a refusal, or its checks: it must be listed, ready to end, and not be this pane. */
-const requirePick = (deps: Deps, id: string, listed: readonly WorkerStatus[], panes: readonly PaneRow[]): CliResult<WorkerStatus> => {
+/**
+ * The picked worker as a refusal, or its checks: it must be listed, ready to end, and not be this pane. The list and the pane
+ * choose the target, so they run with every value; the check of the state follows the values.
+ */
+const requirePick = (
+  deps: Deps,
+  id: string,
+  listed: readonly WorkerStatus[],
+  panes: readonly PaneRow[],
+  guards: GuardValues,
+): CliResult<WorkerStatus> => {
   const entry = listed.find((candidate) => candidate.id === id);
   if (entry === undefined) {
     return failure(
@@ -698,7 +840,7 @@ const requirePick = (deps: Deps, id: string, listed: readonly WorkerStatus[], pa
       `Run "${commandText(commands.status)}" to see the state of each ${roles.worker}, or run "${commandText(IDLE_LINE)}" again.`,
     );
   }
-  const endable = requireEndable(entry, IDLE_LINE);
+  const endable = requireEndable(entry, IDLE_LINE, guards);
   if (!endable.ok) return endable;
   const pane = panes.find((row) => row.worker === id && !row.dead);
   if (pane !== undefined) {
@@ -716,15 +858,20 @@ interface Pick {
   readonly entry: WorkerStatus;
   readonly inspected: Inspected;
   readonly lineSession: string | null;
-  /** The ignored files that the free deletes. A worker with unpushed work is not freed, so its list is empty. */
+  /** The ignored files that the free deletes. The list is empty for a worker with unpushed work. */
   readonly ignored: IgnoredList;
 }
 
-const prepare = async (deps: Deps, home: string, entry: WorkerStatus, inspected: CliResult<Inspected>): Promise<CliResult<Pick>> => {
+const prepare = async (
+  deps: Deps,
+  home: string,
+  entry: WorkerStatus,
+  inspected: CliResult<Inspected>,
+): Promise<CliResult<Pick>> => {
   if (!inspected.ok) return inspected;
   const lineSession = await lineSessionOf(deps, home, entry.id);
   if (!lineSession.ok) return lineSession;
-  const ignored: CliResult<IgnoredList> = inspected.value.reasons.length === 0 ? await ignoredIn(deps, inspected.value.plan) : ok(NO_IGNORED);
+  const ignored = inspected.value.reasons.length === 0 ? await ignoredIn(deps, inspected.value.plan) : ok(NO_IGNORED);
   return ignored.ok ? ok({ entry, inspected: inspected.value, lineSession: lineSession.value, ignored: ignored.value }) : ignored;
 };
 
@@ -749,7 +896,7 @@ const freePicks = async (deps: Deps, facts: Facts, picks: readonly Pick[]): Prom
       stuck.push(plan.id);
       continue;
     }
-    const done = await freeWorker(deps, { home: facts.home, session: facts.session, plan, panes: facts.panes, lineSession });
+    const done = await freeWorker(deps, { home: facts.home, session: facts.session, plan, panes: facts.panes, lineSession, ...ownerRemovalAdvice(inspected) });
     if (!done.ok) {
       const before = freed.length === 0 ? '' : `. Freed before this fault: ${freed.join(', ')}`;
       return err({ ...done.error, message: `${done.error.message}${before}` });
@@ -766,7 +913,8 @@ interface ListedWorker {
   readonly id: string;
   readonly project: string;
   readonly state: string;
-  readonly pushed: boolean;
+  /** Null when the pushed test did not run. */
+  readonly pushed: boolean | null;
   /** The count of the ignored files that the free deletes, or null when they are not read. At the cap it is the cap, and `ignoredMore` is true. */
   readonly ignoredCount: number | null;
   readonly ignoredMore: boolean;
@@ -779,29 +927,46 @@ interface Listed {
   readonly json: JsonDoc;
 }
 
+const readIdleAnswer = async (deps: Deps): Promise<CliResult<string>> => {
+  if (deps.stdinIsTTY) {
+    return deps.prompt(printable(`Dismiss which ${roles.worker}s? Type their ids with spaces, or press Enter to end nothing: `));
+  }
+  const answer = await deps.readStdin(MAX_IDLE_ANSWER_BYTES);
+  if (!answer.ok) return answer;
+  if (answer.value === '') return failure('no answer was given');
+  return ok(answer.value.split(/[\r\n]/, 1)[0] ?? '');
+};
+
 /**
- * The pick step of `dismiss --idle`, in a terminal window outside a factory session: the owner types the ids. The owner may take
- * long, so after the answer the state of the workers is read again, and every picked id is checked again (it must be listed as
+ * The pick step of `dismiss --idle` reads one line from a terminal or from bounded standard input.
+ * After the answer, the state of the workers is read again, and every picked id is checked again (it must be listed as
  * idle with no open work, and its work must be pushed) before the first change. Then each picked worker is freed as `dismiss ID --yes`
  * frees it. The table goes to stdout before the question, so the owner sees the state, the pushed test and the ignored files that
  * each free deletes when the owner picks; the output of the run does not repeat it.
  */
-const pickAndFree = async (deps: Deps, workItems: WorkItemPort, facts: Facts, listed: Listed): Promise<CliResult<CommandOutput>> => {
+const pickAndFree = async (
+  deps: Deps,
+  workItems: WorkItemPort,
+  facts: Facts,
+  listed: Listed,
+  guards: GuardValues,
+): Promise<CliResult<CommandOutput>> => {
   const { table, workers, json } = listed;
   const { warnings } = facts;
   const shown = await deps.writeStdout(`${table.map((line) => printable(line.text)).join('\n')}\n`);
   if (!shown.ok) return shown;
-  const answer = await deps.prompt(printable(`Dismiss which ${roles.worker}s? Type their ids with spaces, or press Enter to end nothing: `));
+  const answer = await readIdleAnswer(deps);
   if (!answer.ok) return answer;
   const ids = idsOf(answer.value);
   if (ids.length === 0) return ok({ lines: [text('Nothing picked. Nothing changed.')], json, warnings, failed: false });
   const now = await factsOf(deps, workItems, facts.home, facts.config, IDLE_LINE);
   if (!now.ok) return now;
-  const idleNow = listableOf(now.value.entries);
-  const inspect = inspectorOf(deps, now.value.home, now.value.config);
+  const shownProjects = new Map(workers.map((entry) => [entry.id, entry.project]));
+  const idleNow = listableOf(now.value.entries).filter((entry) => shownProjects.get(entry.id) === entry.project);
+  const inspect = inspectorOf(deps, now.value.home, now.value.config, [], undefined, guards);
   const picks: Pick[] = [];
   for (const id of ids) {
-    const entry = requirePick(deps, id, idleNow, now.value.panes ?? []);
+    const entry = requirePick(deps, id, idleNow, now.value.panes ?? [], guards);
     if (!entry.ok) return entry;
     const pick = await prepare(deps, now.value.home, entry.value, await inspect({ id, project: entry.value.project }));
     if (!pick.ok) return pick;
@@ -827,7 +992,8 @@ const pickAndFree = async (deps: Deps, workItems: WorkItemPort, facts: Facts, li
  * `dismiss --idle`: lists the idle workers that have no open work, with their state, whether their work is pushed and the count of the
  * ignored files that their free deletes, and changes nothing. Inside a factory session the pick step stops (exit 4). With no terminal
  * window the list is all. In a terminal window the owner types the ids to dismiss: every id is checked before the first change, and
- * then each picked worker is freed as `dismiss ID --yes` frees it.
+ * then each picked worker is freed as `dismiss ID --yes` frees it. While the session-checks guard is off, the pick step runs also
+ * with no terminal window, and with the dismiss guard off too, also in a session.
  */
 const dismissIdle = async (deps: Deps, options: DismissOptions, registry: RecipeRegistry, workItems: WorkItemPort): Promise<CliResult<CommandOutput>> => {
   const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
@@ -835,39 +1001,42 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
   const home = located.value.home;
   const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return loaded;
+  const guards = await guardValuesFor(deps, home);
   const facts = await factsOf(deps, workItems, home, loaded.value, IDLE_LINE);
   if (!facts.ok) return facts;
   const idle = listableOf(facts.value.entries);
   const warnings = facts.value.warnings;
   const base = { schema: schemaIds.dismiss, home, idle: true, yes: false };
-  const inspect = inspectorOf(deps, home, loaded.value);
+  const inspect = inspectorOf(deps, home, loaded.value, [], undefined, guards);
   const checked = new Map<string, CliResult<Inspected>>();
   for (const entry of idle) checked.set(entry.id, await inspect({ id: entry.id, project: entry.project }));
   const ignored = await ignoredOf(deps, idle, checked);
-  const pushedWord = (id: string): string => (isPushed(checked.get(id)) ? dismissWords.pushed.yes : dismissWords.pushed.no);
-  const ignoredCell = (id: string): string => {
-    const list = ignored.get(id);
-    return list === undefined ? dismissWords.noCount : countOf(list);
-  };
-  const table =
+  const ignoredCell = (id: string): string => countOf(ignored.get(id) ?? null);
+  const rows =
     idle.length === 0
       ? [text(`No idle ${roles.worker}s.`)]
       : tableLines(
           Object.values(dismissWords.columns),
           idle.map((entry) =>
-            [entry.id, entry.project, stateText(entry), pushedWord(entry.id), ignoredCell(entry.id)].map((cell) => displayLine(cell)),
+            [entry.id, entry.project, stateText(entry), pushedCell(pushedOf(checked.get(entry.id))), ignoredCell(entry.id)].map((cell) => displayLine(cell)),
           ),
         );
+  const table = idle.length > 0 && !isGuardOn(guards, guardIds.dismiss) ? [...rows, UNCHECKED_LINE] : rows;
   const listed: readonly ListedWorker[] = idle.map((entry) => ({
     id: entry.id,
     project: entry.project,
     state: stateText(entry),
-    pushed: isPushed(checked.get(entry.id)),
+    pushed: pushedOf(checked.get(entry.id)),
     ignoredCount: ignored.get(entry.id)?.paths.length ?? null,
     ignoredMore: ignored.get(entry.id)?.reachedCap ?? false,
   }));
   const json = { ...base, freed: false, workers: listed, picked: [] };
-  if (inFactorySession(deps)) {
+  // The stop in a session and the list with no terminal window keep a session and a script from the pick. The stop in a session
+  // goes away only with the dismiss guard off too, because a free in a session needs a closed item while that guard is on. While
+  // the session-checks guard is off, the pick reads its answer from the standard input, and the checks of each pick in
+  // `pickAndFree` run as before.
+  const ownerChannel = isGuardOn(guards, guardIds.sessionChecks);
+  if (inFactorySession(deps) && freeStopsInSession(guards)) {
     return ok({
       lines: [
         ...table,
@@ -881,7 +1050,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
     });
   }
   if (idle.length === 0) return ok({ lines: table, json, warnings, failed: false });
-  if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
+  if (ownerChannel && !(deps.stdinIsTTY && deps.stdoutIsTTY)) {
     return ok({
       lines: [...table, text(`To pick, run "${commandText(IDLE_LINE)}" in a terminal window.`)],
       json,
@@ -889,7 +1058,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
       failed: false,
     });
   }
-  return pickAndFree(deps, workItems, facts.value, { table, workers: listed, json });
+  return pickAndFree(deps, workItems, facts.value, { table, workers: listed, json }, guards);
 };
 
 /**

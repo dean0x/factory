@@ -151,7 +151,8 @@ export const runGuardSet = async (deps: Deps, options: GuardSetOptions, registry
   const allGuards = guardsFor(loaded.value.config.entry).filter((guard) => !guard.fixed);
   const guards = allGuards.filter((guard) => guard.wired && (id === null || guard.id === id));
   if (id !== null && guards.length === 0) return usageError(guardSetWords.unknownId(displayLineCore(id)));
-  const excluded = id === null ? allGuards.length - guards.length : null;
+  // The count line names only guards that this version cannot set, so a version that can set all of them shows no line.
+  const excluded = id === null && allGuards.length > guards.length ? allGuards.length - guards.length : null;
   const edited = setGuardText(loaded.value.local, Object.fromEntries(guards.map((guard) => [guard.id, value])));
   if (!edited.ok) return failure(edited.error);
   const config = parseConfigTexts(loaded.value.shared, edited.value, registry);

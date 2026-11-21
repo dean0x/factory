@@ -7,11 +7,12 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { guardIds, launchConfirm, marker, maxFileBytes, maxSetupTextBytes, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { guardIds, launchConfirm, marker, maxFileBytes, maxSetupTextBytes, nodeSendReasons, roleText, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { claudeFileText, noSetupTexts, workerFileText } from '../helpers/blocks.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import {
   FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, withStoreReadFault,
   type GuardedSetup,
@@ -1106,6 +1107,87 @@ describe.each(FOLDER_ORIGINS)('worker new: the link stop of the exclude file in 
     expect(await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes'], made.deps, sink)).toBe(4);
     expect(sink.errors.join('')).toContain(`cannot use ${EXCLUDE}: it is a link`);
     expect(made.events).not.toContain('tmux split-window');
+  });
+});
+
+describe.each(FOLDER_ORIGINS)('worker new: the guard task-files in %s', (_title, origin) => {
+  const TREE = '/w/tree';
+  const HIDDEN = `${TREE}/.drafts/task.md`;
+  const TASK = '# Task\n\nFix the build.\n';
+
+  /** A node whose local file holds task-files off as the setup says, with a file in a folder of the work tree that starts with a dot. */
+  const guardedMake = (setup: GuardedSetup, task = TASK): Made => {
+    const off = setup.off ?? [];
+    return make({
+      origin,
+      tree: TREE,
+      config: withGuardsOff(sampleConfig(), off),
+      seed: {
+        [HIDDEN]: task,
+        ...(setup.record === false ? {} : { [GUARD_STORE]: guardStoreText('demo', HOME, off, new Date('2026-11-01T00:00:00.000Z')) }),
+      },
+    });
+  };
+
+  it.each(guardStatesOf(guardIds.taskFiles))('copies an assignment below a folder that starts with a dot only while the guard counts as off: %s', async (_state, setup, on) => {
+    const made = guardedMake(setup);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', HIDDEN], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+    expect(made.deps.files.get(`${INBOX}/assignment.md`)).toBe(on ? undefined : TASK);
+    expect(sink.out.join('').includes(`The guard ${guardIds.taskFiles} is off`)).toBe(!on);
+  });
+
+  it.each([
+    ['on', [guardIds.taskFiles], 4],
+    ['off', [guardIds.taskFiles, guardIds.secrets], 0],
+  ] as const)('checks an assignment below a dot folder with secrets %s', async (_state, off, exit) => {
+    const task = `${TASK}\n${FAKE_GITHUB_TOKEN}\n`;
+    const made = guardedMake({ off: [...off] }, task);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', HIDDEN], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(exit);
+    expect([...sink.out, ...sink.errors].join('').includes(FAKE_GITHUB_TOKEN)).toBe(false);
+    if (exit === 4) {
+      expect(sink.errors.join('')).toContain(nodeSendReasons.token);
+      expectNothingChanged(made);
+    } else {
+      expect(made.deps.files.get(`${INBOX}/assignment.md`) === task).toBe(true);
+    }
+  });
+
+  it('refuses an assignment that becomes a link before the read', async () => {
+    const made = guardedMake({ off: [guardIds.taskFiles] });
+    let sourceIsLink = false;
+    const fs: FakeDeps['fs'] = {
+      ...made.deps.fs,
+      lstat: async (path) => {
+        if (path === `${TREE}/.drafts`) sourceIsLink = true;
+        return path === HIDDEN && sourceIsLink ? ok('link') : made.deps.fs.lstat(path);
+      },
+    };
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', HIDDEN], { ...made.deps, fs }, sink);
+    expect(code, sink.errors.join('')).toBe(4);
+    expectNothingChanged(made);
+  });
+
+  it.each(guardStatesOf(guardIds.taskFiles))('refuses the local config as an assignment with exit 4 with every value of the guard, so the owner prefix never reaches a worker: %s', async (_state, setup) => {
+    const made = guardedMake(setup);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', `${HOME}/factory.local.yaml`], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(4);
+    expect(sink.errors.join('')).toContain('factory.local.yaml holds the settings of one person on one machine');
+    expect(made.deps.files.has(`${INBOX}/assignment.md`)).toBe(false);
+  });
+
+  it('still refuses an assignment file outside the folder and the work tree with exit 4 while the guard is off', async () => {
+    const made = guardedMake({ off: [guardIds.taskFiles] });
+    made.deps.seed('/w/other/task.md', TASK);
+    const sink = captureSink();
+    const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', '/w/other/task.md'], made.deps, sink);
+    expect(code, sink.errors.join('')).toBe(4);
+    expect(made.deps.files.has(`${INBOX}/assignment.md`)).toBe(false);
   });
 });
 

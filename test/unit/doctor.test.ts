@@ -31,6 +31,7 @@ import {
   checkTempFolders,
   checkTools,
   checkTracker,
+  runDoctor as runDoctorOf,
   type CheckResult,
 } from '../../src/commands/doctor.js';
 import { renderConfig } from '../../src/config/render.js';
@@ -58,6 +59,7 @@ import { OWN_SETTINGS_TEXT, seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup
 import { checkChildren, inspectConfig, runDoctor, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
+import { UNWIRED_GUARD, unwiredRegistry } from '../helpers/unwired-guard.js';
 import { GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
@@ -230,11 +232,13 @@ describe('doctor: shared guard state', () => {
 
   it('warns for an unwired off value and absent deny rules', async () => {
     const deps = await initialized();
-    writeConfig(deps, withGuards({ 'work-conduct': 'off' }));
+    writeConfig(deps, withGuards({ [UNWIRED_GUARD]: 'off' }));
     deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(ownSettingsEntries));
-    const found = await guardCheck(deps);
+    const output = await runDoctorOf(deps, { home: HOME }, unwiredRegistry);
+    if (!output.ok) throw new Error(output.error.message);
+    const found = (output.value.json['checks'] as CheckResult[]).find((entry) => entry.id === checkIds.guards);
     expect(found?.level).toBe('warn');
-    expect(found?.text).toContain('work-conduct is not settable in this version; its value stays on');
+    expect(found?.text).toContain(`${UNWIRED_GUARD} is not settable in this version; its value stays on`);
     expect(found?.text).not.toContain('wired');
     expect(found?.text).toContain('Own file Edit rules are incomplete.');
   });
@@ -2343,6 +2347,19 @@ describe('doctor: the lessons file of the coordinator', () => {
   it('passes when there is no lessons file yet', async () => {
     const deps = await initialized();
     expect(await checkLessons(deps, HOME)).toMatchObject({ id: 'lessons', level: 'ok' });
+  });
+
+  it('still fails a file past its limits while the guard work-conduct is off, because the limits bound the standing instructions', async () => {
+    const deps = await initialized();
+    const config = sampleConfig();
+    writeConfig(deps, { ...config, core: { ...config.core, guards: { [guardIds.workConduct]: 'off' } } });
+    deps.seed(`/state/factory/${files.guardRecords}`, JSON.stringify({ schema: 1, records: [{ node: config.core.node.id, root: HOME, prefix: null,
+      values: { [guardIds.workConduct]: { value: 'off', at: '2030-01-02T03:04:05.678Z' } },
+    }] }));
+    deps.files.set(LESSONS, entries(lessonLimits.maxEntries + 1));
+    const checks = (await doctor(deps)).json['checks'] as CheckResult[];
+    expect(checks.find((entry) => entry.id === checkIds.guards)?.text).toContain('1 off');
+    expect(checks.find((entry) => entry.id === checkIds.lessons)).toMatchObject({ level: 'fail' });
   });
 
   it('passes for a file with 40 entries, and counts the lines that start with Rule: only', async () => {

@@ -1,7 +1,9 @@
 import { usageError, type CliResult } from '../cli/errors.js';
 import { displayLine } from '../cli/output.js';
 import { ok } from '../core/result.js';
-import { maxEchoChars } from '../names.js';
+import { allOn, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
+import { guardIds, maxEchoChars } from '../names.js';
 import type { RecipeBoard } from '../recipes/entry.js';
 
 /**
@@ -33,13 +35,14 @@ export const requireStage = (board: RecipeBoard, stage: string): CliResult<strin
 
 /**
  * A stage that a command may set: a listed stage that no flow reserves. A stage that only a flow sets is a usage error (exit 2) that
- * names the flow, as the recipe gives it. The check needs no lock, so a command runs it before it takes the lock.
+ * names the flow, as the recipe gives it. While the guard of board edits is off in `guards`, a command may set such a stage too; the
+ * stage must still be listed. The check needs no lock, so a command runs it before it takes the lock.
  */
-export const requireSettableStage = (board: RecipeBoard, stage: string): CliResult<string> => {
+export const requireSettableStage = (board: RecipeBoard, stage: string, guards: GuardValues = allOn): CliResult<string> => {
   const listed = requireStage(board, stage);
   if (!listed.ok) return listed;
   const flow = flowOf(board, stage);
-  return flow === undefined ? listed : usageError(`the stage ${stage} is set only by the ${flow}`);
+  return flow === undefined || !isGuardOn(guards, guardIds.boardEdits) ? listed : usageError(`the stage ${stage} is set only by the ${flow}`);
 };
 
 /**

@@ -13,6 +13,8 @@ import { locateHomeFolder } from '../core/home.js';
 import { isSameOrInside, realPathOf } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
+import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import {
   address as addressNames,
   commandLines,
@@ -21,6 +23,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   maxDisplayWidth,
   maxFileBytes,
   nodeCommands,
@@ -38,7 +41,7 @@ import {
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { walkTree, type TreeRow, type TreeWalk } from '../report/tree.js';
-import { textHasToken } from '../safety/secrets.js';
+import { checkFileTokens } from '../safety/secrets.js';
 import { layoutOf } from '../state/layout.js';
 import { readAssignment } from '../workers/assignment.js';
 import { workerHasId } from '../workers/registry.js';
@@ -461,20 +464,34 @@ const refuseDelivery = (result: Exclude<DeliverResult, { readonly kind: 'written
 
 /**
  * The text of the task file as the child gets it: CRLF becomes LF. A text that the screen would show in another form (a control
- * character other than the line break and the tab, a bidi or hidden character) is exit 2, and a text that looks like a token is
- * exit 4. No refusal repeats a part of the text.
+ * character other than the line break and the tab, a bidi or hidden character) is exit 2 while the task-files guard is on in
+ * `guards`. A text that looks like a token is exit 4 while the secrets guard is on. No refusal repeats a part of the text.
  */
-const checkedTask = (text: string, id: string): CliResult<string> => {
+const checkedTask = (text: string, id: string, guards: GuardValues): CliResult<string> => {
   const body = text.replace(/\r\n/g, '\n');
   const again = `Then run "${commandText(sendAgain(id))}" again.`;
-  if (removedByDisplay(body)) {
+  if (isGuardOn(guards, guardIds.taskFiles) && removedByDisplay(body)) {
     return usageError(nodeSendReasons.controlChars, `Remove the character from the task file. ${again}`);
   }
-  if (textHasToken(body)) return safetyRefusal(nodeSendReasons.token, `Remove the token from the task file. ${again}`);
-  return ok(body);
+  const tokens = checkFileTokens(body, guards, `Remove the token from the task file. ${again}`);
+  return tokens.ok ? ok(body) : tokens;
 };
 
-const sentOutput = (node: OpenNode, id: string, session: string, file: string): CommandOutput => {
+/** The line of each guard that is off in `guards`, with the checks of a send that it turned off. */
+const SEND_OFF_LINES: readonly (readonly [string, string])[] = [
+  [
+    guardIds.taskFiles,
+    `The guard ${guardIds.taskFiles} is off, so this send did not check the task file for hidden characters or a dot part. ` +
+      'It did not check that the state repo of the child ignores the inbox.',
+  ],
+  [guardIds.secrets, `The guard ${guardIds.secrets} is off, so this send did not check the task for text like a token.`],
+];
+
+/** The lines of a send that name the parts that a guard turned off, so that no line of the send reads as their result. */
+const guardOffLines = (guards: GuardValues): readonly OutLine[] =>
+  SEND_OFF_LINES.filter(([guard]) => !isGuardOn(guards, guard)).map(([, text]) => ({ level: 'text', text }));
+
+const sentOutput = (node: OpenNode, id: string, session: string, file: string, guards: GuardValues): CommandOutput => {
   const listCheck = `Check with ${sendTools.listAgents} that exactly one session has the name ${session}.`;
   const sendStep = `Then send one ${sendTools.sendMessage} to ${session} that names the file.`;
   return {
@@ -482,6 +499,7 @@ const sentOutput = (node: OpenNode, id: string, session: string, file: string): 
       { level: 'ok', text: `Wrote the task for ${id} as a new file in its inbox.` },
       { level: 'text', text: `File: ${file}` },
       { level: 'text', text: `Session: ${session}` },
+      ...guardOffLines(guards),
       { level: 'text', text: listCheck },
       { level: 'text', text: sendStep },
     ],
@@ -516,10 +534,11 @@ const runSend = async (
   }
   const session = sessionNames.coordinator(id);
   if (!session.ok) return failure(session.error);
+  const guards = await guardValuesFor(deps, home);
 
   const text = await readAssignment(deps, { home, path: options.file, again: sendAgain(id) });
   if (!text.ok) return text;
-  const body = checkedTask(text.value, id);
+  const body = checkedTask(text.value, id, guards);
   if (!body.ok) return body;
 
   const delivered = await fileTransport(deps, registry).deliver(child.address, {
@@ -528,8 +547,9 @@ const runSend = async (
     targetId: id,
     targetLayer: config.core.node.layer - 1,
     body: body.value,
+    guards,
   });
-  return delivered.kind === 'written' ? ok(sentOutput(node.value, id, session.value, delivered.path)) : refuseDelivery(delivered, id);
+  return delivered.kind === 'written' ? ok(sentOutput(node.value, id, session.value, delivered.path, guards)) : refuseDelivery(delivered, id);
 };
 
 export const runNode = async (

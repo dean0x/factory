@@ -954,6 +954,17 @@ describe('the board block', () => {
     expect(checkBoard((board) => (board.fields[1].name = 'epics'))).toBeNull();
   });
 
+  it('refuses a reserved name as the name of a field also when the local file holds the board edits guard off', () => {
+    for (const name of reservedFieldNames) {
+      const message = check((raw) => {
+        raw['board'] = sampleBoard();
+        raw['board'].fields[1].name = name;
+        raw['guards'] = { [guardIds.boardEdits]: 'off' };
+      });
+      expect(message, name).toContain('board.fields.1.name:');
+    }
+  });
+
   it('refuses the keys of a merge record, of an unassign mark and of the stage time as the name of a field, and says to rename the field', () => {
     for (const name of [
       boardKeys.mergedPrHead,

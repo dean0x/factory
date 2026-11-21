@@ -1,21 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import { treeOutput, type NodeOptions } from '../../src/commands/node.js';
 import type { NodeReport, ReportChild } from '../../src/comms/report-schema.js';
 import { fileTransport, parseConfigTexts, runNode } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
-import { childReasons, env, nodeInbox, nodeSendReasons, reportLimits, schemaIds, treeLimits } from '../../src/names.js';
+import { guardSourceFor } from '../../src/core/guard-source.js';
+import { isGuardOn } from '../../src/guards/effective.js';
+import { childReasons, commands, env, guardIds, nodeInbox, nodeSendReasons, reportLimits, schemaIds, treeLimits } from '../../src/names.js';
+import { recipes } from '../../src/recipes/index.js';
 import { reportTextOf } from '../../src/report/build.js';
 import type { TreeRow, TreeWalk } from '../../src/report/tree.js';
 import { STATE_GITIGNORE } from '../../src/state/files.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
+import { FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff, type GuardedSetup } from '../helpers/guarded-node.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 const HOME = '/w/mgr';
@@ -919,6 +925,134 @@ describe('node send', () => {
   };
 
   const inboxFiles = (deps: FakeDeps): string[] => [...deps.files.keys()].filter((path) => path.startsWith(`${INBOX}/`));
+
+  /**
+   * A node that is ready for a send, whose local file holds each guard of `guards` off, with the owner record unless the setup has
+   * none. The factory list names the folder with `origin`.
+   */
+  const guardedSendable = (guards: GuardedSetup, origin: string, setup: Setup = {}): FakeDeps => {
+    const off = guards.off ?? [];
+    const deps = sendable(setup);
+    seedConfig(deps, HOME, withGuardsOff(configOf('mgr', 2, [{ id: 'web', address: `file://${CHILD}` }]), off));
+    registerRoot(deps, HOME, 'mgr', [], origin);
+    if (guards.record !== false) deps.seed(GUARD_STORE, guardStoreText('mgr', HOME, off, deps.now()));
+    return deps;
+  };
+
+  /** One run of `node send ID --file FILE` as a person types it. */
+  const sendLine = async (
+    deps: Deps,
+    file: string = TASK,
+    id = 'web',
+  ): Promise<{ readonly code: number; readonly out: string; readonly err: string }> => {
+    const sink = captureSink();
+    const code = await runCli(['node', 'send', id, '--file', file, '--home', HOME], deps, sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  describe.each(FOLDER_ORIGINS)('the guard owner-go in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.ownerGo))('keeps the full message header for a child with owner-go on: sender %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin);
+      registerRoot(deps, CHILD, 'web');
+      const sender = await guardSourceFor(deps, HOME, recipes, commands.node).read();
+      const child = await guardSourceFor(deps, CHILD, recipes, commands.start).read();
+      expect(isGuardOn(sender.values, guardIds.ownerGo)).toBe(on);
+      expect(isGuardOn(child.values, guardIds.ownerGo)).toBe(true);
+
+      const result = await sendLine(deps);
+      expect(result.code, result.err).toBe(0);
+      expect(deps.files.get(SENT)).toBe(`${HEADER.join('\n')}\n\nBuild the page.\n`);
+      expect(result.out).not.toContain(`The guard ${guardIds.ownerGo} is off`);
+    });
+  });
+
+  describe.each(FOLDER_ORIGINS)('the guard task-files in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.taskFiles))('sends a task with a control character only while the guard counts as off: %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin, { task: 'a\u0001b\n' });
+      const result = await sendLine(deps);
+      expect(result.code, result.err).toBe(on ? 2 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+      expect(result.out.includes(`The guard ${guardIds.taskFiles} is off`)).toBe(!on);
+    });
+
+    it.each(guardStatesOf(guardIds.taskFiles))('writes into the inbox of a child whose state repo does not ignore it only while the guard counts as off: %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin, { stateGitignore: GITIGNORE_WITHOUT_INBOX });
+      const result = await sendLine(deps);
+      expect(result.code, result.err).toBe(on ? 3 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+    });
+
+    it.each(guardStatesOf(guardIds.taskFiles))('sends a task file below a folder that starts with a dot only while the guard counts as off: %s', async (_state, setup, on) => {
+      const file = `${HOME}/.drafts/task.md`;
+      const deps = guardedSendable(setup, origin);
+      deps.seed(file, 'Build the page.\n');
+      const result = await sendLine(deps, file);
+      expect(result.code, result.err).toBe(on ? 4 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+    });
+
+    it.each(guardStatesOf(guardIds.taskFiles))('refuses the local config as a task file with exit 4 with every value of the guard, so the owner prefix never reaches a child: %s', async (_state, setup) => {
+      const deps = guardedSendable(setup, origin);
+      const result = await sendLine(deps, LOCAL_PATH);
+      expect(result.code, result.err).toBe(4);
+      expect(result.err).toContain('factory.local.yaml holds the settings of one person on one machine');
+      expect(inboxFiles(deps)).toEqual([]);
+    });
+
+    describe('with the guard off and its owner record', () => {
+      const OFF: GuardedSetup = { off: [guardIds.taskFiles] };
+
+      it('still refuses a link as the inbox with exit 4, because a task file goes only into the inbox of the child', async () => {
+        const deps = guardedSendable(OFF, origin, { links: { [INBOX]: '/elsewhere' } });
+        deps.seedDir(INBOX);
+        const result = await sendLine(deps);
+        expect(result.code, result.err).toBe(4);
+        expect(result.err).toContain(nodeSendReasons.unsafe);
+      });
+
+      it('still refuses a full inbox with exit 3, because the inbox stays within its count', async () => {
+        const deps = guardedSendable(OFF, origin);
+        for (let index = 0; index < nodeInbox.maxFiles; index += 1) deps.seed(`${INBOX}/old-${index}.md`, 'x');
+        const result = await sendLine(deps);
+        expect(result.code, result.err).toBe(3);
+        expect(inboxFiles(deps)).toHaveLength(nodeInbox.maxFiles);
+      });
+
+      it('still refuses a child with no state folder with exit 3, and makes no folder', async () => {
+        const deps = guardedSendable(OFF, origin, { stateGitignore: null });
+        const result = await sendLine(deps);
+        expect(result.code, result.err).toBe(3);
+        expect(deps.dirs.has(`${CHILD}/.factory`)).toBe(false);
+      });
+
+      it('still refuses an id that is not a child with exit 2, because a task file goes only to a child', async () => {
+        const deps = guardedSendable(OFF, origin);
+        const result = await sendLine(deps, TASK, 'nobody');
+        expect(result.code, result.err).toBe(2);
+        expect(result.err).toContain(nodeSendReasons.notChild);
+      });
+
+      it('still refuses a task file that is a link with exit 4', async () => {
+        const link = `${HOME}/.factory/orders/link.md`;
+        const deps = guardedSendable(OFF, origin, { links: { [link]: TASK } });
+        const result = await sendLine(deps, link);
+        expect(result.code, result.err).toBe(4);
+        expect(result.err).toContain('it is a link');
+        expect(deps.dirs.has(INBOX)).toBe(false);
+      });
+    });
+  });
+
+  describe.each(FOLDER_ORIGINS)('the guard secrets in %s', (_folder, origin) => {
+    it.each(guardStatesOf(guardIds.secrets))('sends a task with text like a token only while the guard counts as off, and prints no value: %s', async (_state, setup, on) => {
+      const deps = guardedSendable(setup, origin, { task: `Push with ${FAKE_GITHUB_TOKEN} now.\n` });
+      const result = await sendLine(deps);
+      expect(result.code, result.err).toBe(on ? 4 : 0);
+      expect(inboxFiles(deps)).toEqual(on ? [] : [SENT]);
+      expect(`${result.out}${result.err}`).not.toContain(FAKE_GITHUB_TOKEN);
+      expect(result.out.includes(`The guard ${guardIds.secrets} is off`)).toBe(!on);
+    });
+  });
 
   it('writes the task as a new file with mode 600, the fixed header and a name that the program made', async () => {
     const deps = sendable();

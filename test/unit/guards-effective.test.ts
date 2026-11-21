@@ -183,8 +183,8 @@ describe('the proof of an off value with a check of the config parse', () => {
     const board = sampleBoard();
     return sampleConfigWithBoard({ ...board, fields: [...(board.fields ?? []), { name, target: 'item', kind: 'token', required: false }] });
   };
-  const readOf = async (name: string) => {
-    const deps = guardedNode({}, { config: withField(name) });
+  const readOf = async (name: string, off: readonly string[] = [OFF_GUARD]) => {
+    const deps = guardedNode({}, { config: withField(name), off });
     return { loaded: await loadConfig(deps, GUARDED_HOME, recipes), read: await guardSourceFor(deps, GUARDED_HOME, recipes, commands.status).read() };
   };
 
@@ -199,6 +199,16 @@ describe('the proof of an off value with a check of the config parse', () => {
     expect(loaded.ok).toBe(false);
     expect(guards.filter((guard) => !isGuardOn(read.values, guard.id)).map((guard) => guard.id)).toEqual([]);
     expect(read.state).toMatchObject({ proof: guardRecordWords.unproved });
+  });
+
+  it('gives the board edits guard off with a matching record only when the config loads: its field name check runs before the values', async () => {
+    const free = await readOf('effort', [guardIds.boardEdits]);
+    expect(free.loaded.ok).toBe(true);
+    expect(isGuardOn(free.read.values, guardIds.boardEdits)).toBe(false);
+    const reserved = await readOf(reservedFieldNames[0] ?? '', [guardIds.boardEdits]);
+    expect(reserved.loaded.ok).toBe(false);
+    expect(guards.filter((guard) => !isGuardOn(reserved.read.values, guard.id)).map((guard) => guard.id)).toEqual([]);
+    expect(reserved.read.state).toMatchObject({ proof: guardRecordWords.unproved });
   });
 });
 

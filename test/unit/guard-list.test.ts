@@ -15,6 +15,7 @@ import { countReadsOf } from '../helpers/read-count.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
+import { UNWIRED_GUARD, unwiredRegistry } from '../helpers/unwired-guard.js';
 
 const HOME = '/w/node';
 const STORE = `/state/factory/${files.guardRecords}`;
@@ -170,20 +171,28 @@ describe('guard list', () => {
     ] });
   });
 
-  it('shows merge quality as on and not settable even with a local off value', async () => {
+  it('shows a guard that this version cannot set as on and not settable even with a local off value', async () => {
     const config = sampleConfig();
-    const deps = make({ ...config, core: { ...config.core, guards: { 'merge-quality': 'off' } } });
-    const json = await run(deps, ['--json']);
+    const deps = make({ ...config, core: { ...config.core, guards: { [UNWIRED_GUARD]: 'off' } } });
+    const json = await run(deps, ['--json'], unwiredRegistry);
     expect(json.code).toBe(0);
     const doc: unknown = JSON.parse(json.out);
     expect(doc).toMatchObject({ guards: expect.arrayContaining([
-      expect.objectContaining({ id: 'merge-quality', wired: false, settable: false, value: 'on' }),
+      expect.objectContaining({ id: UNWIRED_GUARD, wired: false, settable: false, value: 'on' }),
     ]) });
-    const text = await run(deps, ['--all']);
+    const text = await run(deps, ['--all'], unwiredRegistry);
     expect(text.code).toBe(0);
     const lines = linesOf(text.out);
-    const row = lines.find((line) => line.startsWith('merge-quality')) ?? '';
-    expect(rowCells(lines[0] ?? '', row)).toEqual(['merge-quality', 'on', 'on', 'H', 'not settable in this version']);
+    const row = lines.find((line) => line.startsWith(UNWIRED_GUARD)) ?? '';
+    expect(rowCells(lines[0] ?? '', row)).toEqual([UNWIRED_GUARD, 'on', 'on', 'H', 'not settable in this version']);
+  });
+
+  it.each(['board-edits', 'merge-quality', 'dismiss', 'session-checks', 'owner-go', 'task-files', 'pr-rules', 'work-conduct'])('shows %s as settable', async (id) => {
+    const json = await run(make(sampleConfig()), ['--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.out)).toMatchObject({ guards: expect.arrayContaining([
+      expect.objectContaining({ id, wired: true, settable: true, value: 'on' }),
+    ]) });
   });
 
   it('shows the effective value, source and time from one guard store read', async () => {
@@ -200,12 +209,12 @@ describe('guard list', () => {
     expect(counted.count()).toBe(1);
   });
 
-  it.each([{}, { 'merge-quality': 'off' as const }])('reads no guard store without a wired local off value: %j', async (guards) => {
+  it.each([{}, { [UNWIRED_GUARD]: 'off' as const }])('reads no guard store without a wired local off value: %j', async (guards) => {
     const config = sampleConfig();
     const deps = make({ ...config, core: { ...config.core, guards } });
     seedRecord(deps, { [guardIds.installRules]: 'off' });
     const counted = countReadsOf(deps, STORE);
-    expect((await run(counted.deps)).code).toBe(0);
+    expect((await run(counted.deps, [], unwiredRegistry)).code).toBe(0);
     expect(counted.count()).toBe(0);
   });
 

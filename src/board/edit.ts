@@ -1,9 +1,11 @@
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import { displayLine, removedByDisplay } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
-import { dotRuleReason, type NameCompare } from '../core/place-rule.js';
+import { dotRuleReason, localConfigReason, type NameCompare, type PlaceRule } from '../core/place-rule.js';
 import { projectFolderKey } from '../core/project-path.js';
 import { ok, type Err } from '../core/result.js';
+import { allOn, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import {
   approvalLinkLabels,
   boardIds,
@@ -17,6 +19,7 @@ import {
   files,
   flags,
   flagText,
+  guardIds,
   markLimits,
   maxBoardNumber,
   maxEchoChars,
@@ -200,17 +203,17 @@ export const checkPatch = (setup: BoardSetup, patch: ItemPatch): CliResult<ItemC
 };
 
 /**
- * A move to a state of the setup, or to a stage that a command may set (a stage that only a flow sets is a usage error). The key is
- * the key of the item that the move sets: its status, or its stage.
+ * A move to a state of the setup, or to a stage that a command may set (a stage that only a flow sets is a usage error while the guard
+ * of board edits is on in `guards`). The key is the key of the item that the move sets: its status, or its stage.
  */
 export interface CheckedMove {
   readonly key: typeof boardKeys.status | typeof boardKeys.stage;
   readonly value: string;
 }
 
-export const checkMove = (setup: BoardSetup, move: ItemMove): CliResult<CheckedMove> => {
+export const checkMove = (setup: BoardSetup, move: ItemMove, guards: GuardValues = allOn): CliResult<CheckedMove> => {
   if ('stage' in move) {
-    const stage = requireSettableStage(setup.recipe, move.stage);
+    const stage = requireSettableStage(setup.recipe, move.stage, guards);
     return stage.ok ? ok({ key: boardKeys.stage, value: stage.value }) : stage;
   }
   const states = setup.config?.states ?? [];
@@ -367,6 +370,9 @@ export interface DocPathIssue {
 /** The doc place rule compares a name with a fixed name in any letter case, on every platform. */
 const sameDocName: NameCompare = (a, b) => projectFolderKey(a) === projectFolderKey(b);
 
+/** The place rule of a doc path: the names start at the top of the factory folder, with no exception for the orders folder. */
+const docPlaceRule: PlaceRule = { atFactoryTop: true, ordersException: false, sameName: sameDocName };
+
 const plainPathFault = (path: string): string | null => {
   if (path === '') return 'is empty';
   if (visibleLineIssue(path) !== null) return 'holds a line break, a control character, a hidden character or a mark of text direction';
@@ -379,17 +385,21 @@ const plainPathFault = (path: string): string | null => {
  * The one name check of the doc rule, or null for a path that passes. It reads the path text and no file. The write (`checkDocPath`)
  * and every view of a stored path call it, so they agree on each path. The checks run in this order: a plain path with no hidden
  * character, then the place rule. The place rule refuses the local config at the top of the factory folder, in any letter case, and
- * a part that starts with a dot. It has no exception for the orders folder.
+ * a part that starts with a dot. It has no exception for the orders folder. The dot part of the place rule follows the guard of board
+ * edits in `guards`. The plain path check runs with every value, because it keeps a doc inside the factory folder and bounds the text
+ * of a path. The refusal of the local config runs with every value too, because that file holds the owner prefix and a doc link can
+ * show it to a worker.
  */
-export const docPathIssue = (path: string): DocPathIssue | null => {
+export const docPathIssue = (path: string, guards: GuardValues = allOn): DocPathIssue | null => {
   const fault = plainPathFault(path);
   if (fault !== null) return { kind: 'form', reason: fault };
-  const place = dotRuleReason(path.split('/'), { atFactoryTop: true, ordersException: false, sameName: sameDocName });
+  const names = path.split('/');
+  const place = localConfigReason(names, docPlaceRule) ?? (isGuardOn(guards, guardIds.boardEdits) ? dotRuleReason(names, docPlaceRule) : null);
   return place === null ? null : { kind: 'place', reason: `is refused: ${displayLine(place, maxEchoChars)}` };
 };
 
-export const checkDocPath = (path: string, again: CommandText): CliResult<string> => {
-  const issue = docPathIssue(path);
+export const checkDocPath = (path: string, again: CommandText, guards: GuardValues = allOn): CliResult<string> => {
+  const issue = docPathIssue(path, guards);
   if (issue === null) return ok(path);
   const message = `the path ${shown(path)} ${issue.reason}`;
   return issue.kind === 'form'
@@ -522,32 +532,39 @@ export const addItemIn = (doc: BoardDoc, item: NewItem, at: string): CliResult<E
  * removes a worker. An empty value for an item with no worker key is refused as `checkPatch` held it back. An item with no worker key
  * takes a worker, and a patch with the stored value changes nothing. The guard reads the item that was
  * read under the lock, so a worker that arrived after the first look still stops the patch. A stored value of any kind counts, so
- * the guard does not lower for a value that is not text.
+ * the guard does not lower for a value that is not text. With the guard off, a replacement keeps the mark of the former worker.
+ * An empty value is still refused, because no write holds an empty value.
  */
 export const changeItemIn = (
   doc: BoardDoc,
   id: string,
   changes: ItemChanges,
   workerField: string | undefined,
+  guards: GuardValues = allOn,
 ): CliResult<Edit<string>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
-  if (workerField !== undefined && Object.hasOwn(found.value.record, workerField)) {
-    const changed = Object.hasOwn(changes.fields, workerField) && changes.fields[workerField] !== found.value.record[workerField];
-    if (changed || changes.emptyWorker !== undefined) return usageError(workerFieldGuard.message(id), workerFieldGuard.remedy(id));
+  const { record } = found.value;
+  const hasWorker = workerField !== undefined && Object.hasOwn(record, workerField);
+  const worker = hasWorker ? record[workerField] : undefined;
+  const replacesWorker = hasWorker && Object.hasOwn(changes.fields, workerField) && changes.fields[workerField] !== worker;
+  if (hasWorker && (replacesWorker || changes.emptyWorker !== undefined) && isGuardOn(guards, guardIds.boardEdits)) {
+    return usageError(workerFieldGuard.message(id), workerFieldGuard.remedy(id));
   }
   if (changes.emptyWorker !== undefined) return changes.emptyWorker;
   if (changes.track !== undefined) {
     const track = requireTrack(doc, changes.track);
     if (!track.ok) return track;
   }
+  const marked = replacesWorker && typeof worker === 'string' ? markFormerWorker(record, id, worker, commandLines.itemUpdate) : ok(record);
+  if (!marked.ok) return marked;
   const entries: [string, unknown][] = [];
   if (changes.title !== undefined) entries.push([boardKeys.title, changes.title]);
   if (changes.track !== undefined) entries.push([boardKeys.track, changes.track]);
   if (changes.text !== undefined) entries.push([boardKeys.text, changes.text]);
   if (changes.epic !== undefined) entries.push([boardKeys.epic, changes.epic]);
   entries.push(...Object.entries(changes.fields));
-  const next = withKeys(found.value.record, entries);
+  const next = withKeys(marked.value, entries);
   return ok({ top: next.changed ? withItem(doc, id, next.record) : null, value: id });
 };
 
@@ -699,6 +716,20 @@ export const formerWorkersOf = (record: Stored, id: string, command: string, res
   );
 };
 
+/** Add the worker to the list once, if the list holds text and has room. */
+const markFormerWorker = (record: Stored, id: string, worker: string, command: string): CliResult<Stored> => {
+  const former = formerWorkersOf(record, id, command, ` ${id}`);
+  if (!former.ok) return former;
+  if (former.value.includes(worker)) return ok(record);
+  if (former.value.length >= markLimits.maxFormerWorkers) {
+    return usageError(
+      `the item ${id} names ${markLimits.maxFormerWorkers} former ${roles.worker}s already, so it takes no more`,
+      `Take a former ${roles.worker} out of the "${boardKeys.unassignedFrom}" of the item in ${files.board}, then run "${commandText(command)} ${id}" again.`,
+    );
+  }
+  return ok({ ...record, [boardKeys.unassignedFrom]: [...former.value, worker] });
+};
+
 /**
  * Take the worker off an item: delete the worker key and add the worker to the list of former workers of the item, once. The state,
  * the stage and every other key stay. A worker field that does not hold text is a usage error (exit 2), and so is a list of former
@@ -715,18 +746,10 @@ export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliR
   if (typeof worker !== 'string') {
     return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}, then run "${again}" again.`);
   }
-  const former = formerWorkersOf(record, id, commandLines.itemUnassign, ` ${id}`);
-  if (!former.ok) return former;
-  const named = former.value.includes(worker);
-  if (!named && former.value.length >= markLimits.maxFormerWorkers) {
-    return usageError(
-      `the item ${id} names ${markLimits.maxFormerWorkers} former ${roles.worker}s already, so it takes no more`,
-      `Take a former ${roles.worker} out of the "${boardKeys.unassignedFrom}" of the item in ${files.board}, then run "${again}" again.`,
-    );
-  }
-  const without = Object.fromEntries(Object.entries(record).filter(([key]) => key !== workerField));
-  const marked = named ? without : withKeys(without, [[boardKeys.unassignedFrom, [...former.value, worker]]]).record;
-  return ok({ top: withItem(doc, id, marked), value: worker });
+  const marked = markFormerWorker(record, id, worker, commandLines.itemUnassign);
+  if (!marked.ok) return marked;
+  const without = Object.fromEntries(Object.entries(marked.value).filter(([key]) => key !== workerField));
+  return ok({ top: withItem(doc, id, without), value: worker });
 };
 
 /**

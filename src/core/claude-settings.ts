@@ -2,7 +2,8 @@ import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { printable } from '../cli/output.js';
-import { guardOn } from '../guards/effective.js';
+import { allOn, guardOn, guardValuesFor, isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
 import { isRecord } from '../migrate/inspect.js';
 import {
   capitalize,
@@ -543,24 +544,32 @@ export const declinedHookText = (declined: DeclinedOutcome, command: CommandText
 };
 
 /**
- * The yes flag is a consent outside a factory session. Inside one it counts only for a work copy with no settings file. The
- * test reads only the session marker, which the session controls: a process in the session can remove the variable before it
- * runs the command. So the refusal stops an accidental consent only. It is not a security boundary.
+ * The guard values of the consent rule. `init` keeps the session rule of the yes flag with every value: the factory list has no
+ * entry for a new folder before `init` ends, so the values of that folder are not known yet.
  */
-const yesCounts =(deps: Deps, request: HookConsentRequest, fileExists: boolean): boolean =>
-  request.yes && (!inFactorySession(deps) || (request.session === hookSessions.workCopy && !fileExists));
+const consentGuards = async (deps: Deps, request: HookConsentRequest): Promise<GuardValues> =>
+  request.command === commands.init ? allOn : guardValuesFor(deps, request.home);
+
+/**
+ * The yes flag is a consent outside a factory session. Inside one it counts only for a work copy with no settings file, or while
+ * the session-checks guard is off. The test reads only the session marker, which the session controls: a process in the session
+ * can remove the variable before it runs the command. So the refusal stops an accidental consent only. It is not a security boundary.
+ */
+const yesCounts = (deps: Deps, request: HookConsentRequest, fileExists: boolean, guards: GuardValues): boolean =>
+  request.yes &&
+  (!inFactorySession(deps) || !isGuardOn(guards, guardIds.sessionChecks) || (request.session === hookSessions.workCopy && !fileExists));
 
 /** The yes flag inside a factory session, where it gives no consent: the command stops with a usage error, with or without a terminal. */
-const yesRefused = (deps: Deps, request: HookConsentRequest, fileExists: boolean): boolean =>
-  request.yes && !yesCounts(deps, request, fileExists);
+const yesRefused = (deps: Deps, request: HookConsentRequest, fileExists: boolean, guards: GuardValues): boolean =>
+  request.yes && !yesCounts(deps, request, fileExists, guards);
 
 /**
  * The remedy of a stop without consent. It never offers a flag that the next run refuses: the yes flag is offered only when
- * it would count for this session, this kind of session folder and this state of the file.
+ * it would count for this session, this kind of session folder, this state of the file and these guard values.
  */
-export const noConsentRemedy = (deps: Deps, request: HookConsentRequest, fileExists: boolean): string => {
+export const noConsentRemedy = (deps: Deps, request: HookConsentRequest, fileExists: boolean, guards: GuardValues): string => {
   const run = `Run "${commandText(request.command)}"`;
-  if (yesCounts(deps, { ...request, yes: true }, fileExists)) return `${run} in a terminal window, or add ${flagText(flags.yes)}.`;
+  if (yesCounts(deps, { ...request, yes: true }, fileExists, guards)) return `${run} in a terminal window, or add ${flagText(flags.yes)}.`;
   const elsewhere = `${run} outside the ${places.session}, or in a terminal window`;
   return request.yes
     ? `${flagText(flags.yes)} gives no consent inside a ${places.session}. ${elsewhere} without ${flagText(flags.yes)} and answer the question.`
@@ -568,21 +577,28 @@ export const noConsentRemedy = (deps: Deps, request: HookConsentRequest, fileExi
 };
 
 /** The same consent rule serves the check before other writes and the settings writer. */
-const consentRoute = (deps: Deps, request: HookConsentRequest, fileExists: boolean): 'flag' | 'ask-terminal' | 'refused-yes' | 'no-terminal' => {
-  if (yesRefused(deps, request, fileExists)) return 'refused-yes';
-  if (yesCounts(deps, request, fileExists)) return 'flag';
+const consentRoute = (
+  deps: Deps,
+  request: HookConsentRequest,
+  fileExists: boolean,
+  guards: GuardValues,
+): 'flag' | 'ask-terminal' | 'refused-yes' | 'no-terminal' => {
+  if (yesRefused(deps, request, fileExists, guards)) return 'refused-yes';
+  if (yesCounts(deps, request, fileExists, guards)) return 'flag';
   return deps.stdinIsTTY && deps.stdoutIsTTY ? 'ask-terminal' : 'no-terminal';
 };
 
 /** The change is shown before consent. No terminal is distinct from a refused flag or a no to the question. With the guard of the
- * settings write off, the change needs no consent: it is shown as with the yes flag. A yes flag in a session still stops. */
+ * settings write off, the change needs no consent: it is shown as with the yes flag. A yes flag in a session still stops, unless
+ * the values of the consent rule hold the session-checks guard off. */
 const askConsent = async (
   deps: Deps,
   request: HookConsentRequest,
   shown: string,
   fileExists: boolean,
+  guards: GuardValues,
 ): Promise<CliResult<'accepted' | 'declined' | 'no-terminal'>> => {
-  const route = consentRoute(deps, request, fileExists);
+  const route = consentRoute(deps, request, fileExists, guards);
   if (route !== 'refused-yes' && !(await guardOn(deps, guardIds.settingsWrite, request.home))) {
     deps.warn(shown);
     return ok('accepted');
@@ -592,7 +608,7 @@ const askConsent = async (
       deps.warn(shown);
       return ok('accepted');
     case 'refused-yes':
-      return usageError(shown, noConsentRemedy(deps, request, fileExists));
+      return usageError(shown, noConsentRemedy(deps, request, fileExists, guards));
     case 'no-terminal':
       return ok('no-terminal');
     case 'ask-terminal': {
@@ -723,11 +739,12 @@ export const ensureHookSettings = async (
   const shown = shownChange(target.file, change.lines);
   const { onlyIdleCompaction } = change;
   if (request.dryRun) return ok({ kind: 'would-write', file: target.file, change: shown, onlyIdleCompaction });
-  const consent = await askConsent(deps, request, shown, text !== null);
+  const guards = await consentGuards(deps, request);
+  const consent = await askConsent(deps, request, shown, text !== null, guards);
   if (!consent.ok) return consent;
   if (consent.value === 'no-terminal') {
     if (onlyIdleCompaction && noTerminalIdleChange === 'return-outcome') return ok({ kind: 'no-consent', file: target.file, onlyIdleCompaction });
-    return usageError(shown, noConsentRemedy(deps, request, text !== null));
+    return usageError(shown, noConsentRemedy(deps, request, text !== null, guards));
   }
   if (consent.value === 'declined') return ok({ kind: 'declined', file: target.file, onlyIdleCompaction });
   const current = await planAfterConsent(deps, request, planned.value);
@@ -770,8 +787,9 @@ export const requireHookConsent = async (
   if (!planned.ok) return planned;
   const { change, text } = planned.value;
   if (change.lines.length === 0) return ok(undefined);
-  const route = consentRoute(deps, request, text !== null);
+  const guards = await consentGuards(deps, request);
+  const route = consentRoute(deps, request, text !== null, guards);
   if (route === 'flag' || route === 'ask-terminal') return ok(undefined);
   if (route === 'no-terminal' && !(await guardOn(deps, guardIds.settingsWrite, request.home))) return ok(undefined);
-  return usageError(shownChange(target.file, change.lines), noConsentRemedy(deps, request, text !== null));
+  return usageError(shownChange(target.file, change.lines), noConsentRemedy(deps, request, text !== null, guards));
 };

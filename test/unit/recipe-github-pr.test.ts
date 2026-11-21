@@ -11,6 +11,7 @@ import {
   runPrView,
   type MergedRead,
 } from '../../src/recipes/software/github-pr.js';
+import { softwareGuardIds } from '../../src/recipes/software/guard-parts.js';
 import { commands, flags, flagText, ghTimeoutMs } from '../../src/names.js';
 import { createFakeDeps, exited, missingProgram, type RunHandler } from '../helpers/fake-deps.js';
 
@@ -310,6 +311,32 @@ describe('readMergedPr: every PR that does not match is a failure (exit 1)', () 
 
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(textOf(error)).not.toContain(HOSTILE);
+  });
+});
+
+describe('readMergedPr: the guard of the push and PR rules', () => {
+  const off = { ...inputOf, guards: { [softwareGuardIds.prRules]: 'off' as const } };
+
+  it('accepts an open PR with no merge time and no merge commit while the guard is off', async () => {
+    const pr = { ...goodPr(), state: 'OPEN', mergedAt: null, mergeCommit: null };
+    const done = await readWith(answering(pr), off).result;
+    expect(done.ok).toBe(true);
+    if (done.ok) expect(done.value.pr).toMatchObject({ number: 12, mergeCommit: null, prHead: HEAD_SHA });
+  });
+
+  it('accepts a PR that merged into another base while the guard is off', async () => {
+    expect((await readWith(answering({ ...goodPr(), baseRefName: 'release' }), off).result).ok).toBe(true);
+  });
+
+  it.each([
+    ['a PR with another number', { ...goodPr(), number: 13 }],
+    ['a PR from another repo', { ...goodPr(), isCrossRepository: true }],
+    ['a url of another repo', { ...goodPr(), url: 'https://github.com/other/web/pull/12' }],
+    ['a PR from another head branch', { ...goodPr(), headRefName: 'other-branch' }],
+    ['a merge commit that is not a full sha', { ...goodPr(), mergeCommit: { oid: 'abc123' } }],
+    ['a head that is not a full sha', { ...goodPr(), headRefOid: 'abc123' }],
+  ])('still refuses %s with exit 1 while the guard is off', async (_name, pr) => {
+    expect(exitCodeOf[(await errorOf(readWith(answering(pr), off).result)).kind]).toBe(1);
   });
 });
 

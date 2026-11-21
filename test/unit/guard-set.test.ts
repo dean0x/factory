@@ -7,11 +7,12 @@ import { readGuardState, readGuardStore, recordGuards, recordPrefix } from '../.
 import { ok } from '../../src/core/result.js';
 import { guardsFor } from '../../src/guards/registry.js';
 import { env, files, guardIds, guardRecords, guardRecordWords, guardSetWords } from '../../src/names.js';
-import { recipes } from '../../src/recipes/index.js';
+import { recipes, type RecipeRegistry } from '../../src/recipes/index.js';
 import { softwareGuardIds } from '../../src/recipes/software/guard-parts.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeOptions } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
+import { UNWIRED_GUARD, unwiredRegistry } from '../helpers/unwired-guard.js';
 import { parseConfigTexts } from '../../src/config/load.js';
 
 const HOME = '/work/node';
@@ -27,9 +28,9 @@ const fixture = (options: FakeOptions = {}, config = sampleConfig()) => {
   registerRoot(deps, HOME, 'demo');
   return deps;
 };
-const run = async (deps: Deps, words: readonly string[]) => {
+const run = async (deps: Deps, words: readonly string[], registry: RecipeRegistry = recipes) => {
   const sink = captureSink();
-  const code = await runCli(['guard', ...words], deps, sink);
+  const code = await runCli(['guard', ...words], deps, sink, registry);
   return { code, out: sink.out.join(''), err: sink.errors.join('') };
 };
 const state = async (deps: ReturnType<typeof fixture>) => {
@@ -43,8 +44,6 @@ describe('guard set arguments', () => {
     [['set', 'unknown-guard', 'off'], 'Unknown guard "unknown-guard"'],
     [['set', guardIds.cloneRules, 'off'], `Unknown guard "${guardIds.cloneRules}"`],
     [['set', guardIds.hookRuntime, 'on'], `Unknown guard "${guardIds.hookRuntime}"`],
-    [['set', softwareGuardIds.mergeQuality, 'off'], 'not settable in this version'],
-    [['set', guardIds.sessionChecks, 'off'], 'not settable in this version'],
     [['set', A, 'off', '--all'], '--all'],
     [['set', A, 'bad'], 'on or off'],
     [['set', A, 'off', '--json'], '--json'],
@@ -58,9 +57,27 @@ describe('guard set arguments', () => {
     const result = await run(deps, words);
     expect(result.code).toBe(2);
     expect(result.err).toContain(message);
-    const listed: readonly string[] = ['unknown-guard', guardIds.cloneRules, guardIds.hookRuntime, softwareGuardIds.mergeQuality];
+    const listed: readonly string[] = ['unknown-guard', guardIds.cloneRules, guardIds.hookRuntime];
     if (listed.includes(words[1] ?? '')) expect(result.err).toContain('factory guard list');
     expect(seen).toEqual([]);
+  });
+
+  it('refuses a guard that this version cannot set with exit 2 and the list command before any file read', async () => {
+    const seen: string[] = [];
+    const deps = withFsWatch(createFakeDeps(), (method) => { seen.push(method); });
+    const result = await run(deps, ['set', UNWIRED_GUARD, 'off'], unwiredRegistry);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain(guardSetWords.notSettable(UNWIRED_GUARD));
+    expect(seen).toEqual([]);
+  });
+
+  it.each([
+    guardIds.boardEdits, guardIds.ownerGo, softwareGuardIds.prRules, softwareGuardIds.mergeQuality, guardIds.dismiss, guardIds.sessionChecks,
+    guardIds.taskFiles, guardIds.workConduct,
+  ])('accepts the wired guard %s past the argument check', async (id) => {
+    const result = await run(createFakeDeps(), ['set', id, 'off']);
+    expect(result.code).toBe(4);
+    expect(result.err).not.toContain('not settable');
   });
 });
 
@@ -71,13 +88,26 @@ describe('the guard command channel', () => {
     [{ stdinIsTTY: false }, guardRecordWords.inputRequired],
     [{ stdoutIsTTY: false }, guardRecordWords.outputRequired],
   ] as const;
+  const restricted = [guardIds.sessionChecks, guardIds.approvalDelegation, guardIds.ownerGo, guardIds.fileLinkSafety];
+  /** The node holds each restricted guard off, with the matching owner record. */
+  const seedRestrictedOff = (deps: ReturnType<typeof fixture>): void => {
+    const config = sampleConfig();
+    seedConfig(deps, HOME, { ...config, core: { ...config.core, guards: Object.fromEntries(restricted.map((id) => [id, 'off'])) } });
+    deps.seed(STORE, JSON.stringify({ schema: guardRecords.schema, records: [{ node: 'demo', root: HOME, prefix: null, values: Object.fromEntries(restricted.map((id) => [id, { value: 'off', at: deps.now().toISOString() }])) }] }));
+  };
+
+  it('runs the channel cases on a node whose session-checks guard counts as off', async () => {
+    const deps = fixture();
+    seedRestrictedOff(deps);
+    const result = await run(deps, ['list', '--json']);
+    expect(result.code, result.err).toBe(0);
+    expect(JSON.parse(result.out)).toMatchObject({ guards: expect.arrayContaining([expect.objectContaining({ id: guardIds.sessionChecks, value: 'off' })]) });
+  });
+
   for (const command of [['set', A, 'off'], ['confirm']]) {
     it.each(cases)(`${command[0]} refuses a restricted channel %j before any read`, async (options, message) => {
       const deps = fixture(options);
-      const config = sampleConfig();
-      const restricted = [guardIds.sessionChecks, guardIds.approvalDelegation, guardIds.ownerGo, guardIds.fileLinkSafety];
-      seedConfig(deps, HOME, { ...config, core: { ...config.core, guards: Object.fromEntries(restricted.map((id) => [id, 'off'])) } });
-      deps.seed(STORE, JSON.stringify({ schema: guardRecords.schema, records: [{ node: 'demo', root: HOME, prefix: null, values: Object.fromEntries(restricted.map((id) => [id, { value: 'off', at: deps.now().toISOString() }])) }] }));
+      seedRestrictedOff(deps);
       const before = new Map(deps.files);
       const seen: string[] = [];
       const result = await run(withFsWatch(deps, (method) => { seen.push(method); }), command);
@@ -125,7 +155,7 @@ describe('guard set writes', () => {
     expect(deps.prompts).toHaveLength(1);
   });
 
-  it.each(['on', 'off'] as const)('sets only wired guards to %s with all, skips the fixed guards and reports the excluded count', async (value) => {
+  it.each(['on', 'off'] as const)('sets every guard that is not fixed to %s with all, skips the fixed guards and shows no excluded count', async (value) => {
     const deps = fixture();
     const result = await run(deps, ['set', '--all', value]);
     expect(result.code).toBe(0);
@@ -135,9 +165,19 @@ describe('guard set writes', () => {
     const display = deps.written.join('');
     if (value === 'off') for (const guard of wired) expect(display).toContain(`${guard.id}${guard.harm ? ' H' : ''}`);
     for (const id of [guardIds.cloneRules, guardIds.hookRuntime]) expect(`${display}${result.out}${deps.files.get(LOCAL) ?? ''}`).not.toContain(id);
-    const settable = guardsFor(recipes[0]).filter((guard) => !guard.fixed);
-    expect(`${display}${result.out}`).toContain(`${settable.length - wired.length} guards are not settable`);
+    expect(guardsFor(recipes[0]).filter((guard) => !guard.fixed)).toHaveLength(wired.length);
+    expect(`${display}${result.out}`).not.toContain('not settable');
     expect(deps.prompts).toHaveLength(value === 'off' ? 1 : 0);
+  });
+
+  it.each(['on', 'off'] as const)('skips a guard that this version cannot set with all %s and reports the excluded count', async (value) => {
+    const deps = fixture();
+    const result = await run(deps, ['set', '--all', value], unwiredRegistry);
+    expect(result.code).toBe(0);
+    const stored = await readGuardStore(deps, STORE);
+    expect(stored.ok ? Object.keys(stored.value[0]?.values ?? {}) : null).not.toContain(UNWIRED_GUARD);
+    expect(deps.files.get(LOCAL) ?? '').not.toContain(UNWIRED_GUARD);
+    expect(`${deps.written.join('')}${result.out}`).toContain('1 guard is not settable in this version.');
   });
 
   it.each(['', 'no'])('writes nothing when the answer is %j', async (answer) => {

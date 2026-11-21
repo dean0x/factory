@@ -80,7 +80,15 @@ const boardEditRows: readonly GuardRow[] = [
     name: `The ${worker} of an item changes only through the unassign command, and a check-in keeps it`,
     applies: 'Item update, item unassign and check-in',
     harm: false,
-    sites: at('src/board/edit.ts', 'changeItemIn', 'unassignIn'),
+    sites: at('src/board/edit.ts', 'changeItemIn'),
+  }),
+  alwaysOnRow({
+    id: 'board-former-worker-mark',
+    guard: guardIds.boardEdits,
+    name: `An item keeps the mark of its former ${worker} so the closed work check can find the item`,
+    applies: 'Item update and item unassign',
+    harm: true,
+    sites: at('src/board/edit.ts', 'markFormerWorker'),
   }),
   alwaysOnRow({
     id: 'board-reserved-names',
@@ -102,7 +110,7 @@ const boardEditRows: readonly GuardRow[] = [
       ...at('src/commands/queue.ts', 'execute'),
     ],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'board-file-links',
     guard: guardIds.boardEdits,
     name: 'Board files, decisions and docs use plain relative paths with no link; a doc link checks file kind and size',
@@ -110,17 +118,25 @@ const boardEditRows: readonly GuardRow[] = [
     harm: true,
     sites: [
       ...at('src/board/files.ts', 'textOfFile'),
-      ...at('src/board/local.ts', 'createLocalBoard'),
-      ...at('src/board/edit.ts', 'docPathIssue'),
+      ...at('src/board/local.ts', 'requireDocFile'),
+      ...at('src/board/edit.ts', 'plainPathFault'),
     ],
   }),
   codeRow({
     id: 'board-doc-place',
     guard: guardIds.boardEdits,
-    name: 'A doc link keeps local settings and dot folders private through one path name check in any letter case',
+    name: 'A doc link keeps dot folders private through one path name check in any letter case',
     applies: commandLines.itemDoc,
     harm: true,
     sites: [...at('src/board/edit.ts', 'checkDocPath', 'docPathIssue'), ...at('src/core/place-rule.ts', 'dotRuleReason')],
+  }),
+  alwaysOnRow({
+    id: 'board-doc-local-config',
+    guard: guardIds.boardEdits,
+    name: `A board doc link never names the local config of the ${folder}, with every guard value`,
+    applies: commandLines.itemDoc,
+    harm: true,
+    sites: at('src/core/place-rule.ts', 'localConfigReason'),
   }),
   codeRow({
     id: 'board-doc-view',
@@ -130,7 +146,7 @@ const boardEditRows: readonly GuardRow[] = [
     harm: false,
     sites: [...at('src/commands/item.ts', 'docsOf'), ...at('src/board/edit.ts', 'docPathIssue')],
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'board-commit-paths',
     guard: guardIds.boardEdits,
     name: 'A board commit takes plain relative paths with no link, valid text and at most one MiB',
@@ -403,7 +419,7 @@ const dismissRows: readonly GuardRow[] = [
     id: 'dismiss-pushed',
     guard: guardIds.dismiss,
     name: 'A dismiss needs the head on the remote, no changed or untracked file and an empty stash',
-    applies: 'Dismiss, free and reset',
+    applies: 'Dismiss and free',
     harm: true,
     sites: [...at('src/workers/dismiss.ts', 'checkPushed'), ...at('src/commands/dismiss.ts', 'dismissOne')],
   }),
@@ -438,15 +454,15 @@ const dismissRows: readonly GuardRow[] = [
   alwaysOnRow({
     id: 'dismiss-inbox-stop',
     guard: guardIds.dismiss,
-    name: 'A dismiss stops on a link or a fault in the inbox folder',
-    applies: 'Dismiss',
+    name: 'A list of inbox files stops on a link or a read fault, so it lists only files of this inbox',
+    applies: 'Dismiss dry run and closed free',
     harm: true,
     sites: at('src/workers/dismiss.ts', 'inboxFilesIn'),
   }),
-  codeRow({
+  alwaysOnRow({
     id: 'dismiss-inbox-ignored',
     guard: guardIds.dismiss,
-    name: 'A dismiss lists the ignored files that it deletes',
+    name: 'A dismiss lists the ignored files up to the cap and does not remove a work copy if the list fails',
     applies: 'Dismiss',
     harm: true,
     sites: at('src/workers/dismiss.ts', 'ignoredIn'),

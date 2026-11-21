@@ -1,4 +1,8 @@
-import { address, keys } from '../names.js';
+import { safetyRefusal, type CliResult } from '../cli/errors.js';
+import { ok } from '../core/result.js';
+import { isGuardOn } from '../guards/effective.js';
+import type { GuardValues } from '../guards/types.js';
+import { address, guardIds, keys, nodeSendReasons } from '../names.js';
 
 const TOKEN_PREFIXES: readonly RegExp[] = [
   /sk-ant-[A-Za-z0-9_-]{4,}/,
@@ -42,10 +46,14 @@ const isPathLike = (run: string): boolean => {
 /**
  * True when the text of a file holds a token: a known prefix, a hex run of 40 characters or more, or a long base64 run.
  * A text holds paths and URLs, and a long path with mixed letters and digits looks like random data, so a run that is a
- * path (see `isPathLike`) is not a token. The check is for the tracked text files of the root.
+ * path (see `isPathLike`) is not a token.
  */
 export const textHasToken = (text: string): boolean =>
   hasKnownTokenShape(text) || (text.match(BASE64_RUN) ?? []).some((run) => !isPathLike(run) && isRandomLooking(run));
+
+/** Refuse a file before it is copied or linked. The message never contains file text. */
+export const checkFileTokens = (text: string, guards: GuardValues, hint: string): CliResult<void> =>
+  isGuardOn(guards, guardIds.secrets) && textHasToken(text) ? safetyRefusal(nodeSendReasons.token, hint) : ok(undefined);
 
 const ITEM_INDEX = /^\d+$/;
 

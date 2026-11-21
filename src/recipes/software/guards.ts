@@ -33,16 +33,20 @@ export const softwareGuards: readonly GuardDefinition[] = [
       [`${keys.root.approval}.${releasePoint.id}`],
     ),
   ),
-  guardOf(
-    softwareGuardIds.mergeQuality,
-    'Quality checks before a merge',
-    'A merge uses the checked head SHA, green CI there and a posted review of a releasable change.',
+  wiredGuard(
+    guardOf(
+      softwareGuardIds.mergeQuality,
+      'Quality checks before a merge',
+      'A merge uses the checked head SHA, green CI there and a posted review of a releasable change.',
+    ),
   ),
-  guardOf(
-    softwareGuardIds.prRules,
-    'Push and pull request rules',
-    'A push, a pull request and a merge report follow the rules of the project.',
-    [`${keys.root.recipe}.${keys.recipe.projects}[].${keys.project.defaultBranch}`],
+  wiredGuard(
+    guardOf(
+      softwareGuardIds.prRules,
+      'Push and pull request rules',
+      'A push, a pull request and a merge report follow the rules of the project.',
+      [`${keys.root.recipe}.${keys.recipe.projects}[].${keys.project.defaultBranch}`],
+    ),
   ),
 ];
 
@@ -201,7 +205,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
   fixedTextRow({
     id: 'dismiss-dry-run-text',
     guard: guardIds.dismiss,
-    name: 'The dry run of a dismiss comes first and lists the files that the free deletes',
+    name: 'The dry run of a dismiss comes before the free',
     applies: `Role text of the ${coordinator}`,
     harm: true,
     sites: at(COORDINATOR_FILE, 'workerSectionLines'),
