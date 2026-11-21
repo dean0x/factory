@@ -16,7 +16,7 @@ import { guardsFor } from '../../src/guards/registry.js';
 import { expectShortOutput } from '../helpers/short-output.js';
 import { ok } from '../../src/core/result.js';
 import { acceptanceState, manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { commands, env, files as fileNames, guardIds, guardRecordWords, hookNames, setupAcceptance, stateGuard, values } from '../../src/names.js';
+import { blockNames, commands, env, files as fileNames, guardIds, guardRecordWords, hookNames, setupAcceptance, stateGuard, values } from '../../src/names.js';
 import { SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { loadState } from '../../src/state/load.js';
@@ -41,6 +41,7 @@ import { GUARD_STORE, GUARDED_HOME, guardStoreText, withGuardsOff } from '../hel
 import { oldWordsIn } from '../helpers/old-words.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
+import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
 /** init writes the root into the factory list as its last step, so every run needs a place for the list. */
@@ -3817,6 +3818,50 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     expect(result.ok && result.value.json['accepted']).toBe(false);
   });
 
+  it('keeps the setup check on for an own folder with setup text that init did not write', async () => {
+    const { deps } = setup({}, { ...terminal, env: { ...ENV, PATH: '/bin' } });
+    const text = 'My own rules.';
+    const file = `${HOME}/coordinator/CLAUDE.md`;
+    deps.seed(`${HOME}/${COORDINATOR}`, `${text}\n`);
+    deps.seed('/bin/tmux', '');
+    deps.seed('/bin/claude', '');
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.has(ACCEPTANCES)).toBe(false);
+    expect.soft(linesOf(result)).toContain(
+      'Guards: 28 off; 27 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
+    );
+    expect.soft(await loadConfig(deps, HOME)).toMatchObject({ ok: true, value: { core: { guards: { 'setup-text': 'on' }, shared_guards: {} } } });
+    const store = await readGuardStore(deps, GUARD_STORE);
+    expect(store.ok && store.value).toHaveLength(1);
+    expect.soft(store.ok && store.value[0]?.values).not.toHaveProperty('setup-text');
+
+    const original = deps.files.get(file) ?? '';
+    const blocks = parseBlocks(original);
+    const existing = blocks.ok ? blocks.value.find(({ name }) => name === blockNames.setup) : undefined;
+    expect(existing?.body).toContain(text);
+    if (existing === undefined) return;
+    const withoutSetup = original.slice(0, existing.start) + original.slice(existing.end);
+    deps.seed(file, withoutSetup);
+    const upgrade = captureSink();
+    expect.soft(await runCli(['upgrade', '--home', HOME], deps, upgrade)).toBe(4);
+    expect.soft(upgrade.errors.join('')).toContain('the owner has not accepted the setup text');
+    expect.soft(deps.files.get(file)).toBe(withoutSetup);
+
+    const { handler, log } = tmuxHandler();
+    const withTmux = {
+      ...deps,
+      run: async (command: string, args: readonly string[], runOptions?: { readonly cwd?: string }) =>
+        command === 'tmux' ? handler({ command, args, cwd: runOptions?.cwd }) : deps.run(command, args, runOptions),
+    };
+    const start = captureSink();
+    expect.soft(await runCli(['start', '--home', HOME], withTmux, start)).toBe(4);
+    expect.soft(start.errors.join('')).toContain('the owner has not accepted the setup text');
+    expect.soft(start.errors.join('')).toContain('Run "factory init" in a terminal window and accept the files.');
+    expect.soft(log.sessions().size).toBe(0);
+    expect(deps.files.has(ACCEPTANCES)).toBe(false);
+  });
+
   it('accepts the one text that it wrote when the other file holds only white space', async () => {
     const { deps } = setup();
     deps.seed(`${HOME}/${COORDINATOR}`, '  \n');
@@ -4116,7 +4161,7 @@ describe('init: the hook settings of the coordinator on a new root', () => {
       expect([...deps.files.keys()].filter((path) => path.includes('settings.local.json'))).toEqual([]);
     });
 
-    it('exits 1 with the remedy line when the file changes while the question waits, and keeps the file as the other program left it', async () => {
+    it('keeps the hook remedy and explains the guard record when the file changes while the question waits', async () => {
       const { deps } = setup({}, { ...terminal, prompt: answering('y') });
       const saved = JSON.stringify({ model: 'opus', ...ownSettingsEntries });
       const changing: FakeDeps = {
@@ -4129,7 +4174,12 @@ describe('init: the hook settings of the coordinator on a new root', () => {
       const { code, shown } = await runOnTerminal(changing);
       expect(code).toBe(1);
       expect(shown).toContain(`error: cannot write ${FILE}: it changed while the question waited`);
-      expect(shown).toContain('Then run "factory init" again.');
+      expect(shown.split('\n')).toContain(
+        'Check the file. Then run "factory init" again. Every guard stays on. ' +
+        'Run "factory guard confirm" in your terminal window to confirm the owner prefix. ' +
+        'Optional: Run "factory guard set --all off" to turn the guards off.',
+      );
+      expect(deps.files.has(GUARD_STORE)).toBe(false);
       expectNodeKept(deps);
       expect(deps.files.get(FILE)).toBe(saved);
     });

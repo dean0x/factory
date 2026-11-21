@@ -634,7 +634,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 | `workers` | local | True for one machine only; each entry picks a proxy of this machine for one worker. |
 | `approval` (the mode of each point) | local | Personal. A delegation is owner authority and needs an approval record on each machine. The list of approval points travels with the recipe. Only the mode per person stays local. |
 | `shared_guards` | shared | A shared `on` keeps its guard on (§4.16). |
-| `guards` | local | A missing guard key means `on`. For a new node, `init` writes `off` for each guard that is not fixed (§4.16). |
+| `guards` | local | A missing guard key means `on`. For the values that `init` writes, see §4.16. |
 | `parent`, `children` | local | True for one machine only; each holds an absolute `file://` address. |
 | the board account and its credentials (FAC-M3) | local | A credential. |
 | `tracker` with a board plugin as `kind`, and its `options` (FAC-M11) | local | True for one machine only. The user installs the plugin on this machine and names it here. A name in the shared file would ask each receiver to load a package that the receiver did not choose. |
@@ -1400,11 +1400,13 @@ Each guard has an id, a name, what it keeps safe, its kinds, its harm mark and i
 
 **Config keys.** The local key `guards` in `factory.local.yaml` accepts `on` or `off` for each known guard id. The shared key `shared_guards` in `factory.yaml` accepts `on` only. A shared `on` keeps the guard on even when the local value is `off`. An unknown or retired id is refused. The message names the id and `factory guard list`. A key of a fixed guard has no setting: the load accepts it, `guard list`, `doctor` and `start` warn about it, every read keeps the guard on, and `upgrade` removes the key. `guard set` refuses the id as an unknown id.
 
-A missing guard key means `on`. For a new node in its own folder or a received folder, `init` writes `off` for every guard that is not fixed. Each value has a comment that says what the guard keeps safe. A comment for a guard with the mark `H` starts with `H:`. A repeat `init`, config splits and upgrade rewrites keep existing guard values. Related config keys keep their own meaning. A related key is not a guard key.
+A missing guard key means `on`. For a new node in its own folder or a received folder, `init` writes `off` for settable guards by default. It writes `setup-text: on` if the owner declines setup acceptance or `init` plans no acceptance in an own folder. Each value has a comment that says what the guard keeps safe. A comment for a guard with the mark `H` starts with `H:`. A repeat `init`, config splits and upgrade rewrites keep existing guard values. Related config keys keep their own meaning. A related key is not a guard key.
 
-`init` does its checks and asks for hook consent as if every guard is on. It has no effective guard values for the new node yet. It also renders the all-on managed text. It writes the local values, saves the hook settings if the owner gives consent, then records every local guard value and the owner prefix in one write. The same rule applies with or without `--yes`. There is no additional guard question. The approval mode question stays.
+`init` does its checks and asks for hook consent as if every guard is on. It has no effective guard values for the new node yet. It also renders the all-on managed text. It writes the local values and saves the hook settings if the owner gives consent. It then records the local `off` values and the owner prefix in one write. The same rule applies with or without `--yes`. There is no additional guard question. The approval mode question stays.
 
 To write the record, use terminal input and output outside factory and Claude Code sessions. This requirement helps prevent mistakes. It does not prove who owns the terminal. In that terminal window, `init` removes any earlier record for the same node id and folder before it starts clones or writes node files. If `init` cannot read the store or remove the record, it stops with code 1 before it changes any node files.
+
+If the hook step fails after registration, `init` keeps its error and remedy. The hint states that every guard stays on. A repeat `init` can finish only the hook step. Use `factory guard confirm` to record the owner prefix. To turn the guards off, use `factory guard set --all off`.
 
 If the final record write fails, `init` keeps both config files and exits with code 1. Without a matching record, every guard stays on.
 

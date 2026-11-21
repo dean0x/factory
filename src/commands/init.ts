@@ -44,6 +44,7 @@ import {
   flags,
   flagText,
   ghTimeoutMs,
+  guardIds,
   guardKeys,
   guardStartWords,
   guardValues,
@@ -544,6 +545,7 @@ export const localSettingsOf = (
   github: string | undefined,
   sources: Readonly<Record<string, string>>,
   recipe: RecipeEntry,
+  keepSetupTextOn: boolean,
 ): unknown => ({
   [keys.root.schema]: LOCAL_SCHEMA_VERSION,
   [keys.root.owner]: {
@@ -558,7 +560,9 @@ export const localSettingsOf = (
   [keys.root.parent]: null,
   [keys.root.children]: [],
   [keys.root.sources]: sources,
-  [guardKeys.local]: Object.fromEntries(guardsFor(recipe).filter(isSettable).map(({ id }) => [id, guardValues.off])),
+  [guardKeys.local]: Object.fromEntries(guardsFor(recipe).filter(isSettable).map(({ id }) => [
+    id, keepSetupTextOn && id === guardIds.setupText ? guardValues.on : guardValues.off,
+  ])),
 });
 
 /** The settings of the two config files. The projects are the described projects of the command. */
@@ -566,6 +570,7 @@ const settingsOf = (
   checked: CheckedValues,
   github: string | undefined,
   { projects, sources }: ProjectSettings,
+  keepSetupTextOn = false,
 ): { readonly shared: unknown; readonly local: unknown } => ({
   shared: {
     [keys.root.schema]: CONFIG_SCHEMA_VERSION,
@@ -583,7 +588,7 @@ const settingsOf = (
       [keys.recipe.projects]: projects,
     },
   },
-  local: localSettingsOf(checked, github, sources, checked.recipe),
+  local: localSettingsOf(checked, github, sources, checked.recipe, keepSetupTextOn),
 });
 
 const parseSettings = (
@@ -705,13 +710,14 @@ const planChecked = async (
   const projects = await describeProjects(deps, planned, checked.recipe);
   if (!projects.ok) return projects;
 
-  const config = parseSettings(settingsOf(checked, github, projects.value), registry);
+  const own = ownTextAcceptance(home, checked.id, root);
+  const keepSetupTextOn = own.acceptance === null;
+  const config = parseSettings(settingsOf(checked, github, projects.value, keepSetupTextOn), registry);
   if (!config.ok) return config;
   const stateFiles = stateFilesOf(templates, blocks.workerText, queueKeyOf(checked.recipe));
   if (!stateFiles.ok) return stateFiles;
 
   const texts = renderConfig(config.value);
-  const own = ownTextAcceptance(home, config.value.core.node.id, root);
   return ok({
     home,
     received: false,
@@ -1022,24 +1028,32 @@ export const recordAcceptance = async (
       };
 };
 
+const CONFIRM_INIT_PREFIX = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the ${roles.owner} prefix.`;
+const INIT_GUARDS_STAY_ON = 'Every guard stays on.';
+
+/** Keep the hook error and its remedy when init stops before the guard record write. */
+export const withInitGuardHint = (error: CliError): CliResult<never> => err({
+  ...error,
+  hint: [error.hint, INIT_GUARDS_STAY_ON, CONFIRM_INIT_PREFIX, `Optional: ${guardStartWords.confirmOff}`].filter(Boolean).join(' '),
+});
+
 /** Record after all init files and hook settings are saved. A failure keeps the files and clones. */
 export const recordInitGuards = async (deps: Deps, plan: InitPlan): Promise<CliResult<{
   readonly lines: CommandOutput['lines']; readonly warnings: readonly string[];
 }>> => {
   const { core, entry } = plan.config;
-  const guards = guardsFor(entry).filter(isSettable);
-  const confirm = `Run "${commandText(commandLines.guardConfirm)}" in your terminal window to confirm the ${roles.owner} prefix.`;
+  const localOff = guardsFor(entry).filter((guard) => isSettable(guard) && core.guards[guard.id] === guardValues.off);
   const offRemedy = guardStartWords.confirmOff;
   if (!requireGuardChannel(deps, commands.init).ok) return ok({ lines: [], warnings: [
-    `No ${roles.owner} prefix record was written. ${confirm}`,
-    `Every guard stays on. ${offRemedy}`,
+    `No ${roles.owner} prefix record was written. ${CONFIRM_INIT_PREFIX}`,
+    `${INIT_GUARDS_STAY_ON} ${offRemedy}`,
   ] });
   const written = await recordGuards(deps, {
     root: plan.home, node: core.node.id, prefix: core.owner.prefix,
-    change: guards.map((guard) => ({ guard, value: guardValues.off })),
+    change: localOff.map((guard) => ({ guard, value: guardValues.off })),
   });
-  if (!written.ok) return failure(`The files stay, but the guard record could not be written: ${written.error.message}`, `${confirm} ${offRemedy}`);
-  const off = guards.filter(({ id }) => core.shared_guards[id] !== guardValues.on);
+  if (!written.ok) return failure(`The files stay, but the guard record could not be written: ${written.error.message}`, `${CONFIRM_INIT_PREFIX} ${offRemedy}`);
+  const off = localOff.filter(({ id }) => core.shared_guards[id] !== guardValues.on);
   return ok({
     lines: [{ level: 'text', text: guardStartWords.init(off.length, off.filter(({ harm }) => harm).length) }],
     warnings: written.value.warning === null ? [] : [written.value.warning],
@@ -1107,9 +1121,9 @@ export const runInit = async (
   if (!plan.ok) return undoClones(deps, made, parents.value, plan.error);
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);
-  // The node is made and listed. A failure of the hook settings leaves it, and a second run of init finishes the step.
+  // A repeat init can finish the hook step only. Use guard confirm and guard set for the records.
   const hook = await writeHookSettings(deps, plan.value.home, options.yes, idleCompaction);
-  if (!hook.ok) return hook;
+  if (!hook.ok) return withInitGuardHint(hook.error);
   const guards = await recordInitGuards(deps, plan.value);
   if (!guards.ok) return guards;
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];

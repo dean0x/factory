@@ -116,13 +116,15 @@ The place of the factory folder is decided in this order:
 
 For a proposal, `init` asks you to confirm it in a terminal window. With `--yes`, it uses the proposal and does not ask about the folder. With no terminal window and no `--yes`, it prints the proposal and exits with code 2.
 
-For a new node, `init` writes `off` in `factory.local.yaml` for every guard that is not fixed. This applies to your own folder and to a received folder. The checks, hook consent and managed blocks at `init` still use every guard on.
+For a new node, `init` writes `off` in `factory.local.yaml` for settable guards by default. This applies to your own folder and to a received folder. The `setup-text` value is `on` if you decline setup acceptance or `init` plans no acceptance in your own folder. The checks, hook consent and managed blocks at `init` still use every guard on.
 
-Run `init` in a terminal window outside factory and Claude Code sessions, with terminal input and output. After the files and hook settings, `init` records the new values and the owner prefix in one write. It asks no guard question, with or without `--yes`. Without a shared `on` override, it prints:
+Run `init` in a terminal window outside factory and Claude Code sessions, with terminal input and output. After the files and hook settings, `init` records the local `off` values and the owner prefix in one write. It asks no guard question, with or without `--yes`. If all the settable guards are off, it prints:
 
 ```text
 Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.
 ```
+
+If only `setup-text` stays on, the line shows `28 off; 27 with H`.
 
 In that terminal channel, `init` removes any earlier record for the same node id and folder before it starts clones or writes node files. If `init` cannot read the store or remove the record, it stops with code 1 before it changes any node files.
 
@@ -133,6 +135,8 @@ If the check passes, `init` writes the local values but no record. It prints thi
 ```text
 Every guard stays on. Run "factory guard set --all off" to turn the guards off.
 ```
+
+If the hook step fails after registration, every guard stays on. A repeat `init` can finish the hook step. Run `factory guard confirm` to record the owner prefix. You can also run `factory guard set --all off` if you want to turn the guards off.
 
 If the record write fails, `init` keeps both config files and exits with code 1. If the store cannot be read, every guard stays on. When all 29 local values are `off` with no matching records, the `doctor` guard check includes:
 
