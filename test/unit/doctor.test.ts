@@ -192,6 +192,7 @@ describe('doctor: shared guard state', () => {
     const deps = await initialized();
     const found = await guardCheck(deps);
     expect(found).toMatchObject({ level: 'warn' });
+    expect(found?.text).toContain('29 off values have no owner record. Run "factory guard set --all off" to turn the guards off.');
     expect(found?.text.match(/factory guard set --all off/g) ?? []).toHaveLength(1);
     expect(found?.text).not.toMatch(/unmatched [a-z]+-/);
     expect(found?.text).toContain('0 off; 0 with H');

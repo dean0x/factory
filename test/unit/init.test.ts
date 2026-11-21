@@ -135,7 +135,9 @@ describe('init: the owner prefix record', () => {
       expect(local).toContain(`  ${guard.id}: "off"    # ${guard.harm ? 'H: ' : ''}${guard.keepsSafe}`);
     }
     const lines = result.value.lines.map((line) => line.text);
-    expect(lines.filter((line) => line.includes('factory guard set <id> on'))).toHaveLength(1);
+    expect(lines.filter((line) => line.startsWith('Guards:'))).toEqual([
+      'Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
+    ]);
     expectShortOutput(lines.join('\n'));
   });
 
