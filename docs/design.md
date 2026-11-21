@@ -1404,7 +1404,9 @@ A missing guard key means `on`. For a new node in its own folder or a received f
 
 `init` does its checks and asks for hook consent as if every guard is on. It has no effective guard values for the new node yet. It also renders the all-on managed text. It writes the local values, saves the hook settings if the owner gives consent, then records every local guard value and the owner prefix in one write. The same rule applies with or without `--yes`. There is no additional guard question. The approval mode question stays.
 
-The record write needs the owner channel: terminal input and output outside factory and Claude Code sessions. This requirement helps prevent mistakes. It is not proof of who owns the terminal. In that channel, the final write replaces any earlier record for the same node id and folder. If the record write fails, `init` keeps both config files and exits with code 1. If the store cannot be read, every guard stays on.
+The record write needs the owner channel: terminal input and output outside factory and Claude Code sessions. This requirement helps prevent mistakes. It is not proof of who owns the terminal. In that channel, `init` removes any earlier record for the same node id and folder before it starts clones or writes node files. If `init` cannot read the store or remove the record, it stops with code 1 before it changes any node files.
+
+If the final record write fails, `init` keeps both config files and exits with code 1. Without a matching record, every guard stays on.
 
 Without that channel, `init` checks the store before the first clone. If it cannot open or read the store, it exits with code 1. If the store has a record for the same node id and folder, `init` exits with code 1. To replace that record, run `factory init` again in a terminal window outside a session.
 

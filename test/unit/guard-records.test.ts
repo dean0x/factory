@@ -127,16 +127,20 @@ describe('guard store reads and writes', () => {
     expect(deps.atomicWrites.filter((file) => file === path)).toHaveLength(1);
   });
 
-  it('replaces only the matching record when init writes the values and prefix', async () => {
+  it('does not replace a record that appears before the final init lock read', async () => {
     const deps = fixture();
     const other = { ...record(), node: 'other' };
-    deps.seed(path, storeText([record({ [otherGuard.id]: { value: 'on', at } }), other]));
-    const prefix = 'Owner text';
-    expect(await storeApi.recordGuards(deps, { root, node: 'demo', prefix, change })).toEqual(ok({ warning: null }));
-    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([
-      record({ [guard.id]: { value: 'off', at } }, { hash: sha256Hex(prefix), at }), other,
-    ]));
-    expect(deps.atomicWrites.filter((file) => file === path)).toHaveLength(1);
+    const current = record({ [otherGuard.id]: { value: 'on', at } });
+    deps.seed(path, storeText([other]));
+    const raced = { ...deps, fs: { ...deps.fs, writeTextExclusive: async (target: string, text: string, mode: number) => {
+      const taken = await deps.fs.writeTextExclusive(target, text, mode);
+      if (target === userFileLockPath(path) && taken.ok && taken.value) deps.seed(path, storeText([other, current]));
+      return taken;
+    } } };
+    const result = await storeApi.recordGuards(raced, { root, node: 'demo', prefix: 'Owner text', change });
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining(guardRecordWords.priorRecord) } });
+    expect(await storeApi.readGuardStore(deps, path)).toEqual(ok([other, current]));
+    expect(deps.atomicWrites).toEqual([]);
   });
 
   it('refuses a liveness policy in the age-only lock path', async () => {

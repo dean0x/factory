@@ -23,7 +23,7 @@ import {
   parseGithubRepo,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
-import { checkInitGuardRecord, recordGuards, requireGuardChannel } from '../core/guard-records.js';
+import { checkInitGuardRecord, clearInitGuardRecord, recordGuards, requireGuardChannel } from '../core/guard-records.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
@@ -1093,6 +1093,8 @@ export const runInit = async (
   const idleCompaction = values.defaultIdleCompaction;
   const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;
+  const cleared = await clearInitGuardRecord(deps, { root: home, node: checked.value.id });
+  if (!cleared.ok) return cleared;
   // Git makes the folders above a clone by itself. This run makes the root and its parents first, so that the undo can
   // remove them.
   const parents = projects.value.some((project) => !project.present) ? await makeRootFolders(deps, home) : ok([]);
@@ -1111,7 +1113,11 @@ export const runInit = async (
   const guards = await recordInitGuards(deps, plan.value);
   if (!guards.ok) return guards;
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
-  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings, ...notes];
+  const clearWarning = cleared.value?.warning ?? null;
+  const warnings = [
+    ...plan.value.warnings, ...(clearWarning === null ? [] : [clearWarning]),
+    ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings, ...notes,
+  ];
 
   const written = [
     files.config,

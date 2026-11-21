@@ -124,7 +124,7 @@ Run `init` in a terminal window outside factory and Claude Code sessions, with t
 Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.
 ```
 
-In that terminal channel, the final write replaces any earlier record for the same node id and folder.
+In that terminal channel, `init` removes any earlier record for the same node id and folder before it starts clones or writes node files. If `init` cannot read the store or remove the record, it stops with code 1 before it changes any node files.
 
 Without that terminal channel, `init` checks the guard store before the first clone. If it cannot open or read the store, it exits with code 1. If the store has a record for the same node id and folder, `init` exits with code 1. To replace that record, run `factory init` again in a terminal window outside a session.
 

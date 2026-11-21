@@ -147,9 +147,11 @@ describe('init: the owner prefix of a received factory', () => {
     const config: FactoryConfig = { ...sample, core: { ...sample.core, shared_guards: { proxy: 'on' } } };
     const { deps } = received({ config }, { ...terminal, prompt: person('y', [], 'y') });
     if (yes) deps.seed(store, guardStoreText('demo', ROOT, ['old-guard'], deps.now()));
+    const hookAtStoreWrite: boolean[] = [];
     const result = await runInit(withFsWatch(deps, (method, path) => {
-      if (method === 'writeTextAtomicCore' && path === store) expect(deps.files.has(HOOK_FILE)).toBe(true);
+      if (method === 'writeTextAtomicCore' && path === store) hookAtStoreWrite.push(deps.files.has(HOOK_FILE));
     }), options({ yes }));
+    expect(hookAtStoreWrite).toEqual(yes ? [false, true] : [true]);
     expect(result.ok).toBe(true);
     const guards = guardsFor(sample.entry).filter((guard) => !guard.fixed);
     const at = deps.now().toISOString();
@@ -158,7 +160,7 @@ describe('init: the owner prefix of a received factory', () => {
       prefix: { hash: createHash('sha256').update(sample.core.owner.prefix, 'utf8').digest('hex'), at },
     }]));
     expect(deps.files.has(HOOK_FILE)).toBe(true);
-    expect(deps.atomicWrites.filter((path) => path === store)).toHaveLength(1);
+    expect(deps.atomicWrites.filter((path) => path === store)).toHaveLength(yes ? 2 : 1);
     expect(deps.atomicWrites.at(-1)).toBe(store);
     const loaded = await loadConfig(deps, ROOT);
     if (!loaded.ok) throw new Error(loaded.error.message);
@@ -179,22 +181,37 @@ describe('init: the owner prefix of a received factory', () => {
     ]);
   });
 
-  it('keeps every guard on and keeps both config files when the record lacks the prefix field', async () => {
+  it('keeps both config files and every guard on when the final record write fails', async () => {
     const { deps } = received({}, terminal);
-    const before = JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT,
-      values: { 'install-rules': { value: 'off', at: deps.now().toISOString() } },
-    }] });
+    const guards = guardsFor(sampleConfig().entry);
+    deps.seed(store, guardStoreText('demo', ROOT, guards.filter(({ fixed }) => !fixed).map(({ id }) => id), deps.now()));
     const shared = deps.files.get(`${ROOT}/factory.yaml`);
-    deps.seed(store, before);
-    const result = await runInit(deps, options({ yes: true }));
-    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
-    expect(deps.files.get(store)).toBe(before);
+    const used = { ...deps, fs: { ...deps.fs, writeTextAtomicCore: async (...args: Parameters<NonNullable<typeof deps.fs.writeTextAtomicCore>>) =>
+      args[0] === store && deps.files.has(`${ROOT}/factory.local.yaml`) ? failure('disk full') : deps.fs.writeTextAtomic(...args),
+    } };
+    const sink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--owner-name', 'Test Owner', '--yes'], used, sink)).toBe(1);
+    expect(sink.errors.join('')).toContain('factory guard confirm');
     expect(deps.files.get(`${ROOT}/factory.yaml`)).toBe(shared);
     const config = await loadConfig(deps, ROOT);
     if (!config.ok) throw new Error(config.error.message);
     const state = await readGuardState(deps, ROOT, config.value, 'always');
+    expect(state.values).toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'on'])));
     expect(state.record).toBe(false);
-    expect(state.values).toEqual(Object.fromEntries(guardsFor(config.value.entry).map(({ id }) => [id, 'on'])));
+    expect(await readGuardStore(deps, store)).toEqual(ok([]));
+  });
+
+  it.each(['remove', 'read'])('stops before a clone or file change when init cannot %s the earlier record', async (fault) => {
+    const { deps, log } = received({}, terminal);
+    const prior = fault === 'remove' ? guardStoreText('demo', ROOT, ['install-rules'], deps.now()) : '{}';
+    deps.seed(store, prior);
+    const before = snapshot(deps);
+    const used = { ...deps, fs: { ...deps.fs, writeTextAtomicCore: async () => failure('disk full') } };
+    const sink = captureSink();
+    expect(await runCli(['init', '--home', ROOT, '--owner-name', 'Test Owner', '--yes'], used, sink)).toBe(1);
+    expect(sink.errors.join('')).toContain(fault === 'remove' ? 'disk full' : 'The guard store does not match its schema.');
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
   });
 
   it.each([

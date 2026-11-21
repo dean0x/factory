@@ -7,7 +7,7 @@ import { renderConfig } from '../config/render.js';
 import { localConfigSchema, mergeConfig, type FactoryConfig, type SharedConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
-import { checkInitGuardRecord } from '../core/guard-records.js';
+import { checkInitGuardRecord, clearInitGuardRecord } from '../core/guard-records.js';
 import { configValue, ignoredPathsOf, isWorkTreeRoot, trackedFilesOf } from '../core/git.js';
 import { rootRefusalOf } from '../core/home.js';
 import { entryOfHome, readHomeIndex } from '../core/home-index.js';
@@ -544,6 +544,8 @@ export const runReceived = async (
     ],
   });
   if (!planned.ok) return planned;
+  const cleared = await clearInitGuardRecord(deps, { root: home, node: id });
+  if (!cleared.ok) return cleared;
 
   const cloned = await runClones(deps, projects.value.planned, []);
   if (!cloned.ok) return cloned;
@@ -555,7 +557,11 @@ export const runReceived = async (
   const guards = await recordInitGuards(deps, planned.value);
   if (!guards.ok) return guards;
 
-  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings];
+  const clearWarning = cleared.value?.warning ?? null;
+  const warnings = [
+    ...planned.value.warnings, ...(clearWarning === null ? [] : [clearWarning]),
+    ...applied.value.warnings, ...hook.value.warnings, ...guards.value.warnings,
+  ];
   const written = [files.localConfig, join(dirs.coordinator, files.claudeMd), `${dirs.state}/`, ...hook.value.written];
   const kept = decision.value.kind === 'declined' ? declinedLines() : [];
   return ok({
