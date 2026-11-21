@@ -35,7 +35,7 @@ export const workerSectionParts: readonly TextPart[] = [
         guards: [guardIds.taskFiles],
         text: ' Write a long task as a file in `{{workersDir}}<id>/inbox/`, with a new plain name each time, and name the file. The file is the durable copy. A `SendMessage` has no read receipt. After `{{workerNewCommand}} {{yesFlag}}`, send one `SendMessage` that names the copied file.',
       },
-      { guards: [guardIds.folderTrust], text: ' If the output of that command names a trust question, tell the {{owner}} at once which pane waits.' },
+      ' If the output of that command names a trust question, tell the {{owner}} at once which pane waits.',
       ' In this session, `{{yesFlag}}` is the consent to the hook settings of a new work copy.',
       {
         guards: [guardIds.sessionChecks],

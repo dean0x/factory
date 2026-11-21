@@ -983,7 +983,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
-    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(176);
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(177);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
@@ -1007,7 +1007,7 @@ describe('the rows of the registry', () => {
       ],
       'folder-trust': [
         'registration-check', 'home-env-conflict', 'unregistered-upgrade', 'origin-received', 'home-is-new', 'home-outside-roots',
-        'received-init-checks', 'init-proposal-confirm', 'existing-registration-ask',
+        'received-init-checks', 'init-proposal-confirm', 'existing-registration-ask', 'trust-question-text',
       ],
       'git-safety': ['state-git-hooks-off', 'commit-named-paths', 'work-tree-top', 'root-repo-init'],
       'hook-runtime': ['hook-never-fails', 'hook-silent-outside', 'hook-session-identity', 'statusline-command', 'statusline-identity'],

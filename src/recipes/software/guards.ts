@@ -270,7 +270,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
   }),
 
   // Folder trust.
-  textRow({
+  fixedTextRow({
     id: 'trust-question-text',
     guard: guardIds.folderTrust,
     name: `The ${owner} hears which pane waits when a new ${worker} shows a trust question`,
