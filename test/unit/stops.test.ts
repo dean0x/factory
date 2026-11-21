@@ -297,6 +297,7 @@ describe('the remedy line of every stop in the source', () => {
     'commands/setup-check.ts: remedy',
     'core/home.ts: problem.remedy',
     'migrate/inspect.ts: state.hint',
+    'safety/secrets.ts: hint',
   ];
 
   it('names a command in the remedy line of each of the stops of src', () => {

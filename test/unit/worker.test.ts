@@ -1158,9 +1158,13 @@ describe.each(FOLDER_ORIGINS)('worker new: the guard task-files in %s', (_title,
 
   it('refuses an assignment that becomes a link before the read', async () => {
     const made = guardedMake({ off: [guardIds.taskFiles] });
+    let sourceIsLink = false;
     const fs: FakeDeps['fs'] = {
       ...made.deps.fs,
-      openChecked: async (path, request) => path === HIDDEN ? ok({ state: 'link' }) : made.deps.fs.openChecked(path, request),
+      lstat: async (path) => {
+        if (path === `${TREE}/.drafts`) sourceIsLink = true;
+        return path === HIDDEN && sourceIsLink ? ok('link') : made.deps.fs.lstat(path);
+      },
     };
     const sink = captureSink();
     const code = await runCli(['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', HIDDEN], { ...made.deps, fs }, sink);
