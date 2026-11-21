@@ -8,10 +8,10 @@ import { recipes } from '../../src/recipes/index.js';
 import { workerSectionLines } from '../../src/recipes/software/roles/coordinator.js';
 import { softwareGuardIds } from '../../src/recipes/software/guards.js';
 import { hookOutputOf } from '../../src/hooks/hook.js';
-import { fixedGuard, guardOf, wiredGuard } from '../../src/guards/build.js';
+import { fixedGuard, guardOf } from '../../src/guards/build.js';
 import { guardRowsFor, guardsFor, recordPathSites, retiredGuardIds } from '../../src/guards/registry.js';
 import type { Guard, GuardRow, GuardValues, RowSite } from '../../src/guards/types.js';
-import { allOn, guardRulesOf } from '../../src/guards/effective.js';
+import { allOn } from '../../src/guards/effective.js';
 import { fillTemplate } from '../../src/templates/fill.js';
 import { blockNames, commandLines, guardIds, guardKeys, guardKinds, guardValues, keys, roleText } from '../../src/names.js';
 import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
@@ -20,7 +20,6 @@ import { oldWordsIn } from '../helpers/old-words.js';
 import { jargonIn } from '../helpers/plain-words.js';
 import { publishRecipe } from '../helpers/publish-recipe.js';
 import { sampleObject } from '../helpers/sample-config.js';
-import { UNWIRED_GUARD, unwiredRecipe, unwiredRegistry } from '../helpers/unwired-guard.js';
 import * as sourceScan from '../helpers/source-scan.js';
 import { allSourceFiles, importPathsOf, topLevelNamesOf } from '../helpers/source-scan.js';
 
@@ -136,9 +135,8 @@ const recordApprovalReason = 'A pure part of the approval check of a record; rec
 const closedProofReason = 'dismissClosed reads the value and does not call it while the guard is off; the owner request form calls it with every guard on.';
 
 /**
- * The listed sites of a code row of a wired guard whose own declaration does not name the guard id. Each one has its reason: the
- * value is read by its caller or its callee, or the site holds a stop that the guard shares with a guard that this version cannot
- * set, so the stop stays on.
+ * The sites of configurable code rows that do not name the guard id. A caller or callee reads the value, or the site
+ * enforces a check that stays on.
  */
 const unreadSiteExceptions: readonly { readonly row: string; readonly path: string; readonly symbol: string; readonly reason: string }[] = [
   { row: 'delegation-record', path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Merges the mode of the local file; delegationReport reads the value and gives the mode that counts.' },
@@ -338,22 +336,8 @@ describe('the guards of a recipe', () => {
   });
 
   it('keeps merge quality separate from approval, with its one text row', () => {
-    expect(software.guards.find((guard) => guard.id === 'merge-quality')).toMatchObject({ wired: true, rows: ['merge-head-text'] });
+    expect(software.guards.find((guard) => guard.id === 'merge-quality')).toMatchObject({ fixed: false, rows: ['merge-head-text'] });
     expect(software.rows.find((row) => row.id === 'merge-head-text')?.guard).toBe('merge-quality');
-  });
-
-  it('keeps a guard that this version cannot set on even with a recorded local off value', () => {
-    const { shared, local } = splitConfigValue({ ...sampleObject(), guards: { [UNWIRED_GUARD]: guardValues.off } });
-    const parsed = parseConfig(shared, local, unwiredRegistry);
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) return;
-    const guards = guardsFor(unwiredRecipe);
-    const state = guardRulesOf(guards, {
-      node: 'demo', root: '/node', local: parsed.data.core.guards,
-      record: { node: 'demo', root: '/node', values: { [UNWIRED_GUARD]: { value: guardValues.off, at: '2026-11-18T00:00:00.000Z' } }, prefix: null },
-    });
-    expect(state.values[UNWIRED_GUARD]).toBe(guardValues.on);
-    expect(guards.find((guard) => guard.id === UNWIRED_GUARD)).toMatchObject({ wired: false });
   });
 
   it('sets the harm mark for a recipe guard with no rows', () => {
@@ -371,17 +355,9 @@ describe('the guards of a recipe', () => {
     expect(idsOf(software.guards).filter((id) => taken.has(id))).toEqual([]);
   });
 
-  it('wires the text guards of the software recipe and each guard whose sites read its value', () => {
-    expect(software.guards.filter((guard) => guard.wired).map((guard) => guard.id)).toEqual([
-      guardIds.approvalDelegation, guardIds.boardEdits, guardIds.settingsCheck, guardIds.settingsWrite, guardIds.contextLimits, guardIds.deleteGuard, guardIds.dismiss, guardIds.fileLinkSafety,
-      guardIds.folderTrust, guardIds.gitSafety, guardIds.machineLimits, guardIds.taskFiles, guardIds.sessionChecks, guardIds.ownerGo, guardIds.paneSafety, guardIds.permissionMode, guardIds.proxy, guardIds.resumeRoutines, guardIds.rootScan, guardIds.safetyBlock, guardIds.secrets,
-      guardIds.setupText, guardIds.spend, guardIds.workConduct, guardIds.installRules, 'approval-merge', 'approval-release', 'merge-quality', 'pr-rules',
-    ]);
-  });
-
-  it('reads the value of a wired guard in each listed site of each of its code rows, or names the reason of a site that does not', () => {
+  it('lists a guard read or an explained exception at each configurable code site', () => {
     const codeRows = software.rows.filter((row) =>
-      row.kind === guardKinds.code && !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && guard.wired));
+      row.kind === guardKinds.code && !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && !guard.fixed));
     const paths = [...new Set(codeRows.flatMap((row) => row.sites.map((site) => site.path)))];
     const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
     expect(codeRows.length).toBeGreaterThan(0);
@@ -397,21 +373,20 @@ describe('the guards of a recipe', () => {
     expect(excepted.filter((site) => !unread.includes(site))).toEqual([]);
   });
 
-  it('makes clone rules, hook runtime and launch commands fixed guards: no key, never wired, no harm mark and only rows that are always on', () => {
+  it('makes clone rules, hook runtime and launch commands fixed guards: no key, no harm mark and only rows that are always on', () => {
     const fixed = software.guards.filter((guard) => guard.fixed);
     expect(idsOf(fixed)).toEqual([guardIds.cloneRules, guardIds.hookRuntime, guardIds.launchCommands]);
     for (const guard of fixed) {
-      expect(guard, guard.id).toMatchObject({ key: null, wired: false, harm: false });
+      expect(guard, guard.id).toMatchObject({ key: null, harm: false });
       expect(rowsOf(guard).length, guard.id).toBeGreaterThan(0);
       expect(rowsOf(guard).filter((row) => !row.alwaysOn).map((row) => row.id), guard.id).toEqual([]);
     }
   });
 
-  it('never wires a fixed guard, also when its definition is marked wired', () => {
+  it('gives a fixed recipe guard no key', () => {
     const definition = guardOf('test-guard', 'Test guard', 'Test work stays safe.');
-    expect(fixedGuard(definition)).toEqual({ ...definition, fixed: true, wired: false });
-    expect(guardsFor({ ...publishRecipe, guards: [wiredGuard(fixedGuard(definition))] }).at(-1)).toMatchObject({
-      id: 'test-guard', fixed: true, wired: false, key: null,
+    expect(guardsFor({ ...publishRecipe, guards: [fixedGuard(definition)] }).at(-1)).toMatchObject({
+      id: 'test-guard', fixed: true, key: null,
     });
   });
 
@@ -453,17 +428,6 @@ describe('the guards of a recipe', () => {
       'approval-release': true,
       'merge-quality': true,
       'pr-rules': true,
-    });
-  });
-
-  it('marks a guard as wired without a change to its definition', () => {
-    const definition = guardOf('test-guard', 'Test guard', 'Test work stays safe.', ['test.key']);
-    const wired = wiredGuard(definition);
-    expect(wired).toEqual({ ...definition, wired: true });
-    expect(wired).not.toBe(definition);
-    expect(definition.wired).toBe(false);
-    expect(guardsFor({ ...publishRecipe, guards: [wired] }).at(-1)).toMatchObject({
-      ...definition, wired: true, harm: true, kinds: [], rows: [],
     });
   });
 
@@ -1444,11 +1408,11 @@ describe('the text rows of the registry', () => {
   };
 
   const textRows = software.rows.filter((row) => row.kind === guardKinds.text);
-  const wiredRows = textRows.filter((row) => !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && guard.wired));
+  const settableRows = textRows.filter((row) => !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && !guard.fixed));
   const fixedRows = textRows.filter((row) => row.alwaysOn);
   const allOff: GuardValues = Object.fromEntries(software.guards.map((guard) => [guard.id, guardValues.off]));
   /** The texts of each cited file for the guard values. The coordinator text holds the merge rules of both modes of the merge point. */
-  const wiredTextsOf = (guards: GuardValues): Readonly<Record<string, readonly string[]>> => {
+  const blockTextsFor = (guards: GuardValues): Readonly<Record<string, readonly string[]>> => {
     const blocks = blockTemplatesFor(blockInput(1, { guards }));
     const coordinator = bodyOf(blocks, blockNames.coordinator);
     const delegated = bodyOf(blockTemplatesFor(blockInput(1, { guards, modes: { ...softwareOwnerModes, merge: 'delegated' } })), blockNames.coordinator);
@@ -1465,9 +1429,9 @@ describe('the text rows of the registry', () => {
     };
   };
 
-  it.each(wiredRows)('removes the on text of $id from every cited block when its guard is off', (row) => {
-    const on = wiredTextsOf(allOn);
-    const off = wiredTextsOf({ [row.guard]: guardValues.off });
+  it.each(settableRows)('removes the on text of $id from every cited block when its guard is off', (row) => {
+    const on = blockTextsFor(allOn);
+    const off = blockTextsFor({ [row.guard]: guardValues.off });
     const pieces = FRAGMENTS[row.id] ?? [];
     const point = softwareRecipe.approvalPoints.find((candidate) => candidate.guard === row.guard);
     expect(pieces.length, row.id).toBeGreaterThan(0);

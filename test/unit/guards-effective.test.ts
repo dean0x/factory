@@ -4,7 +4,7 @@ import { withGuards, type Deps } from '../../src/core/deps.js';
 import { readGuardState } from '../../src/core/guard-records.js';
 import { guardReadOf, guardSourceFor } from '../../src/core/guard-source.js';
 import { guardsFor } from '../../src/guards/registry.js';
-import type { Guard, GuardSource } from '../../src/guards/types.js';
+import type { GuardSource } from '../../src/guards/types.js';
 import { loadConfig } from '../../src/config/load.js';
 import { commands, guardIds, guardRecordWords, guardValues, reservedFieldNames } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
@@ -16,7 +16,7 @@ import {
 import { countReadsOf } from '../helpers/read-count.js';
 import { sampleBoard, sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 
-const guards = guardsFor(softwareRecipe).map((guard): Guard => ({ ...guard, wired: true, fixed: false }));
+const guards = guardsFor(softwareRecipe).filter((guard) => !guard.fixed);
 const node = 'demo';
 const root = '/work/demo';
 const at = '2026-11-17T00:00:00.000Z';
@@ -61,14 +61,8 @@ describe('effective guard values', () => {
     });
   });
 
-  it('keeps unwired guards on even with an off record', () => {
-    expect(guardRulesOf(guards.map((guard) => ({ ...guard, wired: false })), { node, root, local, record })).toMatchObject({
-      values: Object.fromEntries(guards.map(({ id }) => [id, 'on'])), unmatched: [], loosened: [],
-    });
-  });
-
-  it('keeps a fixed guard on by its fixed mark, also when it is marked wired and has an off value with a matching record', () => {
-    const fixed = guards.map((guard): Guard => ({ ...guard, fixed: true }));
+  it('keeps fixed guards on even with local off values and a matching record', () => {
+    const fixed = guards.map((guard) => ({ ...guard, fixed: true }));
     expect(guardRulesOf(fixed, { node, root, local, record })).toMatchObject({
       values: Object.fromEntries(guards.map(({ id }) => [id, 'on'])),
       sources: Object.fromEntries(guards.map(({ id }) => [id, 'missing'])),

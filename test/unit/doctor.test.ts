@@ -31,7 +31,6 @@ import {
   checkTempFolders,
   checkTools,
   checkTracker,
-  runDoctor as runDoctorOf,
   type CheckResult,
 } from '../../src/commands/doctor.js';
 import { renderConfig } from '../../src/config/render.js';
@@ -59,7 +58,6 @@ import { OWN_SETTINGS_TEXT, seedAcceptedSetup, seedOwnHooks, seedUnacceptedSetup
 import { checkChildren, inspectConfig, runDoctor, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { UNWIRED_GUARD, unwiredRegistry } from '../helpers/unwired-guard.js';
 import { GUARD_STORE, guardStatesOf, guardStoreText, withGuardsOff } from '../helpers/guarded-node.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
@@ -228,19 +226,6 @@ describe('doctor: shared guard state', () => {
     expect(found?.text).toContain('unmatched install-rules');
     expect(found?.text).toContain('factory guard set install-rules on');
     expect(found?.text).toContain('factory guard confirm');
-  });
-
-  it('warns for an unwired off value and absent deny rules', async () => {
-    const deps = await initialized();
-    writeConfig(deps, withGuards({ [UNWIRED_GUARD]: 'off' }));
-    deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify(ownSettingsEntries));
-    const output = await runDoctorOf(deps, { home: HOME }, unwiredRegistry);
-    if (!output.ok) throw new Error(output.error.message);
-    const found = (output.value.json['checks'] as CheckResult[]).find((entry) => entry.id === checkIds.guards);
-    expect(found?.level).toBe('warn');
-    expect(found?.text).toContain(`${UNWIRED_GUARD} is not settable in this version; its value stays on`);
-    expect(found?.text).not.toContain('wired');
-    expect(found?.text).toContain('Own file Edit rules are incomplete.');
   });
 
   it.each(['local', 'shared'] as const)('warns for a key of a fixed guard in the %s file and keeps the guard on', async (file) => {

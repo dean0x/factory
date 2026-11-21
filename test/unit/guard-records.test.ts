@@ -5,7 +5,7 @@ import { failure } from '../../src/cli/errors.js';
 import { ok } from '../../src/core/result.js';
 import * as lockApi from '../../src/core/file-lock.js';
 import type { GuardRecord } from '../../src/guards/effective.js';
-import { guardOf, wiredGuard } from '../../src/guards/build.js';
+import { fixedGuard, guardOf } from '../../src/guards/build.js';
 import { guardRecords, privateFile } from '../../src/names.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { describe, expect, it } from 'vitest';
@@ -19,10 +19,9 @@ const stateHome = '/state';
 const path = `${stateHome}/factory/${files.guardRecords}`;
 const folder = `${stateHome}/factory`;
 const at = '2030-01-02T03:04:05.678Z';
-const guard = wiredGuard(guardOf('test-guard', 'Test guard', 'Test work stays safe.'));
-const otherGuard = wiredGuard(guardOf('other-guard', 'Other guard', 'Other work stays safe.'));
-/** A guard that this version cannot set: its local off never needs the store. */
-const unwiredGuard = guardOf('unwired-guard', 'Unwired guard', 'Unwired work stays safe.');
+const guard = guardOf('test-guard', 'Test guard', 'Test work stays safe.');
+const otherGuard = guardOf('other-guard', 'Other guard', 'Other work stays safe.');
+const fixed = fixedGuard(guardOf('fixed-guard', 'Fixed guard', 'Fixed work stays safe.'));
 const change = [{ guard, value: 'off' as const }];
 const record = (values: GuardRecord['values'] = {}, prefix: GuardRecord['prefix'] = null): GuardRecord => ({ node: 'demo', root, values, prefix });
 const storeText = (records: readonly GuardRecord[]): string => JSON.stringify({ schema: guardRecords.schema, records });
@@ -34,7 +33,7 @@ const fixture = (options: Parameters<typeof createFakeDeps>[0] = {}) => {
 };
 const config = (local: Readonly<Record<string, 'on' | 'off'>> = { [guard.id]: 'off' }) => {
   const sample = sampleConfig();
-  return { ...sample, core: { ...sample.core, guards: local }, entry: { ...sample.entry, guards: [guard, otherGuard] } };
+  return { ...sample, core: { ...sample.core, guards: local }, entry: { ...sample.entry, guards: [guard, otherGuard, fixed] } };
 };
 /** The fixture with the config on disk and the root in the factory list, so that a local off value has its proof. */
 const provedFixture = (options: Parameters<typeof createFakeDeps>[0] = {}) => {
@@ -302,10 +301,11 @@ describe('guard store reads and writes', () => {
     expect((await storeApi.readGuardState(deps, root, config(), 'always')).values[guard.id]).toBe('off');
   });
 
-  it('refuses an unwired guard without a write', async () => {
+  it.each(['on', 'off'] as const)('refuses to record %s for a fixed guard without a write', async (value) => {
     const deps = fixture();
-    expect(await storeApi.recordGuards(deps, { root, node: 'demo', change: [{ guard: { ...guard, wired: false }, value: 'off' }] }))
-      .toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(await storeApi.recordGuards(deps, { root, node: 'demo', change: [...change, { guard: fixed, value }] }))
+      .toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining(`Unknown guard "${fixed.id}"`) } });
+    expect(deps.atomicWrites).toEqual([]);
     expect(deps.files.size).toBe(0);
   });
 
@@ -431,7 +431,7 @@ describe('the letter case rewrite of a record root', () => {
 });
 
 describe('one guard state read', () => {
-  it.each(['on', 'off', 'unwired'] as const)('reads the store only for a wired off in when-off mode: %s', async (value) => {
+  it.each(['on', 'off', 'fixed'] as const)('reads the store only for a non-fixed local off in when-off mode: %s', async (value) => {
     const deps = provedFixture();
     let opens = 0;
     deps.seed(path, storeText([record({ [guard.id]: { value: 'off', at } })]));
@@ -439,8 +439,7 @@ describe('one guard state read', () => {
       opens += 1;
       return deps.fs.openCheckedCore?.(...args) ?? failure('record core is absent');
     } } };
-    const base = config(value === 'unwired' ? { [unwiredGuard.id]: 'off' } : { [guard.id]: value });
-    const read = { ...base, entry: { ...base.entry, guards: [...base.entry.guards, unwiredGuard] } };
+    const read = config(value === 'fixed' ? { [fixed.id]: 'off' } : { [guard.id]: value });
     const state = await storeApi.readGuardState(watched, root, read, 'when-off');
     expect(opens).toBe(value === 'off' ? 1 : 0);
     expect(state.values[guard.id]).toBe(value === 'off' ? 'off' : 'on');

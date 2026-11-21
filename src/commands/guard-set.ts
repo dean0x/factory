@@ -55,7 +55,6 @@ const parseGuardSet = (options: GuardSetOptions, registry: RecipeRegistry): CliR
   if (id !== null) {
     const guard = registry.flatMap(guardsFor).find((item) => item.id === id);
     if (guard === undefined || guard.fixed) return usageError(guardSetWords.unknownId(displayLineCore(id)));
-    if (!guard.wired) return usageError(guardSetWords.notSettable(id));
   }
   const value = options.words.at(-1);
   return value === guardValues.on || value === guardValues.off ? ok({ id, value }) : usageError(guardSetWords.badValue);
@@ -126,10 +125,9 @@ const guardWriteOutput = (schema: string, text: string, written: GuardRecordWrit
   failed: false,
 });
 
-const askGuardOff = async (deps: Deps, guards: readonly Guard[], excluded: number | null): Promise<CliResult<void>> => {
+const askGuardOff = async (deps: Deps, guards: readonly Guard[]): Promise<CliResult<void>> => {
   const lines = [
     ...guards.map((guard) => `${guard.id}${guard.harm ? ` ${harmMark}` : ''}`),
-    ...(excluded === null ? [] : [guardSetWords.skipped(excluded)]),
     guardSetWords.effectTime,
   ];
   const shown = await deps.writeStdout(`${lines.join('\n')}\n`);
@@ -148,17 +146,14 @@ export const runGuardSet = async (deps: Deps, options: GuardSetOptions, registry
   const loaded = await loadGuardConfig(deps, options.home, registry);
   if (!loaded.ok) return loaded;
   const { id, value } = parsed.value;
-  const allGuards = guardsFor(loaded.value.config.entry).filter((guard) => !guard.fixed);
-  const guards = allGuards.filter((guard) => guard.wired && (id === null || guard.id === id));
+  const guards = guardsFor(loaded.value.config.entry).filter((guard) => !guard.fixed && (id === null || guard.id === id));
   if (id !== null && guards.length === 0) return usageError(guardSetWords.unknownId(displayLineCore(id)));
-  // The count line names only guards that this version cannot set, so a version that can set all of them shows no line.
-  const excluded = id === null && allGuards.length > guards.length ? allGuards.length - guards.length : null;
   const edited = setGuardText(loaded.value.local, Object.fromEntries(guards.map((guard) => [guard.id, value])));
   if (!edited.ok) return failure(edited.error);
   const config = parseConfigTexts(loaded.value.shared, edited.value, registry);
   if (!config.ok) return config;
   if (value === guardValues.off) {
-    const answer = await askGuardOff(deps, guards, excluded);
+    const answer = await askGuardOff(deps, guards);
     if (!answer.ok) return answer;
     const local = await writeGuardLocal(deps, loaded.value, edited.value, registry);
     if (!local.ok) return local;
@@ -185,7 +180,6 @@ export const runGuardSet = async (deps: Deps, options: GuardSetOptions, registry
   return ok({ ...output, lines: [
     ...output.lines,
     ...(value === guardValues.on ? [{ level: 'text' as const, text: guardSetWords.effectTime }] : []),
-    ...(value === guardValues.on && excluded !== null ? [{ level: 'text' as const, text: guardSetWords.skipped(excluded) }] : []),
   ] });
 };
 

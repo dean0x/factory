@@ -30,15 +30,11 @@ export const guardOf = (
   id,
   name,
   keepsSafe,
-  wired: false,
   fixed: false,
   newNode: guardValues.on,
   whenMissing: guardValues.on,
   related,
 });
 
-/** Mark a definition whose sites can all follow its value. */
-export const wiredGuard = (definition: GuardDefinition): GuardDefinition => ({ ...definition, wired: true });
-
-/** Mark a definition whose rows are all always on: it has no key, and no setting changes it. A fixed guard is never wired. */
-export const fixedGuard = (definition: GuardDefinition): GuardDefinition => ({ ...definition, fixed: true, wired: false });
+/** Mark a definition whose rows are all always on: it has no key, and no setting changes it. */
+export const fixedGuard = (definition: GuardDefinition): GuardDefinition => ({ ...definition, fixed: true });

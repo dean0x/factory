@@ -67,12 +67,11 @@ describe('guard config values', () => {
     expect(fixedGuardKeyWarnings(parsedOf(sampleObject()))).toEqual([]);
   });
 
-  it.each(['on', 'off'] as const)('accepts local %s for every guard that is not fixed, also when it is not wired', (value) => {
+  it.each(['on', 'off'] as const)('accepts local %s for every guard that is not fixed', (value) => {
     const { shared, local } = sampleFiles();
     const values = Object.fromEntries(known.map((id) => [id, value]));
     const parsed = parseConfig(shared, { ...local, guards: values });
     expect(parsed.success && parsed.data.core.guards).toEqual(values);
-    expect(guards.some((guard) => !guard.wired)).toBe(true);
   });
 
   it('accepts shared on for every guard that is not fixed', () => {

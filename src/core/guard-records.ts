@@ -2,7 +2,7 @@ import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { sha256Hex } from '../blocks/managed.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
-import { removedByDisplay } from '../cli/output.js';
+import { displayLineCore, removedByDisplay } from '../cli/output.js';
 import { loadConfig } from '../config/load.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION } from '../config/schema.js';
@@ -185,7 +185,7 @@ const guardPlaceOf = async (deps: Deps, root: string): Promise<CliResult<GuardPl
 };
 
 export interface GuardChange {
-  readonly guard: Pick<GuardDefinition, typeof keys.id | 'wired'>;
+  readonly guard: Pick<GuardDefinition, typeof keys.id | 'fixed'>;
   readonly value: GuardValue;
 }
 
@@ -210,7 +210,7 @@ export const recordGuards = async (
   const channel = requireGuardChannel(deps, commandLines.guardSet);
   if (!channel.ok) return channel;
   for (const item of input.change) {
-    if (!item.guard.wired) return usageError(guardSetWords.notSettable(item.guard.id));
+    if (item.guard.fixed) return usageError(guardSetWords.unknownId(displayLineCore(item.guard.id)));
     if (!slug.safeParse(item.guard.id).success || !guardValueSchema.safeParse(item.value).success) {
       return usageError(guardRecordWords.invalidChange);
     }
@@ -328,7 +328,7 @@ export interface GuardConfig {
   };
 }
 
-/** True when the local file sets a wired guard off: only then can a record of the guard store change a value. */
+/** True when the local file sets a non-fixed guard off: only then can a record of the guard store change a value. */
 export const holdsLocalOff = (config: GuardConfig): boolean =>
   guardsFor(config.entry).some((guard) => isSettable(guard) && config.core.guards[guard.id] === guardValues.off);
 

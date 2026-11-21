@@ -1,4 +1,4 @@
-import { alwaysOnRow, at, fixedTextRow, guardOf, textRow, wiredGuard } from '../../guards/build.js';
+import { alwaysOnRow, at, fixedTextRow, guardOf, textRow } from '../../guards/build.js';
 import type { GuardDefinition, GuardRow } from '../../guards/types.js';
 import { commandLines, guardIds, keys, requestWords, roles } from '../../names.js';
 import { softwareApprovalPoints } from './approval.js';
@@ -17,36 +17,28 @@ const { coordinator, manager, owner, worker } = roles;
 const [mergePoint, releasePoint] = softwareApprovalPoints;
 
 export const softwareGuards: readonly GuardDefinition[] = [
-  wiredGuard(
-    guardOf(
-      softwareGuardIds.approvalMerge,
-      'Approval of a merge',
-      `A merge waits for the go of the ${owner}.`,
-      [`${keys.root.approval}.${mergePoint.id}`],
-    ),
+  guardOf(
+    softwareGuardIds.approvalMerge,
+    'Approval of a merge',
+    `A merge waits for the go of the ${owner}.`,
+    [`${keys.root.approval}.${mergePoint.id}`],
   ),
-  wiredGuard(
-    guardOf(
-      softwareGuardIds.approvalRelease,
-      'Approval of a release',
-      `A release waits for the go of the ${owner}.`,
-      [`${keys.root.approval}.${releasePoint.id}`],
-    ),
+  guardOf(
+    softwareGuardIds.approvalRelease,
+    'Approval of a release',
+    `A release waits for the go of the ${owner}.`,
+    [`${keys.root.approval}.${releasePoint.id}`],
   ),
-  wiredGuard(
-    guardOf(
-      softwareGuardIds.mergeQuality,
-      'Quality checks before a merge',
-      'A merge uses the checked head SHA, green CI there and a posted review of a releasable change.',
-    ),
+  guardOf(
+    softwareGuardIds.mergeQuality,
+    'Quality checks before a merge',
+    'A merge uses the checked head SHA, green CI there and a posted review of a releasable change.',
   ),
-  wiredGuard(
-    guardOf(
-      softwareGuardIds.prRules,
-      'Push and pull request rules',
-      'A push, a pull request and a merge report follow the rules of the project.',
-      [`${keys.root.recipe}.${keys.recipe.projects}[].${keys.project.defaultBranch}`],
-    ),
+  guardOf(
+    softwareGuardIds.prRules,
+    'Push and pull request rules',
+    'A push, a pull request and a merge report follow the rules of the project.',
+    [`${keys.root.recipe}.${keys.recipe.projects}[].${keys.project.defaultBranch}`],
   ),
 ];
 

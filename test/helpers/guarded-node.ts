@@ -5,7 +5,7 @@ import { env, files, guardIds, guardRecords, guardValues, program, roles } from 
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from './fake-deps.js';
 import { sampleConfig, seedConfig } from './sample-config.js';
 
-/** A registered node whose local file sets one wired guard off, with the matching owner record in the guard store. */
+/** A registered node whose local file sets one guard off, with the matching owner record in the guard store. */
 export const GUARDED_HOME = '/h/guarded';
 export const OTHER_HOME = '/h/other';
 export const OFF_GUARD = guardIds.installRules;
