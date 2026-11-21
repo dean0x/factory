@@ -481,7 +481,6 @@ const checkedTask = (text: string, id: string, guards: GuardValues): CliResult<s
 
 /** The line of each guard that is off in `guards`, with the checks of a send that it turned off. */
 const SEND_OFF_LINES: readonly (readonly [string, string])[] = [
-  [guardIds.ownerGo, `The guard ${guardIds.ownerGo} is off, so the header of the file does not say that it carries no authority of the ${roles.owner}.`],
   [
     guardIds.taskFiles,
     `The guard ${guardIds.taskFiles} is off, so this send did not check the task file for hidden characters or a dot part. ` +

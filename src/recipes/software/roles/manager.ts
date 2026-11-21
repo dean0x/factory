@@ -35,7 +35,7 @@ export const MANAGER_PARTS: readonly TextPart[] = [
   {
     segments: [
       '- To give a task to a child, write the task in a file. Run `{{nodeSendCommand}}`. The command puts the file in the inbox of the child and prints the session name of the child. Check with `ListAgents` that exactly one session has that name. Then send one `SendMessage` that names the file.',
-      { guards: [guardIds.ownerGo], text: ' The file carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}.' },
+      ' The file carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}.',
     ],
   },
   { guards: [guardIds.workConduct], lines: ['- A child that you cannot read is unknown. Say so. Do not guess its state.'] },

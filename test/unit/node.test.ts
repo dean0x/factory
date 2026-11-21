@@ -8,7 +8,10 @@ import { fileTransport, parseConfigTexts, runNode } from '../helpers/package-reg
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
-import { childReasons, env, guardIds, nodeInbox, nodeSendReasons, reportLimits, schemaIds, treeLimits } from '../../src/names.js';
+import { guardSourceFor } from '../../src/core/guard-source.js';
+import { isGuardOn } from '../../src/guards/effective.js';
+import { childReasons, commands, env, guardIds, nodeInbox, nodeSendReasons, reportLimits, schemaIds, treeLimits } from '../../src/names.js';
+import { recipes } from '../../src/recipes/index.js';
 import { reportTextOf } from '../../src/report/build.js';
 import type { TreeRow, TreeWalk } from '../../src/report/tree.js';
 import { STATE_GITIGNORE } from '../../src/state/files.js';
@@ -948,12 +951,18 @@ describe('node send', () => {
   };
 
   describe.each(FOLDER_ORIGINS)('the guard owner-go in %s', (_folder, origin) => {
-    it.each(guardStatesOf(guardIds.ownerGo))('ends the header of the file with the line that it carries no owner authority only while the guard counts as on: %s', async (_state, setup, on) => {
+    it.each(guardStatesOf(guardIds.ownerGo))('keeps the full message header for a child with owner-go on: sender %s', async (_state, setup, on) => {
       const deps = guardedSendable(setup, origin);
+      registerRoot(deps, CHILD, 'web');
+      const sender = await guardSourceFor(deps, HOME, recipes, commands.node).read();
+      const child = await guardSourceFor(deps, CHILD, recipes, commands.start).read();
+      expect(isGuardOn(sender.values, guardIds.ownerGo)).toBe(on);
+      expect(isGuardOn(child.values, guardIds.ownerGo)).toBe(true);
+
       const result = await sendLine(deps);
       expect(result.code, result.err).toBe(0);
-      expect(deps.files.get(SENT)).toBe(`${(on ? HEADER : HEADER.slice(0, -1)).join('\n')}\n\nBuild the page.\n`);
-      expect(result.out.includes(`The guard ${guardIds.ownerGo} is off`)).toBe(!on);
+      expect(deps.files.get(SENT)).toBe(`${HEADER.join('\n')}\n\nBuild the page.\n`);
+      expect(result.out).not.toContain(`The guard ${guardIds.ownerGo} is off`);
     });
   });
 

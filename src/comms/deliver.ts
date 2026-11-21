@@ -13,7 +13,6 @@ import {
   files,
   guardIds,
   messageFile,
-  messageHeader,
   messageHeaderLines,
   nodeInbox,
   privateFile,
@@ -187,7 +186,7 @@ const answersAsTarget = (answer: PingResult, input: DeliverInput): boolean =>
  *  7. The second ping. Unless it answers with the same id and layer, the file is removed and the value is `mismatch`; if the
  *     removal fails, `mismatch` holds the path of the file.
  * Every fault gives a kind: a safety stop of a step is `unsafe`, any other fault is `io`. No result holds text of the child.
- * The header ends with the line that the file carries no authority of the owner while the owner-go guard of the sender is on.
+ * The header always ends with the line that the file carries no authority of the owner.
  */
 export const deliverToHome = async (deps: Deps, ping: Ping, address: string, input: DeliverInput): Promise<DeliverResult> => {
   const guards = input.guards ?? allOn;
@@ -202,8 +201,7 @@ export const deliverToHome = async (deps: Deps, ping: Ping, address: string, inp
   if (!answersAsTarget(first, input)) return { kind: 'mismatch', stranded: null };
 
   const layout = layoutOf(home.value);
-  const header = messageHeaderLines(input).filter((line) => line !== messageHeader.notice || isGuardOn(guards, guardIds.ownerGo));
-  const text = [...header, '', input.body].join('\n');
+  const text = [...messageHeaderLines(input), '', input.body].join('\n');
   const state = await requireState(deps, layout);
   if (!state.ok) return state.error;
   const room = await requireRoom(deps, layout, Buffer.byteLength(text, 'utf8'));

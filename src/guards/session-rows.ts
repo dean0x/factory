@@ -271,7 +271,7 @@ const sessionCheckRows: readonly GuardRow[] = [
 ];
 
 const ownerGoRows: readonly GuardRow[] = [
-  codeRow({
+  alwaysOnRow({
     id: 'inbox-task-file-header',
     guard: guardIds.ownerGo,
     name: `A task file for a child starts with a fixed header that says it carries no authority of the ${owner}`,

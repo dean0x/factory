@@ -1017,7 +1017,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
-    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(171);
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(176);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
@@ -1066,9 +1066,11 @@ describe('the rows of the registry', () => {
         'coordinator-decision-caller', 'coordinator-target-pane', 'decide-channel-text',
       ],
       'owner-go': [
-        'decide-prompt', 'decision-proof', 'decision-one-answer', 'answered-row-not-proof', 'answered-no-reclose', 'settle-relay-rules', 'linked-relay-scope',
-        'owner-row-under-lock', 'decision-record-escape', 'approval-store-place', 'profile-owner-only-wait-text', 'profile-no-invented-decision-text', 'glossary-owner-approves-text',
-        'stage-not-approval-glossary-text', 'answered-row-not-proof-text', 'settle-relay-text',
+        'inbox-task-file-header', 'decide-prompt', 'decision-proof', 'decision-one-answer', 'answered-row-not-proof', 'answered-no-reclose',
+        'settle-relay-rules', 'linked-relay-scope', 'owner-row-under-lock', 'decision-record-escape', 'approval-store-place',
+        'profile-owner-only-wait-text', 'profile-no-invented-decision-text', 'glossary-owner-approves-text', 'stage-not-approval-glossary-text',
+        'prefix-relay-only-text', 'outside-text-no-authority-text', 'peer-text-data-text', 'inbox-file-text',
+        'answered-row-not-proof-text', 'settle-relay-text',
       ],
       'pane-safety': [
         'own-tmux-session', 'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'stop-term-only',
