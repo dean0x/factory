@@ -127,6 +127,15 @@ describe('guard store reads and writes', () => {
     expect(deps.atomicWrites.filter((file) => file === path)).toHaveLength(1);
   });
 
+  it('keeps a record that exists when init takes the store lock', async () => {
+    const deps = fixture();
+    const before = storeText([record({ [guard.id]: { value: 'on', at } })]);
+    deps.seed(path, before);
+    const result = await storeApi.recordGuards(deps, { root, node: 'demo', prefix: 'Owner text', change });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(deps.files.get(path)).toBe(before);
+  });
+
   it('refuses a liveness policy in the age-only lock path', async () => {
     const deps = fixture();
     const result = await lockApi.takeAgeLock(deps, `${path}.lock`, {

@@ -124,6 +124,8 @@ Run `init` in a terminal window outside factory and Claude Code sessions, with t
 Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.
 ```
 
+Before it creates a node, `init` checks for an earlier guard record for that node id and folder. If it cannot open the store for this check, it stops. If a record exists, use another node id or folder.
+
 Without that terminal channel, `init` writes the local values but no record. It prints this warning:
 
 ```text

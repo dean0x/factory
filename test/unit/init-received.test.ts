@@ -166,6 +166,24 @@ describe('init: the owner prefix of a received factory', () => {
     expect((await readGuardState(deps, ROOT, loaded.value, 'always')).values).toMatchObject({ proxy: 'on', 'install-rules': 'off' });
   });
 
+  it('keeps every guard on and keeps both config files when the record lacks the prefix field', async () => {
+    const { deps } = received({}, terminal);
+    const before = JSON.stringify({ schema: 1, records: [{ node: 'demo', root: ROOT,
+      values: { 'install-rules': { value: 'off', at: deps.now().toISOString() } },
+    }] });
+    const shared = deps.files.get(`${ROOT}/factory.yaml`);
+    deps.seed(store, before);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(deps.files.get(store)).toBe(before);
+    expect(deps.files.get(`${ROOT}/factory.yaml`)).toBe(shared);
+    const config = await loadConfig(deps, ROOT);
+    if (!config.ok) throw new Error(config.error.message);
+    const state = await readGuardState(deps, ROOT, config.value, 'always');
+    expect(state.record).toBe(false);
+    expect(state.values).toEqual(Object.fromEntries(guardsFor(config.value.entry).map(({ id }) => [id, 'on'])));
+  });
+
   it.each([
     { ...terminal, env: { ...ENV, [env.claudeCode]: '1' } },
     { stdinIsTTY: false, stdoutIsTTY: true },

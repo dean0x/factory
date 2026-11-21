@@ -520,7 +520,7 @@ export const runReceived = async (
   if (!answered.ok) return answered;
   const decision = await decideAcceptance(asking, { home, node: id, yes: options.yes, setup: setup.value });
   if (!decision.ok) return decision;
-  // The hook settings come after the last write. The check of their target and of the consent comes before the first write.
+  // Check the target and consent before the first write. Save the hook settings before the guard record.
   const idleCompaction = shared.core.session.idle_compaction;
   const consent = await checkHookConsent(deps, home, options.yes, idleCompaction);
   if (!consent.ok) return consent;

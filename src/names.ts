@@ -2516,8 +2516,8 @@ export const guardConfirmWords = {
 
 /** Guard record checks and their remedies have words of their own. */
 export const guardRecordWords = {
-  priorOff: `A guard record already exists for this ${roles.node} and folder.`,
-  priorOffRemedy: `Use another ${roles.node} id or folder.`,
+  priorRecord: `A guard record already exists for this ${roles.node} and folder.`,
+  priorRecordRemedy: `Use another ${roles.node} id or folder.`,
   sessionRefused: `A ${program} session cannot write a guard record.`,
   claudeRefused: 'A Claude Code session cannot write a guard record.',
   inputRequired: 'A guard record needs terminal input.',

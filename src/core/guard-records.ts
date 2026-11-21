@@ -64,7 +64,8 @@ const storeSchema = z.strictObject({
 /** The key uses the exact real root. Letter case never makes two records share a key. */
 const recordKey = (node: string, root: string): string => JSON.stringify([node, resolve(root)]);
 
-const recordsOf = (text: string): Result<readonly GuardRecord[], string> => {
+const recordsOf = (text: string | null): Result<readonly GuardRecord[], string> => {
+  if (text === null) return ok([]);
   const json = parseJsonText(text);
   if (!json.ok) return json;
   const parsed = storeSchema.safeParse(json.value);
@@ -85,13 +86,13 @@ const checkedFolder = async (deps: Deps, path: string): Promise<Result<boolean, 
   return usableInfo(deps, folder.value, 'dir') ? ok(true) : err(guardRecordWords.badFolder);
 };
 
-/** Read one bounded store through its checked handle. A missing store has no records. */
-export const readGuardStore = async (deps: Deps, path: string): Promise<Result<readonly GuardRecord[], string>> => {
+/** Read the bounded store through its checked handle. Null means the file is absent. */
+const readGuardStoreText = async (deps: Deps, path: string): Promise<Result<string | null, string>> => {
   const folder = await checkedFolder(deps, path);
   if (!folder.ok) return err(guardRecordWords.readFault(path, folder.error));
   const file = await deps.fs.lstatInfo(path);
   if (!file.ok) return err(guardRecordWords.readFault(path, file.error.message));
-  if (file.value === null) return ok([]);
+  if (file.value === null) return ok(null);
   if (!folder.value || !usableInfo(deps, file.value, 'file')) return err(guardRecordWords.readFault(path, guardRecordWords.badFile));
   if (file.value.kind !== 'link' && file.value.size > guardRecords.maxBytes) return err(guardRecordWords.byteCap);
   if (deps.fs.openCheckedCore === undefined) return err(guardRecordWords.adapterRequired);
@@ -102,7 +103,13 @@ export const readGuardStore = async (deps: Deps, path: string): Promise<Result<r
     const reason = value.state === 'refused' && value.fault === 'size' ? guardRecordWords.byteCap : guardRecordWords.badOpen;
     return err(guardRecordWords.readFault(path, reason));
   }
-  const records = recordsOf(value.text);
+  return ok(value.text);
+};
+
+export const readGuardStore = async (deps: Deps, path: string): Promise<Result<readonly GuardRecord[], string>> => {
+  const text = await readGuardStoreText(deps, path);
+  if (!text.ok) return text;
+  const records = recordsOf(text.value);
   return records.ok ? records : err(guardRecordWords.readFault(path, records.error));
 };
 
@@ -184,17 +191,19 @@ const guardPlaceOf = async (deps: Deps, root: string, newRoot = false): Promise<
   return ok({ root: real.value, path: place.path });
 };
 
-/** A new node must not inherit an off record of a prior node with the same id and root. */
+/** A new node must have no earlier record for its id and root. */
 export const requireFreshGuardRecord = async (deps: Deps, input: RecordPlaceInput): Promise<CliResult<void>> => {
   const place = await guardPlaceOf(deps, input.root, true);
-  // A store that cannot be read cannot supply an effective off value.
-  if (!place.ok || place.value.path === null) return ok(undefined);
-  const records = await readGuardStore(deps, place.value.path);
+  if (!place.ok) return place;
+  if (place.value.path === null) return failure(guardRecordWords.noPlace);
+  const text = await readGuardStoreText(deps, place.value.path);
+  if (!text.ok) return failure(text.error);
+  const records = recordsOf(text.value);
+  // Malformed text supplies no records. The final write reports its fault and keeps the files.
   if (!records.ok) return ok(undefined);
   const key = recordKey(input.node, place.value.root);
-  const record = records.value.find(({ root, node }) => recordKey(node, root) === key);
-  if (record === undefined || !Object.values(record.values).some(({ value }) => value === guardValues.off)) return ok(undefined);
-  return failure(guardRecordWords.priorOff, guardRecordWords.priorOffRemedy);
+  return records.value.some(({ root, node }) => recordKey(node, root) === key)
+    ? failure(guardRecordWords.priorRecord, guardRecordWords.priorRecordRemedy) : ok(undefined);
 };
 
 export interface GuardChange {
@@ -207,16 +216,17 @@ interface RecordPlaceInput {
   readonly node: string;
 }
 
-const replaceRecord = (
-  records: readonly GuardRecord[], input: RecordPlaceInput, change: (record: GuardRecord) => GuardRecord,
-): readonly GuardRecord[] => {
+const changeRecord = (
+  records: readonly GuardRecord[], input: RecordPlaceInput, mode: 'new' | 'set', change: (record: GuardRecord) => GuardRecord,
+): GuardStoreResult => {
   const key = recordKey(input.node, input.root);
   const current = records.find((record) => recordKey(record.node, record.root) === key);
+  if (mode === 'new' && current !== undefined) return err(guardRecordWords.priorRecord);
   const next = change(current ?? { ...input, values: {}, prefix: null });
-  return current === undefined ? [...records, next] : records.map((record) => recordKey(record.node, record.root) === key ? next : record);
+  return ok(current === undefined ? [...records, next] : records.map((record) => record === current ? next : record));
 };
 
-/** Save the named values and, if supplied, the exact prefix hash in one write. */
+/** Init supplies the prefix to create one new record. A guard set changes only the named values. */
 export const recordGuards = async (
   deps: Deps, input: RecordPlaceInput & { readonly change: readonly GuardChange[]; readonly prefix?: string },
 ): Promise<CliResult<GuardRecordWrite>> => {
@@ -235,13 +245,13 @@ export const recordGuards = async (
   if (place.value.path === null) return failure(guardRecordWords.noPlace);
   const at = deps.now().toISOString();
   const prefix = input.prefix === undefined ? null : { hash: sha256Hex(input.prefix), at };
-  const written = await changeGuardStore(deps, place.value.path, (records) => ok(replaceRecord(
-    records, { node: input.node, root: place.value.root }, (current) => ({
+  const written = await changeGuardStore(deps, place.value.path, (records) => changeRecord(
+    records, { node: input.node, root: place.value.root }, prefix === null ? 'set' : 'new', (current) => ({
       ...current,
       values: { ...current.values, ...Object.fromEntries(input.change.map((item) => [item.guard.id, { value: item.value, at }])) },
       prefix: prefix ?? current.prefix,
     }),
-  )));
+  ));
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
 };
 
@@ -314,9 +324,9 @@ export const recordPrefix = async (
   if (!place.ok) return place;
   if (place.value.path === null) return failure(guardRecordWords.noPlace);
   const prefix = { hash: sha256Hex(input.prefix), at: deps.now().toISOString() };
-  const written = await changeGuardStore(deps, place.value.path, (records) => ok(replaceRecord(
-    records, { node: input.node, root: place.value.root }, (current) => ({ ...current, prefix }),
-  )));
+  const written = await changeGuardStore(deps, place.value.path, (records) => changeRecord(
+    records, { node: input.node, root: place.value.root }, 'set', (current) => ({ ...current, prefix }),
+  ));
   return written.ok ? written : failure(guardRecordWords.writeFault(written.error));
 };
 

@@ -219,16 +219,34 @@ describe('init: the owner prefix record', () => {
     expect(deps.files.has(store)).toBe(false);
   });
 
-  it('refuses to reuse an old off record for a new folder with the same node id and root', async () => {
+  it.each(['off value', 'prefix'] as const)('keeps a prior %s for the same node id and root', async (part) => {
     const { deps } = setup();
-    deps.seed(store, guardStoreText('node', HOME, [guardIds.installRules], deps.now()));
+    const at = deps.now().toISOString();
+    const before = part === 'off value' ? guardStoreText('node', HOME, [guardIds.installRules], deps.now())
+      : JSON.stringify({ schema: 1, records: [{ node: 'node', root: HOME, values: {}, prefix: { hash: 'a'.repeat(64), at } }] });
+    deps.seed(store, before);
     const result = await runInit(deps, options());
     expect(result.ok).toBe(false);
     expect(messageOf(result)).toContain('guard record already exists');
     expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(false);
   });
 
-  it('keeps an unreadable store and the new files, exits one and names guard confirm', async () => {
+  it.each([false, true])('requires a readable prior record before init, with owner channel %s', async (owner) => {
+    const { deps } = setup({}, { stdinIsTTY: owner, stdoutIsTTY: owner });
+    const before = guardStoreText('node', HOME, [guardIds.installRules], deps.now());
+    deps.seed(store, before);
+    const used: Deps = { ...deps, fs: { ...deps.fs, openCheckedCore: (path, request) =>
+      path === store ? Promise.resolve(failure('cannot open the store')) : deps.fs.openChecked(path, request),
+    } };
+    const result = await runInit(used, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain('cannot open the store');
+    expect(deps.files.get(store)).toBe(before);
+    expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(false);
+    expect(deps.files.has(INDEX)).toBe(false);
+  });
+
+  it('keeps a malformed store and the new files, exits one and names guard confirm', async () => {
     const { deps } = setup({}, terminal);
     deps.seed(store, 'invalid store');
     const result = await runInit(deps, options());
