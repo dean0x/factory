@@ -726,7 +726,7 @@ describe('the local connector: item notes', () => {
 
   it.each(['\n', '\u200b'])('refuses a commit message with a character that is not shown on one line', (hidden) => {
     expect(checkMessageLine(`chore: note item B-1: New note${hidden}`)).toMatchObject({ ok: false, error: {
-      kind: 'failure', message: 'the item commit message is not one visible line',
+      kind: 'failure', message: 'the item commit subject is not one visible line',
     } });
   });
 

@@ -123,7 +123,7 @@ export const checkNoteText = (what: string, text: string): CliResult<string> => 
 };
 
 export const checkMessageLine = (message: string): CliResult<void> =>
-  visibleLineIssue(message) === null ? ok(undefined) : failure('the item commit message is not one visible line');
+  visibleLineIssue(message) === null ? ok(undefined) : failure('the item commit subject is not one visible line');
 
 /** The fields of the contract as the typed text that `resolveFields` checks. */
 const inputsOf = (fields: FieldValues | undefined): FieldInput[] =>
