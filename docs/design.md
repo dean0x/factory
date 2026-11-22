@@ -824,7 +824,7 @@ children: []                 # nodes this node manages, each { id, address } (§
   4. The worker waits for an answer (`waits`).
   5. The worker looks stalled (`stalled?`). Its state is `busy`, and the newer of the event and percent times is older than 15 minutes.
 
-  A missing line is not a change in the first two checks unless the watch read a valid line before. A line that is not owned is a change at once. Level kinds (`stalled?`, `waits`) report again at each new run.
+  A missing or invalid line is not a change in the first two checks unless the watch read a valid line before. A line that is not owned is a change at once. Level kinds (`stalled?`, `waits`) report again at each new run.
 
   Use the saved finish time, even if a new turn or dialog follows the `Stop`. If an older line has no saved finish time and its event is `Stop`, use the event time. A finish must be later than the baseline and at or before the check time. The event `SessionStart` sets no finish.
 

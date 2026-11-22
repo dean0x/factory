@@ -685,6 +685,15 @@ describe('a finish of a worker ends the watch', () => {
     expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: BETA, kind: 'finished' }], checks: 1 });
   });
 
+  it('reports a finish a fraction of a millisecond after the check only at the next check', async () => {
+    const world = await make({ workers: [ALPHA, BETA] });
+    const since = world.deps.now().toISOString();
+    await writesLiteralLine(world.deps, ALPHA, 'Stop', since, since.replace('Z', '0Z'));
+    await writesLiteralLine(world.deps, BETA, 'Stop', since, since.replace('Z', '1Z'));
+    const outcome = valueOf(await world.watch([ALPHA, BETA], atWait(2, () => world.end(PANE_OF[BETA] ?? '')), [], since));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: BETA, kind: 'finished' }], checks: 1 });
+  });
+
   it('reports waits for a dialog with a finish time later than the check', async () => {
     const world = await make({ events: { [ALPHA]: 'SessionStart' } });
     const since = world.deps.now().toISOString();
@@ -728,6 +737,15 @@ describe('a finish of a worker ends the watch', () => {
     expect(first).toMatchObject({ changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 1 });
     const next = valueOf(await world.watch([], atWait(1, () => world.end(PANE_OF[ALPHA] ?? '')), [], first.checkedAt));
     expect(next).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'ended' }], checks: 1 });
+  });
+
+  it('reports the pane change instead of a finish at the same check', async () => {
+    const world = await make();
+    const outcome = valueOf(await world.watch([], atWait(1, async ({ deps }) => {
+      await writesEvent(deps, ALPHA, 'Stop');
+      world.end(PANE_OF[ALPHA] ?? '');
+    })));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'ended' }], checks: 1 });
   });
 
   it('reports a finish before a dialog and reports waits in the next run', async () => {

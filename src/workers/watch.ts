@@ -50,15 +50,15 @@ import { paneProcessStart, requireLineAfterStart } from './session-checks.js';
  *     that `--since` takes;
  *  6. a fault of a read (tmux, a file) is exit 1.
  * The panes at the first check are the panes that later checks read. Each check reports at most one change per worker. A pane
- * change comes first, then a missing line after the grace period, a line that is not valid, or a line that is not owned. Then
+ * change comes first. Next come a line that is not owned, or a missing or invalid line after the grace period. Then
  * come `finished`, `waits`, and `stalled`. Level kinds can report again in the next run.
  * Use the saved finish time, or the event time of an older `Stop` line with no saved finish time. Report a finish only after
  * the baseline and at or before the check time. At the first check, start with the later of the event time and the finish time.
  * Limit it to the check time and to `--since` if that is older. With no event, finish, or `--since`, there is no baseline time.
  * Pass the last check time as `--since` to report a finish between runs. `SessionStart` sets no finish. A `--ready` worker
  * never reports a finish.
- * A worker that is new has no line yet, so a missing line is not a change in the first `watchPoll.lineGraceChecks` checks, the
- * baseline included. A missing line is a change from that check on, and at once for a worker whose valid line was seen at an
+ * A missing or invalid line is not a change in the first `watchPoll.lineGraceChecks` checks, the baseline included.
+ * Such a line is a change after those checks, and at once for a worker whose valid line was seen at an
  * earlier check. A line that does not belong to the worker is a change at once.
  * A worker of `--ready ID` waits out a block, for example a dialog that only the owner answers. It is watched with the other workers,
  * and its pane changes and a line that does not belong to it stay changes. Its other change is `ready`: a valid line of its own at the
@@ -245,18 +245,26 @@ const changeOf = async (deps: Deps, home: string, target: Target, missingIsChang
   return ok({ change, lineSeen: valid !== null, eventAt, finishedAt });
 };
 
+/** Both UTC times have fixed-width fields through seconds. Keep every fraction digit when their precision differs. */
+const isAfter = (first: string, second: string): boolean => {
+  if (first.length === second.length) return first > second;
+  const width = Math.max(first.length, second.length);
+  const key = (time: string): string => time.slice(0, -1).replace('.', '').padEnd(width, '0');
+  return key(first) > key(second);
+};
+
 /** The older of two times, or the one that is there. Both are ISO times in UTC that a schema has checked. */
 const olderOf = (first: string | null, second: string | null): string | null => {
   if (first === null) return second;
   if (second === null) return first;
-  return Date.parse(first) <= Date.parse(second) ? first : second;
+  return isAfter(first, second) ? second : first;
 };
 
 /** The newer of two times, or the one that is there. */
 const newerOf = (first: string | null, second: string | null): string | null => {
   if (first === null) return second;
   if (second === null) return first;
-  return Date.parse(first) >= Date.parse(second) ? first : second;
+  return isAfter(second, first) ? second : first;
 };
 
 const firstBaseline = (eventAt: string | null, finishedAt: string | null, checkedAt: string, since: string | null): string | null => {
@@ -267,7 +275,7 @@ const firstBaseline = (eventAt: string | null, finishedAt: string | null, checke
 
 /** True when the finish time is there and is newer than the given time. Null is older than every time. */
 const isFinishAfter = (finishedAt: string | null, time: string | null): boolean =>
-  finishedAt !== null && (time === null || Date.parse(finishedAt) > Date.parse(time));
+  finishedAt !== null && (time === null || isAfter(finishedAt, time));
 
 const levelKinds: readonly WatchKind[] = ['waits', 'stalled'];
 
@@ -276,7 +284,7 @@ const pickKind = (change: WatchKind | null, finished: boolean): WatchKind | null
 
 /**
  * What the checks remember: the workers whose valid line has been seen so far, and the baseline of each worker that an earlier check
- * has met. A baseline of none is a worker that had no valid line at its first check, with no `--since`.
+ * has met. A null baseline means that the first check had no event time, finish time or `--since`.
  */
 interface Memory {
   readonly seen: ReadonlySet<string>;

@@ -833,7 +833,7 @@ The sessions of one factory talk with the cross-session messages of Claude Code 
   4. The worker waits for an answer (`waits`).
   5. The worker looks stalled (`stalled?`). Its state is `busy`, and the newer of the event and percent times is older than 15 minutes.
 
-  A worker with no line yet gets two checks to write one. This includes the first check. After that, or after the watch reads a valid line, a missing line is a change. A line of another session is a change at once. Level kinds (`stalled?`, `waits`) report again at each new run.
+  A worker with no valid line yet gets two checks to write one. This includes the first check. After that, or after the watch reads a valid line, a missing or invalid line is a change. A line of another session is a change at once. Level kinds (`stalled?`, `waits`) report again at each new run.
 
   The line keeps the time of the last `Stop`, even if a new turn or a dialog follows it. If an older line has no saved finish time and its event is `Stop`, the watch uses the event time. A finish must be later than the baseline and at or before the check time. The event `SessionStart` sets no finish.
 
