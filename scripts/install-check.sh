@@ -146,8 +146,10 @@ installed_js="$npm_config_prefix/lib/node_modules/@dean0x/factory/dist/factory.j
 [ -f "$installed_js" ] || fail "the installed package has no dist/factory.js"
 [ -x "$installed_js" ] || fail "the installed dist/factory.js is not executable"
 cmp -s "$installed_js" "$root/dist/factory.js" || fail "the installed dist/factory.js differs from dist/factory.js of the source tree. Build from a clean tree with: npm run build"
-installed="$(factory version)"
+installed="$(factory version | sed -n 1p)"
 [ "$installed" = "$version" ] || fail "factory version prints $installed, expected $version"
+installed_commit="$(factory version | sed -n 2p)"
+[ "$installed_commit" = "commit $sha" ] || fail "factory version prints '$installed_commit', expected 'commit $sha'"
 logged help factory --help
 printf 'installed factory %s from commit %s\n' "$installed" "$sha"
 
