@@ -964,6 +964,12 @@ describe('the board block', () => {
     expect(checkBoard((board) => (board.fields[1].name = 'epics'))).toBeNull();
   });
 
+  it('refuses notes as an owner field name and says to rename the field', () => {
+    const message = checkBoard((board) => (board.fields[1].name = 'notes'));
+    expect(message).toEqual(expect.stringContaining('board.fields.1.name: is reserved:'));
+    expect(message).toEqual(expect.stringContaining('Rename the field'));
+  });
+
   it('refuses a reserved name as the name of a field also when the local file holds the board edits guard off', () => {
     for (const name of reservedFieldNames) {
       const message = check((raw) => {

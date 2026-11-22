@@ -177,6 +177,7 @@ export const commandLines = {
   itemUpdate: `${commands.item} ${itemCommands.update}`,
   itemMove: `${commands.item} ${itemCommands.move}`,
   itemClose: `${commands.item} ${itemCommands.close}`,
+  itemNote: `${commands.item} note`,
   itemList: `${commands.item} ${itemCommands.list}`,
   itemRecord: `${commands.item} ${itemCommands.record}`,
   itemUnassign: `${commands.item} ${itemCommands.unassign}`,
@@ -246,6 +247,7 @@ export const flags = {
   later: 'later',
   item: 'item',
   note: 'note',
+  reason: 'reason',
   position: 'position',
   priority: 'priority',
   epic: 'epic',
@@ -657,6 +659,10 @@ export const boardKeys = {
   text: 'text',
   docs: 'docs',
   note: 'note',
+  /** The list of notes on an item. The `note` key holds one line on a queue row. */
+  notes: 'notes',
+  /** The time of an item note. */
+  noteAt: 'at',
   defaultQueue: 'queue',
   mergedPrHead: 'merged_pr_head',
   unassignedFrom: 'unassigned_from',
@@ -761,6 +767,9 @@ export const followPollMs = 2_000;
 export const itemWords = {
   item: 'item',
   items: 'items',
+  note: 'note',
+  reason: 'reason',
+  noteToken: 'the note or close reason looks like a token',
   track: 'track',
   tracks: 'tracks',
   columns: { id: 'ID', stage: 'STAGE', status: 'STATUS', title: 'TITLE' },
@@ -915,8 +924,8 @@ export const requestGroups = { now: 'now', later: 'later' } as const;
 
 /**
  * The limits of the text of a board write. A title, a text, a question and the text of an option are one line each, with at most
- * this many characters. A decision has at most `maxOptions` options. The note of an owner answer is one line of at most
- * `maxNoteChars` characters. A link from an item to a file is a relative path of at most `maxDocPathChars` characters.
+ * this many characters. A decision has at most `maxOptions` options. An owner answer note, an item note and a close reason
+ * each have one line of at most `maxNoteChars` characters. A link to a file is a relative path of at most `maxDocPathChars` characters.
  */
 export const boardTextLimits = {
   maxTitleChars: 100,
@@ -932,6 +941,8 @@ export const boardTextLimits = {
   maxReleaseGroupChars: 60,
   /** The most docs that one item holds. A write that would pass it is a usage error. */
   maxItemDocs: 10,
+  /** The most notes that one item holds. */
+  maxItemNotes: 30,
   maxRequestDocs: 5,
   maxRequestFields: 6,
   maxFieldLabelChars: 60,
@@ -971,6 +982,7 @@ export const reservedFieldNames: readonly string[] = [
   'answer',
   boardKeys.name,
   boardKeys.note,
+  boardKeys.notes,
   boardKeys.items,
   boardKeys.tracks,
   boardKeys.track,
