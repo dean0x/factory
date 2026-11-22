@@ -145,6 +145,40 @@ describe('the board commands with the delete guard off', () => {
   );
 });
 
+describe('item notes in the state repo', () => {
+  it('refuses leading line breaks and commits a valid note in one line', async () => {
+    await mustRun(['item', 'add', '--title', 'First']);
+    const before = await commitCount();
+
+    const refused = await factory(['item', 'note', 'B-1', '\n\nWork started']);
+    expect(refused.code, refused.stderr).toBe(2);
+    expect(refused.stderr).toContain('the note is not one line');
+    expect(await commitCount()).toBe(before);
+
+    const noted = await mustRun(['item', 'note', 'B-1', '  Work started  ']);
+    expect(noted.stdout).toBe('Noted B-1: First\n');
+    expect(await commitCount()).toBe(before + 1);
+    expect(await filesOfLastCommits(1)).toEqual([files.board]);
+    expect((await stateGit(['log', '-1', '--format=%B'])).stdout).toBe('chore: note item B-1: Work started\n\n');
+    const board: unknown = JSON.parse(await textOf(files.board));
+    expect(board).toMatchObject({ items: [{ id: 'B-1', status: 'open', notes: [{ text: 'Work started', at: expect.any(String) }] }] });
+  }, CASE_MS);
+
+  it('closes the item and stores the reason in the same board commit', async () => {
+    await mustRun(['item', 'add', '--title', 'First']);
+    const before = await commitCount();
+
+    const closed = await mustRun(['item', 'close', 'B-1', '--reason', '  Work is complete  ']);
+
+    expect(closed.stdout).toBe('Closed B-1: First\n');
+    expect(await commitCount()).toBe(before + 1);
+    expect(await filesOfLastCommits(1)).toEqual([files.board]);
+    expect((await stateGit(['log', '-1', '--format=%B'])).stdout).toBe('chore: close item B-1: Work is complete\n\n');
+    const board: unknown = JSON.parse(await textOf(files.board));
+    expect(board).toMatchObject({ items: [{ id: 'B-1', status: 'done', notes: [{ text: 'Work is complete' }] }] });
+  }, CASE_MS);
+});
+
 /** The text that the state lock wait of the product puts in stderr when another process still holds the lock at the end of the wait. */
 const LOCK_HELD_TEXT = 'holds the lock';
 

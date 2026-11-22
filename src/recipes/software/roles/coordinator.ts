@@ -237,6 +237,7 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
     ],
   },
   '- `{{itemCommand}}` adds, changes, moves and closes an item, and lists items. `{{trackCommand}}` adds a track and lists tracks. A track groups items.',
+  '- To add a note to an item, run `{{itemNoteCommand}}`. To close an item with a reason, run `{{itemCloseWithReasonCommand}}`.',
   '- `{{requestCommand}}` puts a question for the {{owner}} in `{{waitingFile}}`. `{{queueCommand}}` sets the order of the finished work that waits for an approval point.',
   `- The stages of an item, in order, are ${inCode(softwareStages).join(', ')}. The {{coordinator}} moves the stage at each milestone event, with \`{{itemMoveCommand}}\`.`,
   {

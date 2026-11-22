@@ -2812,6 +2812,8 @@ export const templateValues: Readonly<Record<string, string>> = {
   itemRecordCommand: `${commandText(commandLines.itemRecord)} <id> ${flagText(flags.ref)} N`,
   itemUpdateCommand: commandText(commandLines.itemUpdate),
   itemUnassignCommand: `${commandText(commandLines.itemUnassign)} <id>`,
+  itemNoteCommand: `${commandText(commandLines.itemNote)} ID TEXT`,
+  itemCloseWithReasonCommand: `${commandText(commandLines.itemClose)} ID ${flagText(flags.reason)} TEXT`,
   requestRelayCommand: `${commandText(commandLines.requestClose)} <id> ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT`,
   requestLogCommand: `${commandText(commandLines.requestLog)} ${flagText(flags.madeBy)} ${Object.values(requestDeciders).join('|')} ${flagText(flags.title)} TEXT ${flagText(flags.decision)} TEXT`,
   upgradeCommand: commandText(commands.upgrade),
