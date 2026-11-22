@@ -1673,8 +1673,8 @@ describe('the names of the board records', () => {
     expect(boardTextLimits).toMatchObject({ maxRequestDocs: 5, maxRequestFields: 6, maxFieldLabelChars: 60, maxFieldTextChars: 200, maxWhyChars: 200 });
   });
 
-  it('adds the record, unassign and doc subcommands of item after the five older ones', () => {
-    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign', 'doc']);
+  it('lists the item subcommands in the order shown to the user', () => {
+    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign', 'doc', 'note']);
   });
 
   it('gives the doc subcommand of item a command line', () => {

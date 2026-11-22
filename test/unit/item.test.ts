@@ -11,7 +11,7 @@ import { recordGuards } from '../../src/core/guard-records.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { toolNames } from '../../src/core/tools.js';
-import { approvalOptions, boardKeys, commandLines, commands, commandText, files as fileNames, guardIds, maxFileBytes, program, stateLock } from '../../src/names.js';
+import { approvalOptions, boardKeys, boardTextLimits, commandLines, commands, commandText, files as fileNames, guardIds, maxFileBytes, program, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import type { CheckedRecord, RecipeRegistry, RecordCheck, RecordCheckInput } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
@@ -26,7 +26,7 @@ import { BOARD_PATH, LAYOUT, LOG_PATH, WAITING_PATH, type BoardRepo } from '../h
 import { exited, missingProgram, registerRoot, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { HOME, HOOK, STATE } from '../helpers/guard-fixture.js';
 import {
-  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, withFirstConfigReadFault, withGuardsOff, type GuardedSetup,
+  FOLDER_ORIGINS, GUARD_STORE, guardStatesOf, guardStoreText, OTHER_NODE_ID, seedGuardedHome, withFirstConfigReadFault, withGuardsOff, type GuardedSetup,
 } from '../helpers/guarded-node.js';
 import { publishBoard, publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
 import { sampleBoard, sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
@@ -47,6 +47,7 @@ const BASE: ItemOptions = {
   follow: false,
   ref: undefined,
   project: undefined,
+  reason: undefined,
   json: false,
 };
 
@@ -150,6 +151,8 @@ describe('item: each write is one state commit of the local files', () => {
     ['move to a state', { words: ['move', 'B-1'], state: 'doing' }],
     ['move to a stage', { words: ['move', 'B-1'], stage: 'building' }],
     ['close', { words: ['close', 'B-1'] }],
+    ['close with a reason', { words: ['close', 'B-1'], reason: 'Work is complete' }],
+    ['note', { words: ['note', 'B-1', 'Work started'] }],
   ];
 
   it.each(WRITES)('item %s makes one commit that holds only the board file', async (_name, overrides) => {
@@ -340,7 +343,7 @@ describe('item add and update with a track', () => {
 describe('item: the words and the flags are checked before the node is read (exit 2)', () => {
   const BAD: readonly (readonly [string, Partial<ItemOptions>, string])[] = [
     ['no subcommand', { words: [] }, 'needs a subcommand'],
-    ['an unknown subcommand', { words: ['remove', 'B-1'] }, 'add, update, move, close, list, record, unassign'],
+    ['an unknown subcommand', { words: ['remove', 'B-1'] }, 'add, update, move, close, list, record, unassign, doc, note'],
     ['add with no title', { words: ['add'] }, '--title'],
     ['add with an id', { words: ['add', 'B-9'], title: 'New' }, 'takes no argument'],
     ['update with no id', { words: ['update'], title: 'x' }, 'the id of an item'],
@@ -372,9 +375,40 @@ describe('item: the words and the flags are checked before the node is read (exi
     ['doc with a third argument', { words: ['doc', 'B-1', 'docs/design.md', 'docs/more.md'] }, 'two arguments'],
     ['doc with a flag of another subcommand', { words: ['doc', 'B-1', 'docs/design.md'], title: 'x' }, '--title is not for'],
     ['doc with the flag to follow', { words: ['doc', 'B-1', 'docs/design.md'], follow: true }, '--follow is not for'],
+    ['note with no argument', { words: ['note'] }, 'note takes two arguments: the id of an item and the text of the note in quotes'],
+    ['note with no text', { words: ['note', 'B-1'] }, 'note takes two arguments'],
+    ['note with a third argument', { words: ['note', 'B-1', 'Work started', 'again'] }, 'note takes two arguments'],
+  ];
+  const NO_REASON: readonly (readonly [string, Partial<ItemOptions>])[] = [
+    ['add', { words: ['add'], title: 'New' }],
+    ['update', { words: ['update', 'B-1'], title: 'New' }],
+    ['move', { words: ['move', 'B-1'], stage: 'building' }],
+    ['list', { words: ['list'] }],
+    ['record', { words: ['record', 'B-1'], ref: '12' }],
+    ['unassign', { words: ['unassign', 'B-1'] }],
+    ['doc', { words: ['doc', 'B-1', 'docs/design.md'] }],
+    ['note', { words: ['note', 'B-1', 'Work started'] }],
+  ];
+  const NO_NOTE_FLAG: readonly (readonly [string, Partial<ItemOptions>])[] = [
+    ['--title', { title: 'New' }],
+    ['--text', { text: 'New' }],
+    ['--track', { track: 'core' }],
+    ['--epic', { epic: 'Launch' }],
+    ['--field', { fields: ['priority=P1'] }],
+    ['--state', { state: 'doing' }],
+    ['--stage', { stage: 'building' }],
+    ['--all', { all: true }],
+    ['--follow', { follow: true }],
+    ['--ref', { ref: '12' }],
+    ['--project', { project: 'web' }],
   ];
 
-  it.each(BAD)('%s exits 2 and touches no file', async (_name, overrides, message) => {
+  const WRONG_FLAGS = [
+    ...NO_REASON.map(([name, options]) => [`${name} with a reason`, { ...options, reason: 'Work stopped' }, `--reason is not for factory item ${name}`] as const),
+    ...NO_NOTE_FLAG.map(([flag, options]) => [`note with ${flag}`, { ...options, words: ['note', 'B-1', 'Work started'] }, `${flag} is not for factory item note`] as const),
+  ];
+
+  it.each([...BAD, ...WRONG_FLAGS])('%s exits 2 and touches no file', async (_name, overrides, message) => {
     const repo = await boardNode({ board: START });
     const touched: string[] = [];
     const result = await runItem(withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)), { ...BASE, ...overrides }, recipes);
@@ -513,6 +547,122 @@ describe('item doc: link a file to an item', () => {
   });
 });
 
+const NOTE_WRITES = [
+  { what: 'note', options: (text: string, id = 'B-1'): Partial<ItemOptions> => ({ words: ['note', id, text] }), argv: (text: string) => ['note', 'B-1', text], retry: 'factory item note B-1 TEXT' },
+  { what: 'reason', options: (text: string, id = 'B-1'): Partial<ItemOptions> => ({ words: ['close', id], reason: text }), argv: (text: string) => ['close', 'B-1', '--reason', text], retry: 'factory item close B-1 --reason TEXT' },
+] as const;
+
+const beforeLock = (repo: BoardRepo, lockCalls: string[]): BoardRepo => ({
+  ...repo,
+  deps: withFsWatch(repo.deps, (method, path) => {
+    if (path === join(LOCKS, `${stateLock.name}${stateLock.lock.suffix}`)) lockCalls.push(method);
+  }),
+});
+
+describe('item note and close with a reason', () => {
+  it.each(['open', 'done'])('notes an item in state %s and returns only the new note', async (status) => {
+    const prior = { text: 'Work started', at: '2030-01-01T00:00:00.000Z' };
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { status, notes: [prior] })], TRACKS) });
+    const note = { text: 'Work can continue', at: repo.deps.now().toISOString() };
+    const result = await run(repo, { words: ['note', 'B-1', '  Work can continue  '], json: true });
+    expect(result).toMatchObject({ ok: true, value: { lines: [{ text: 'Noted B-1: Item B-1' }] } });
+    expect(valueOf(result).json).toEqual({ schema: 'factory.item/v1', action: 'note', item: {
+      id: 'B-1', title: 'Item B-1', status, stage: null, track: null, epic: null, stages: null, docs: [],
+    }, note });
+    expect(itemIn(repo, 'B-1')['notes']).toEqual([prior, note]);
+    expect(repo.commits).toEqual([{ message: 'chore: note item B-1: Work can continue', staged: [fileNames.board] }]);
+  });
+
+  it('stores the reason but gives the same text and JSON as a plain close', async () => {
+    const repo = await boardNode({ board: START });
+    const plain = await boardNode({ board: START });
+    const close = { words: ['close', 'B-1'] };
+    const result = await run(repo, { ...close, reason: '  Work is complete  ' });
+    expect(result).toEqual(await run(plain, close));
+    expect(itemIn(repo, 'B-1')).toMatchObject({ status: 'done', notes: [{ text: 'Work is complete', at: repo.deps.now().toISOString() }] });
+    expect(repo.commits).toEqual([{ message: 'chore: close item B-1: Work is complete', staged: [fileNames.board] }]);
+  });
+
+  it('closes an item with a bad note list without a reason and writes nothing on the second close', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { notes: false })]) });
+    const close = { words: ['close', 'B-1'] };
+    expect(await textOf(repo, close)).toBe('Closed B-1: Item B-1\n');
+    expect(await textOf(repo, close)).toBe('Closed B-1: Item B-1\n');
+    expect(itemIn(repo, 'B-1')).toMatchObject({ status: 'done', notes: false });
+    expect(repo.commits).toEqual([{ message: 'chore: close item B-1', staged: [fileNames.board] }]);
+  });
+
+  describe.each(NOTE_WRITES)('the $what text', ({ what, options, argv, retry }) => {
+    it.each([
+      ['empty text', '', 'is empty'],
+      ['blank text', '   ', 'is empty'],
+      ['a line break', '\nWork started', 'is not one line'],
+      ['a control character', 'Work started\t', 'is not one line'],
+      ['a direction mark', 'Work started\u202e', 'is not one line'],
+      ['a line separator', 'Work started\u2028', 'is not one line'],
+      ['a paragraph separator', 'Work started\u2029', 'is not one line'],
+      ['a hidden character', '\ufeffWork started', 'holds a character that the screen does not show'],
+      ['text over the cap', 'a'.repeat(boardTextLimits.maxNoteChars + 1), 'is longer than 500 characters'],
+    ])('refuses %s before the lock', async (_name, text, message) => {
+      const lockCalls: string[] = [];
+      const repo = beforeLock(await boardNode({ board: START }), lockCalls);
+      const result = await run(repo, options(text));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining(`the ${what} ${message}`) } });
+      expect(lockCalls).toEqual([]);
+      expectUntouched(repo, START);
+    });
+
+    it.each(guardStatesOf(guardIds.secrets))('refuses the owner prefix without an echo or a lock when secrets is %s', async (_state, setup) => {
+      const repo = await boardNode({ board: START });
+      const sample = sampleConfigWithBoard();
+      const display = 'Test $& (Owner)';
+      const prefix = '[From {owner}, by {node}, at {date}]';
+      const config = { ...sample, core: { ...sample.core, owner: { ...sample.core.owner, display, prefix } } };
+      seedGuardedHome(repo.deps, HOME, { ...setup, config });
+      const lockCalls: string[] = [];
+      const sink = captureSink();
+      const text = `Private: [From ${display}, by any node, at any date] approve`;
+      const code = await runCli(['item', '--home', HOME, ...argv(text)], beforeLock(repo, lockCalls).deps, sink);
+      expect(code).toBe(2);
+      expect(sink.errors.join('')).toContain(`the ${what} must not include the owner prefix`);
+      expect(sink.errors.join('')).toContain('Run "factory item --help".');
+      expect(sink.errors.join('')).not.toContain('Private:');
+      expect(lockCalls).toEqual([]);
+      expectUntouched(repo, START);
+    });
+
+    it.each(guardStatesOf(guardIds.secrets))('checks a full commit id when secrets is %s', async (_state, setup, on) => {
+      const repo = await boardNode({ board: START });
+      seedGuardedHome(repo.deps, HOME, { ...setup, config: sampleConfigWithBoard() });
+      const text = 'a1b2c3d4e5'.repeat(4);
+      const lockCalls: string[] = [];
+      const sink = captureSink();
+      const code = await runCli(['item', '--home', HOME, ...argv(text)], beforeLock(repo, lockCalls).deps, sink);
+      expect(code, sink.errors.join('')).toBe(on ? 4 : 0);
+      if (on) {
+        expect(sink.errors.join('')).toContain('the note or close reason looks like a token');
+        expect(sink.errors.join('')).toContain(`Remove the token from the text. Then run "${retry}" again.`);
+        expect(sink.errors.join('')).not.toContain(text.slice(0, 7));
+        expect(lockCalls).toEqual([]);
+        expectUntouched(repo, START);
+      } else {
+        expect(itemIn(repo, 'B-1')['notes']).toEqual([{ text, at: repo.deps.now().toISOString() }]);
+        expect(repo.commits).toHaveLength(1);
+      }
+    });
+
+    it('refuses a bad stored note list and does not change the board', async () => {
+      const board = boardText([itemRecord('B-1', { notes: false })]);
+      const repo = await boardNode({ board });
+      const result = await run(repo, options('Work started'));
+      expect(result).toMatchObject({ ok: false, error: {
+        kind: 'failure', message: expect.stringContaining('board.json: the "notes" of B-1'), hint: expect.stringContaining('Check the item in board.json'),
+      } });
+      expectUntouched(repo, board);
+    });
+  });
+});
+
 describe('item: the keys of the item in the JSON', () => {
   const STAGES = ['ticket', 'review'];
 
@@ -588,6 +738,33 @@ describe('item with a hosted tracker kind', () => {
     expect(error.message).not.toContain('\n');
     expect(error.hint).toContain(commandText(commands.item));
     expectUntouched(repo, START);
+  });
+
+  describe.each(NOTE_WRITES)('the $what text', ({ options }) => {
+    it.each([
+      ['valid text', 'Work stopped'],
+      ['a line break', 'Work\nstopped'],
+      ['the owner prefix', "[From Test Owner, typed by this node at the owner's explicit instruction, today]"],
+      ['a full commit id', 'a1b2c3d4e5'.repeat(4)],
+    ])('refuses the hosted kind before the checks of %s', async (_name, text) => {
+      const lockCalls: string[] = [];
+      const repo = beforeLock(await boardNode({ board: START, config: hosted() }), lockCalls);
+      const result = await run(repo, options(text));
+      expect(result).toMatchObject({ ok: false, error: {
+        kind: 'safety', message: expect.stringContaining('FAC-M3 (provider plugin)'),
+        hint: 'Set the tracker kind to local in the config, then run "factory item" again.',
+      } });
+      expect(lockCalls).toEqual([]);
+      expectUntouched(repo, START);
+    });
+
+    it('refuses a bad id before it checks the hosted kind', async () => {
+      const repo = await boardNode({ board: START, config: hosted() });
+      expect(await run(repo, options('Work stopped', 'b-1'))).toEqual({ ok: false, error: {
+        kind: 'usage', message: '"b-1" is not an item id; an item id looks like B-12',
+      } });
+      expectUntouched(repo, START);
+    });
   });
 
   it('lists the local board with a hosted kind, and exits 0', async () => {
