@@ -499,7 +499,7 @@ const noteTextFor = async (
   const checked = checkNoteText(what, text);
   if (!checked.ok) return checked;
   const { prefix, display } = board.config.core.owner;
-  return hasOwnerPrefix(checked.value, prefix, display) ? needsUsage(`the ${what} must not include the ${roles.owner} prefix`) : checked;
+  return hasOwnerPrefix(text, prefix, display) ? needsUsage(`the ${what} must not include the ${roles.owner} prefix`) : checked;
 };
 
 const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<CliResult<CommandOutput>> => {

@@ -641,12 +641,17 @@ describe('the local connector: item notes', () => {
   const writeNote = (c: BoardConnector, action: 'note' | 'close', text: string, id = 'B-1'): Promise<CliResult<unknown>> =>
     action === 'note' ? c.noteItem(id, text) : c.closeItem(id, text);
 
+  const lockTime = '2031-01-01T00:00:00.000Z';
+  const timedConnector = (repo: BoardRepo): LocalBoard => connectorOf({
+    ...repo, deps: { ...repo.deps, now: () => repo.deps.files.has(LOCK_FILE) ? new Date(lockTime) : repo.deps.now() },
+  });
+
   it('adds a trimmed note to a closed item and keeps earlier notes and their extra keys', async () => {
     const old = { text: 'First note', at: '2030-01-01T00:00:00.000Z', extra: true };
     const notes = Array.from({ length: boardTextLimits.maxItemNotes - 1 }, () => old);
     const repo = await repoWith(boardWith([item('B-1', { status: 'done', notes })]));
-    const note = { text: 'New note', at: repo.deps.now().toISOString() };
-    const done = valueOf(await connectorOf(repo).noteItem('B-1', '  New note  '));
+    const note = { text: 'New note', at: lockTime };
+    const done = valueOf(await timedConnector(repo).noteItem('B-1', '  New note  '));
     expect(done.note).toEqual(note);
     expect(done.item.status).toBe('done');
     expect(done.item.record[boardKeys.notes]).toEqual([...notes, note]);
@@ -655,10 +660,8 @@ describe('the local connector: item notes', () => {
 
   it('closes the item and adds the trimmed reason in one commit', async () => {
     const repo = await repoWith(boardWith([item('B-1')]));
-    const at = '2031-01-01T00:00:00.000Z';
-    const deps = { ...repo.deps, now: () => repo.deps.files.has(LOCK_FILE) ? new Date(at) : repo.deps.now() };
-    const done = await connectorOf({ ...repo, deps }).closeItem('B-1', '  Work is complete  ');
-    expect(done).toMatchObject({ ok: true, value: { status: 'done', record: { notes: [{ text: 'Work is complete', at }] } } });
+    const done = await timedConnector(repo).closeItem('B-1', '  Work is complete  ');
+    expect(done).toMatchObject({ ok: true, value: { status: 'done', record: { notes: [{ text: 'Work is complete', at: lockTime }] } } });
     expect(repo.commits).toEqual([{ message: 'chore: close item B-1: Work is complete', staged: [fileNames.board] }]);
   });
 
@@ -684,15 +687,21 @@ describe('the local connector: item notes', () => {
     expectUntouched(repo, board);
   });
 
-  it.each(['note', 'close'] as const)('refuses %s when one stored note has a bad time', async (action) => {
+  describe.each(['note', 'close'] as const)('%s preserves a bad stored note', (action) => {
     const old = { text: 'Earlier note', at: '2030-01-01T00:00:00.000Z' };
-    const board = boardWith([item('B-2', { notes: [old] }), item('B-1', { notes: [old, { ...old, at: 1 }] })]);
-    const repo = await repoWith(board);
-    const done = await writeNote(connectorOf(repo), action, 'New note');
-    expect(done).toMatchObject({ ok: false, error: {
-      kind: 'failure', message: expect.stringContaining('board.json: the "notes" of B-1'), hint: expect.stringContaining('Check the item in board.json'),
-    } });
-    expectUntouched(repo, board);
+    it.each([
+      ['not an object', null],
+      ['an invalid time', { ...old, at: 1 }],
+      ['invalid text', { ...old, text: 1 }],
+    ] as const)('refuses a note with %s', async (_name, invalid) => {
+      const board = boardWith([item('B-2', { notes: [old] }), item('B-1', { notes: [old, invalid] })]);
+      const repo = await repoWith(board);
+      const done = await writeNote(connectorOf(repo), action, 'New note');
+      expect(done).toMatchObject({ ok: false, error: {
+        kind: 'failure', message: expect.stringContaining('board.json: the "notes" of B-1'), hint: expect.stringContaining('Check the item in board.json'),
+      } });
+      expectUntouched(repo, board);
+    });
   });
 
   it('plain close keeps bad notes and a later close with a reason does not write', async () => {

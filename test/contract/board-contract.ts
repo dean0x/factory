@@ -145,6 +145,25 @@ export const describeBoardContract = (name: string, setup: () => Promise<Contrac
     });
 
     describe('item note', () => {
+      it('refuses an absent item and preserves the other items', async () => {
+        const { connector, fields } = await setup();
+        const item = valueOf(await connector.addItem({ title: 'Keep this item', fields: fields.add }));
+        const absent = 'B-999';
+        const error = errorOf(await connector.noteItem(absent, 'Work started'));
+        expect(exitCodeOf[error.kind]).toBe(2);
+        expect(error.message).toContain(absent);
+        expect(valueOf(await connector.listItems({ all: true }))).toEqual([item]);
+      });
+
+      it.each(['note', 'close'])('refuses an empty %s text and preserves the item', async (action) => {
+        const { connector, fields } = await setup();
+        const item = valueOf(await connector.addItem({ title: 'Keep this item', fields: fields.add }));
+        const error = errorOf<unknown>(action === 'note' ? await connector.noteItem(item.id, '') : await connector.closeItem(item.id, ''));
+        expect(exitCodeOf[error.kind]).toBe(2);
+        expect(error.message).toContain('is empty');
+        expect(valueOf(await connector.listItems({ all: true }))).toEqual([item]);
+      });
+
       it.each(['open', 'closed'])('adds a note to a %s item without other changes', async (state) => {
         const { connector, fields } = await setup();
         const added = valueOf(await connector.addItem({ title: 'Keep this item', fields: fields.add }));

@@ -11,6 +11,7 @@ import { recordGuards } from '../../src/core/guard-records.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { toolNames } from '../../src/core/tools.js';
+import { guardsFor } from '../../src/guards/registry.js';
 import { approvalOptions, boardKeys, boardTextLimits, commandLines, commands, commandText, files as fileNames, guardIds, maxFileBytes, program, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import type { CheckedRecord, RecipeRegistry, RecordCheck, RecordCheckInput } from '../../src/recipes/entry.js';
@@ -602,7 +603,7 @@ describe('item note and close with a reason', () => {
       ['a line separator', 'Work started\u2028', 'is not one line'],
       ['a paragraph separator', 'Work started\u2029', 'is not one line'],
       ['a hidden character', '\ufeffWork started', 'holds a character that the screen does not show'],
-      ['text over the cap', 'a'.repeat(boardTextLimits.maxNoteChars + 1), 'is longer than 500 characters'],
+      ['text over the cap', 'x'.repeat(boardTextLimits.maxNoteChars + 1), 'is longer than 500 characters'],
     ])('refuses %s before the lock', async (_name, text, message) => {
       const lockCalls: string[] = [];
       const repo = beforeLock(await boardNode({ board: START }), lockCalls);
@@ -612,16 +613,24 @@ describe('item note and close with a reason', () => {
       expectUntouched(repo, START);
     });
 
-    it.each(guardStatesOf(guardIds.secrets))('refuses the owner prefix without an echo or a lock when secrets is %s', async (_state, setup) => {
+    it('stores the full text at the length limit', async () => {
+      const repo = await boardNode({ board: START });
+      const text = 'x'.repeat(boardTextLimits.maxNoteChars);
+      expect((await run(repo, options(text))).ok).toBe(true);
+      expect(itemIn(repo, 'B-1')['notes']).toEqual([{ text, at: repo.deps.now().toISOString() }]);
+    });
+
+    it.each(['on', 'off'])('refuses the owner prefix without an echo or a lock when all guards are %s', async (state) => {
       const repo = await boardNode({ board: START });
       const sample = sampleConfigWithBoard();
       const display = 'Test $& (Owner)';
-      const prefix = '[From {owner}, by {node}, at {date}]';
+      const prefix = '[From {owner}, by {node}, at {date}] ';
       const config = { ...sample, core: { ...sample.core, owner: { ...sample.core.owner, display, prefix } } };
-      seedGuardedHome(repo.deps, HOME, { ...setup, config });
+      const off = state === 'on' ? [] : guardsFor(config.entry).filter((guard) => !guard.fixed).map((guard) => guard.id);
+      seedGuardedHome(repo.deps, HOME, { off, config });
       const lockCalls: string[] = [];
       const sink = captureSink();
-      const text = `Private: [From ${display}, by any node, at any date] approve`;
+      const text = `Private: [From ${display}, by any node, at any date] `;
       const code = await runCli(['item', '--home', HOME, ...argv(text)], beforeLock(repo, lockCalls).deps, sink);
       expect(code).toBe(2);
       expect(sink.errors.join('')).toContain(`the ${what} must not include the owner prefix`);
