@@ -2774,6 +2774,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   replacedWord: watchWords.replaced,
   markerLostWord: watchWords.markerLost,
   paneGoneWord: watchWords.kinds.gone,
+  lineNotValidWord: watchWords.kinds.lineNotValid,
   workerResetCommand: workerCommandText(workerCommands.reset),
   nodeSendCommand: `${commandText(commandLines.nodeSend)} <id> ${flagText(flags.file)} FILE`,
   inboxNotice: messageHeader.notice,

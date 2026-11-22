@@ -323,6 +323,9 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
   '## After an upgrade',
   '',
   '- `{{upgradeCommand}}` can change the rules of this block. This session can resume an earlier conversation that holds the old rules.',
+  '- After you update {{Program}}, run `{{workerWatchCommand}}` again as a background task. If you have the last report time, pass it as `{{sinceFlag}} <time>`.',
+  '- If a watch still runs, it ends with `{{replacedWord}}` at its next check.',
+  '- If the earlier watch reported `{{lineNotValidWord}}` just after the update, check the named {{worker}} before you wait again.',
   {
     guards: [guardIds.workConduct],
     lines: [

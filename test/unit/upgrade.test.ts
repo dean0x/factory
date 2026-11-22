@@ -4975,7 +4975,7 @@ describe('upgrade: render a changed block again', () => {
   });
 });
 
-describe('upgrade: the role texts of worker version 5 and coordinator version 9', () => {
+describe('upgrade: the role texts of worker version 5 and coordinator version 10', () => {
   /** Put an earlier version of the block `name` into the file, with a text of its own, and record that version. */
   const makeOlder = (deps: FakeDeps, path: string, name: string, version: number): void => {
     const parsed = parseBlocks(text(deps, path));
@@ -4989,20 +4989,20 @@ describe('upgrade: the role texts of worker version 5 and coordinator version 9'
   };
 
   it('writes the new blocks over the earlier versions, and then shows them as current', async () => {
-    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([5, 9]);
+    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([5, 10]);
     const { deps } = await makeNode();
     makeOlder(deps, WORKER, 'worker', 4);
     makeOlder(deps, CLAUDE, 'coordinator', 7);
 
     const output = success(await upgrade(deps));
 
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 4 to 5', 'block coordinator: version 7 to 9']));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 4 to 5', 'block coordinator: version 7 to 10']));
     expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v5 sha256=');
-    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v9 sha256=');
+    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v10 sha256=');
     expect(text(deps, CLAUDE)).not.toContain('The coordinator text of an earlier version.');
     expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
     const state = parseJsonText(text(deps, NODE_JSON));
-    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 9, worker: 5 } });
+    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 10, worker: 5 } });
     await deps.fs.remove(`${HOME}/.factory/backups`);
     expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
   });
@@ -5013,7 +5013,7 @@ describe('upgrade: the role texts of worker version 5 and coordinator version 9'
     makeOlder(deps, CLAUDE, 'coordinator', 7);
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 4 to 5', 'block coordinator: version 7 to 9']));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 4 to 5', 'block coordinator: version 7 to 10']));
     expect(snapshot(deps)).toEqual(before);
   });
 });
