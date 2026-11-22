@@ -6,15 +6,15 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, type HookEvent, type HookState } from '../names.js';
+import { eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, watchPoll, type HookEvent, type HookState } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
 import { listWorkerRecords, readCheckedFile, readWorkerFile, type WorkerFileRead } from './registry.js';
 
 /**
- * The last-seen line of a session (design 4.6). The hook of Claude Code writes the last event and its time. The status
- * line writes the context percent and its time. Each write keeps the part that it does not set, so one file holds both.
- * The file is one JSON text in the heartbeat folder of the run-time folder, named by the session id. A worker has one more
+ * The last-seen line of a session (design 4.6). The hook of Claude Code writes the last event and its time. A Stop also
+ * sets the last finish time. The status line writes the context percent and its time. Each write keeps the data that it
+ * does not set. The file is one JSON text in the heartbeat folder of the run-time folder, named by the session id. A worker has one more
  * file, a pointer in its own folder that holds the id of its newest session, so the line of a worker is found from the id
  * of the worker. The coordinator has the same pointer in the run-time folder, so its newest session is found from the id of the
  * node. This module is the only writer and the only reader of these files.
@@ -37,6 +37,7 @@ const lastSeenSchema = z
     [keys.sessionId]: z.string().regex(lastSeen.sessionIdPattern, 'must be a UUID with lower case letters'),
     [keys.event]: z.enum(hookNames.events).nullable(),
     [keys.eventAt]: time.nullable(),
+    [keys.finishedAt]: time.optional(),
     [keys.contextPct]: z.number().min(lastSeen.minPercent).max(lastSeen.maxPercent).nullable(),
     [keys.pctAt]: time.nullable(),
     [keys.sessionMarker]: slug.optional(),
@@ -45,6 +46,9 @@ const lastSeenSchema = z
     if ((line[keys.event] === null) !== (line[keys.eventAt] === null)) {
       ctx.addIssue({ code: 'custom', path: [keys.eventAt], message: 'must be set when the event is set, and only then' });
     }
+    if (line[keys.finishedAt] !== undefined && line[keys.eventAt] === null) {
+      ctx.addIssue({ code: 'custom', path: [keys.finishedAt], message: 'must have an event time' });
+    }
     if ((line[keys.contextPct] === null) !== (line[keys.pctAt] === null)) {
       ctx.addIssue({ code: 'custom', path: [keys.pctAt], message: 'must be set when the percent is set, and only then' });
     }
@@ -52,6 +56,10 @@ const lastSeenSchema = z
 
 /** The last-seen line of one session. */
 export type LastSeen = z.infer<typeof lastSeenSchema>;
+
+/** The stored finish time, or the event time if an older line ended with Stop. */
+export const lastFinishOf = (line: LastSeen): string | null =>
+  line[keys.finishedAt] ?? (line[keys.event] === watchPoll.finishEvent ? line[keys.eventAt] : null);
 
 /** What a read finds: a valid line, a file that is not valid and the reason, or no file. */
 export type LastSeenRead =
@@ -141,6 +149,7 @@ const lineWith = (
   sessionId: string,
   event: HookEvent | null,
   eventAt: string | null,
+  finishedAt: string | null,
   percent: number | null,
   percentAt: string | null,
   marker: string | undefined,
@@ -149,6 +158,7 @@ const lineWith = (
   [keys.sessionId]: sessionId,
   [keys.event]: event,
   [keys.eventAt]: eventAt,
+  ...(finishedAt === null ? {} : { [keys.finishedAt]: finishedAt }),
   [keys.contextPct]: percent,
   [keys.pctAt]: percentAt,
   ...(marker === undefined ? {} : { [keys.sessionMarker]: marker }),
@@ -167,16 +177,27 @@ const changedLine = (
   writer: string | undefined,
 ): LastSeen => {
   const marker = stored === null ? writer : stored[keys.sessionMarker];
-  return change.kind === 'event'
-    ? lineWith(sessionId, change.event, at, stored?.[keys.contextPct] ?? null, stored?.[keys.pctAt] ?? null, marker)
-    : lineWith(
-        sessionId,
-        stored?.[keys.event] ?? null,
-        stored?.[keys.eventAt] ?? null,
-        change.percent,
-        change.percent === null ? null : at,
-        marker,
-      );
+  if (change.kind === 'event') {
+    const storedFinish = stored === null ? null : lastFinishOf(stored);
+    return lineWith(
+      sessionId,
+      change.event,
+      at,
+      change.event === watchPoll.finishEvent ? at : storedFinish,
+      stored?.[keys.contextPct] ?? null,
+      stored?.[keys.pctAt] ?? null,
+      marker,
+    );
+  }
+  return lineWith(
+    sessionId,
+    stored?.[keys.event] ?? null,
+    stored?.[keys.eventAt] ?? null,
+    stored?.[keys.finishedAt] ?? null,
+    change.percent,
+    change.percent === null ? null : at,
+    marker,
+  );
 };
 
 /** The line after a change, or the reason that the change is refused. */
@@ -192,16 +213,16 @@ const nextLine = (
 };
 
 /**
- * Write the last-seen line of a session. A hook write keeps the stored percent and its time. A status line write keeps the
- * stored event and its time, and a null percent clears the stored percent. A stored file that is not valid is replaced.
- * The write is refused, and nothing changes, for a session id that is not a UUID, an event off the list and a percent
- * outside 0-100. A folder or a file that is a link is a security stop (exit 4) from the safe write.
+ * Write the last-seen line of a session. A hook write keeps the stored percent and its time. A Stop sets the finish time
+ * from the writer clock. Another hook event keeps that time, or takes the event time from an older Stop line with no finish
+ * time. A status line write keeps the stored event, event time and finish time. A null percent clears the stored percent.
+ * A write replaces a stored file that is not valid. The writer refuses a session id that is not a UUID, an event off the list
+ * or a percent outside 0-100. If the folder or file is a link, the safe write gives a security stop (exit 4).
  *
- * The hook and the status line wrapper write at the same moments, so a lock file beside the line (`hookNames.heartbeatLock`)
- * lets one writer read, merge and write at a time. The writer reads the line again and takes the time inside the lock, so a
- * write never puts back older data. A writer that does not get the lock within the wait bound writes nothing, and the value
- * is a failure (exit 1): that update is skipped, and the next event or refresh sets it again. A lock path that is a link is a
- * security stop (exit 4). The value is the line.
+ * A lock file beside the line (`hookNames.heartbeatLock`) lets one writer at a time read, merge and write. The writer reads
+ * the line again and takes the time inside the lock. If the writer does not get the lock within the wait bound, it writes
+ * nothing and returns a failure (exit 1). A lock path that is a link gives a security stop (exit 4). On success, the value
+ * is the line.
  *
  * `marker` is the id that the session marker of the writer holds (a slug). A new line records it. A stored line that records
  * another marker is never changed: the write is a failure, so a session of one node or worker can not rewrite the line of a

@@ -97,6 +97,7 @@ describe('factory hook: the last-seen line of each captured payload', () => {
       session_id: SESSION,
       event,
       event_at: NOW,
+      ...(event === 'Stop' ? { finished_at: NOW } : {}),
       context_pct: null,
       pct_at: null,
       session_marker: NODE_ID,
@@ -117,7 +118,13 @@ describe('factory hook: the last-seen line of each captured payload', () => {
     const stored = { schema: schemaIds.lastSeen, session_id: SESSION, event: null, event_at: null, context_pct: 42, pct_at: '2030-01-02T03:00:00.000Z' };
     deps.seed(FILE, `${JSON.stringify(stored)}\n`);
     expect((await runHook(deps, ['Stop'])).ok).toBe(true);
-    expect(lineOf(deps)).toEqual({ ...stored, event: 'Stop', event_at: NOW });
+    expect(lineOf(deps)).toEqual({ ...stored, event: 'Stop', event_at: NOW, finished_at: NOW });
+  });
+
+  it('uses the writer clock instead of the finish time in the Stop input', async () => {
+    const deps = make({ stdin: payload('Stop', { finished_at: '2099-01-02T03:04:05.678Z' }) });
+    expect(await runHook(deps, ['Stop'])).toEqual(SILENT);
+    expect(lineOf(deps)).toHaveProperty('finished_at', NOW);
   });
 
   it('reads the input with the byte cap of the hook', async () => {
@@ -361,6 +368,7 @@ describe('factory hook: the id of a worker in the registry as the session', () =
       session_id: SESSION,
       event: 'Stop',
       event_at: NOW,
+      finished_at: NOW,
       context_pct: null,
       pct_at: null,
       session_marker: WORKER_ID,
