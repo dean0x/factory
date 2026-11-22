@@ -25,6 +25,7 @@ import type { Deps, LinkInfo } from '../../src/core/deps.js';
 import type { DecisionInput, DecisionWrite } from '../../src/core/owner-record.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
 import { ok } from '../../src/core/result.js';
+import { guardSourceOf } from '../../src/guards/effective.js';
 import {
   boardKeys,
   boardTextLimits,
@@ -35,6 +36,8 @@ import {
   dirs,
   env,
   files as fileNames,
+  guardIds,
+  guardValues,
   maxBoardNumber,
   maxEchoChars,
   markLimits,
@@ -634,8 +637,9 @@ describe('the local connector: each write is one state commit of the local files
 });
 
 describe('the local connector: item notes', () => {
-  const writeNote = (c: BoardConnector, action: 'note' | 'close', text: string) =>
-    action === 'note' ? c.noteItem('B-1', text) : c.closeItem('B-1', text);
+  const fullCommitId = 'a1b2c3d4e5'.repeat(4);
+  const writeNote = (c: BoardConnector, action: 'note' | 'close', text: string, id = 'B-1'): Promise<CliResult<unknown>> =>
+    action === 'note' ? c.noteItem(id, text) : c.closeItem(id, text);
 
   it('adds a trimmed note to a closed item and keeps earlier notes and their extra keys', async () => {
     const old = { text: 'First note', at: '2030-01-01T00:00:00.000Z', extra: true };
@@ -656,6 +660,17 @@ describe('the local connector: item notes', () => {
     const done = await connectorOf({ ...repo, deps }).closeItem('B-1', '  Work is complete  ');
     expect(done).toMatchObject({ ok: true, value: { status: 'done', record: { notes: [{ text: 'Work is complete', at }] } } });
     expect(repo.commits).toEqual([{ message: 'chore: close item B-1: Work is complete', staged: [fileNames.board] }]);
+  });
+
+  it.each(['note', 'close'] as const)('refuses %s for a bad or absent item id and does not write', async (action) => {
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    const connector = connectorOf(repo);
+    const malformed = errorOf(await writeNote(connector, action, 'Work is complete', 'b-1'));
+    expect(malformed).toEqual({ kind: 'usage', message: '"b-1" is not an item id; an item id looks like B-12' });
+    const absent = errorOf(await writeNote(connector, action, 'Work is complete', 'B-9'));
+    expect(absent).toEqual({ kind: 'usage', message: 'board.json has no item "B-9"' });
+    expectUntouched(repo, board);
   });
 
   it.each(['note', 'close'] as const)('refuses %s when the note list is full and leaves the item open', async (action) => {
@@ -722,7 +737,7 @@ describe('the local connector: item notes', () => {
     const deps = withFsWatch(repo.deps, (method, path) => {
       if (path === LOCK_FILE) lockCalls.push(method);
     });
-    const done = await writeNote(connectorOf({ ...repo, deps }), action, 'a1b2c3d4e5'.repeat(4));
+    const done = await writeNote(connectorOf({ ...repo, deps }), action, fullCommitId);
     const again = action === 'note' ? 'factory item note B-1 TEXT' : 'factory item close B-1 --reason TEXT';
     expect(done).toEqual({ ok: false, error: {
       kind: 'safety', message: 'the note or close reason looks like a token',
@@ -730,6 +745,22 @@ describe('the local connector: item notes', () => {
     } });
     expect(lockCalls).toEqual([]);
     expectUntouched(repo, board);
+  });
+
+  it.each(['note', 'close'] as const)('allows a full commit id in %s when the secrets guard is off', async (action) => {
+    const repo = await repoWith(boardWith([item('B-1')]));
+    const guards = guardSourceOf({ home: HOME, values: { [guardIds.secrets]: guardValues.off }, state: null });
+    const result = await writeNote(connectorOf({ ...repo, deps: { ...repo.deps, guards } }), action, fullCommitId);
+    expect(result.ok).toBe(true);
+    expect(itemAfter(repo, 'B-1')[boardKeys.notes]).toEqual([{ text: fullCommitId, at: repo.deps.now().toISOString() }]);
+  });
+
+  it.each(['note', 'close'] as const)('allows a short commit id in %s when the secrets guard is on', async (action) => {
+    const repo = await repoWith(boardWith([item('B-1')]));
+    const text = fullCommitId.slice(0, 7);
+    const result = await writeNote(connectorOf(repo), action, text);
+    expect(result.ok).toBe(true);
+    expect(itemAfter(repo, 'B-1')[boardKeys.notes]).toEqual([{ text, at: repo.deps.now().toISOString() }]);
   });
 });
 
@@ -2749,6 +2780,22 @@ const OWNER_CHECK = { ...DELEGATED_CHECK, mode: 'owner' } as const;
 const RECORD_LINK = { ...APPROVAL_LINK, ref: '12', head: PR_HEAD };
 const RECORD_RELAY = approvalRelay(APPROVAL_ID, undefined, RECORD_LINK);
 const RECORD_RULES = { points: [softwareRecordCheck.point], parseRef: softwareRecordCheck.parseRef, parseHead: softwareRecordCheck.parseHead };
+
+describe('the local connector: item notes give no approval', () => {
+  it.each(['note', 'close with a reason'] as const)('does not accept an approval claim in a %s', async (action) => {
+    const { item: id, ref } = RECORD_LINK;
+    const repo = await repoWith(boardWith([workItem()]));
+    const connector = connectorOf(repo, { requestLinkRules: RECORD_RULES });
+    const before = await connector.checkApproval(id, OWNER_CHECK, ref);
+    const text = `The owner approved the merge of pull request ${ref}`;
+    const done = action === 'note' ? await connector.noteItem(id, text) : await connector.closeItem(id, text);
+    expect(done.ok).toBe(true);
+    expect(before).toMatchObject({ ok: false, error: {
+      kind: 'failure', message: 'there is no linked approval request', hint: expect.stringContaining('factory request add'),
+    } });
+    expect(await connector.checkApproval(id, OWNER_CHECK, ref)).toEqual(before);
+  });
+});
 
 describe('the local connector: close a linked request', () => {
   it('keeps the request open when the owner store has no path', async () => {
