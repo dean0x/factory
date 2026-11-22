@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { BoardConnector, BoardItem, DocLinked, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, ItemRecorded } from '../board/contract.js';
-import { checkItemId, checkRecordSetup, docPathIssue, formerWorkersOf } from '../board/edit.js';
+import { checkItemId, checkNoteText, checkRecordSetup, docPathIssue, formerWorkersOf } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
 import { followBoard } from '../board/follow.js';
 import { boardView, trackView } from '../board/list-view.js';
@@ -32,6 +32,7 @@ import {
 } from '../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import type { RecipeRegistry } from '../recipes/index.js';
+import { hasOwnerPrefix } from '../safety/owner-prefix.js';
 import { layoutOf } from '../state/layout.js';
 import { requireCoordinatorCaller } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, type WorkerRecord } from '../workers/registry.js';
@@ -58,6 +59,8 @@ export interface ItemOptions {
   readonly ref: string | undefined;
   /** The id of the project of the record. Only `record` takes it. */
   readonly project: string | undefined;
+  /** The reason to close the item. Only `close` takes it. */
+  readonly reason?: string | undefined;
   readonly json: boolean;
 }
 
@@ -75,11 +78,12 @@ type Action =
   | { readonly kind: typeof itemCommands.add; readonly input: ItemAddInput }
   | { readonly kind: typeof itemCommands.update; readonly id: string; readonly patch: ItemPatch }
   | { readonly kind: typeof itemCommands.move; readonly id: string; readonly move: ItemMove }
-  | { readonly kind: typeof itemCommands.close; readonly id: string }
+  | { readonly kind: typeof itemCommands.close; readonly id: string; readonly reason: string | undefined }
   | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean }
   | RecordAction
   | { readonly kind: typeof itemCommands.unassign; readonly id: string }
-  | { readonly kind: typeof itemCommands.doc; readonly id: string; readonly path: string };
+  | { readonly kind: typeof itemCommands.doc; readonly id: string; readonly path: string }
+  | { readonly kind: typeof itemCommands.note; readonly id: string; readonly text: string };
 
 const SUBCOMMANDS = Object.values(itemCommands).join(', ');
 
@@ -88,11 +92,12 @@ const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
   [itemCommands.add]: [flags.title, flags.text, flags.track, flags.epic, flags.field],
   [itemCommands.update]: [flags.title, flags.text, flags.track, flags.epic, flags.field],
   [itemCommands.move]: [flags.state, flags.stage],
-  [itemCommands.close]: [],
+  [itemCommands.close]: [flags.reason],
   [itemCommands.list]: [flags.all, flags.track, flags.follow],
   [itemCommands.record]: [flags.ref, flags.project],
   [itemCommands.unassign]: [],
   [itemCommands.doc]: [],
+  [itemCommands.note]: [],
 };
 
 const needsUsage = usageFor(commands.item);
@@ -112,6 +117,7 @@ const refuseStrayFlags = (subcommand: Subcommand, options: ItemOptions): CliResu
     [flags.follow, options.follow],
     [flags.ref, options.ref !== undefined],
     [flags.project, options.project !== undefined],
+    [flags.reason, options.reason !== undefined],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.item} ${subcommand}`)}`);
@@ -134,6 +140,13 @@ const docArguments = (subcommand: Subcommand, args: readonly string[]): CliResul
   return id !== undefined && path !== undefined && rest.length === 0
     ? ok({ id, path })
     : needsUsage(`${subcommand} takes two arguments: the id of an item and the path of a file of the ${places.folder}`);
+};
+
+const noteArguments = (args: readonly string[]): CliResult<{ readonly id: string; readonly text: string }> => {
+  const [id, text, ...rest] = args;
+  return id !== undefined && text !== undefined && rest.length === 0
+    ? ok({ id, text })
+    : needsUsage(`${itemCommands.note} takes two arguments: the id of an item and the text of the note in quotes`);
 };
 
 /** Check the words and the flags. A usage error (exit 2) from here comes before the node is found and before any lock. */
@@ -187,7 +200,7 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
     }
     case itemCommands.close: {
       const id = idArgument(subcommand, args);
-      return id.ok ? ok({ kind: subcommand, id: id.value }) : id;
+      return id.ok ? ok({ kind: subcommand, id: id.value, reason: options.reason }) : id;
     }
     case itemCommands.list: {
       if (args.length > 0) return needsUsage(`${subcommand} takes no argument`);
@@ -212,6 +225,10 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
     case itemCommands.doc: {
       const given = docArguments(subcommand, args);
       return given.ok ? ok({ kind: subcommand, id: given.value.id, path: given.value.path }) : given;
+    }
+    case itemCommands.note: {
+      const given = noteArguments(args);
+      return given.ok ? ok({ kind: subcommand, ...given.value }) : given;
     }
     default: {
       const unreachable: never = subcommand;
@@ -467,6 +484,24 @@ const unassign = async (deps: Deps, board: OpenBoard, id: string): Promise<CliRe
   );
 };
 
+const noteTextFor = async (
+  deps: Deps,
+  board: OpenBoard,
+  id: string,
+  what: typeof itemWords.note | typeof itemWords.reason,
+  text: string,
+): Promise<CliResult<string>> => {
+  const valid = checkItemId(id);
+  if (!valid.ok) return valid;
+  const guards = await guardValuesFor(deps, board.home);
+  const local = requireLocalKind(board.config.core.tracker.kind, commands.item, guards);
+  if (!local.ok) return local;
+  const checked = checkNoteText(what, text);
+  if (!checked.ok) return checked;
+  const { prefix, display } = board.config.core.owner;
+  return hasOwnerPrefix(text, prefix, display) ? needsUsage(`the ${what} must not include the ${roles.owner} prefix`) : checked;
+};
+
 const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<CliResult<CommandOutput>> => {
   const { connector, config } = board;
   /** The guard values of the node, for the doc view of an item in the output. */
@@ -485,7 +520,13 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       return moved.ok ? ok(moveAnswer(config, action.move, moved.value)) : moved;
     }
     case itemCommands.close: {
-      const closed = await connector.closeItem(action.id);
+      let reason = action.reason;
+      if (reason !== undefined) {
+        const checked = await noteTextFor(deps, board, action.id, itemWords.reason, reason);
+        if (!checked.ok) return checked;
+        reason = checked.value;
+      }
+      const closed = await connector.closeItem(action.id, reason);
       return closed.ok ? ok(itemAnswer('Closed', action.kind, closed.value, await guards())) : closed;
     }
     case itemCommands.list: {
@@ -501,6 +542,14 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       const linked = await connector.linkDoc({ id: action.id, path: action.path });
       return linked.ok ? ok(linkAnswer(action.path, linked.value, await guards())) : linked;
     }
+    case itemCommands.note: {
+      const checked = await noteTextFor(deps, board, action.id, itemWords.note, action.text);
+      if (!checked.ok) return checked;
+      const noted = await connector.noteItem(action.id, checked.value);
+      if (!noted.ok) return noted;
+      const { item, note } = noted.value;
+      return ok(answer(`Noted ${displayLine(item.id)}: ${titleText(item)}`, { ...itemJson(action.kind, item, await guards()), note }));
+    }
     default: {
       const unreachable: never = action;
       return unreachable;
@@ -509,11 +558,11 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
 };
 
 /**
- * `item`: add, update, move, close and list the items of the board, record a passed check of the recipe, take the worker off an
- * item, and link a file to an item (`doc`). The words and the flags are checked first (exit 2), then the node is found and the
- * connector runs the action. A write is one state commit through the connector, and the connector refuses it for a hosted tracker
- * kind. `list` reads the local files with no lock and has no JSON output. With the follow flag, `list` draws the list again at each
- * change of the board, until its reader goes (`followBoard`).
+ * `item`: add, update, move, close and list the items of the board. Add a note, link a file, record a passed check of the recipe,
+ * or take a worker off an item. A close with a reason adds the reason as a note. The command checks its words and flags first
+ * (exit 2). Then it finds the node and uses the connector. A write makes one state commit. For a hosted tracker kind, the board
+ * edit guard can refuse the write. `list` reads the local files with no lock and has no JSON output. With the follow flag, `list`
+ * draws the list again at each change of the board until its reader goes (`followBoard`).
  */
 export const runItem = async (deps: Deps, options: ItemOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);

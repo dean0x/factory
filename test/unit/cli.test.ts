@@ -949,6 +949,38 @@ describe('the item and track commands in the command line', () => {
     expect(result.out).toMatch(/--epic TEXT\s+With add and update: the epic of the item\./);
   });
 
+  it('shows how to add a note and close with a reason in the help of item', async () => {
+    const result = await run(['item', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory item note ID TEXT [--home DIR]');
+    expect(result.out).toContain('factory item close ID [--reason TEXT] [--home DIR]');
+    expect(result.out).toContain('add a note to an item');
+    expect(result.out).toMatch(/--reason TEXT\s+With close: one line of at most 500 characters\. The board also stores it as a note\./);
+    expect(result.out).toMatch(/--text TEXT\s+With add and update: the text of the item\./);
+  });
+
+  it.each([
+    [['note', 'B-1', '--', '-Work started'], 'Noted B-1: Item B-1\n', '-Work started'],
+    [['close', 'B-1', '--reason=-Work stopped'], 'Closed B-1: Item B-1\n', '-Work stopped'],
+  ] as const)('takes a leading dash as text in %j', async (argv, output, text) => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1')]) });
+    const sink = captureSink();
+    const code = await runCli(['item', '--home', BOARD_HOME, ...argv], repo.deps, sink);
+    expect({ code, output: sink.out.join('') }, sink.errors.join('')).toEqual({ code: 0, output });
+    expect(JSON.parse(repo.textOf(files.board) ?? '')).toMatchObject({ items: [{ notes: [{ text }] }] });
+  });
+
+  it('refuses an empty reason and does not close the item', async () => {
+    const board = boardText([itemRecord('B-1')]);
+    const repo = await boardNode({ board });
+    const sink = captureSink();
+    const code = await runCli(['item', 'close', 'B-1', '--reason', '', '--home', BOARD_HOME], repo.deps, sink);
+    expect(code).toBe(2);
+    expect(sink.errors.join('')).toContain('the reason is empty');
+    expect(repo.textOf(files.board)).toBe(board);
+    expect(repo.commits).toEqual([]);
+  });
+
   it('names no decide command in the help of item or of track', async () => {
     for (const argv of [['item', '--help'], ['track', '--help']]) {
       expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');

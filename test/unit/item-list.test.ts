@@ -26,6 +26,7 @@ const BASE: ItemOptions = {
   follow: false,
   ref: undefined,
   project: undefined,
+  reason: undefined,
   json: false,
 };
 

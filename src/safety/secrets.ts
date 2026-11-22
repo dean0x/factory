@@ -51,9 +51,9 @@ const isPathLike = (run: string): boolean => {
 export const textHasToken = (text: string): boolean =>
   hasKnownTokenShape(text) || (text.match(BASE64_RUN) ?? []).some((run) => !isPathLike(run) && isRandomLooking(run));
 
-/** Refuse a file before it is copied or linked. The message never contains file text. */
-export const checkFileTokens = (text: string, guards: GuardValues, hint: string): CliResult<void> =>
-  isGuardOn(guards, guardIds.secrets) && textHasToken(text) ? safetyRefusal(nodeSendReasons.token, hint) : ok(undefined);
+/** Check a file, a note or a close reason for tokens. The message never repeats the input text. */
+export const checkFileTokens = (text: string, guards: GuardValues, hint: string, reason: string = nodeSendReasons.token): CliResult<void> =>
+  isGuardOn(guards, guardIds.secrets) && textHasToken(text) ? safetyRefusal(reason, hint) : ok(undefined);
 
 const ITEM_INDEX = /^\d+$/;
 

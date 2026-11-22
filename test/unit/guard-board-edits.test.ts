@@ -98,6 +98,24 @@ describe('the guard of board edits', () => {
       expect(repo.commits).toHaveLength(on ? 0 : 2);
     });
 
+    it.each(guardStatesOf(guardIds.boardEdits))('item note and item close with a reason for a hosted tracker kind write the local board only while the guard counts as off: %s', async (_state, setup, on) => {
+      const repo = await nodeOf(setup, origin, START, hostedConfig());
+      const note = await runOn(repo.deps, ['item', 'note', 'B-1', 'Work started']);
+      const commitsAfterNote = repo.commits.length;
+      const close = await runOn(repo.deps, ['item', 'close', 'B-1', '--reason', 'Work is complete']);
+
+      expect([note.code, close.code], `${note.err}${close.err}`).toEqual(on ? [4, 4] : [0, 0]);
+      expect(commitsAfterNote).toBe(on ? 0 : 1);
+      expect(repo.commits).toHaveLength(on ? 0 : 2);
+
+      if (on) {
+        for (const result of [note, close]) {
+          expect(result.err).toContain('The jira board is not in this version.');
+          expect(result.err).toContain('Set the tracker kind to local in the config, then run "factory item" again.');
+        }
+      }
+    });
+
     it.each(guardStatesOf(guardIds.boardEdits))('the claim of the active machine warns about another machine only while the guard counts as on, and claims the mark with every value: %s', async (_state, setup, on) => {
       const repo = await nodeOf(setup, origin);
       repo.deps.seed(LAYOUT.activeMachineFile, `${JSON.stringify({ schema: schemaIds.activeMachine, machine: OTHER_MACHINE, at: '2029-12-31T10:00:00.000Z' })}\n`);

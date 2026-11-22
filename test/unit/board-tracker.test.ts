@@ -82,7 +82,9 @@ const WRITES: readonly (readonly [string, Write])[] = [
   ['item update with an epic only', (c) => c.updateItem('B-1', { epic: 'Launch' })],
   ['item move to a state', (c) => c.moveItem('B-1', { state: 'doing' })],
   ['item move to a stage', (c) => c.moveItem('B-1', { stage: 'building' })],
+  ['item note', (c) => c.noteItem('B-1', 'Progress is steady')],
   ['item close', (c) => c.closeItem('B-1')],
+  ['item close with a reason', (c) => c.closeItem('B-1', 'Work is complete')],
   ['track add', (c) => c.addTrack({ id: 'core', name: 'Core', roadmap: true })],
   ['doc link', (c) => c.linkDoc({ id: 'B-1', path: DOC_PATH })],
   ['decision ask', (c) => c.askDecision(DECISION)],
@@ -102,7 +104,13 @@ const BAD_WRITES: readonly (readonly [string, Write])[] = [
   ['item update', (c) => c.updateItem('nope', { title: 'Changed' })],
   ['item update with an epic', (c) => c.updateItem('B-1', { epic: 'two\nlines' })],
   ['item move', (c) => c.moveItem('nope', { state: 'unknown' })],
+  ['item note with a bad id', (c) => c.noteItem('nope', 'Progress is steady')],
+  ['item note with a line break', (c) => c.noteItem('B-1', 'Progress\nis steady')],
+  ['item note with a full commit id', (c) => c.noteItem('B-1', 'a1b2c3d4e5'.repeat(4))],
   ['item close', (c) => c.closeItem('nope')],
+  ['item close with a reason and a bad id', (c) => c.closeItem('nope', 'Work is complete')],
+  ['item close with a line break in the reason', (c) => c.closeItem('B-1', 'Work\nis complete')],
+  ['item close with a full commit id in the reason', (c) => c.closeItem('B-1', 'a1b2c3d4e5'.repeat(4))],
   ['track add', (c) => c.addTrack({ id: 'Bad Id', name: '', roadmap: true })],
   ['doc link', (c) => c.linkDoc({ id: 'B-1', path: '../outside.md' })],
   ['decision ask', (c) => c.askDecision({ title: '', question: '', options: [] })],
@@ -128,13 +136,14 @@ const FILES = [fileNames.board, fileNames.waiting, fileNames.decisionLog];
 describe('a hosted tracker kind: each board write refuses with exit 4 and one line', () => {
   const CASES = values.trackerHosted.flatMap((kind) => WRITES.map(([name, write]) => [kind, name, write] as const));
 
-  it.each(CASES)('%s: %s exits 4 with one line that says hosted boards come in FAC-M3 (provider plugin)', async (kind, _name, write) => {
+  it.each(CASES)('%s: %s exits 4 with one line and a remedy', async (kind, _name, write) => {
     const repo = await repoWith();
     const error = errorOf(await write(connectorOf(repo.deps, kind)));
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain(kind);
     expect(error.message).toContain(HOSTED_LINE);
     expect(error.message).not.toContain('\n');
+    expect(error.hint).toContain(`Set the tracker kind to ${values.trackerLocal}`);
   });
 
   it('names the command to run again in the remedy line, and the local tracker kind', async () => {
@@ -152,11 +161,13 @@ describe('a hosted tracker kind: each board write refuses with exit 4 and one li
     expect(error.hint).not.toContain(commandText(commands.start));
   });
 
-  it.each(BAD_WRITES)('%s with bad input exits 4 too, because the refusal comes before the input check', async (_name, write) => {
+  it.each(BAD_WRITES)('%s exits 4 for bad input before any input check', async (_name, write) => {
     const repo = await repoWith();
     const error = errorOf(await write(connectorOf(repo.deps, 'jira')));
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain(HOSTED_LINE);
+    expect(error.hint).toContain(`Set the tracker kind to ${values.trackerLocal}`);
+    expect(error.hint).toContain(commandText(PASSED_COMMAND));
   });
 
   it('exits 4 for the hosted kind when the delete guard is off, because the refusal comes before the guard check', async () => {

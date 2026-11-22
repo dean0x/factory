@@ -242,16 +242,16 @@ it.each([1, 2])('removes the resume and routine instructions from layer %i when 
 // The coordinator and safety hashes follow the merge and release modes.
 it.each([
   [owner, owner,
-    '591c76f452333aac3ac038562c6d7ddfc1b0d03f8859e90d0efd0fa18bc83ca0',
+    '39ff53497af3da41fd0310f88c35cd91155dbfc75e8a5eaa7fc5a4a5fb758a2a',
     '03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41'],
   [delegated, owner,
-    '40449598acb444e313327b5064254d673f43f03b4801e804a796a3d422b780d6',
+    'b6170b4895534451cf960b23ce7ae6541774748a736af43f22ce20f94527bd72',
     'e9ac704b9a1d2d27a1383df7510d755705ca7910d1fab2518a1ed5c7ed53973c'],
   [owner, delegated,
-    '49c5e46558fc7b8b5ec16edc03351bb886c0c5e80f2d070264294212b42b3bd3',
+    'a37997083b3fc94f4ae9770505b17f5ea2d6ce55f1014429a836a99d3e978dfb',
     '43142523d806d9c7634e6a482661f055ae420e4406312fe93924ed4de187c59d'],
   [delegated, delegated,
-    'fe5b6cbcc7a97fd592a274b5a414918d4aa8fcf7a9712f04a19e5487e0998858',
+    '729964a74f5faefa156d93a5de2f167009f3e8445ef4ce777022e954f70ea29c',
     '951bcfac48d42deb37a270018c26164a233b8fa7eeb7314238336f4db18dad59'],
 ] as const)('keeps the base text and block versions with merge %s and release %s when every guard is on',
   (merge, release, coordinatorHash, safetyHash) => {
@@ -396,7 +396,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 147],
+    ['coordinator', 40, 148],
     ['manager', 20, 51],
     ['safety', 12, 25],
     ['work-rules', 15, 30],
@@ -1154,6 +1154,14 @@ describe('the coordinator text: the board records', () => {
     `${commandText(commandLines.requestLog)} ${flagText(flags.madeBy)} coordinator|delegate ` +
     `${flagText(flags.title)} TEXT ${flagText(flags.decision)} TEXT`;
   const stateFile = (file: string): string => `../${dirs.state}/${file}`;
+
+  it('tells the coordinator how to add a note and close an item with a reason', () => {
+    const note = `${commandText(commandLines.itemNote)} ID TEXT`;
+    const close = `${commandText(commandLines.itemClose)} ID ${flagText(flags.reason)} TEXT`;
+    expect(sectionOf('Board').split('\n')).toContain(
+      `- To add a note to an item, run \`${note}\`. To close an item with a reason, run \`${close}\`.`,
+    );
+  });
 
   it('tells the coordinator to run the record command after the go of the owner and the merge of the PR', () => {
     expect(sectionOf('Board')).toContain(

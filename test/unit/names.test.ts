@@ -38,6 +38,7 @@ import {
   hookNames,
   instructionFiles,
   itemCommands,
+  itemWords,
   keys,
   lessonLimits,
   lockLine,
@@ -1672,12 +1673,26 @@ describe('the names of the board records', () => {
     expect(boardTextLimits).toMatchObject({ maxRequestDocs: 5, maxRequestFields: 6, maxFieldLabelChars: 60, maxFieldTextChars: 200, maxWhyChars: 200 });
   });
 
-  it('adds the record, unassign and doc subcommands of item after the five older ones', () => {
-    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign', 'doc']);
+  it('lists the item subcommands in the order shown to the user', () => {
+    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign', 'doc', 'note']);
   });
 
   it('gives the doc subcommand of item a command line', () => {
     expect(commandLines.itemDoc).toBe(`${commands.item} ${itemCommands.doc}`);
+  });
+
+  it('names the item note command and the close reason flag', () => {
+    expect(commandLines.itemNote).toBe('item note');
+    expect(flags.reason).toBe('reason');
+    expect(itemWords.note).toBe('note');
+    expect(itemWords.reason).toBe('reason');
+  });
+
+  it('names the item note keys and caps the list at 30', () => {
+    expect(boardKeys.notes).toBe('notes');
+    expect(boardKeys.noteAt).toBe('at');
+    expect(boardTextLimits.maxItemNotes).toBe(30);
+    expect(boardTextLimits.maxNoteChars).toBe(500);
   });
 
   it('names the flags of a request link', () => {

@@ -1184,7 +1184,14 @@ describe('request close: owner prefix', () => {
     const repo = await nodeWithPrefix(template);
     const before = filesOf(repo);
     const result = await runRequest(inPane(repo.deps, '%0'), { ...BASE, words: ['close', 'D-1'], relayed: true, decision }, recipes);
-    expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: expect.stringContaining('owner prefix') } });
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: 'usage',
+        message: 'the relayed decision must not include the owner prefix',
+        hint: 'Run "factory request --help".',
+      },
+    });
     expect(JSON.stringify(result)).not.toContain('Private:');
     expect(filesOf(repo)).toEqual(before);
     expect(repo.commits).toEqual([]);

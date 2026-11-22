@@ -6,6 +6,7 @@ import { projectFolderKey } from '../core/project-path.js';
 import { ok, type Err } from '../core/result.js';
 import { allOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
+import { isRecord } from '../migrate/inspect.js';
 import {
   approvalLinkLabels,
   boardIds,
@@ -48,6 +49,7 @@ import type {
   ItemAddInput,
   ItemMove,
   ItemMoved,
+  ItemNote,
   ItemPatch,
   QueueRowInput,
   QueueRowSet,
@@ -111,6 +113,17 @@ const shownLineOf = (what: string, text: string, max: number): CliResult<string>
 
 const optionalShownLineOf = (what: string, text: string | undefined, max: number): CliResult<string | undefined> =>
   text === undefined ? ok(undefined) : shownLineOf(what, text, max);
+
+export const checkNoteText = (what: string, text: string): CliResult<string> => {
+  const line = shownLineOf(what, text, boardTextLimits.maxNoteChars);
+  if (!line.ok || line.value === text) return line;
+  // Trim must not hide a line break or an invisible character at either end.
+  const issue = visibleLineIssue(text);
+  return issue === null ? line : usageError(`the ${what} ${issue}`);
+};
+
+export const checkMessageLine = (message: string): CliResult<void> =>
+  visibleLineIssue(message) === null ? ok(undefined) : failure('the item commit subject is not one visible line');
 
 /** The fields of the contract as the typed text that `resolveFields` checks. */
 const inputsOf = (fields: FieldValues | undefined): FieldInput[] =>
@@ -584,12 +597,51 @@ export const moveItemIn = (doc: BoardDoc, id: string, move: CheckedMove, at: str
   return ok({ top: withItem(doc, id, withKeys(found.value.record, entries).record), value: moved });
 };
 
-/** Set the closed state of an item. The stage and every other key stay. The value is the id. */
-export const closeItemIn = (doc: BoardDoc, id: string, closed: string): CliResult<Edit<string>> => {
+const noteCommand = (id: string): string => `${commandText(commandLines.itemNote)} ${id} TEXT`;
+
+const isItemNote = (entry: unknown): entry is ItemNote =>
+  isRecord(entry) && typeof entry[boardKeys.text] === 'string' && typeof entry[boardKeys.noteAt] === 'string';
+
+/** Check the stored list before the append. Keep every key of each earlier entry. */
+const withNote = (record: Stored, id: string, note: ItemNote, command: string): CliResult<Stored> => {
+  const stored = record[boardKeys.notes];
+  if (stored !== undefined && !(Array.isArray(stored) && stored.every(isItemNote))) {
+    return failure(
+      `${files.board}: the "${boardKeys.notes}" of ${id} is not a list of notes with text and time`,
+      `Check the item in ${files.board}, then run "${command}" again.`,
+    );
+  }
+  const current: readonly ItemNote[] = stored ?? [];
+  if (current.length >= boardTextLimits.maxItemNotes) {
+    return usageError(
+      `the item ${id} holds ${boardTextLimits.maxItemNotes} notes already, so it takes no more`,
+      `Take an old note out of "${boardKeys.notes}" in ${files.board}; the state-repo history keeps its text; then run "${command}" again.`,
+    );
+  }
+  return ok({ ...record, [boardKeys.notes]: [...current, { [boardKeys.text]: note.text, [boardKeys.noteAt]: note.at }] });
+};
+
+/** Append a note without a state change. */
+export const noteItemIn = (doc: BoardDoc, id: string, note: ItemNote): CliResult<Edit<ItemNote>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
-  const next = withKeys(found.value.record, [[boardKeys.status, closed]]);
-  return ok({ top: next.changed ? withItem(doc, id, next.record) : null, value: id });
+  const next = withNote(found.value.record, id, note, noteCommand(id));
+  return next.ok ? ok({ top: withItem(doc, id, next.value), value: note }) : next;
+};
+
+/** Set the closed state. If the close adds a note, the item must be open. The value is the id. */
+export const closeItemIn = (doc: BoardDoc, id: string, closed: string, note?: ItemNote): CliResult<Edit<string>> => {
+  const found = itemAt(doc, id);
+  if (!found.ok) return found;
+  const { record, status } = found.value;
+  if (note === undefined) {
+    const next = withKeys(record, [[boardKeys.status, closed]]);
+    return ok({ top: next.changed ? withItem(doc, id, next.record) : null, value: id });
+  }
+  if (status === closed) return usageError(`the item ${id} is closed already`, `Run "${noteCommand(id)}" to add a note.`);
+  const next = withNote(record, id, note, `${commandText(commandLines.itemClose)} ${id} ${flagText(flags.reason)} TEXT`);
+  if (!next.ok) return next;
+  return ok({ top: withItem(doc, id, withKeys(next.value, [[boardKeys.status, closed]]).record), value: id });
 };
 
 /**

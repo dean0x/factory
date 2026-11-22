@@ -3,10 +3,8 @@ import type { BoardConnector, DecisionAskInput, FieldValues } from '../../src/bo
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 
 /**
- * The contract suite of the board connector (design 4.10). A connector passes it when it gives the same results as every other
- * connector for item add, update, move, close and list, track add and list, decision ask, doc link and a read of changes. The suite
- * holds no assertion that is true of one connector only: it reads results through the contract, and never a file or a service.
- * The suite has no decision read in this change.
+ * The board contract covers item add, update, move, note, close and list. It also covers track add and list, decision ask,
+ * doc link and a read of changes. The suite reads results through the contract. It does not read a file or a service.
  */
 
 /** What a connector under test gives to the suite: the connector, and the names that its setup declares. */
@@ -36,6 +34,7 @@ const exitOf = <T>(result: CliResult<T>): number => exitCodeOf[errorOf(result).k
 
 const ITEM_ID = /^B-[0-9]+$/;
 const DECISION_ID = /^D-[0-9]+$/;
+const UTC_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 const decision: DecisionAskInput = {
   title: 'Pick a plan',
@@ -145,6 +144,37 @@ export const describeBoardContract = (name: string, setup: () => Promise<Contrac
       });
     });
 
+    describe('item note', () => {
+      it('refuses an absent item and preserves the other items', async () => {
+        const { connector, fields } = await setup();
+        const item = valueOf(await connector.addItem({ title: 'Keep this item', fields: fields.add }));
+        const absent = 'B-999';
+        const error = errorOf(await connector.noteItem(absent, 'Work started'));
+        expect(exitCodeOf[error.kind]).toBe(2);
+        expect(error.message).toContain(absent);
+        expect(valueOf(await connector.listItems({ all: true }))).toEqual([item]);
+      });
+
+      it.each(['note', 'close'])('refuses an empty %s text and preserves the item', async (action) => {
+        const { connector, fields } = await setup();
+        const item = valueOf(await connector.addItem({ title: 'Keep this item', fields: fields.add }));
+        const error = errorOf<unknown>(action === 'note' ? await connector.noteItem(item.id, '') : await connector.closeItem(item.id, ''));
+        expect(exitCodeOf[error.kind]).toBe(2);
+        expect(error.message).toContain('is empty');
+        expect(valueOf(await connector.listItems({ all: true }))).toEqual([item]);
+      });
+
+      it.each(['open', 'closed'])('adds a note to a %s item without other changes', async (state) => {
+        const { connector, fields } = await setup();
+        const added = valueOf(await connector.addItem({ title: 'Keep this item', fields: fields.add }));
+        const before = state === 'closed' ? valueOf(await connector.closeItem(added.id)) : added;
+        const { item, note } = valueOf(await connector.noteItem(added.id, '  Work can continue  '));
+        expect(note).toEqual({ text: 'Work can continue', at: expect.stringMatching(UTC_TIME) });
+        expect(item).toEqual({ ...before, record: { ...before.record, notes: [note] } });
+        expect(valueOf(await connector.listItems({ all: true }))).toEqual([item]);
+      });
+    });
+
     describe('item close', () => {
       it('closes an item with the closed state, and keeps its id and its stage', async () => {
         const { connector, states, stages, fields } = await setup();
@@ -170,6 +200,27 @@ export const describeBoardContract = (name: string, setup: () => Promise<Contrac
         const added = valueOf(await connector.addItem({ title: 'Twice', fields: fields.add }));
         valueOf(await connector.closeItem(added.id));
         expect(valueOf(await connector.closeItem(added.id)).status).toBe(states.closed);
+      });
+
+      it('closes an open item and appends the reason after its earlier note', async () => {
+        const { connector, states, fields } = await setup();
+        const added = valueOf(await connector.addItem({ title: 'Close with a reason', fields: fields.add }));
+        const { item, note } = valueOf(await connector.noteItem(added.id, 'Work started'));
+        const closed = valueOf(await connector.closeItem(added.id, '  Work is complete  '));
+        const reason = { text: 'Work is complete', at: expect.stringMatching(UTC_TIME) };
+        expect(closed).toEqual({ ...item, status: states.closed, record: { ...item.record, status: states.closed, notes: [note, reason] } });
+        expect(valueOf(await connector.listItems({ all: true }))).toEqual([closed]);
+      });
+
+      it('refuses a reason after a plain close and gives the command to add a note', async () => {
+        const { connector, fields } = await setup();
+        const added = valueOf(await connector.addItem({ title: 'Close once', fields: fields.add }));
+        const closed = valueOf(await connector.closeItem(added.id));
+        const error = errorOf(await connector.closeItem(added.id, 'Work is complete'));
+        expect(exitCodeOf[error.kind]).toBe(2);
+        expect(error.message).toContain(`the item ${added.id} is closed already`);
+        expect(error.hint).toContain(`factory item note ${added.id} TEXT`);
+        expect(valueOf(await connector.listItems({ all: true }))).toEqual([closed]);
       });
 
       it('refuses an item that is not there with exit 2', async () => {
