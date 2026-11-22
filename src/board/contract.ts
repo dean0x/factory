@@ -277,9 +277,15 @@ export interface BoardConnector {
   addItem(input: ItemAddInput): Promise<CliResult<BoardItem>>;
   updateItem(id: string, patch: ItemPatch): Promise<CliResult<BoardItem>>;
   moveItem(id: string, move: ItemMove): Promise<CliResult<ItemMoved>>;
-  /** Append a note to an open or closed item. */
+  /**
+   * Append a note to an open or closed item.
+   * With any guard value, the caller must refuse input that contains the configured owner prefix in the original, untrimmed text.
+   */
   noteItem(id: string, text: string): Promise<CliResult<ItemNoted>>;
-  /** Set the closed state. With a reason, refuse a closed item and add the note in the same commit. */
+  /**
+   * Set the closed state. With a reason, refuse a closed item and add the note in the same commit.
+   * With any guard value, the caller must refuse a reason that contains the configured owner prefix in the original, untrimmed text.
+   */
   closeItem(id: string, reason?: string): Promise<CliResult<BoardItem>>;
   listItems(query: ItemQuery): Promise<CliResult<readonly BoardItem[]>>;
   addTrack(input: TrackAddInput): Promise<CliResult<BoardTrack>>;
