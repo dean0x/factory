@@ -21,7 +21,7 @@ import {
   type WatchKind,
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
-import { promptStateOf, readOwnLastSeen, type LastSeen, type OwnSessionRead } from './last-seen.js';
+import { lastFinishOf, promptStateOf, readOwnLastSeen, type LastSeen, type OwnSessionRead } from './last-seen.js';
 import { listPanes, readPaneLife, requireCoordinatorCaller, type PaneLife } from './panes.js';
 import { listWorkerRecords, requireRecord } from './registry.js';
 import { paneProcessStart, requireLineAfterStart } from './session-checks.js';
@@ -49,16 +49,16 @@ import { paneProcessStart, requireLineAfterStart } from './session-checks.js';
  *     A terminal is no condition: a background watch has none. Each end but `no-worker` gives the time of the last check, in the form
  *     that `--since` takes;
  *  6. a fault of a read (tmux, a file) is exit 1.
- * The panes that a worker has at the baseline are the panes that the later checks read, each by its id. A change of a worker is the
- * first of: a pane that ended, is gone or runs another program than the launch of the worker; a last-seen line that is not valid or
- * does not belong to the worker; a dialog that waits for an answer; a session that works and was silent for more than
- * `watchPoll.stalledAfterMs`; a finish.
- * A finish is a last-seen line with the event `watchPoll.finishEvent` that is newer than the baseline of the worker. The baseline is the
- * event time of the line at the first check, or the `--since` time when that is older, and none when the worker has no line and no
- * `--since` is given. So a finish between two runs shows at once at the baseline of the next run, when that run gets the time of the
- * last check of the earlier run as `--since`. A line of the event `SessionStart` is no finish, and a worker of `--ready` has no finish.
- * A worker that is new has no line yet, so a missing line is not a change in the first `watchPoll.lineGraceChecks` checks, the
- * baseline included. A missing line is a change from that check on, and at once for a worker whose valid line was seen at an
+ * The panes at the first check are the panes that later checks read. Each check reports at most one change per worker. A pane
+ * change comes first. Next come a line that is not owned, or a missing or invalid line after the grace period. Then
+ * come `finished`, `waits`, and `stalled`. Level kinds can report again in the next run.
+ * Use the saved finish time, or the event time of an older `Stop` line with no saved finish time. Report a finish only after
+ * the baseline and at or before the check time. At the first check, start with the later of the event time and the finish time.
+ * Limit it to the check time and to `--since` if that is older. With no event, finish, or `--since`, there is no baseline time.
+ * Pass the last check time as `--since` to report a finish between runs. `SessionStart` sets no finish. A `--ready` worker
+ * never reports a finish.
+ * A missing or invalid line is not a change in the first `watchPoll.lineGraceChecks` checks, the baseline included.
+ * Such a line is a change after those checks, and at once for a worker whose valid line was seen at an
  * earlier check. A line that does not belong to the worker is a change at once.
  * A worker of `--ready ID` waits out a block, for example a dialog that only the owner answers. It is watched with the other workers,
  * and its pane changes and a line that does not belong to it stay changes. Its other change is `ready`: a valid line of its own at the
@@ -211,8 +211,8 @@ const readyFinding = async (deps: Deps, target: Target, read: OwnSessionRead): P
 };
 
 /**
- * What a check found for one worker: its change, or null, whether the check read a valid line of the worker, the event time of that line,
- * and the event time of that line when its event is the finish event. Both times are null when the check read no valid line.
+ * The pane or line change, whether the check read a valid line of the worker, and its event and finish times.
+ * Both times are null if the check found no valid line of the worker.
  */
 interface Finding {
   readonly change: WatchKind | null;
@@ -241,24 +241,50 @@ const changeOf = async (deps: Deps, home: string, target: Target, missingIsChang
     : lineChange(line.value, deps.now().getTime(), missingIsChange);
   const valid = line.value.state === 'valid' ? line.value.line : null;
   const eventAt = valid?.[keys.eventAt] ?? null;
-  const finishedAt = valid?.[keys.event] === watchPoll.finishEvent ? eventAt : null;
+  const finishedAt = valid === null ? null : lastFinishOf(valid);
   return ok({ change, lineSeen: valid !== null, eventAt, finishedAt });
+};
+
+/** Both UTC times have fixed-width fields through seconds. Keep every fraction digit when their precision differs. */
+const isAfter = (first: string, second: string): boolean => {
+  if (first.length === second.length) return first > second;
+  const width = Math.max(first.length, second.length);
+  const key = (time: string): string => time.slice(0, -1).replace('.', '').padEnd(width, '0');
+  return key(first) > key(second);
 };
 
 /** The older of two times, or the one that is there. Both are ISO times in UTC that a schema has checked. */
 const olderOf = (first: string | null, second: string | null): string | null => {
   if (first === null) return second;
   if (second === null) return first;
-  return Date.parse(first) <= Date.parse(second) ? first : second;
+  return isAfter(first, second) ? second : first;
 };
 
-/** True when the finish time is there and is newer than the baseline. A baseline of none is older than every time. */
-const isFinishAfter = (finishedAt: string | null, baseline: string | null): boolean =>
-  finishedAt !== null && (baseline === null || Date.parse(finishedAt) > Date.parse(baseline));
+/** The newer of two times, or the one that is there. */
+const newerOf = (first: string | null, second: string | null): string | null => {
+  if (first === null) return second;
+  if (second === null) return first;
+  return isAfter(second, first) ? second : first;
+};
+
+const firstBaseline = (eventAt: string | null, finishedAt: string | null, checkedAt: string, since: string | null): string | null => {
+  const latest = newerOf(eventAt, finishedAt);
+  if (latest === null && since === null) return null;
+  return olderOf(olderOf(latest, checkedAt), since);
+};
+
+/** True when the finish time is there and is newer than the given time. Null is older than every time. */
+const isFinishAfter = (finishedAt: string | null, time: string | null): boolean =>
+  finishedAt !== null && (time === null || isAfter(finishedAt, time));
+
+const levelKinds: readonly WatchKind[] = ['waits', 'stalled'];
+
+const pickKind = (change: WatchKind | null, finished: boolean): WatchKind | null =>
+  finished && (change === null || levelKinds.includes(change)) ? 'finished' : change;
 
 /**
  * What the checks remember: the workers whose valid line has been seen so far, and the baseline of each worker that an earlier check
- * has met. A baseline of none is a worker that had no valid line at its first check, with no `--since`.
+ * has met. A null baseline means that the first check had no event time, finish time or `--since`.
  */
 interface Memory {
   readonly seen: ReadonlySet<string>;
@@ -272,16 +298,16 @@ interface Checked {
 }
 
 /**
- * One check of every target, in order. `index` is the count of waits before this check (0: the baseline). A missing line is a change
- * for a worker in `memory.seen`, and for every worker from the check with the index `watchPoll.lineGraceChecks` on. The first check
- * that meets a worker sets its baseline: the event time of its line, or `since` when that is older. A line with the finish event that is
- * newer than the baseline is the change `finished`, unless the worker has another change or waits to be ready.
+ * Check every target in order. `index` is the count of waits before this check (0: the baseline).
+ * A missing line is a change after a valid line, or from `watchPoll.lineGraceChecks` on.
+ * The first check sets each baseline. Only a finish after that baseline and at or before `checkedAt` can report.
  */
 const check = async (
   deps: Deps,
   home: string,
   targets: readonly Target[],
   index: number,
+  checkedAt: string,
   since: string | null,
   memory: Memory,
 ): Promise<CliResult<Checked>> => {
@@ -294,10 +320,10 @@ const check = async (
     const found = await changeOf(deps, home, target, missingIsChange);
     if (!found.ok) return found;
     const { change, lineSeen, eventAt, finishedAt } = found.value;
-    const baseline = baselines.has(workerId) ? (baselines.get(workerId) ?? null) : olderOf(eventAt, since);
+    const baseline = baselines.has(workerId) ? (baselines.get(workerId) ?? null) : firstBaseline(eventAt, finishedAt, checkedAt, since);
     baselines.set(workerId, baseline);
-    const finished = !target.waitsForReady && isFinishAfter(finishedAt, baseline);
-    const kind = change ?? (finished ? 'finished' : null);
+    const finished = !target.waitsForReady && isFinishAfter(finishedAt, baseline) && !isFinishAfter(finishedAt, checkedAt);
+    const kind = pickKind(change, finished);
     if (kind !== null) changes.push({ workerId, kind });
     if (lineSeen) seen.add(workerId);
   }
@@ -429,7 +455,7 @@ export const watchWorkers = async (deps: Deps, request: WatchRequest): Promise<C
     if (marker === 'lost') return failure(watchWords.markerLost, `Run "${AGAIN}" again.`);
     if (marker === 'replaced') return ok({ kind: 'replaced', checkedAt });
     checkedAt = deps.now().toISOString();
-    const found = await check(deps, home, targets, checks, since, memory);
+    const found = await check(deps, home, targets, checks, checkedAt, since, memory);
     if (!found.ok) return found;
     if (found.value.changes.length > 0) return ok({ kind: 'changed', changes: found.value.changes, checks, checkedAt });
     memory = found.value.memory;

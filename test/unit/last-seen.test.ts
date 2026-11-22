@@ -107,7 +107,7 @@ describe('writeLastSeen', () => {
   it('returns the line that it wrote', async () => {
     const deps = createFakeDeps();
     const result = await writeLastSeen(deps, HOME, ID, event('Stop'));
-    expect(result).toEqual({ ok: true, value: line({ event: 'Stop', event_at: T0 }) });
+    expect(result).toEqual({ ok: true, value: line({ event: 'Stop', event_at: T0, finished_at: T0 }) });
   });
 
   it('keeps the stored percent and its time when a hook event comes', async () => {
@@ -115,7 +115,7 @@ describe('writeLastSeen', () => {
     await writeLastSeen(deps, HOME, ID, percent(42));
     deps.advance(MINUTE);
     await writeLastSeen(deps, HOME, ID, event('Stop'));
-    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T1, context_pct: 42, pct_at: T0 }));
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T1, finished_at: T1, context_pct: 42, pct_at: T0 }));
   });
 
   it('keeps the stored event and its time when a status line percent comes', async () => {
@@ -123,7 +123,34 @@ describe('writeLastSeen', () => {
     await writeLastSeen(deps, HOME, ID, event('Stop'));
     deps.advance(MINUTE);
     await writeLastSeen(deps, HOME, ID, percent(55));
-    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0, context_pct: 55, pct_at: T1 }));
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0, finished_at: T0, context_pct: 55, pct_at: T1 }));
+  });
+
+  it.each(['UserPromptSubmit', 'SessionStart'] as const)('keeps the last finish after %s and a percent write', async (name) => {
+    const deps = createFakeDeps();
+    await writeLastSeen(deps, HOME, ID, event('Stop'));
+    deps.advance(MINUTE);
+    await writeLastSeen(deps, HOME, ID, event(name));
+    expect(storedLine(deps)).toEqual(line({ event: name, event_at: T1, finished_at: T0 }));
+    await writeLastSeen(deps, HOME, ID, percent(42));
+    expect(storedLine(deps)).toEqual(line({ event: name, event_at: T1, finished_at: T0, context_pct: 42, pct_at: T1 }));
+  });
+
+  it('sets the time of the next Stop even when the clock steps back', async () => {
+    const deps = createFakeDeps();
+    deps.advance(MINUTE);
+    await writeLastSeen(deps, HOME, ID, event('Stop'));
+    deps.advance(-MINUTE);
+    await writeLastSeen(deps, HOME, ID, event('Stop'));
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0, finished_at: T0 }));
+  });
+
+  it('keeps the time of an old Stop at the next event write', async () => {
+    const deps = createFakeDeps();
+    seedLine(deps, { event: 'Stop', event_at: T0 });
+    deps.advance(MINUTE);
+    await writeLastSeen(deps, HOME, ID, event('UserPromptSubmit'));
+    expect(storedLine(deps)).toEqual(line({ event: 'UserPromptSubmit', event_at: T1, finished_at: T0 }));
   });
 
   it('replaces the stored event and keeps the percent over a run of changes', async () => {
@@ -142,7 +169,7 @@ describe('writeLastSeen', () => {
     await writeLastSeen(deps, HOME, ID, percent(42));
     deps.advance(MINUTE);
     await writeLastSeen(deps, HOME, ID, percent(null));
-    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0 }));
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0, finished_at: T0 }));
   });
 
   it.each([0, 100])('writes the percent %j at the edge of the range', async (value) => {
@@ -188,7 +215,15 @@ describe('writeLastSeen', () => {
     const deps = createFakeDeps();
     deps.seed(FILE, 'not json at all');
     await writeLastSeen(deps, HOME, ID, event('Stop'));
-    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0 }));
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0, finished_at: T0 }));
+  });
+
+  it('drops the finish of a stored line that is not valid', async () => {
+    const deps = createFakeDeps();
+    seedLine(deps, { event: 'Stop', event_at: T0, finished_at: T0, extra: 1 });
+    deps.advance(MINUTE);
+    await writeLastSeen(deps, HOME, ID, event('UserPromptSubmit'));
+    expect(storedLine(deps)).toEqual(line({ event: 'UserPromptSubmit', event_at: T1 }));
   });
 
   it('writes with the safe write and never with the atomic write of the file system', async () => {
@@ -198,12 +233,12 @@ describe('writeLastSeen', () => {
     expect([...deps.files.keys()]).toEqual([FILE]);
   });
 
-  it('holds only the six keys, and no path of a transcript', async () => {
+  it('records the event, finish and percent without the transcript path', async () => {
     const deps = createFakeDeps();
     await writeLastSeen(deps, HOME, ID, event('Stop'));
     await writeLastSeen(deps, HOME, ID, percent(7));
     expect(Object.keys(storedLine(deps) as object).sort()).toEqual(
-      ['context_pct', 'event', 'event_at', 'pct_at', 'schema', 'session_id'],
+      ['context_pct', 'event', 'event_at', 'finished_at', 'pct_at', 'schema', 'session_id'],
     );
     expect(deps.files.get(FILE)).not.toContain('transcript');
   });
@@ -282,7 +317,7 @@ describe('writeLastSeen: the session marker of the line', () => {
     const deps = createFakeDeps();
     seedLine(deps, { event: 'SessionStart', event_at: T0 });
     expect((await writeLastSeen(deps, HOME, ID, event('Stop'), 'alpha')).ok).toBe(true);
-    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0 }));
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0, finished_at: T0 }));
   });
 
   it('keeps the stored session marker when the call names none', async () => {
@@ -332,7 +367,13 @@ describe('writeLastSeen: two writers at once', () => {
     const deps = createFakeDeps();
     const results = await Promise.all(changes.map((change) => writeLastSeen(deps, HOME, ID, change)));
     expect(results.map((result) => result.ok)).toEqual([true, true]);
-    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: expect.any(String), context_pct: 42, pct_at: expect.any(String) }));
+    expect(storedLine(deps)).toEqual(line({
+      event: 'Stop',
+      event_at: expect.any(String),
+      finished_at: expect.any(String),
+      context_pct: 42,
+      pct_at: expect.any(String),
+    }));
     expect([...deps.files.keys()]).toEqual([FILE]);
   });
 
@@ -355,7 +396,8 @@ describe('writeLastSeen: two writers at once', () => {
     });
     expect((await writeLastSeen(waiting, HOME, ID, event('Stop'))).ok).toBe(true);
     expect(deps.sleeps).toEqual([BOUND.waitMs, BOUND.waitMs]);
-    expect(storedLine(deps)).toMatchObject({ event: 'Stop' });
+    const at = new Date(Date.parse(T0) + 2 * BOUND.waitMs).toISOString();
+    expect(storedLine(deps)).toMatchObject({ event: 'Stop', event_at: at, finished_at: at });
     expect([...deps.files.keys()]).toEqual([FILE]);
   });
 
@@ -502,6 +544,13 @@ describe('readLastSeen', () => {
     });
   });
 
+  it.each([T0, '2030-01-02T03:06:05.678Z'])('accepts a finish at %s with a different event time', async (finishedAt) => {
+    const deps = createFakeDeps();
+    const fields = { event: 'UserPromptSubmit', event_at: T1, finished_at: finishedAt };
+    seedLine(deps, fields);
+    expect(await readValue(deps)).toEqual({ state: 'valid', line: line(fields) });
+  });
+
   it.each(['Notification', 'PreToolUse'] as const)('gives the line of a %s event as valid', async (name) => {
     const deps = createFakeDeps();
     await writeLastSeen(deps, HOME, ID, event(name));
@@ -548,6 +597,14 @@ describe('readLastSeen', () => {
     ['a session id that is not a UUID', { session_id: 'abc' }, 'session_id'],
   ])('gives invalid for %s', async (_name, fields, reason) => {
     expect(await invalid(JSON.stringify(line(fields)))).toContain(reason);
+  });
+
+  it.each([
+    ['with no event time', {}, T0, 'must have an event time'],
+    ['that is not a date', { event: 'UserPromptSubmit', event_at: T1 }, 'yesterday', 'Invalid ISO datetime'],
+    ['with an offset instead of Z', { event: 'UserPromptSubmit', event_at: T1 }, '2030-01-02T04:04:05.678+01:00', 'Invalid ISO datetime'],
+  ])('refuses a finish time %s', async (_name, fields, finishedAt, reason) => {
+    expect(await invalid(JSON.stringify(line({ ...fields, finished_at: finishedAt })))).toContain(`finished_at: ${reason}`);
   });
 
   it('gives invalid for a line that is not an object', async () => {

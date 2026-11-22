@@ -38,7 +38,7 @@ const managerFor = (input: BlockInput): BlockTemplate => ({
  */
 const coordinatorFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.coordinator,
-  version: 9,
+  version: 10,
   target: 'claudeFile',
   body: fillTemplate(
     coordinatorLines(

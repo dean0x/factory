@@ -242,16 +242,16 @@ it.each([1, 2])('removes the resume and routine instructions from layer %i when 
 // The coordinator and safety hashes follow the merge and release modes.
 it.each([
   [owner, owner,
-    '6f211fb5bc46792a3bcb7914ef7a47ae10003df6077049042d5733dc75fbdfd3',
+    '591c76f452333aac3ac038562c6d7ddfc1b0d03f8859e90d0efd0fa18bc83ca0',
     '03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41'],
   [delegated, owner,
-    '90505aa1c74c725ec602d8ce2442139faca3fbb9c6a5d2b5a1c23b13d7ca341d',
+    '40449598acb444e313327b5064254d673f43f03b4801e804a796a3d422b780d6',
     'e9ac704b9a1d2d27a1383df7510d755705ca7910d1fab2518a1ed5c7ed53973c'],
   [owner, delegated,
-    'caee2bb290fb592955669d50e09f7095f3bb1a47578ec695d7563e4e2b26238a',
+    '49c5e46558fc7b8b5ec16edc03351bb886c0c5e80f2d070264294212b42b3bd3',
     '43142523d806d9c7634e6a482661f055ae420e4406312fe93924ed4de187c59d'],
   [delegated, delegated,
-    '1907692355165569ed67020659eed9929e58f08d663cda95a508ffaeea33b7f2',
+    'fe5b6cbcc7a97fd592a274b5a414918d4aa8fcf7a9712f04a19e5487e0998858',
     '951bcfac48d42deb37a270018c26164a233b8fa7eeb7314238336f4db18dad59'],
 ] as const)('keeps the base text and block versions with merge %s and release %s when every guard is on',
   (merge, release, coordinatorHash, safetyHash) => {
@@ -261,7 +261,7 @@ it.each([
     );
     expect(blocks).toEqual([
       [
-        ['coordinator', 9, 'claudeFile', coordinatorHash],
+        ['coordinator', 10, 'claudeFile', coordinatorHash],
         ['safety', 2, 'claudeFile', safetyHash],
         ['work-rules', 1, 'claudeFile', '3eeed8b66b1b2fa0d093e01fb1cfc7acf24cd1cc1357adad2ae141666fe30261'],
         ['worker', 5, 'workerFile', 'efd421639502a2c494bf8f5a4b40adb739b7a20517b3446845d0184c198c78cf'],
@@ -367,7 +367,7 @@ const summary = (blocks: readonly { name: string; version: number; target: strin
 describe('block templates', () => {
   it('gives layer 1 the coordinator, safety, work rules and worker blocks with their versions and targets', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
-      ['coordinator', 9, 'claudeFile'],
+      ['coordinator', 10, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['work-rules', 1, 'claudeFile'],
       ['worker', 5, 'workerFile'],
@@ -396,7 +396,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 144],
+    ['coordinator', 40, 147],
     ['manager', 20, 51],
     ['safety', 12, 25],
     ['work-rules', 15, 30],
@@ -1316,6 +1316,25 @@ describe('the coordinator text: the board records', () => {
       `A change of the worker field to pass the guard of a dismiss is a workaround. \`${update}\` now refuses it. Use \`${unassign}\`.`,
     );
   });
+
+  it('starts a new watch with the last report time after a package update', () => {
+    expect(sectionOf('After an upgrade')).toContain(
+      `After you update Factory, run \`${templateValues.workerWatchCommand}\` again as a background task. ` +
+      `If you have the last report time, pass it as \`${flagText(flags.since)} <time>\`.`,
+    );
+  });
+
+  it('says when the earlier watch ends after a package update', () => {
+    expect(sectionOf('After an upgrade')).toContain(
+      `If a watch still runs, it ends with \`${watchWords.replaced}\` at its next check.`,
+    );
+  });
+
+  it('asks for a check of the named worker after an invalid line report from the earlier watch', () => {
+    expect(sectionOf('After an upgrade')).toContain(
+      `If the earlier watch reported \`${watchWords.kinds.lineNotValid}\` just after the update, check the named worker before you wait again.`,
+    );
+  });
 });
 
 describe('the worker section: the watch over a long run', () => {
@@ -2097,7 +2116,7 @@ describe('the work rules block of the coordinator', () => {
 
   it('keeps work rules separate from the coordinator block and its approval point lines', () => {
     const template = layer1Blocks.find((candidate) => candidate.name === 'coordinator');
-    expect(template?.version).toBe(9);
+    expect(template?.version).toBe(10);
     expect(template?.body).not.toContain('Work rules');
     for (const line of approvalLines(points, softwareOwnerModes)) expect(rules()).not.toContain(line);
   });

@@ -1377,7 +1377,7 @@ export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
  * that works is stalled when the newer of its event time and its percent time is more than `stalledAfterMs` old. A worker that is new
  * has no last-seen line yet, so a missing line is not a change in the first `lineGraceChecks` checks (the baseline counts as the
  * first). From the check with this index on, or once a valid line was seen, a missing line is a change. A worker finished when its last
- * event is `finishEvent` and is newer than the baseline of the worker.
+ * finish time is newer than its baseline and not later than the time of the check.
  */
 export const watchPoll = {
   capMs: 86_400_000,
@@ -1850,8 +1850,8 @@ export const sessionNames = {
 
 /**
  * The last-seen line (design 4.6): one JSON text for each session, in the heartbeat folder of the run-time folder. It
- * holds the session id, the last hook event with its time, and the context percent with its time. The name of the file
- * is the session id, so the id must match the pattern before it is used in a path.
+ * holds the session id, the last hook event with its time, the last finish time, and the context percent with its time.
+ * The name of the file is the session id, so the id must match the pattern before it is used in a path.
  */
 export const lastSeen = {
   keys: {
@@ -1859,6 +1859,8 @@ export const lastSeen = {
     sessionId: 'session_id',
     event: 'event',
     eventAt: 'event_at',
+    /** The time of the last Stop event, if one occurred. */
+    finishedAt: 'finished_at',
     contextPct: 'context_pct',
     pctAt: 'pct_at',
     /** The id that the session marker held when the line was made: the id of the node, or the id of a worker. */
@@ -2772,6 +2774,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   replacedWord: watchWords.replaced,
   markerLostWord: watchWords.markerLost,
   paneGoneWord: watchWords.kinds.gone,
+  lineNotValidWord: watchWords.kinds.lineNotValid,
   workerResetCommand: workerCommandText(workerCommands.reset),
   nodeSendCommand: `${commandText(commandLines.nodeSend)} <id> ${flagText(flags.file)} FILE`,
   inboxNotice: messageHeader.notice,

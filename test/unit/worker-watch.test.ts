@@ -4,7 +4,7 @@ import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cl
 import { launchArgv } from '../../src/launch/argv.js';
 import { schemaIds, tmuxNames, watchPoll, watchRun, watchWords, type HookEvent, type WatchKind } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
-import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
+import { writeLastSeen, writeWorkerSession, type LastSeen } from '../../src/workers/last-seen.js';
 import { branchOf, workCopyOf, writeWorkerRecord } from '../../src/workers/registry.js';
 import { watchOutput, watchWorkers, type WatchOutcome } from '../../src/workers/watch.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
@@ -57,6 +57,8 @@ interface Setup {
    * coordinator. `worker`: in the pane of alpha.
    */
   readonly caller?: 'coordinator' | 'worker';
+  /** An action that runs just before a read of a last-seen line. */
+  readonly beforeLineRead?: (deps: FakeDeps) => Promise<void>;
   /** A write of the run marker fails: the file system is full. */
   readonly markerWriteFails?: boolean;
 }
@@ -128,26 +130,45 @@ const etimeOf = (elapsedMs: number): string => {
 
 const lineFile = (sessionId: string): string => `${layoutOf(HOME).heartbeatDir}/${sessionId}`;
 
-/** The hook of the session of a worker writes a line: the event at the time of the fake clock, with the marker of the worker or another. */
-const writesEvent = async (deps: FakeDeps, id: string, event: HookEvent, marker: string = id): Promise<void> => {
+const writesPointer = async (deps: FakeDeps, id: string): Promise<string> => {
   const sessionId = SESSION_OF[id] ?? '';
   const pointer = await writeWorkerSession(deps, HOME, id, sessionId);
   if (!pointer.ok) throw new Error(pointer.error.message);
+  return sessionId;
+};
+
+/** The hook of the session of a worker writes a line: the event at the time of the fake clock, with the marker of the worker or another. */
+const writesEvent = async (deps: FakeDeps, id: string, event: HookEvent, marker: string = id): Promise<void> => {
+  const sessionId = await writesPointer(deps, id);
   const line = await writeLastSeen(deps, HOME, sessionId, { kind: 'event', event }, marker);
   if (!line.ok) throw new Error(line.error.message);
 };
 
-/** The text of a line for the session of alpha that records the marker of another session, as a program in a pane could write it. */
-const foreignLineText = (deps: FakeDeps): string =>
+const lineText = (
+  id: string,
+  event: HookEvent,
+  eventAt: string,
+  fields: Pick<LastSeen, 'finished_at' | 'session_marker'> = {},
+): string =>
   `${JSON.stringify({
     schema: schemaIds.lastSeen,
-    session_id: SESSION_OF[ALPHA],
-    event: 'Stop',
-    event_at: deps.now().toISOString(),
+    session_id: SESSION_OF[id],
+    event,
+    event_at: eventAt,
     context_pct: null,
     pct_at: null,
-    session_marker: BETA,
+    session_marker: id,
+    ...fields,
   })}\n`;
+
+/** The text of a line for alpha with the marker of another session. */
+const foreignLineText = (deps: FakeDeps): string =>
+  lineText(ALPHA, 'Stop', deps.now().toISOString(), { session_marker: BETA });
+
+const writesLiteralLine = async (deps: FakeDeps, id: string, event: HookEvent, eventAt: string, finishedAt?: string): Promise<void> => {
+  const sessionId = await writesPointer(deps, id);
+  deps.seed(lineFile(sessionId), lineText(id, event, eventAt, finishedAt === undefined ? {} : { finished_at: finishedAt }));
+};
 
 /** The status line of the session of a worker writes the context percent at the time of the fake clock. */
 const writesPercent = async (deps: FakeDeps, id: string): Promise<void> => {
@@ -211,7 +232,10 @@ const make = async (setup: Setup = {}): Promise<World> => {
     fs: {
       ...deps.fs,
       readTextLimited: async (path, maxBytes) => {
-        if (lineReadsBroken && path.startsWith(`${heartbeatDir}/`)) return failure(`cannot read ${path}: EIO`);
+        if (path.startsWith(`${heartbeatDir}/`)) {
+          if (lineReadsBroken) return failure(`cannot read ${path}: EIO`);
+          await setup.beforeLineRead?.(deps);
+        }
         if (markerReadsBroken && path === MARKER_FILE) return failure(`cannot read ${path}: EIO`);
         return deps.fs.readTextLimited(path, maxBytes);
       },
@@ -627,6 +651,140 @@ describe('a finish of a worker ends the watch', () => {
     expect(outcome.changes).toEqual([{ workerId: BETA, kind: 'finished' }]);
   });
 
+  it.each(['UserPromptSubmit', 'PreCompact', 'PreToolUse', 'SessionStart'] as const)(
+    'reports a finish before %s when both events come between checks',
+    async (event) => {
+      const world = await make({ events: { [ALPHA]: 'SessionStart' } });
+      const outcome = valueOf(await world.watch([], atWait(1, async ({ deps }) => {
+        await writesEvent(deps, ALPHA, 'Stop');
+        deps.advance(1);
+        await writesEvent(deps, ALPHA, event);
+      })));
+      expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 1 });
+    },
+  );
+
+  it('reports the honest finish but not a kept time later than the check', async () => {
+    const world = await make({ workers: [ALPHA, BETA], events: { [ALPHA]: 'SessionStart', [BETA]: 'SessionStart' } });
+    const outcome = valueOf(await world.watch([ALPHA, BETA], atWait(1, async ({ deps }) => {
+      const eventAt = deps.now().toISOString();
+      const future = new Date(deps.now().getTime() + DAY).toISOString();
+      await writesLiteralLine(deps, ALPHA, 'Stop', eventAt, future);
+      await writesEvent(deps, BETA, 'Stop');
+    })));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: BETA, kind: 'finished' }], checks: 1 });
+  });
+
+  it('does not report the time of an older Stop line when it is later than the check', async () => {
+    const world = await make({ workers: [ALPHA, BETA], events: { [ALPHA]: 'SessionStart', [BETA]: 'SessionStart' } });
+    const outcome = valueOf(await world.watch([ALPHA, BETA], atWait(1, async ({ deps }) => {
+      const future = new Date(deps.now().getTime() + DAY).toISOString();
+      await writesLiteralLine(deps, ALPHA, 'Stop', future);
+      await writesEvent(deps, BETA, 'Stop');
+    })));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: BETA, kind: 'finished' }], checks: 1 });
+  });
+
+  it('reports a finish a fraction of a millisecond after the check only at the next check', async () => {
+    const world = await make({ workers: [ALPHA, BETA] });
+    const since = world.deps.now().toISOString();
+    await writesLiteralLine(world.deps, ALPHA, 'Stop', since, since.replace('Z', '0Z'));
+    await writesLiteralLine(world.deps, BETA, 'Stop', since, since.replace('Z', '1Z'));
+    const outcome = valueOf(await world.watch([ALPHA, BETA], atWait(2, () => world.end(PANE_OF[BETA] ?? '')), [], since));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: BETA, kind: 'finished' }], checks: 1 });
+  });
+
+  it('reports waits for a dialog with a finish time later than the check', async () => {
+    const world = await make({ events: { [ALPHA]: 'SessionStart' } });
+    const since = world.deps.now().toISOString();
+    world.deps.advance(MINUTE);
+    const future = new Date(world.deps.now().getTime() + DAY).toISOString();
+    await writesLiteralLine(world.deps, ALPHA, 'Notification', world.deps.now().toISOString(), future);
+    const outcome = valueOf(await world.watch([], undefined, [], since));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'waits' }], checks: 0 });
+  });
+
+  it('reports the next Stop when the first check sees a finish time in the future', async () => {
+    const world = await make();
+    const future = new Date(world.deps.now().getTime() + DAY).toISOString();
+    await writesLiteralLine(world.deps, ALPHA, 'Stop', future, future);
+    const outcome = valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, ALPHA, 'Stop'))));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 1 });
+  });
+
+  it('reports a Stop at the time of the first check when that check has no line or since', async () => {
+    const world = await make({ events: { [ALPHA]: null } });
+    const outcome = valueOf(await world.watch([], atWait(1, async ({ deps }) => {
+      deps.advance(-watchPoll.intervalMs);
+      await writesEvent(deps, ALPHA, 'Stop');
+    })));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 1 });
+  });
+
+  it('reports a Stop at the next check if it comes after the time of the current check', async () => {
+    let wroteStop = false;
+    const world = await make({
+      events: { [ALPHA]: 'SessionStart' },
+      beforeLineRead: async (deps) => {
+        if (wroteStop) return;
+        wroteStop = true;
+        deps.advance(1);
+        await writesEvent(deps, ALPHA, 'Stop');
+      },
+    });
+    const since = new Date(world.deps.now().getTime() - MINUTE).toISOString();
+    const first = changedOf(valueOf(await world.watch([], undefined, [], since)));
+    expect(first).toMatchObject({ changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 1 });
+    const next = valueOf(await world.watch([], atWait(1, () => world.end(PANE_OF[ALPHA] ?? '')), [], first.checkedAt));
+    expect(next).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'ended' }], checks: 1 });
+  });
+
+  it('reports the pane change instead of a finish at the same check', async () => {
+    const world = await make();
+    const outcome = valueOf(await world.watch([], atWait(1, async ({ deps }) => {
+      await writesEvent(deps, ALPHA, 'Stop');
+      world.end(PANE_OF[ALPHA] ?? '');
+    })));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'ended' }], checks: 1 });
+  });
+
+  it('reports a finish before a dialog and reports waits in the next run', async () => {
+    const world = await make();
+    const first = changedOf(valueOf(await world.watch([], atWait(1, async ({ deps }) => {
+      await writesEvent(deps, ALPHA, 'Stop');
+      deps.advance(1);
+      await writesEvent(deps, ALPHA, 'Notification');
+    }))));
+    expect(first).toMatchObject({ changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 1 });
+    const next = valueOf(await world.watch([], undefined, [], first.checkedAt));
+    expect(next).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'waits' }], checks: 0 });
+  });
+
+  it('reports a finish before a stall and reports the stall in the next run', async () => {
+    const world = await make();
+    const since = world.deps.now().toISOString();
+    world.deps.advance(MINUTE);
+    await writesEvent(world.deps, ALPHA, 'Stop');
+    world.deps.advance(MINUTE);
+    await writesEvent(world.deps, ALPHA, 'UserPromptSubmit');
+    world.deps.advance(watchPoll.stalledAfterMs + 1);
+    const first = changedOf(valueOf(await world.watch([], undefined, [], since)));
+    expect(first).toMatchObject({ changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 0 });
+    const next = valueOf(await world.watch([], undefined, [], first.checkedAt));
+    expect(next).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'stalled' }], checks: 0 });
+  });
+
+  it('a worker of --ready with a kept finish waits for the dialog to end', async () => {
+    const world = await make();
+    const since = world.deps.now().toISOString();
+    world.deps.advance(MINUTE);
+    await writesEvent(world.deps, ALPHA, 'Stop');
+    world.deps.advance(MINUTE);
+    await writesEvent(world.deps, ALPHA, 'Notification');
+    const outcome = valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, ALPHA, 'PreToolUse')), [ALPHA], since));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'readyAfterBlock' }], checks: 2 });
+  });
+
   it('a worker of --ready is not reported as finished: its change is ready', async () => {
     const world = await make({ events: { [ALPHA]: 'Notification' } });
     const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, ALPHA, 'Stop')), [ALPHA])));
@@ -820,6 +978,43 @@ describe('the time that the watch starts from', () => {
     const outcome = changedOf(valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, ALPHA, 'Stop')), [], since)));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'finished' }]);
     expect(outcome.checks).toBe(1);
+  });
+
+  it('reports a Stop from an older line without a saved finish time', async () => {
+    const world = await make();
+    const since = world.deps.now().toISOString();
+    world.deps.advance(MINUTE);
+    await writesLiteralLine(world.deps, ALPHA, 'Stop', world.deps.now().toISOString());
+    const outcome = valueOf(await world.watch([], undefined, [], since));
+    expect(outcome).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 0 });
+  });
+
+  it('reports the kept finish once when the clock moved back before a dialog', async () => {
+    const world = await make();
+    const since = world.deps.now().toISOString();
+    world.deps.advance(2 * MINUTE);
+    await writesEvent(world.deps, ALPHA, 'Stop');
+    world.deps.advance(-MINUTE);
+    await writesEvent(world.deps, ALPHA, 'Notification');
+    world.deps.advance(2 * MINUTE);
+    const first = changedOf(valueOf(await world.watch([], undefined, [], since)));
+    expect(first).toMatchObject({ changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 0 });
+    const next = valueOf(await world.watch([], undefined, [], first.checkedAt));
+    expect(next).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'waits' }], checks: 0 });
+  });
+
+  it('reports the kept finish once when the worker resumed between runs', async () => {
+    const world = await make({ paneStartsAfterLineMs: 2 * MINUTE });
+    const since = world.deps.now().toISOString();
+    world.deps.advance(MINUTE);
+    await writesEvent(world.deps, ALPHA, 'Stop');
+    world.deps.advance(2 * MINUTE);
+    await writesEvent(world.deps, ALPHA, 'SessionStart');
+    const endPane = atWait(1, () => world.end(PANE_OF[ALPHA] ?? ''));
+    const first = changedOf(valueOf(await world.watch([], endPane, [], since)));
+    expect(first).toMatchObject({ changes: [{ workerId: ALPHA, kind: 'finished' }], checks: 0 });
+    const next = valueOf(await world.watch([], endPane, [], first.checkedAt));
+    expect(next).toMatchObject({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'ended' }], checks: 1 });
   });
 
   it('the time that the watch prints is a time that since accepts', async () => {

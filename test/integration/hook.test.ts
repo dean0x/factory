@@ -179,6 +179,7 @@ describe('factory hook (built binary)', () => {
         schema: 'factory.last-seen/v1',
         session_id: SESSION,
         event: 'Stop',
+        finished_at: expect.any(String),
       });
     });
 
