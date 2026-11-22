@@ -218,6 +218,18 @@ export interface ItemUnassigned {
   readonly worker: string;
 }
 
+/** One note of an item. A note grants no authority. */
+export interface ItemNote {
+  readonly text: string;
+  readonly at: string;
+}
+
+/** The item after the write and the note that the write added. */
+export interface ItemNoted {
+  readonly item: BoardItem;
+  readonly note: ItemNote;
+}
+
 /**
  * One row of the queue, as the board file shows it. The reader does not check the keys of a row, so a name, a note or a release group
  * that is not text reads as null, and an item list that is not a list of text reads as an empty list.
@@ -265,8 +277,10 @@ export interface BoardConnector {
   addItem(input: ItemAddInput): Promise<CliResult<BoardItem>>;
   updateItem(id: string, patch: ItemPatch): Promise<CliResult<BoardItem>>;
   moveItem(id: string, move: ItemMove): Promise<CliResult<ItemMoved>>;
-  /** Set the closed state. The item keeps its id and its stage. */
-  closeItem(id: string): Promise<CliResult<BoardItem>>;
+  /** Append a note to an open or closed item. */
+  noteItem(id: string, text: string): Promise<CliResult<ItemNoted>>;
+  /** Set the closed state. With a reason, refuse a closed item and add the note in the same commit. */
+  closeItem(id: string, reason?: string): Promise<CliResult<BoardItem>>;
   listItems(query: ItemQuery): Promise<CliResult<readonly BoardItem[]>>;
   addTrack(input: TrackAddInput): Promise<CliResult<BoardTrack>>;
   listTracks(): Promise<CliResult<readonly BoardTrack[]>>;

@@ -15,8 +15,11 @@ import {
   dirs,
   env,
   files,
+  flags,
+  flagText,
   guardIds,
   hostedBoardLine,
+  itemWords,
   maxEchoChars,
   maxFileBytes,
   places,
@@ -39,6 +42,8 @@ import type {
   DecisionRequestRead,
   DocLinked,
   ItemMoved,
+  ItemNote,
+  ItemNoted,
   ItemUnassigned,
   LocalBoard,
   QueueRowSet,
@@ -59,9 +64,11 @@ import {
   checkDocPath,
   checkItemId,
   checkLogEntry,
+  checkMessageLine,
   checkMove,
   checkNewItem,
   checkNewTrack,
+  checkNoteText,
   checkPatch,
   checkQueueRow,
   checkRecorded,
@@ -75,6 +82,7 @@ import {
   linkRequestDocIn,
   logDecisionIn,
   moveItemIn,
+  noteItemIn,
   recordCheckedIn,
   recordMessage,
   requireTrack,
@@ -125,7 +133,8 @@ const commitMessages = {
   addItem: 'chore: add an item to the board',
   updateItem: (id: string): string => `chore: change item ${id}`,
   moveItem: (id: string): string => `chore: move item ${id}`,
-  closeItem: (id: string): string => `chore: close item ${id}`,
+  noteItem: (id: string, text: string): string => `chore: note item ${id}: ${text}`,
+  closeItem: (id: string, reason?: string): string => `chore: close item ${id}${reason === undefined ? '' : `: ${reason}`}`,
   linkDoc: (id: string): string => `chore: link a file to item ${id}`,
   addTrack: (id: string): string => `chore: add track ${id}`,
   unassignItem: (id: string): string => `chore: take the ${roles.worker} off item ${id}`,
@@ -223,6 +232,9 @@ const checkDocTokens = async (deps: Deps, layout: Layout, path: string, guards: 
   if (!linked.ok) return linked;
   return checkFileTokens(value.text, guards, `Remove the token from the doc file. Then run "${commandText(commandLines.itemDoc)}" again.`);
 };
+
+const checkNoteTokens = (text: string, guards: GuardValues, again: string): CliResult<void> =>
+  checkFileTokens(text, guards, `Remove the token from the text. Then run "${again}" again.`, itemWords.noteToken);
 
 export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoardOptions): LocalBoard => {
   const { queueKey } = options;
@@ -527,6 +539,26 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   const itemWrite = (message: string, edit: (doc: BoardDoc) => CliResult<Edit<string>>): Promise<CliResult<BoardItem>> =>
     boardWrite({ message, edit, resultOf: itemIn });
 
+  const checkedNoteText = async (what: string, text: string, again: string): Promise<CliResult<string>> => {
+    const checked = checkNoteText(what, text);
+    if (!checked.ok) return checked;
+    const tokens = checkNoteTokens(checked.value, await nodeGuards(), again);
+    return tokens.ok ? checked : tokens;
+  };
+
+  const closePlainItem = (id: string, closed: string): Promise<CliResult<BoardItem>> =>
+    itemWrite(commitMessages.closeItem(id), (doc) => closeItemIn(doc, id, closed));
+
+  const closeItemWithReason = async (id: string, closed: string, reason: string): Promise<CliResult<BoardItem>> => {
+    const again = `${commandText(commandLines.itemClose)} ${id} ${flagText(flags.reason)} TEXT`;
+    const checked = await checkedNoteText(itemWords.reason, reason, again);
+    if (!checked.ok) return checked;
+    const message = commitMessages.closeItem(id, checked.value);
+    const line = checkMessageLine(message);
+    if (!line.ok) return line;
+    return itemWrite(message, (doc) => closeItemIn(doc, id, closed, { text: checked.value, at: deps.now().toISOString() }));
+  };
+
   return {
     kind: options.tracker,
 
@@ -610,14 +642,34 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       });
     },
 
-    async closeItem(id) {
+    async noteItem(id, text) {
+      const local = await requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkItemId(id);
+      if (!valid.ok) return valid;
+      const checked = await checkedNoteText(itemWords.note, text, `${commandText(commandLines.itemNote)} ${id} TEXT`);
+      if (!checked.ok) return checked;
+      const message = commitMessages.noteItem(id, checked.value);
+      const line = checkMessageLine(message);
+      if (!line.ok) return line;
+      return boardWrite<ItemNote, ItemNoted>({
+        message,
+        edit: (doc) => noteItemIn(doc, id, { text: checked.value, at: deps.now().toISOString() }),
+        resultOf: (doc, note) => {
+          const item = itemIn(doc, id);
+          return item.ok ? ok({ item: item.value, note }) : item;
+        },
+      });
+    },
+
+    async closeItem(id, reason) {
       const local = await requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
       const closed = checkClose(setup);
       if (!closed.ok) return closed;
-      return itemWrite(commitMessages.closeItem(id), (doc) => closeItemIn(doc, id, closed.value));
+      return reason === undefined ? closePlainItem(id, closed.value) : closeItemWithReason(id, closed.value, reason);
     },
 
     async listItems(query) {

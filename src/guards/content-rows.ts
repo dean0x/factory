@@ -178,14 +178,14 @@ const secretRows: readonly GuardRow[] = [
   codeRow({
     id: 'task-file-token',
     guard: guardIds.secrets,
-    name: 'A task file, assignment or item doc that holds text like a token is refused. The output never has the value.',
-    applies: `${commandLines.nodeSend}, ${commandLines.workerNew} with an assignment, and ${commandLines.itemDoc}`,
+    name: 'The check refuses a task file, assignment, item doc, note or close reason that looks like a token. The output omits the value.',
+    applies: `${commandLines.nodeSend}, ${commandLines.workerNew} with an assignment, ${commandLines.itemDoc}, ${commandLines.itemNote}, and ${commandLines.itemClose} with a reason`,
     harm: true,
     sites: [
       ...at('src/safety/secrets.ts', 'checkFileTokens'),
       ...at('src/commands/node.ts', 'checkedTask'),
       ...at('src/commands/worker.ts', 'runNew'),
-      ...at('src/board/local.ts', 'checkDocTokens'),
+      ...at('src/board/local.ts', 'checkDocTokens', 'checkNoteTokens'),
     ],
   }),
   alwaysOnRow({
