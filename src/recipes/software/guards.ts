@@ -113,7 +113,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
     name: 'When the merge approval rule applies, the command needs a go for this PR and head',
     applies: 'Pull request merge',
     harm: true,
-    sites: at(PR_MERGE_FILE, 'proofNeedOf'),
+    sites: at(PR_MERGE_FILE, 'proofNeedOf', 'mergeProofOf'),
   }),
   codeRow({
     id: 'merge-approval-point',
@@ -121,7 +121,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
     name: 'The merge approval point uses the proof rule of its mode',
     applies: 'Pull request merge',
     harm: true,
-    sites: at(PR_MERGE_FILE, 'proofNeedOf'),
+    sites: at(PR_MERGE_FILE, 'proofNeedOf', 'mergeProofOf'),
   }),
   codeRow({
     id: 'admin-merge-proof',
@@ -129,7 +129,7 @@ export const softwareGuardRows: readonly GuardRow[] = [
     name: `An admin merge needs an ${owner} store go for this PR and head`,
     applies: 'Admin merge of a pull request',
     harm: true,
-    sites: at(PR_MERGE_FILE, 'proofNeedOf'),
+    sites: at(PR_MERGE_FILE, 'proofNeedOf', 'mergeProofOf'),
   }),
 
   // Board edits.

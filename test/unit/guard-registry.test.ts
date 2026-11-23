@@ -139,6 +139,7 @@ const closedProofReason = 'dismissClosed reads the value and does not call it wh
  * enforces a check that stays on.
  */
 const unreadSiteExceptions: readonly { readonly row: string; readonly path: string; readonly symbol: string; readonly reason: string }[] = [
+  { row: 'admin-merge-proof', path: 'src/recipes/software/pr-merge.ts', symbol: 'mergeProofOf', reason: 'Applies the proof rule from proofNeedOf, which reads the guard value.' },
   { row: 'delegation-record', path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Merges the mode of the local file; delegationReport reads the value and gives the mode that counts.' },
   { row: 'delegation-store-fallback', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
   { row: 'delegation-move', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
@@ -990,14 +991,14 @@ describe('the rows of the registry', () => {
   });
 
   it.each([
-    ['merge-caller', 'session-checks', 'requireMergeCaller'],
-    ['merge-owner-proof', 'owner-go', 'proofNeedOf'],
-    ['merge-approval-point', 'approval-merge', 'proofNeedOf'],
-    ['admin-merge-proof', 'admin-merge', 'proofNeedOf'],
-  ])('lists %s as a settable merge check with the harm mark', (id, guard, symbol) => {
+    ['merge-caller', 'session-checks', ['requireMergeCaller']],
+    ['merge-owner-proof', 'owner-go', ['proofNeedOf', 'mergeProofOf']],
+    ['merge-approval-point', 'approval-merge', ['proofNeedOf', 'mergeProofOf']],
+    ['admin-merge-proof', 'admin-merge', ['proofNeedOf', 'mergeProofOf']],
+  ] as const)('lists %s as a settable merge check with the harm mark', (id, guard, symbols) => {
     expect(softwareRecipe.guardRows.find((row) => row.id === id)).toMatchObject({
       guard, kind: 'code', harm: true, alwaysOn: false,
-      sites: [{ path: 'src/recipes/software/pr-merge.ts', symbol }],
+      sites: symbols.map((symbol) => ({ path: 'src/recipes/software/pr-merge.ts', symbol })),
     });
   });
 

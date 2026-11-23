@@ -3,7 +3,7 @@ import { readDecisionLog, readWaiting } from '../board/files.js';
 import { requireLocalKind } from '../board/local.js';
 import { branchesOf, checkInputOf, findWorkItem, openRequestsOf, recordWork, workerOf } from '../board/record-flow.js';
 import type { RequestLinkRules } from '../board/requests.js';
-import { localBoardOf, requestLinkRulesOf, type OpenBoard } from '../commands/board-open.js';
+import { localBoardOf, openNodeConfig, requestLinkRulesOf, type OpenBoard } from '../commands/board-open.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { Deps } from '../core/deps.js';
 import { guardReadOf } from '../core/guard-source.js';
@@ -11,7 +11,7 @@ import { locateHomeFolder } from '../core/home.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import type { GuardValues } from '../guards/types.js';
-import { commands, commandText, decideProof, files, flags, flagText, requestWords, roles, type CommandName } from '../names.js';
+import { commandText, files, flags, flagText, roles, type CommandName } from '../names.js';
 import type { RecipeHost, RecipeProject, RecipeRegistry, WorkHost } from '../recipes/index.js';
 import { writeEventFile } from '../report/event-file.js';
 import { layoutOf } from '../state/layout.js';
@@ -90,18 +90,12 @@ const factsOf = (deps: Deps, board: OpenBoard, rules: RequestLinkRules, command:
 const workHostOf = (deps: Deps, board: OpenBoard, rules: RequestLinkRules, guards: GuardValues, command: CommandName): WorkHost => ({
   guards,
   caller: () => requireNodeCaller(deps, board.home, board.config, command),
+  project: (id) => projectOf(board.config.recipe.projects, id, command),
   find: findOf(deps, board, rules, command),
   facts: factsOf(deps, board, rules, command),
-  approval: async ({ item, point, ref, head, need }) => {
+  approval: async ({ item, point, ref, head }) => {
     const proof = await board.connector.proveApproval(item, point, ref, head);
-    if (!proof.ok) return proof.error.reason === 'hash-mismatch' ? safetyRefusal(proof.error.message, proof.error.hint) : proof;
-    if (need === 'owner-record' && proof.value.kind === decideProof.relayed) {
-      return failure(
-        `this reference and head need an ${roles.owner} store decision`,
-        `Add a new linked ${requestWords.request} for this reference and head. Ask the ${roles.owner} to answer it with "${commandText(commands.decide)}".`,
-      );
-    }
-    return proof;
+    return !proof.ok && proof.error.reason === 'hash-mismatch' ? safetyRefusal(proof.error.message, proof.error.hint) : proof;
   },
   record: ({ item, ref, head, project }) => recordWork(deps, board, { id: item, ref, head, project }),
   writeEvent: (event) => writeEventFile(deps, board.home, event),
@@ -121,12 +115,9 @@ export const recipeHostFor = (registry: RecipeRegistry): RecipeHost => {
       return config.ok ? projectOf(config.value.recipe.projects, projectId, command) : config;
     },
     openWork: async (deps, homeFlag, command, access = 'read') => {
-      const located = await locateNode(deps, homeFlag, command);
-      if (!located.ok) return located;
-      const home = located.value;
-      const loaded = await loadConfig(deps, home, registry);
-      if (!loaded.ok) return loaded;
-      const config = loaded.value;
+      const opened = await openNodeConfig(deps, homeFlag, registry, command);
+      if (!opened.ok) return opened;
+      const { home, config } = opened.value;
       const rules = requestLinkRulesOf(config);
       if (rules === undefined) return usageError(`the ${roles.recipe} ${config.entry.id} has no work check`);
       const read = await guardReadOf(deps, home, config, 'when-off');

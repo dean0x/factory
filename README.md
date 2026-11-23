@@ -1086,7 +1086,7 @@ Each program has 5 seconds. A program that does not run, that takes too long or 
 
 `READY` means the pull request is open, is not a draft, and has at least one check. All checks must pass, and the check list must be complete. The head must be up to date with the base and have no merge conflict. GitHub must report an acceptable merge state and no request for review or changes. An empty review decision also passes. Factory must find one matching board item with no open ask, open request or head conflict. With `pr-rules` on, the base must be the project default branch.
 
-The first line gives the result. Fixed reasons, a remedy and any guard off line can follow. `--json` gives `factory.check/v1`, which includes the checked head when known. Exit 0 means `READY`. Exit 3 means `NOT READY` or `HEAD MOVED`. Exit 1 means `UNREADABLE`. Exit 2 means a usage fault. With `pr-rules` off, the output says the check did not test the base branch.
+The first line gives the result. Fixed reasons, a remedy and any guard off line can follow. `--json` gives `factory.check/v1`, which includes the checked head when known. Exit 0 means `READY`. Exit 3 means `NOT READY` or `HEAD MOVED`. Exit 1 means an ordinary `UNREADABLE` result. Exit 2 means a usage fault. Exit 4 means a refusal with an `UNREADABLE` result. With `pr-rules` off, the output says the check did not test the base branch.
 
 ### Merge a pull request
 

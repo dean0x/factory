@@ -8,7 +8,7 @@ import { inFactorySession } from '../../core/factory-session.js';
 import { ok } from '../../core/result.js';
 import { isGuardOn } from '../../guards/effective.js';
 import type { GuardValues } from '../../guards/types.js';
-import { commandLines, commands, commandText, decideProof, eventFile, flags, flagText, guardIds, roles } from '../../names.js';
+import { commandLines, commands, commandText, decideProof, eventFile, flags, flagText, guardIds, requestWords, roles } from '../../names.js';
 import type { EventFileInput } from '../../report/event-file.js';
 import type { ApprovalMode, RecipeHost, WorkHost } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
@@ -45,7 +45,7 @@ interface RecordedMerge {
 export type MergeOutcome =
   | ({ readonly kind: 'merged' | 'already-recorded' } & RecordedMerge)
   | Exclude<MergeConfirmation, { kind: 'merged' }>
-  | { readonly kind: 'merged-not-recorded' };
+  | { readonly kind: 'merged-not-recorded'; readonly stop: boolean };
 
 interface MergeArgs {
   readonly number: number;
@@ -95,7 +95,13 @@ export const proofNeedOf = (guards: GuardValues, mode: ApprovalMode, admin: bool
 
 const mergeProofOf = async (work: WorkHost, link: RequestLink, mode: ApprovalMode, { need, offLines }: ProofPolicy): Promise<CliResult<SettledProof | null>> => {
   if (need === decideProof.none) return ok(null);
-  const proof = await work.approval({ ...link, need });
+  const read = await work.approval(link);
+  const proof = read.ok && need === 'owner-record' && read.value.kind === decideProof.relayed
+    ? failure(
+        `this reference and head need an ${roles.owner} store decision`,
+        `Add a new linked ${requestWords.request} for this reference and head. Ask the ${roles.owner} to answer it with "${commandText(commands.decide)}".`,
+      )
+    : read;
   if (proof.ok) return proof;
   const delegated = mode !== roles.owner && isGuardOn(work.guards, guardIds.ownerGo) && isGuardOn(work.guards, softwareGuardIds.approvalMerge);
   const requirement = need === 'owner-record' ? prMergeWords.needRecord : prMergeWords.needGo;
@@ -131,7 +137,10 @@ const recordMerge = async (
   deps: Deps, work: WorkHost, target: MergeTarget, link: RequestLink, project: string, proof: CliResult<SettledProof | null>,
 ): Promise<MergeOutcome> => {
   const recorded = await work.record({ item: link.item, ref: link.ref, head: link.head, project });
-  if (!recorded.ok) return { kind: 'merged-not-recorded' };
+  if (!recorded.ok) {
+    const stop = recorded.error.kind === 'safety' || (!proof.ok && proof.error.kind === 'safety');
+    return { kind: 'merged-not-recorded', stop };
+  }
   const event = await writeMergeEvent(deps, work, target, link, proof);
   return { kind: recorded.value.recorded.changed ? 'merged' : 'already-recorded', event, proof: proof.ok ? proof.value : null };
 };
@@ -167,7 +176,7 @@ const outputOf = (args: MergeArgs, item: string, outcome: MergeOutcome, offLines
         event.kind === 'warning' ? [prMergeWords.eventWarning] : []);
     }
     case 'merged-not-recorded':
-      return mergeOutput(args, outcome.kind, exitCodeOf.failure, [
+      return mergeOutput(args, outcome.kind, outcome.stop ? exitCodeOf.safety : exitCodeOf.failure, [
         verdict, `Run "${commandText(commandLines.itemRecord)} ${item} ${flagText(flags.ref)} ${args.number}".`, ...offLines,
       ], { item, offLines });
     case 'head-moved':
@@ -220,9 +229,7 @@ export const runPrMerge = async (host: RecipeHost, deps: Deps, words: readonly s
   const work = opened.value;
   const caller = await requireMergeCaller(work, deps);
   if (!caller.ok) return caller;
-  const home = await host.locateNode(deps, args.home, COMMAND);
-  if (!home.ok) return home;
-  const project = await host.loadProject(deps, home.value, args.project, COMMAND);
+  const project = work.project(args.project);
   if (!project.ok) return project;
   const read = await readinessFor(deps, work, { pr: args.number, head: args.head, project: project.value });
   const offLines = [...caller.value, ...(isGuardOn(work.guards, softwareGuardIds.prRules) ? [] : [checkPrRulesOff])];

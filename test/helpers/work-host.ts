@@ -22,6 +22,10 @@ export const fakeWorkHost = (overrides: Partial<WorkHost> = {}): FakeWorkHost =>
         calls.push(['caller']);
         return overrides.caller?.() ?? ok(undefined);
       },
+      project: (id) => {
+        calls.push(['project', id]);
+        return overrides.project?.(id) ?? failure('the test gives no project');
+      },
       find: async (query) => {
         calls.push(['find', query]);
         return overrides.find?.(query) ?? ok({ kind: 'lookup', cause: 'no item matches the reference or head branch' });

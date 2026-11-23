@@ -48,7 +48,6 @@ interface Setup {
   readonly view?: Partial<ReadinessPr>;
   readonly mode?: 'owner' | 'delegated';
   readonly work?: Partial<WorkHost>;
-  readonly project?: RecipeHost['loadProject'];
   readonly open?: RecipeHost['openWork'];
   readonly merge?: RunHandler;
   readonly confirm?: RunHandler;
@@ -60,9 +59,10 @@ const setup = (options: Setup = {}) => {
   const mark = <T>(step: string, result: T): T => { log.push(step); return result; };
   const { work, calls } = fakeWorkHost({
     caller: async () => mark('caller', ok(undefined)),
+    project: () => mark('project', ok(project)),
     find: async () => mark('find', ok({ kind: 'found', item: boardItem })),
     facts: async () => mark('facts', ok({ branches: [branch], project, cloneDir: '/factory/web', openRequests: [], headConflict: null, mode: options.mode ?? 'owner' })),
-    approval: async ({ need }) => mark(`proof:${need}`, ok(ownerProof)),
+    approval: async () => mark('proof', ok(ownerProof)),
     record: async () => mark('record', ok(recordedWork(true))),
     writeEvent: async () => mark('event', ok('written')),
     ...options.work,
@@ -70,7 +70,7 @@ const setup = (options: Setup = {}) => {
   const host: RecipeHost = {
     registry: recipes,
     locateNode: async () => mark('locate', ok('/factory')),
-    loadProject: options.project ?? (async () => mark('project', ok(project))),
+    loadProject: async () => mark('load', ok(project)),
     openWork: options.open ?? (async () => mark('open', ok(work))),
   };
   const deps = createFakeDeps({ run: (call) => {
@@ -92,7 +92,7 @@ const output = async (run: ReturnType<typeof setup>['run'], flags?: Readonly<Rec
   return { ...result.value, text: result.value.lines.map(({ text }) => `${text}\n`).join('') };
 };
 
-const beforeProof = ['open', 'caller', 'locate', 'project', 'view', 'compare', 'find', 'facts'];
+const beforeProof = ['open', 'caller', 'project', 'view', 'compare', 'find', 'facts'];
 const eventName = `merge-${ref}-${head}.json`;
 
 const proofRows = [
@@ -136,8 +136,8 @@ describe('pr merge', () => {
     const result = await output(world.run);
     expect(result.exitCode).toBe(0);
     expect(result.text).toMatch(/^MERGED AND RECORDED\b/);
-    expect(world.log).toEqual([...beforeProof, 'proof:go', 'merge', 'confirm', 'record', 'event']);
-    expect(world.calls).toContainEqual(['approval', { item, point, ref, head, need: 'go' }]);
+    expect(world.log).toEqual([...beforeProof, 'proof', 'merge', 'confirm', 'record', 'event']);
+    expect(world.calls).toContainEqual(['approval', { item, point, ref, head }]);
     expect(world.calls).toContainEqual(['record', { item, ref, head, project: project.id }]);
     expect(world.ghCalls[2]?.args).toEqual(['pr', 'merge', '--repo', 'github.com/acme/web', '--match-head-commit', head, '--rebase', '--', ref]);
   });
@@ -173,28 +173,28 @@ describe('pr merge', () => {
   });
 
   it('stops when the project cannot load', async () => {
-    const world = setup({ project: async () => usageError('the project does not exist') });
+    const world = setup({ work: { project: () => usageError('the project does not exist') } });
     expect(await world.run()).toMatchObject({ ok: false, error: { kind: 'usage', message: 'the project does not exist' } });
-    expect(world.log).toEqual(['open', 'caller', 'locate']);
+    expect(world.log).toEqual(['open', 'caller']);
   });
 
   it('treats missing gh on the first read as unreadable, without a probe', async () => {
     const world = setup({ read: () => missingProgram('gh') });
     expect(await output(world.run)).toMatchObject({ exitCode: 1, text: expect.stringMatching(/^UNREADABLE\n.*PR facts/) });
-    expect(world.log).toEqual(beforeProof.slice(0, 5));
+    expect(world.log).toEqual(beforeProof.slice(0, 4));
     expect(world.ghCalls).toHaveLength(1);
   });
 
   it('refuses a missing item with exit 1', async () => {
     const world = setup({ work: { find: async () => ok({ kind: 'lookup', cause: 'no item matches the reference or head branch' }) } });
     expect(await output(world.run)).toMatchObject({ exitCode: 1, text: expect.stringContaining('no item matches the reference or head branch') });
-    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'find']);
+    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'project', 'find']);
   });
 
   it('refuses a moved head before proof or merge', async () => {
     const world = setup({ view: { headRefOid: moved } });
     expect(await output(world.run)).toMatchObject({ exitCode: 3, text: expect.stringMatching(/^HEAD MOVED\n/) });
-    expect(world.log).toEqual(beforeProof.slice(0, 5));
+    expect(world.log).toEqual(beforeProof.slice(0, 4));
   });
 
   it.each([
@@ -206,7 +206,7 @@ describe('pr merge', () => {
     const world = setup({ view, work: { guards } });
     expect(await output(world.run)).toMatchObject({ exitCode: 3, text: expect.stringContaining(reason) });
     expect(world.ghCalls).toHaveLength(1);
-    expect(world.calls).toEqual([]);
+    expect(world.calls).toEqual([['project', project.id]]);
   });
 
   it('names the absent proof and the non-proof sources before any merge', async () => {
@@ -215,22 +215,24 @@ describe('pr merge', () => {
       kind: 'failure', message: expect.stringContaining('no linked approval request'), hint: expect.stringContaining('factory request add'),
     } });
     expect(world.log).toEqual(beforeProof);
-    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'find', 'facts', 'approval']);
+    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'project', 'find', 'facts', 'approval']);
   });
 
-  it('requires an owner store decision in delegated mode and names the absent proofs', async () => {
-    const world = setup({ mode: 'delegated', work: { approval: async () => failure('this reference and head need an owner store decision') } });
-    expect(await world.run()).toMatchObject({ ok: false, error: {
-      kind: 'failure', message: expect.stringContaining('Delegated proofs are not built'),
+  it.each([
+    { mode: 'delegated', admin: false, reason: 'Delegated proofs are not built' },
+    { mode: 'owner', admin: true, reason: 'The PR and head need an owner store decision to go.' },
+  ] as const)('refuses a relay in $mode mode with admin set to $admin', async ({ mode, admin, reason }) => {
+    const world = setup({ mode, work: { approval: async () => ok(relayedProof) } });
+    expect(await world.run({ ...args, admin })).toMatchObject({ ok: false, error: {
+      kind: 'failure', message: expect.stringContaining(reason), hint: expect.stringContaining('factory decide'),
     } });
-    expect(world.calls.at(-1)).toEqual(['approval', { item, point, ref, head, need: 'owner-record' }]);
-    expect(world.ghCalls).toHaveLength(2);
+    expect(world.ghCalls.map(({ args: call }) => call[0])).toEqual(['pr', 'api']);
   });
 
   it('accepts an owner store decision in delegated mode', async () => {
     const world = setup({ mode: 'delegated' });
     expect(await output(world.run)).toMatchObject({ exitCode: 0 });
-    expect(world.log).toContain('proof:owner-record');
+    expect(world.log).toContain('proof');
   });
 
   it.each([{}, { 'admin-merge': 'off' }] as const)('passes admin only when given with %j', async (guards) => {
@@ -240,7 +242,7 @@ describe('pr merge', () => {
     const admin = setup({ work: { guards } });
     expect(await output(admin.run, { ...args, admin: true })).toMatchObject({ exitCode: 0 });
     expect(admin.ghCalls[2]?.args.filter((word) => word === '--admin')).toEqual(['--admin']);
-    expect(admin.calls).toContainEqual(['approval', { ...APPROVAL_LINK, need: guards['admin-merge'] === 'off' ? 'go' : 'owner-record' }]);
+    expect(admin.calls).toContainEqual(['approval', APPROVAL_LINK]);
   });
 
   it('requires an owner record for admin even when both approval guards are off', async () => {
@@ -249,7 +251,7 @@ describe('pr merge', () => {
     expect(result.exitCode).toBe(0);
     expect(result.text).toContain('The guard owner-go is off');
     expect(result.text).toContain('The guard approval-merge is off');
-    expect(world.calls).toContainEqual(['approval', { ...APPROVAL_LINK, need: 'owner-record' }]);
+    expect(world.calls).toContainEqual(['approval', APPROVAL_LINK]);
   });
 
   it.each([
@@ -270,18 +272,32 @@ describe('pr merge', () => {
     expect(world.log.includes('event')).toBe(exitCode === 0);
   });
 
-  it('gives the record remedy and writes no event when the record refuses', async () => {
-    const world = setup({ work: { record: async () => failure('the locked record refused') } });
-    const result = await output(world.run);
-    expect(result).toMatchObject({ exitCode: 1, text: expect.stringMatching(/^MERGED NOT RECORDED\n/) });
-    expect(result.text).toContain(`factory item record ${item} --ref ${ref}`);
-    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'find', 'facts', 'approval', 'record']);
+  it.each([
+    { record: failure(privateText), exitCode: 1 },
+    { record: safetyRefusal(privateText, privateText), exitCode: 4 },
+  ])('keeps exit $exitCode and the record remedy when the record refuses', async ({ record, exitCode }) => {
+    const world = setup({ work: { record: async () => record } });
+    expect(await output(world.run)).toMatchObject({
+      exitCode, text: `MERGED NOT RECORDED\nRun "factory item record ${item} --ref ${ref}".\n`,
+    });
+    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'project', 'find', 'facts', 'approval', 'record']);
+  });
+
+  it('keeps the proof stop when a rerun cannot record the merge', async () => {
+    const world = setup({ view: mergedPr, work: {
+      approval: async () => safetyRefusal(privateText, privateText), record: async () => failure(privateText),
+    } });
+    expect(await output(world.run)).toMatchObject({
+      exitCode: 4, text: `MERGED NOT RECORDED\nRun "factory item record ${item} --ref ${ref}".\n`,
+    });
+    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'project', 'find', 'facts', 'approval', 'record']);
+    expect(world.ghCalls.map(({ args: call }) => call[1])).toEqual(['view']);
   });
 
   it('repairs a missing record and event with the proof of the rerun and no merge call', async () => {
     const world = setup({ view: mergedPr, work: { approval: async () => ok(relayedProof) } });
     expect(await output(world.run)).toMatchObject({ exitCode: 0, text: expect.stringContaining('relayed by the coordinator') });
-    expect(world.log).toEqual(['open', 'caller', 'locate', 'project', 'view', 'find', 'facts', 'record', 'event']);
+    expect(world.log).toEqual(['open', 'caller', 'project', 'view', 'find', 'facts', 'record', 'event']);
     expect(world.calls.at(-1)).toMatchObject(['writeEvent', { name: eventName, fields: { proof: 'relayed', decider: 'coordinator' } }]);
   });
 
@@ -300,13 +316,13 @@ describe('pr merge', () => {
     expect(world.ghCalls.filter(({ args: call }) => call[1] === 'merge')).toHaveLength(1);
   });
 
-  it('records a rerun and writes no event when its proof read refuses', async () => {
-    const world = setup({ view: mergedPr, work: { approval: async () => failure('no proof') } });
-    const result = await output(world.run);
-    expect(result).toMatchObject({ exitCode: 0, text: expect.stringContaining('No event file') });
-    expect(result.text.split('\n').filter((line) => line.includes('No event file'))).toHaveLength(1);
-    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'find', 'facts', 'approval', 'record']);
-    expect(world.ghCalls).toHaveLength(1);
+  it('records a rerun and writes no event when its proof read stops', async () => {
+    const world = setup({ view: mergedPr, work: { approval: async () => safetyRefusal(privateText, privateText) } });
+    expect(await output(world.run)).toMatchObject({
+      exitCode: 4, text: 'MERGED AND RECORDED\nNo event file: the proof read refused.\n',
+    });
+    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'project', 'find', 'facts', 'approval', 'record']);
+    expect(world.ghCalls.map(({ args: call }) => call[1])).toEqual(['view']);
   });
 
   it('names an outbox stop after the merged and recorded verdict', async () => {
@@ -314,12 +330,32 @@ describe('pr merge', () => {
     const result = await output(world.run);
     expect(result.exitCode).toBe(4);
     expect(result.text.split('\n').slice(0, 2)).toEqual(['MERGED AND RECORDED', 'Event file stop: the outbox is a link']);
-    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'find', 'facts', 'approval', 'record', 'writeEvent']);
+    expect(world.calls.map(([step]) => step)).toEqual(['caller', 'project', 'find', 'facts', 'approval', 'record', 'writeEvent']);
   });
 
   it('reports an ordinary event failure as a warning after the record', async () => {
     const world = setup({ work: { writeEvent: async () => failure('no space left') } });
     expect(await output(world.run)).toMatchObject({ exitCode: 0, warnings: [expect.stringContaining('event file')] });
+  });
+
+  it.each(['find', 'facts'] as const)('keeps exit 4 in check and merge when %s stops', async (step) => {
+    const world = setup({ work: { [step]: async () => safetyRefusal(privateText, privateText) } });
+    const lines = ['UNREADABLE', 'could not read the work item or its requests', 'Check the board and its request links. Run check again.'];
+    expect(await world.check()).toMatchObject({ ok: true, value: { exitCode: 4, lines: lines.map((text) => ({ text })) } });
+    expect(await output(world.run)).toMatchObject({ exitCode: 4, text: `${lines.join('\n')}\n` });
+    expect(world.ghCalls.map(({ args: call }) => call[0])).toEqual(['pr', 'api', 'pr', 'api']);
+  });
+
+  it.each([
+    { project: failure(privateText), exitCode: 1 },
+    { project: safetyRefusal(privateText, privateText), exitCode: 4 },
+  ])('keeps exit $exitCode when check cannot select the project', async ({ project: fault, exitCode }) => {
+    const world = setup({ work: { project: () => fault } });
+    expect(await world.check()).toMatchObject({ ok: true, value: { exitCode, lines: [
+      { text: 'UNREADABLE' }, { text: 'could not read the node or its project' },
+      { text: 'Check the node and project with factory doctor. Run check again.' },
+    ] } });
+    expect(world.ghCalls).toEqual([]);
   });
 
   it('keeps the check and merge output within the token budget', async () => {

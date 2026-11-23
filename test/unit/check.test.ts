@@ -51,7 +51,7 @@ const setup = ({ view, compare = () => exited(0, '{"behind_by":0}'), items = wor
     const code = await runCli(['check', '--home', GUARDED_HOME, ...words], deps, sink);
     return { code, out: sink.out.join(''), err: sink.errors.join('') };
   };
-  return { run, waiting, log, ghCalls: () => deps.calls.filter((call) => call.command === 'gh') };
+  return { run, waiting, log, seed, deps, ghCalls: () => deps.calls.filter((call) => call.command === 'gh') };
 };
 
 const openRequestReason = 'the item or PR has an open request';
@@ -67,6 +67,16 @@ describe('check', () => {
     const { run, ghCalls } = setup();
     expect(await run()).toEqual({ code: 0, out: 'READY\n', err: '' });
     expect(ghCalls().map(({ args }) => args.slice(0, 2))).toEqual([['pr', 'view'], ['api', '--hostname']]);
+  });
+
+  it.each(['marker', 'local config'] as const)('keeps exit 4 for a refusal at the %s', async (fault) => {
+    const { run, seed, deps, ghCalls } = setup();
+    if (fault === 'marker') seed(files.nodeState, '{}');
+    else expect(await deps.fs.chmod(layout.localConfigFile, 0o666)).toMatchObject({ ok: true });
+    expect(await run()).toEqual({
+      code: 4, out: 'UNREADABLE\ncould not read the node or its project\nCheck the node and project with factory doctor. Run check again.\n', err: '',
+    });
+    expect(ghCalls()).toEqual([]);
   });
 
   it('blocks on an open linked request and accepts the work after an answer', async () => {

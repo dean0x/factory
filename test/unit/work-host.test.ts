@@ -30,7 +30,6 @@ const { item, point, ref, head } = APPROVAL_LINK;
 const worker = 'alpha';
 const query = { point, ref, branch: branchOf(worker) };
 const target = { item, point, ref, head };
-const approval = { ...target, need: 'go' } as const;
 const event = { name: 'work-42.json', fields: { kind: 'done', count: 42 } };
 const host = recipeHostFor(recipes);
 const valueOf = <T>(result: CliResult<T>): T => {
@@ -137,7 +136,7 @@ describe('the work host on a local board', () => {
     const world = await setup({ off: [guardIds.ownerGo] });
     const work = await world.open();
     expect(work.guards[guardIds.ownerGo]).toBe(guardValues.off);
-    expectRefusal(await work.approval(approval), 1, 'no linked approval request', 'factory request add');
+    expectRefusal(await work.approval(target), 1, 'no linked approval request', 'factory request add');
   });
 
   it('reads an owner store answer in delegated mode', async () => {
@@ -145,22 +144,21 @@ describe('the work host on a local board', () => {
     await world.saveAnswer();
     const work = await world.open();
     expect(valueOf(await work.facts({ ...target, project: 'web' })).mode).toBe('delegated');
-    expect(valueOf(await work.approval({ ...approval, need: 'owner-record' }))).toEqual({ kind: 'record', id: APPROVAL_ID, decider: 'owner' });
+    expect(valueOf(await work.approval(target))).toEqual({ kind: 'record', id: APPROVAL_ID, decider: 'owner' });
   });
 
-  it('accepts a relay only when an owner record is not required', async () => {
+  it('reports a settled relay with the coordinator as decider in delegated mode', async () => {
     const world = await setup({ delegated: true });
     await world.writeLog(approvalRelay());
     const work = await world.open();
-    expect(valueOf(await work.approval(approval))).toEqual({ kind: 'relayed', id: APPROVAL_ID, decider: 'coordinator' });
-    expectRefusal(await work.approval({ ...approval, need: 'owner-record' }), 1, 'owner store decision', 'factory decide');
+    expect(valueOf(await work.approval(target))).toEqual({ kind: 'relayed', id: APPROVAL_ID, decider: 'coordinator' });
   });
 
   it('stops on an owner store hash mismatch', async () => {
     const world = await setup({ delegated: true });
     await world.saveAnswer(true);
     const work = await world.open();
-    expectRefusal(await work.approval({ ...approval, need: 'owner-record' }), 4, 'has no settled approval', 'Add a linked request');
+    expectRefusal(await work.approval(target), 4, 'has no settled approval', 'Add a linked request');
   });
 
   it('does not fall back to a branch when the linked id differs only by case', async () => {
@@ -249,6 +247,36 @@ const mergeFixture = async ({ view, ...options }: MergeFixture = {}) => {
 const mergeEventName = `merge-${ref}-${head}.json`;
 const noStoreGo = 'The PR and head need an owner store go or a relayed go.';
 const needStoreDecision = 'The PR and head need an owner store decision';
+
+it.each(['check', 'pr merge'] as const)('uses one config snapshot for %s', async (command) => {
+  const merge = command === 'pr merge';
+  const world = await mergeFixture({ realGit: merge });
+  if (merge) {
+    await world.saveAnswer();
+    await world.commitBase();
+  }
+  const layout = layoutOf(world.home);
+  const fs = world.deps.fs;
+  let sharedReads = 0;
+  let localReads = 0;
+  const readTextLimited: typeof fs.readTextLimited = async (path, ...args) => {
+    const text = await fs.readTextLimited(path, ...args);
+    if (path === layout.localConfigFile) localReads += 1;
+    if (path !== layout.configFile) return text;
+    sharedReads += 1;
+    // The full load and the guard pre-read each read the local file once.
+    if (!text.ok || localReads < 2) return text;
+    return { ok: true, value: text.value.replace('github.com/acme/web.git', 'github.com/acme/other.git') };
+  };
+  const args = [...command.split(' '), ref, '--head', head, '--home', world.home];
+  const sink = captureSink();
+  const code = await runCli(args, { ...world.deps, fs: { ...fs, readTextLimited } }, sink);
+  expect({ repo: world.gh()[0]?.args.slice(2, 4), sharedReads, localReads }).toEqual({
+    repo: ['--repo', 'github.com/acme/web'], sharedReads: 4, localReads: 2,
+  });
+  expect(code).toBe(0);
+  expect(sink.out.join('')).toMatch(merge ? /^MERGED AND RECORDED\n/ : /^READY\n/);
+});
 
 describe('pr merge through the local work host', () => {
   it('makes one board commit before the event and makes no extra commit or event on rerun', async () => {
@@ -373,6 +401,17 @@ describe('pr merge through the local work host', () => {
     expect(world.gh()).toHaveLength(2);
   });
 
+  it('reports a mismatched owner record on a rerun that cannot record the merge', async () => {
+    const world = await mergeFixture({ view: { state: 'MERGED' } });
+    await world.saveAnswer(true);
+    expect(await world.run()).toEqual({
+      code: 4, out: `MERGED NOT RECORDED\nRun "factory item record ${item} --ref ${ref}".\n`, err: '',
+    });
+    expect(world.gh().map(({ args }) => args[1])).toEqual(['view']);
+    expect(await readFile(join(layoutOf(world.home).stateDir, files.board), 'utf8')).toBe(world.board);
+    await expect(stat(layoutOf(world.home).outboxDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('reports a mismatched owner record as a stop before the merge', async () => {
     const world = await mergeFixture();
     await world.saveAnswer(true);
@@ -448,9 +487,9 @@ describe('the fake work host', () => {
     });
     await work.caller();
     await work.find(query);
-    expect(valueOf(await work.approval(approval))).toEqual(proof);
+    expect(valueOf(await work.approval(target))).toEqual(proof);
     expect(work.writeEvent).toBeTypeOf('function');
     expect(valueOf(await work.writeEvent(event))).toBe('exists');
-    expect(calls).toEqual([['caller'], ['find', query], ['approval', approval], ['writeEvent', event]]);
+    expect(calls).toEqual([['caller'], ['find', query], ['approval', target], ['writeEvent', event]]);
   });
 });

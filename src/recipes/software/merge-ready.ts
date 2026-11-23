@@ -37,7 +37,7 @@ export const readinessView = { fields: Object.keys(readinessPrSchema.shape).join
 
 type NotReady = { readonly kind: typeof readinessKinds.notReady; readonly reasons: readonly string[] };
 type Verdict = { readonly kind: typeof readinessKinds.ready } | NotReady;
-type Unreadable = { readonly kind: typeof readinessKinds.unreadable; readonly cause: string; readonly remedy?: string };
+type Unreadable = { readonly kind: typeof readinessKinds.unreadable; readonly cause: string; readonly safety: boolean };
 type WorkLookup = { readonly kind: typeof readinessKinds.lookup; readonly cause: string };
 type PrRead = { readonly kind: 'read'; readonly pr: ReadinessPr } | NotReady | Unreadable;
 
@@ -76,9 +76,8 @@ export interface ReadinessTarget {
 type ReadinessHost = Pick<WorkHost, 'guards' | 'find' | 'facts'>;
 
 const notReady = (...reasons: readonly string[]): NotReady => ({ kind: readinessKinds.notReady, reasons });
-const unreadable = (cause: string, remedy?: string): Unreadable =>
-  ({ kind: readinessKinds.unreadable, cause, ...(remedy === undefined ? {} : { remedy }) });
-const readFault = ({ message, hint }: CliError): Unreadable => unreadable(message, hint);
+const unreadable = (cause: string, safety = false): Unreadable => ({ kind: readinessKinds.unreadable, cause, safety });
+const readFault = ({ kind }: CliError, cause: string): Unreadable => unreadable(cause, kind === 'safety');
 
 const stateReasonOf = (state: z.infer<typeof prState>): string | null => {
   switch (state) {
@@ -174,14 +173,14 @@ const bindWork = async (work: ReadinessHost, target: ReadinessTarget, repo: stri
   const found = await work.find({
     point: MERGE_POINT, ref, branch: pr.headRefName, ...(recordedHead === undefined ? {} : { recordedHead }),
   });
-  if (!found.ok) return readFault(found.error);
+  if (!found.ok) return readFault(found.error, checkReasons.boardUnreadable);
   const lookup = found.value;
   switch (lookup.kind) {
     case readinessKinds.lookup: return lookup;
     case 'found': {
       const { item } = lookup;
       const facts = await work.facts({ item: item.id, point: MERGE_POINT, ref, head: pr.headRefOid, project: target.project.id });
-      if (!facts.ok) return readFault(facts.error);
+      if (!facts.ok) return readFault(facts.error, checkReasons.boardUnreadable);
       const itemRepo = parseGithubRepo(facts.value.project.url ?? '');
       if (facts.value.project.id !== target.project.id || itemRepo?.toLowerCase() !== repo.toLowerCase()) {
         return unreadable(checkReasons.otherProject);
@@ -228,7 +227,7 @@ export const readinessFor = async (deps: Deps, work: ReadinessHost, target: Read
     if (pr.mergedAt === null) return unreadable(checkReasons.noMergeTime);
   } else {
     const compare = await runCompare(deps, { repo, base: base.data, head: pr.headRefOid });
-    if (!compare.ok) return readFault(compare.error);
+    if (!compare.ok) return readFault(compare.error, checkReasons.compareUnreadable);
     const verdict = readinessOf({ pr, behindBy: compare.value });
     if (verdict.kind === readinessKinds.notReady) return verdict;
   }

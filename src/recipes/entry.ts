@@ -174,9 +174,11 @@ export interface WorkFacts {
 export interface WorkHost {
   readonly guards: GuardValues;
   readonly caller: () => Promise<CliResult<void>>;
+  /** Select a project from the open config. Without an id, require exactly one project. */
+  readonly project: (id: string | undefined) => CliResult<RecipeProject>;
   readonly find: (query: Pick<WorkItemQuery, 'point' | typeof flags.ref | 'branch' | 'recordedHead'>) => Promise<CliResult<WorkItemLookup>>;
   readonly facts: (target: RequestLink & { readonly project?: string }) => Promise<CliResult<WorkFacts>>;
-  readonly approval: (target: RequestLink & { readonly need: 'go' | 'owner-record' }) => Promise<CliResult<SettledProof>>;
+  readonly approval: (target: RequestLink) => Promise<CliResult<SettledProof>>;
   readonly record: (target: { readonly item: string; readonly ref: string; readonly head?: string; readonly project?: string }) => Promise<CliResult<RecordedWork>>;
   readonly writeEvent: (event: EventFileInput) => Promise<CliResult<EventWrite>>;
 }

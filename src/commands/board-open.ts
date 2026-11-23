@@ -48,16 +48,13 @@ export const localBoardOf = (deps: Deps, home: string, config: FactoryConfig, co
   });
 };
 
-/**
- * Find the node folder, load its config and build the board connector for it. Every command that reads or changes the board opens
- * it here.
- */
-export const openBoard = async (
+/** Find the node folder and load its config. */
+export const openNodeConfig = async (
   deps: Deps,
   homeFlag: string | undefined,
   registry: RecipeRegistry,
   command: CommandName,
-): Promise<CliResult<OpenBoard>> => {
+): Promise<CliResult<Pick<OpenBoard, 'home' | 'config'>>> => {
   const located = await locateHomeFolder(
     deps,
     homeFlag,
@@ -68,7 +65,19 @@ export const openBoard = async (
   const home = located.value.home;
   const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return loaded;
-  const config = loaded.value;
+  return ok({ home, config: loaded.value });
+};
+
+/** Open the node and build its board connector. */
+export const openBoard = async (
+  deps: Deps,
+  homeFlag: string | undefined,
+  registry: RecipeRegistry,
+  command: CommandName,
+): Promise<CliResult<OpenBoard>> => {
+  const opened = await openNodeConfig(deps, homeFlag, registry, command);
+  if (!opened.ok) return opened;
+  const { home, config } = opened.value;
   return ok({ home, config, connector: localBoardOf(deps, home, config, command) });
 };
 

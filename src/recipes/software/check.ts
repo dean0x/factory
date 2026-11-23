@@ -1,4 +1,4 @@
-import { exitCodeOf, usageError, type CliResult } from '../../cli/errors.js';
+import { exitCodeOf, usageError, type CliError, type CliResult } from '../../cli/errors.js';
 import { foundHomeOption } from '../../cli/home-option.js';
 import type { CommandOutput } from '../../cli/output.js';
 import type { Command, Given } from '../../cli/table.js';
@@ -31,8 +31,8 @@ const notReady = (reasons: readonly string[], remedy: string, head?: string): Ch
   ...(head === undefined ? {} : { head }),
 });
 
-const unreadable = (reason: string, remedy: string): CheckOutcome => ({
-  result: readinessKinds.unreadable, exitCode: exitCodeOf.failure, reasons: [reason], remedy,
+const unreadable = (reason: string, remedy: string, safety: boolean): CheckOutcome => ({
+  result: readinessKinds.unreadable, exitCode: safety ? exitCodeOf.safety : exitCodeOf.failure, reasons: [reason], remedy,
 });
 
 /** Do not pass local record text, raw responses or their errors to the output. */
@@ -54,12 +54,12 @@ export const checkOutcomeOf = (read: Readiness): CheckOutcome => {
       return notReady([checkReasons.merged], checkRemedies.again, read.pr.headRefOid);
     case readinessKinds.unreadable:
       if (read.cause === checkReasons.viewUnreadable || read.cause === checkReasons.compareUnreadable || read.cause === checkReasons.noMergeTime) {
-        return unreadable(read.cause, checkRemedies.github);
+        return unreadable(read.cause, checkRemedies.github, read.safety);
       }
       if (read.cause === checkReasons.unsupportedRepo || read.cause === checkReasons.noDefaultBranch) {
-        return unreadable(read.cause, checkRemedies.node);
+        return unreadable(read.cause, checkRemedies.node, read.safety);
       }
-      return unreadable(checkReasons.boardUnreadable, checkRemedies.board);
+      return unreadable(checkReasons.boardUnreadable, checkRemedies.board, read.safety);
     default: return read satisfies never;
   }
 };
@@ -86,14 +86,13 @@ const run = async (host: RecipeHost, given: Given, deps: Deps): Promise<CliResul
   if (head !== undefined && !mergeCheck.shaPattern.test(head)) {
     return usageError(`${flagText(flags.head)}: must be a full commit id of 40 lowercase hex digits`, USAGE_HINT);
   }
-  const nodeFault = (prRulesOff = false) => ok(outputOf(unreadable(checkReasons.nodeUnreadable, checkRemedies.node), number.value, prRulesOff));
-  const home = await host.locateNode(deps, given.string(flags.home), commands.check);
-  if (!home.ok) return home.error.kind === 'usage' ? home : nodeFault();
-  const work = await host.openWork(deps, home.value, commands.check);
-  if (!work.ok) return work.error.kind === 'usage' ? work : nodeFault();
+  const nodeFault = (error: CliError, prRulesOff = false) =>
+    ok(outputOf(unreadable(checkReasons.nodeUnreadable, checkRemedies.node, error.kind === 'safety'), number.value, prRulesOff));
+  const work = await host.openWork(deps, given.string(flags.home), commands.check);
+  if (!work.ok) return work.error.kind === 'usage' ? work : nodeFault(work.error);
   const prRulesOff = !isGuardOn(work.value.guards, softwareGuardIds.prRules);
-  const project = await host.loadProject(deps, home.value, given.string(flags.project), commands.check);
-  if (!project.ok) return project.error.kind === 'usage' ? project : nodeFault(prRulesOff);
+  const project = work.value.project(given.string(flags.project));
+  if (!project.ok) return project.error.kind === 'usage' ? project : nodeFault(project.error, prRulesOff);
   const read = await readinessFor(deps, work.value, { pr: number.value, head, project: project.value });
   return ok(outputOf(checkOutcomeOf(read), number.value, prRulesOff));
 };

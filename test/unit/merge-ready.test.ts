@@ -215,10 +215,9 @@ describe('readinessFor', () => {
     expect(order).toEqual(['pr', 'api', 'find']);
   });
 
-  it.each(['find', 'facts'] as const)('preserves the board fault from %s', async (step) => {
-    const cause = 'the link of request A-1 is invalid';
-    const { result, order } = runWith({ host: { [step]: async () => failure(cause, 'Check the link.') } });
-    expect(await result).toEqual({ kind: 'unreadable', cause, remedy: 'Check the link.' });
+  it.each(['find', 'facts'] as const)('gives a fixed reason for an ordinary fault from %s', async (step) => {
+    const { result, order } = runWith({ host: { [step]: async () => failure('the link is invalid', 'Check the link.') } });
+    expect(await result).toEqual({ kind: 'unreadable', cause: 'could not read the work item or its requests', safety: false });
     expect(order.at(-1)).toBe(step);
   });
 
