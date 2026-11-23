@@ -7,7 +7,7 @@ import type { Command } from '../cli/table.js';
 import type { Deps } from '../core/deps.js';
 import { allOn } from '../guards/effective.js';
 import type { GuardDefinition, GuardRow, GuardValues } from '../guards/types.js';
-import { boardKeys, guardValues, keys, values, type CommandName } from '../names.js';
+import { boardKeys, guardValues, keys, values, type CommandName, type flags } from '../names.js';
 import type { EventFileInput, EventWrite } from '../report/event-file.js';
 import type { TextPart } from '../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
@@ -174,7 +174,7 @@ export interface WorkFacts {
 export interface WorkHost {
   readonly guards: GuardValues;
   readonly caller: () => Promise<CliResult<void>>;
-  readonly find: (query: Pick<WorkItemQuery, 'point' | 'ref' | 'branch' | 'recordedHead'>) => Promise<CliResult<WorkItemLookup>>;
+  readonly find: (query: Pick<WorkItemQuery, 'point' | typeof flags.ref | 'branch' | 'recordedHead'>) => Promise<CliResult<WorkItemLookup>>;
   readonly facts: (target: RequestLink & { readonly project?: string }) => Promise<CliResult<WorkFacts>>;
   readonly approval: (target: RequestLink & { readonly need: 'go' | 'owner-record' }) => Promise<CliResult<SettledProof>>;
   readonly record: (target: { readonly item: string; readonly ref: string; readonly head?: string; readonly project?: string }) => Promise<CliResult<RecordedWork>>;
