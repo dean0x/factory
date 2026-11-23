@@ -90,7 +90,7 @@ See [the mod guide](plugins/factory-board/README.md) for the options and update 
 | `factory node send ID --file FILE` | Write a task file into the inbox of a child node. It sends no message. See "Send a task to a child node". |
 | `factory node tree` | Show the child nodes and the nodes below them, from the report files. It reads files only. See "Show the tree of child nodes". |
 | `factory help words` | Print one plain sentence for each word that factory uses. |
-| `factory version` | Print the version. |
+| `factory version` | Print the version on line 1 and the full commit SHA of the build on line 2. A build outside a git work tree prints `commit unknown`. A build with changes that were not committed says so, and so does a build that could not read them. `--json` adds `commit` and `modified`. |
 | `factory help` | Show the help. |
 
 Run `factory <command> --help` to see the flags of one command. All commands take `--json`, `--quiet` and `--no-color`. In `--json` output, only control, bidi and invisible characters are removed from string values. A line break stays as an escape, and no string is cut to a width.

@@ -72,7 +72,7 @@ import {
   workerHold,
 } from '../names.js';
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
-import { FACTORY_VERSION } from '../version.js';
+import { FACTORY_BUILD, FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import { foundHomeOption } from './home-option.js';
 import type { CommandOutput } from './output.js';
@@ -987,10 +987,10 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
   },
   {
     name: commands.version,
-    summary: 'Print the version.',
+    summary: 'Print the version and the commit of the build.',
     usage: commandText(commands.version),
     options: {},
-    run: async () => ok(runVersion(FACTORY_VERSION)),
+    run: async () => ok(runVersion(FACTORY_BUILD)),
   },
 ];
 

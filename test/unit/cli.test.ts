@@ -112,13 +112,13 @@ describe('runCli', () => {
     for (const argv of [['version'], ['--version']]) {
       const result = await run(argv);
       expect(result.code).toBe(0);
-      expect(result.out.trim()).toBe(FACTORY_VERSION);
+      expect(result.out).toBe(`${FACTORY_VERSION}\ncommit unknown\n`);
     }
   });
 
   it('prints a JSON document with a schema field for --json', async () => {
     const result = await run(['version', '--json']);
-    expect(JSON.parse(result.out)).toEqual({ schema: 'factory.version/v1', version: FACTORY_VERSION });
+    expect(JSON.parse(result.out)).toEqual({ schema: 'factory.version/v1', version: FACTORY_VERSION, commit: null, modified: null });
   });
 
   it('exits 2 and prints help to stderr for an unknown command', async () => {
@@ -238,7 +238,7 @@ describe('the refusal on Windows', () => {
   it.each([['linux'], ['darwin']])('does not refuse on %s', async (os) => {
     const result = await runOn(os, ['--version']);
     expect(result.code).toBe(0);
-    expect(result.out.trim()).toBe(FACTORY_VERSION);
+    expect(result.out).toBe(`${FACTORY_VERSION}\ncommit unknown\n`);
   });
 });
 
@@ -1360,7 +1360,7 @@ describe('the command seam of a recipe', () => {
     const registry = registryWith(() => [rowNamed(commands.version, 'taken over')]);
     const table = commandTableFor(registry);
     expect(namesOf(table)).toEqual(coreNames);
-    expect(await runWith(registry, [commands.version])).toEqual({ code: 0, out: `${FACTORY_VERSION}\n`, err: '' });
+    expect(await runWith(registry, [commands.version])).toEqual({ code: 0, out: `${FACTORY_VERSION}\ncommit unknown\n`, err: '' });
   });
 
   it('keeps the first row when a recipe names a command twice', async () => {

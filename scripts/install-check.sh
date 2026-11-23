@@ -145,9 +145,13 @@ found="$(command -v factory || true)"
 installed_js="$npm_config_prefix/lib/node_modules/@dean0x/factory/dist/factory.js"
 [ -f "$installed_js" ] || fail "the installed package has no dist/factory.js"
 [ -x "$installed_js" ] || fail "the installed dist/factory.js is not executable"
-cmp -s "$installed_js" "$root/dist/factory.js" || fail "the installed dist/factory.js differs from dist/factory.js of the source tree. Build from a clean tree with: npm run build"
-installed="$(factory version)"
+# The version lines come before the compare of the two files, so a wrong commit line names its own cause.
+version_out="$(factory version)"
+installed="$(printf '%s\n' "$version_out" | sed -n 1p)"
 [ "$installed" = "$version" ] || fail "factory version prints $installed, expected $version"
+installed_commit="$(printf '%s\n' "$version_out" | sed -n 2p)"
+[ "$installed_commit" = "commit $sha" ] || fail "factory version prints '$installed_commit', expected 'commit $sha'"
+cmp -s "$installed_js" "$root/dist/factory.js" || fail "the installed dist/factory.js differs from dist/factory.js of the source tree. Build from a clean tree with: npm run build"
 logged help factory --help
 printf 'installed factory %s from commit %s\n' "$installed" "$sha"
 

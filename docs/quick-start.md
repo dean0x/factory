@@ -18,7 +18,7 @@ The code is in the public GitHub repo `dean0x/factory`. The owner marks each bui
 
 The owner pushes a tag only after the build passes its checks. A tag has no GitHub Release, and nobody publishes the package. The owner never moves, deletes or reuses a tag. A fix gets the next number.
 
-Each build prints `0.2.0` for `factory version`. The version does not tell the builds apart. The tag and its commit tell them apart.
+Each build prints `0.2.0` on line 1 of `factory version`. Line 2 names the full commit SHA of the build, so the commit tells the builds apart.
 
 Use the newest tag. The tags are on the repo page on GitHub. Write down the tag name and the full commit SHA that the tag points to. Keep both. You need them to install, to update and to report a problem.
 
@@ -146,7 +146,7 @@ First, look at the list under `Tarball Contents` that `npm pack` printed in that
 factory version
 ```
 
-It must print `0.2.0`. If a check fails, stop and report the problem (part 13). An install can succeed and still leave no `factory` command, when the build did not run.
+It must print `0.2.0` on line 1 and `commit <sha>` on line 2, with all 40 characters of your `<sha>`. If a check fails, stop and report the problem (part 13). An install can succeed and still leave no `factory` command, when the build did not run.
 
 If your shell does not find `factory`, check that the folder `bin` inside the output of `npm prefix --global` is in your PATH.
 
@@ -160,7 +160,7 @@ If you set `ignore-scripts=true`, npm does not run the build. Then the package f
 
 ### The installed commit
 
-The installed program does not record its commit. See part 12. Keep the tag and the full commit SHA of your build.
+Line 2 of `factory version` shows the commit of the build. See part 12. Keep the tag and the full commit SHA of your build.
 
 ## 5. Make your factory
 
@@ -334,7 +334,7 @@ The command stops every worker and starts each one again with its session id. Ou
 - **Work items.** `factory status` shows the id of the open item of a worker only when the factory has a `board` block that names a worker field. Without that block, it shows `unknown` as the work item of each worker, and `no` as its idle state. Then `factory dismiss --idle` lists nothing.
 - **Authority of the owner.** A message between sessions carries no authority of the owner. To give a worker the authority of the owner, type in its pane. Start the text with the owner prefix. The prefix is in `factory.local.yaml`.
 - **devflow.** Factory has no devflow setup yet. If you want devflow, install it as a normal Claude Code plugin.
-- **The installed commit.** No `npm ls` form shows the commit of an install from a package file. The command `npm ls --global @dean0x/factory` shows the version only. Every build prints `0.2.0` for `factory version`. Keep the tag and the full commit SHA of your build, and give both in a problem report. The command `git ls-remote` shows the commit that a tag has now. It does not show the commit that you installed.
+- **The installed commit.** No `npm ls` form shows the commit of an install from a package file. The command `npm ls --global @dean0x/factory` shows the version only. Line 2 of `factory version` shows the commit of the build. Give the tag and that line in a problem report. The command `git ls-remote` shows the commit that a tag has now. It does not show the commit that you installed.
 - **The npm version.** The install commands of this guide were tested with npm 10.9.8 and npm 11.6.0.
 
 ## 13. Report a problem

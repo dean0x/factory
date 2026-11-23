@@ -14,7 +14,12 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 const INTEGRATION_FILES = Math.max(1, Math.min(4, availableParallelism() - 1));
 
 export default defineConfig({
-  define: { __FACTORY_VERSION__: JSON.stringify(pkg.version) },
+  // The tests read no git: a test build has no commit, so `factory version` prints "commit unknown" from the source.
+  define: {
+    __FACTORY_VERSION__: JSON.stringify(pkg.version),
+    __FACTORY_COMMIT__: JSON.stringify(null),
+    __FACTORY_MODIFIED__: JSON.stringify(null),
+  },
   test: {
     testTimeout: scaled(30_000),
     hookTimeout: scaled(30_000),

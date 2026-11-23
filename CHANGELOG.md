@@ -2,6 +2,7 @@
 
 ## 0.2.0 (not released)
 
+- `factory version` prints the full commit SHA of the build on line 2. Line 1 is still the version. `--json` adds `commit` and `modified`. A build outside a git work tree prints `commit unknown`.
 - Add `factory board`: one text view of requests, workers, open items, the queue and machine facts. `--width` sets the text width. `--json` prints `factory.board/v1`, with section faults and a cap of 500 open items.
 - Add the optional `factory-board` Claude Code mod and repo marketplace. `/board` opens a pane with factory text and this session's context and limits.
 - `doctor` warns when the host of a proxy in use is not `127.0.0.1`, `::1` or `localhost`. The warning names only the proxy id, the host and the port.
@@ -322,7 +323,7 @@ Install
 - You install factory from an early-access tag `v0.2.0-ea.N` of the git repo. The guide clones the repo and runs `git checkout --detach <sha>`. Then `npm ci` and `npm pack` build a package file with the new script `prepare`, and `npm install --global ./dean0x-factory-0.2.0.tgz` installs it. `<sha>` is the full 40-character commit SHA of the tag. The guide first checks with `git ls-remote` that the tag points to `<sha>`, so the build is the commit that was checked and not the tag name. The steps work with npm 10 and npm 11. npm 10 can not make a package file from a GitHub URL, so the guide uses a clone.
 - `package.json` now has `"private": true` and keeps `publishConfig`. FAC-M10 removes `private` after the owner writes the decision id.
 - The package now holds the guide `docs/quick-start.md`. It lists the prerequisites with their checks, the install, the update, the tmux keys and the known limits.
-- A `v0.2.0-ea.N` tag is no release. There is no GitHub Release and no npm publish. `factory version` prints `0.2.0` for every build, so the tag and the commit SHA name the build.
+- A `v0.2.0-ea.N` tag is no release. There is no GitHub Release and no npm publish. `factory version` prints `0.2.0` for every build on line 1, and the full commit SHA of the build on line 2.
 - CI proves the install from git on Linux and on macOS with `npm run install-check`.
 - The README has a section for outside users: the status of the project, what the ids in `docs/` mean, and how to report a problem. The guide `docs/quick-start.md` now installs from the public repo, with no login.
 

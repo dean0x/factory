@@ -92,7 +92,7 @@ tarball="$(find "$tmp/pack" -name '*.tgz' -print | head -n 1)"
 step "install from the tarball"
 logged install npm install --global --offline --ignore-scripts --no-audit --no-fund "$tarball"
 command -v factory >/dev/null 2>&1 || fail "factory is not on PATH after the install"
-installed="$(factory version)"
+installed="$(factory version | sed -n 1p)"
 [ "$installed" = "$version" ] || fail "factory version prints $installed, expected $version"
 printf 'installed factory %s\n' "$installed"
 
