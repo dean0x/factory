@@ -162,6 +162,7 @@ describe('the pane that the read for the binding gives', () => {
     ['a pane id that is not one', `x3|4777|0|1|0|0|0|${'a'}\n`],
     ['a pid of 0', '%3|0|0|1|0|0|0|a\n'],
     ['a pid with a leading zero', '%3|0477|0|1|0|0|0|a\n'],
+    ['a dead pane without a pid', line('1|0|0|0', START, '%3||1')],
     ['an end flag that is not 0 or 1', '%3|4777|2|1|0|0|0|a\n'],
     ['a mark flag that is not 0 or 1', '%3|4777|0|x|0|0|0|a\n'],
     ['a node flag that is not 0 or 1', '%3|4777|0|1|2|0|0|a\n'],
@@ -309,19 +310,6 @@ describe('the tmux call that respawns a pane', () => {
     expect(respawnPaneArgs(target, cwd, words)).toEqual({
       ok: false, error: 'the tmux call refuses a pane id that is not a percent sign and digits',
     });
-  });
-
-  it('starts a new process in the dead pane and keeps its id and marks', () => {
-    const { handler, log } = tmuxHandler({ sessions: { demo: '/w/node' }, endedCoordinators: ['demo'] });
-    const before = log.panes();
-    const call = { command: 'tmux', args: ['respawn-pane', '-t', '%0', '-c', '/w/node dir', '--', ...words.slice(0, -1)], cwd: undefined };
-    expect(handler(call)).toMatchObject({ ok: true, value: { exitCode: 0 } });
-    expect(log.panes()).toEqual([
-      { ...before[0], pid: expect.any(Number), dead: false, cwd: '/w/node dir', command: words.slice(0, -1) },
-      ...before.slice(1),
-    ]);
-    expect(log.panes()[0]?.pid).not.toBe(before[0]?.pid);
-    expect(handler(call)).toMatchObject({ ok: true, value: { exitCode: 1, stderr: expect.stringContaining('still active') } });
   });
 });
 
@@ -787,6 +775,16 @@ describe('the pane list', () => {
     });
   });
 
+  it.each([parsePaneList, parsePaneListSoft])('keeps a dead board without a pid beside a live worker (%s)', (parse) => {
+    expect(parse('%1||1|\n%5|4210|0|alpha\n')).toEqual({
+      ok: true,
+      value: [
+        { paneId: '%1', pid: null, dead: true, worker: null },
+        { paneId: '%5', pid: 4210, dead: false, worker: 'alpha' },
+      ],
+    });
+  });
+
   it('reads a list with no final newline, and an empty list', () => {
     expect(parsePaneList('%5|4210|0|a-1.b_2')).toEqual({
       ok: true,
@@ -866,6 +864,8 @@ describe('the pane list with a soft check of the worker mark', () => {
     ['no pane id', '|4101|0|a'],
     ['a pane id with a letter', '%x|4101|0|a'],
     ['a pid with a letter', '%0|41a1|0|a'],
+    ['a live pane without a pid', '%0||0|a'],
+    ['a dead pane with a pid of 0', '%0|0|1|a'],
     ['a pid of 0, which names a process group', '%0|0|0|a'],
     ['a pid with a leading zero', '%0|0412|0|a'],
     ['a dead flag of 2', '%0|4101|2|a'],

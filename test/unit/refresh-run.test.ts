@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { RunOutput } from '../../src/core/deps.js';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import { guardSourceOf } from '../../src/guards/effective.js';
+import { paneListArgs } from '../../src/launch/tmux.js';
 import { guardIds, guardValues, refreshRunPath, refreshText, refreshWait, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
@@ -12,6 +13,7 @@ import {
 import { actCoordinator, actWorker, pollOnce, refreshExitCode, runRefresh } from '../../src/workers/refresh-run.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
+import { lstartText } from '../helpers/ps-fake.js';
 import { ownSettingsWithRules, seedOwnHooks, seedUnacceptedSetup, settingsFileOf, STATE_ENV } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { startCommandText, tmuxHandler, type PaneFixture, type TmuxFixture } from '../helpers/tmux-fake.js';
@@ -36,11 +38,6 @@ const value = <T>(result: CliResult<T>): T => {
 
 const hook = async (deps: FakeDeps, session: string, marker: string, event: HookEvent) =>
   value(await writeLastSeen(deps, HOME, session, { kind: 'event', event }, marker));
-
-const psStart = (date: Date): string => {
-  const [weekday, month, day, year, time] = date.toString().split(' ');
-  return `${weekday} ${month} ${day} ${time} ${year}\n`;
-};
 
 const workerPane = (id: string, pid: number): PaneFixture => ({
   session: NODE, pid, options: { '@worker': id }, command: launchWordsOf(HOME, id),
@@ -90,7 +87,7 @@ const make = async (setup: Setup = {}) => {
       const override = await onRun(call);
       if (override !== undefined) return override;
       if (command === 'ps' && args[1] === 'lstart=') {
-        return exited(0, psStart(Number(args[3]) === setup.newProcess ? base.now() : new Date('2030-01-02T03:00:00Z')));
+        return exited(0, lstartText(Number(args[3]) === setup.newProcess ? base.now().getTime() : Date.parse('2030-01-02T03:00:00Z')));
       }
       if (command !== 'tmux') return missingProgram(command);
       if (args[0] === 'respawn-pane') {
@@ -176,6 +173,17 @@ describe('refresh runner', () => {
     expect(value(await readRefreshRun(lab.deps, HOME))).toEqual(record);
   });
 
+  it('resumes a live worker beside a dead board pane without a pid', async () => {
+    const lab = await make({ tmux: { deadPanesWithoutPid: ['%1'] } });
+    expect(lab.tmux(paneListArgs(NODE)).stdout).toContain('%1||1|\n');
+    const record = await finish(lab);
+    expect(record).toMatchObject({
+      state: 'done',
+      outcomes: [{ role: 'worker', id: 'alpha', status: 'resumed' }, { role: 'coordinator', id: NODE, status: 'resumed' }],
+    });
+    expect(lab.deps.terminated).toEqual([WORKER_PID, COORDINATOR_PID]);
+  });
+
   it('reads the pane list once per poll and polls busy workers again after ten seconds', async () => {
     const lab = await make({ events: { alpha: 'PreToolUse' } });
     const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
@@ -226,7 +234,7 @@ describe('refresh runner', () => {
     lab.deps.advance(500);
     lab.onRun(async ({ command, args }) => {
       if (args.at(-1) !== String(WORKER_PID)) return undefined;
-      if (command === 'ps' && args[1] === 'lstart=') return exited(0, psStart(new Date('2030-01-02T03:04:05Z')));
+      if (command === 'ps' && args[1] === 'lstart=') return exited(0, lstartText(Date.parse('2030-01-02T03:04:05Z')));
       return undefined;
     });
     const result = value(await runRefresh(lab.deps, { ...lab.request, token: record.token }));
@@ -422,7 +430,7 @@ describe('refresh runner', () => {
   it('does not stop a coordinator on an idle report from an earlier process', async () => {
     const lab = await make({ events: {} });
     lab.deps.advance(10 * 60 * 60 * 1000);
-    const coordinatorStart = psStart(new Date(lab.deps.now().getTime() - 60_000));
+    const coordinatorStart = lstartText(lab.deps.now().getTime() - 60_000);
     lab.onRun(async ({ command, args }) =>
       command === 'ps' && args[1] === 'lstart=' && args[3] === String(COORDINATOR_PID) ? exited(0, coordinatorStart) : undefined);
     const run = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }));
@@ -556,7 +564,7 @@ describe('refresh runner', () => {
     const lab = await make({ events: { alpha: 'Stop', beta: 'PreToolUse' } });
     let alphaStart = '';
     lab.onRun(async (call) => {
-      if (found(call, 'split-window')) alphaStart = psStart(lab.deps.now());
+      if (found(call, 'split-window')) alphaStart = lstartText(lab.deps.now().getTime());
       return undefined;
     });
     lab.onSleep(async (ms) => {

@@ -52,7 +52,7 @@ describe('status: the builder', () => {
     createdAt: '2030-01-01T00:00:00.000Z',
   });
 
-  const paneOf = (worker: string, change: Partial<PaneRow> = {}): PaneRow => ({
+  const paneOf = (worker: string, change: Partial<Omit<PaneRow, 'pid'>> = {}): PaneRow => ({
     paneId: '%7',
     pid: 4001,
     dead: false,

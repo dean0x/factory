@@ -121,7 +121,7 @@ interface Target {
   readonly workerId: string;
   readonly paneIds: readonly string[];
   /** The process ids of the panes at the baseline, in the order of `paneIds`. */
-  readonly pids: readonly number[];
+  readonly pids: readonly (number | null)[];
   /** True for a worker of `--ready`: the watch waits until it is ready. */
   readonly waitsForReady: boolean;
 }
@@ -196,6 +196,7 @@ const readyChange = (read: OwnSessionRead): WatchKind | null => {
  */
 const isLineFresh = async (deps: Deps, target: Target, line: LastSeen): Promise<boolean> => {
   for (const pid of target.pids) {
+    if (pid === null) return false;
     const start = await paneProcessStart(deps, pid, commandLines.workerWatch);
     if (!start.ok) return false;
     if (!requireLineAfterStart(line[keys.eventAt] ?? '', start.value, commandLines.workerWatch).ok) return false;

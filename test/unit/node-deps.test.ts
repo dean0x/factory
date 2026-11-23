@@ -250,11 +250,12 @@ describe('node deps: run', () => {
 
   describe('the environment of the program', () => {
     const show = ['-e', 'process.stdout.write([process.env.LC_ALL, process.env.GIT_TERMINAL_PROMPT].join(","))'];
-    const saved = { LC_ALL: process.env['LC_ALL'], GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] };
+    const saved = { LC_ALL: process.env['LC_ALL'], GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'], TZ: process.env['TZ'] };
 
     beforeEach(() => {
       process.env['LC_ALL'] = 'en_US.UTF-8';
       process.env['GIT_TERMINAL_PROMPT'] = '1';
+      process.env['TZ'] = 'America/New_York';
     });
 
     afterEach(() => {
@@ -272,6 +273,13 @@ describe('node deps: run', () => {
     it('keeps the environment of this process when the caller asks for it', async () => {
       const result = await deps.run('node', show, { inheritEnv: true });
       expect(result.ok && result.value.stdout).toBe('en_US.UTF-8,1');
+    });
+
+    it('sets UTC only in the child and keeps the default locale', async () => {
+      const showZone = ['-e', 'process.stdout.write([process.env.TZ, process.env.LC_ALL].join(","))'];
+      const result = await deps.run('node', showZone, { utc: true });
+      expect(result.ok && result.value.stdout).toBe('UTC0,C');
+      expect(process.env['TZ']).toBe('America/New_York');
     });
   });
 });

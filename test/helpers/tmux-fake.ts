@@ -74,6 +74,8 @@ export interface TmuxFixture {
    * prints `1` for the format `pane_in_mode`, and every other pane prints `0`. Default: none.
    */
   readonly panesInMode?: readonly string[];
+  /** Panes that have ended and print an empty `pane_pid`, by pane id. */
+  readonly deadPanesWithoutPid?: readonly string[];
 }
 
 /** The state of one pane, as the log shows it. */
@@ -452,6 +454,12 @@ export const tmuxHandler = (
     if (!panes.some((pane) => pane.id === id)) throw new Error(`the pane fixture puts the pane ${id} in a mode, but it has no such pane`);
     modeScreens.set(id, 'copy mode');
   }
+  const deadPanesWithoutPid = new Set(fixture.deadPanesWithoutPid);
+  for (const id of deadPanesWithoutPid) {
+    const pane = panes.find((candidate) => candidate.id === id);
+    if (pane === undefined) throw new Error(`the pane fixture marks the pane ${id} as dead, but it has no such pane`);
+    pane.dead = true;
+  }
 
   const targetOf = (command: readonly string[]): string => after(command, '-t');
 
@@ -487,7 +495,7 @@ export const tmuxHandler = (
       case 'pane_id':
         return pane.id;
       case 'pane_pid':
-        return String(pane.pid);
+        return pane.dead && deadPanesWithoutPid.has(pane.id) ? '' : String(pane.pid);
       case 'pane_dead':
         return pane.dead ? '1' : '0';
       case 'pane_active':
@@ -630,16 +638,6 @@ export const tmuxHandler = (
           if (!result.ok || result.value.exitCode !== 0) return result;
         }
         return result;
-      }
-      case 'respawn-pane': {
-        const pane = resolvePane(targetOf(command));
-        if (pane === undefined) return cantFindPane(targetOf(command));
-        if (!pane.dead) return exited(1, '', `pane ${pane.id} is still active\n`);
-        panes[panes.indexOf(pane)] = {
-          ...pane, pid: nextPid++, dead: false, cwd: after(rest, '-c') || pane.cwd, command: programOf(rest), screen: '',
-        };
-        modeScreens.delete(pane.id);
-        return exited(0);
       }
       case 'kill-pane': {
         const pane = resolvePane(targetOf(command));

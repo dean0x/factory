@@ -282,14 +282,17 @@ export const parseCoordinatorPane = (text: string): Result<CoordinatorPane, stri
   return ok({ ...info, dead, pid: Number(pid) });
 };
 
-export interface PaneRow {
+interface PaneRowInfo {
   readonly paneId: string;
-  /** The process id of the program of the pane. For a pane that has ended, it is the id that the program had. */
-  readonly pid: number;
-  readonly dead: boolean;
   /** The value of the worker option, or null for a pane with no worker, such as the coordinator and the slot. */
   readonly worker: string | null;
 }
+
+/** A pane list row. tmux can omit the pid after the program in the pane ends. */
+export type PaneRow = PaneRowInfo & (
+  | { readonly dead: false; readonly pid: number }
+  | { readonly dead: true; readonly pid: number | null }
+);
 
 const PANE_FIELDS = 4;
 /** A process id is a number from 1, with no leading zero and at most 10 digits. A pid of 0 would name a process group. */
@@ -304,14 +307,16 @@ const parsePaneLine = (line: string, badMark: BadMark): PaneRow | null => {
   const fields = line.split(FIELD_SEPARATOR);
   if (fields.length < PANE_FIELDS || (badMark === 'refuse' && fields.length > PANE_FIELDS)) return null;
   const [paneId = '', pid = '', dead = ''] = fields;
-  if (!isPaneId(paneId) || !PID_PATTERN.test(pid)) return null;
-  if (dead !== '0' && dead !== '1') return null;
+  if (!isPaneId(paneId) || (dead !== '0' && dead !== '1')) return null;
   // The mark is the last field, and a program can set it to any text, also text with the separator. A reader that ignores
   // a bad mark takes the rest of the line as the mark, so that a bad mark never moves the id, the pid or the dead flag.
   const worker = fields.slice(PANE_FIELDS - 1).join(FIELD_SEPARATOR);
   const valid = worker === '' || WORKER_PATTERN.test(worker);
   if (!valid && badMark === 'refuse') return null;
-  return { paneId, pid: Number(pid), dead: dead === '1', worker: valid && worker !== '' ? worker : null };
+  const info = { paneId, worker: valid && worker !== '' ? worker : null };
+  if (dead === '1' && pid === '') return { ...info, dead: true, pid: null };
+  if (!PID_PATTERN.test(pid)) return null;
+  return { ...info, dead: dead === '1', pid: Number(pid) };
 };
 
 const parsePaneLines = (text: string, badMark: BadMark): Result<readonly PaneRow[], string> => {
@@ -333,9 +338,8 @@ const parsePaneLines = (text: string, badMark: BadMark): Result<readonly PaneRow
 export const parsePaneList = (text: string): Result<readonly PaneRow[], string> => parsePaneLines(text, 'refuse');
 
 /**
- * Reads the same list as `parsePaneList`, with one change: a worker mark that is not a worker id makes the pane a pane with
- * no worker, and the list stays whole. The id, the pid and the dead flag stay strict. A command that only looks at the
- * panes, such as a launch, a list or a stop, uses this reader, so that a pane with a strange mark can not block it.
+ * Reads the same list as `parsePaneList`, with one change: an invalid worker mark counts as no worker.
+ * The same rules apply to the pane id, pid and dead flag.
  */
 export const parsePaneListSoft = (text: string): Result<readonly PaneRow[], string> => parsePaneLines(text, 'ignore');
 
