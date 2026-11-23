@@ -2,7 +2,7 @@ import { failure, usageError, type CliError, type CliResult } from '../cli/error
 import { wrapText } from '../cli/output.js';
 import type { DecisionRecord } from '../core/owner-record.js';
 import { canonicalRequestText, requestHashOf } from '../core/request-hash.js';
-import { ok, type Err, type Result } from '../core/result.js';
+import { err, ok, type Err, type Result } from '../core/result.js';
 import { isRecord } from '../migrate/inspect.js';
 import {
   approvalLinkLabels,
@@ -436,7 +436,7 @@ export const linkedApprovalsOf = (
   return { open, settled: ok(settled) };
 };
 
-interface ApprovalCheck {
+export interface ApprovalCheck {
   readonly docs: DecisionDocs;
   readonly linked: LinkedApprovals;
   /** The store records for this node and real root. */
@@ -448,21 +448,38 @@ interface ApprovalCheck {
   readonly head: string | null;
 }
 
+export type SettledProof =
+  | { readonly kind: typeof decideProof.record; readonly id: string; readonly decider: typeof roles.owner }
+  | { readonly kind: typeof decideProof.relayed; readonly id: string; readonly decider: typeof roles.coordinator };
+
+export interface ApprovalHashMismatch {
+  readonly kind: 'failure';
+  readonly reason: 'hash-mismatch';
+  readonly message: string;
+  readonly hint: string;
+}
+
+type ApprovalProofError = (CliError & { readonly reason?: never }) | ApprovalHashMismatch;
+
+/** A CLI result that distinguishes a hash mismatch from other refusals. */
+export type ApprovalProofResult = Result<SettledProof, ApprovalProofError>;
+
 const sameApprovalLink = (first: RequestLink | null, second: RequestLink): boolean =>
   first?.item === second.item && first.point === second.point && first.ref === second.ref && first.head === second.head;
 
 /** A stop blocks by id. To clear it, an approve needs proof for the same link. */
 const ownerStopOf = (
   settled: readonly LinkedApproval[], link: RequestLink, records: ReadonlyMap<string, DecisionRecord>,
-  docs: DecisionDocs, rules: RequestLinkRules | undefined,
+  docs: DecisionDocs, rules: RequestLinkRules | undefined, newestProof: RequestProof,
 ): string | null => {
-  for (let index = settled.length - 1; index >= 0; index -= 1) {
+  const last = settled.length - 1;
+  for (let index = last; index >= 0; index -= 1) {
     const entry = settled[index];
     if (entry === undefined || !sameApprovalLink(entry.link, link)) continue;
     const record = records.get(entry.id);
     if (record?.option === approvalOptions.stop) return entry.id;
     if (record?.option !== approvalOptions.go) continue;
-    const proof = proofOf(entry.id, ok(docs), ok({ record }), rules);
+    const proof = index === last ? newestProof : proofOf(entry.id, ok(docs), ok({ record }), rules);
     if (proof.kind === decideProof.record && sameApprovalLink(proof.link, link)) return null;
   }
   return null;
@@ -470,16 +487,19 @@ const ownerStopOf = (
 
 const ADD_APPROVAL = `Add a linked ${requestWords.request} with "${commandText(commandLines.requestAdd)}" and the current head of the reference. Answer it with "${commandText(commands.decide)}", or relay a new go with "${commandText(commandLines.requestClose)} ${flagText(flags.relayed)}".`;
 
-/** Only a settled go for this link permits a record in owner mode. */
-export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }: ApprovalCheck): CliResult<void> => {
-  if (!linked.open.ok) return linked.open;
-  if (linked.open.value !== null) {
-    return failure(
-      `${requestWords.request} ${shown(linked.open.value)} is still open`,
-      `Run "${commandText(commands.decide)}" with this id and an option. If it has an answer, run "${commandText(commands.decide)}" again with the same option.`,
-    );
-  }
-  if (mode !== roles.owner) return ok(undefined);
+const openApprovalVerdict = (open: LinkedApprovals['open']): CliResult<void> => {
+  if (!open.ok) return open;
+  if (open.value === null) return ok(undefined);
+  return failure(
+    `${requestWords.request} ${shown(open.value)} is still open`,
+    `Run "${commandText(commands.decide)}" with this id and an option. If it has an answer, run "${commandText(commands.decide)}" again with the same option.`,
+  );
+};
+
+/** Require a settled go for this link, without a mode or guard skip. */
+export const approvalProof = ({ docs, linked, stored, rules, ref, head }: Omit<ApprovalCheck, 'mode'>): ApprovalProofResult => {
+  const open = openApprovalVerdict(linked.open);
+  if (!open.ok) return open;
   if (!linked.settled.ok) return linked.settled;
   const newest = linked.settled.value.at(-1);
   if (newest === undefined) return failure(`there is no linked approval ${requestWords.request}`, ADD_APPROVAL);
@@ -493,15 +513,19 @@ export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }
     );
   }
   const records = new Map(stored.value.map((record) => [record.id, record]));
-  const stop = ownerStopOf(linked.settled.value, link, records, docs, rules);
+  const record = records.get(id) ?? null;
+  const proof = proofOf(id, ok(docs), ok({ record }), rules);
+  const refuse = (message: string, hint: string): Err<ApprovalProofError> =>
+    proof.kind === decideProof.mismatch
+      ? err({ kind: 'failure', reason: 'hash-mismatch', message, hint })
+      : failure(message, hint);
+  const stop = ownerStopOf(linked.settled.value, link, records, docs, rules, proof);
   if (stop !== null) {
-    return failure(
+    return refuse(
       `the ${roles.owner} answered ${approvalOptions.stop} on ${requestWords.request} ${shown(stop)}`,
       `Add a new linked approval ${requestWords.request} for the same reference and head. The ${roles.owner} must use "${commandText(commands.decide)}" to save an ${approvalOptions.go} answer in the ${roles.owner} store.`,
     );
   }
-  const record = records.get(id) ?? null;
-  const proof = proofOf(id, ok(docs), ok({ record }), rules);
   if (proof.kind === decideProof.relayed && record !== null) {
     return failure(
       `${name} also has an ${roles.owner} store answer`,
@@ -511,7 +535,7 @@ export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }
   const go = (proof.kind === decideProof.record && proof.option === approvalOptions.go) ||
     (proof.kind === decideProof.relayed && proof.settled && proof.decision === approvalOptions.go);
   if (!go || !sameApprovalLink(proof.link, link)) {
-    return failure(`${name} has no settled approval`, ADD_APPROVAL);
+    return refuse(`${name} has no settled approval`, ADD_APPROVAL);
   }
   if (head !== null && (link.ref !== ref || link.head !== head)) {
     return failure(
@@ -519,7 +543,17 @@ export const approvalVerdict = ({ docs, linked, stored, rules, mode, ref, head }
       `Add a new ${requestWords.request} for the new head with "${commandText(commandLines.requestAdd)}".`,
     );
   }
-  return ok(undefined);
+  return proof.kind === decideProof.record
+    ? ok({ kind: decideProof.record, id, decider: roles.owner })
+    : ok({ kind: decideProof.relayed, id, decider: roles.coordinator });
+};
+
+/** Preserve the record check: delegated mode needs no settled proof, and a hash mismatch is a normal refusal. */
+export const approvalVerdict = (check: ApprovalCheck): CliResult<void> => {
+  if (check.mode !== roles.owner) return openApprovalVerdict(check.linked.open);
+  const proof = approvalProof(check);
+  if (proof.ok) return ok(undefined);
+  return proof.error.reason === 'hash-mismatch' ? failure(proof.error.message, proof.error.hint) : proof;
 };
 
 export const addNewRemedy = `Add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}".`;

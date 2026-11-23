@@ -1,7 +1,7 @@
 import type { CliResult } from '../cli/errors.js';
 import type { requestDeciders, requestGroups, requestKinds } from '../names.js';
 import type { ApprovalMode, CheckedRecord } from '../recipes/entry.js';
-import type { DecideRequest, RequestProof } from './decide.js';
+import type { ApprovalProofResult, DecideRequest, RequestProof } from './decide.js';
 
 /**
  * The board connector contract (design 4.10). Every board connector gives these operations, and the contract suite
@@ -403,6 +403,8 @@ export interface LocalBoard extends BoardConnector {
    */
   logDecision(input: DecisionLogInput): Promise<CliResult<string>>;
   checkApproval(id: string, approval: RecordApproval, ref: string): Promise<CliResult<void>>;
+  /** Read a settled go for this reference and head. Use the owner store even when the record check can skip approval. */
+  proveApproval(id: string, point: string, ref: string, head: string): Promise<ApprovalProofResult>;
   /**
    * Check approval again under the state lock with the reference and head from the recipe check.
    * The check runs even if the board has the same record. The item must still name the worker, or name none if `worker` is null.
