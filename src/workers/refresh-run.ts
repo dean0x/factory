@@ -1,8 +1,9 @@
-import { codedNotReady, failure, hasCode, stopCaseRefused, trustQuestionWait, type CliError, type CliResult } from '../cli/errors.js';
+import { codedNotReady, failure, hasCode, notReady, stopCaseRefused, trustQuestionWait, type CliError, type CliResult } from '../cli/errors.js';
 import { displayLine } from '../cli/output.js';
 import { coordinatorLaunchWords } from '../commands/start.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import { processStartSecondOf } from '../core/process-start.js';
 import { ok } from '../core/result.js';
 import { guardValuesFor } from '../guards/effective.js';
 import { respawnPaneArgs, type CoordinatorPane, type PaneRow } from '../launch/tmux.js';
@@ -22,7 +23,7 @@ import {
   type RefreshFault, type RefreshOutcome, type RefreshRole, type RefreshRunChange, type RefreshRunRecord,
 } from './refresh-record.js';
 import { requireRecord } from './registry.js';
-import { paneProcessStart, requireLineAfterStart, requireOwnHooks } from './session-checks.js';
+import { requireLineAfterStart, requireOwnHooks } from './session-checks.js';
 import { readWorkerPanes } from './slot.js';
 import { stopWorker, terminatePane } from './stop.js';
 
@@ -53,6 +54,7 @@ const RETRY = `Run "${REFRESH}" again.`;
 const START = `Check the ${roles.coordinator} pane. If its process ended, run "${commandText(commands.start)}".`;
 const RESULT = `Run "${refreshResultCommand}" to see the last refresh run.`;
 const MAX_SLEEPS = Math.ceil(refreshWait.idleCapMs / refreshWait.intervalMs);
+const MS_PER_SECOND = 1000;
 // Leave room for the role and id in the record's bounded fault text.
 const DETAIL_LIMIT = 900;
 
@@ -99,9 +101,15 @@ export const pollOnce = async (
 };
 
 const requireOlderProcess = async (deps: Deps, pid: number, startedAtMs: number): Promise<CliResult<number>> => {
-  const started = await paneProcessStart(deps, pid, AGAIN);
-  if (!started.ok) return started;
-  return started.value < startedAtMs ? started : failure('the pane process started after the refresh run began', RETRY);
+  const started = await processStartSecondOf(deps, pid);
+  if (!started.ok) {
+    return notReady('cannot read when the process of the pane started', `Look at the pane in tmux. ${RETRY}`);
+  }
+  // The process must predate the run. Its whole start second must be before the run's start second.
+  if (started.value >= Math.floor(startedAtMs / MS_PER_SECOND) * MS_PER_SECOND) {
+    return failure('cannot confirm the pane process started before the refresh run began', RETRY);
+  }
+  return ok(started.value);
 };
 
 /** Run checks and act on one ready worker. Null means the idle gate refused; the worker stays pending. */
@@ -287,7 +295,7 @@ export const actCoordinator = async (deps: Deps, request: RefreshRequest): Promi
   if (latest.value.state !== 'valid' || latest.value.sessionId !== seen.value.sessionId) {
     return fault(failure(`the ${roles.coordinator} session id changed before the stop`).error);
   }
-  const fresh = requireLineAfterStart(latest.value.line[keys.eventAt] ?? '', older.value, AGAIN);
+  const fresh = requireLineAfterStart(latest.value.line[keys.eventAt] ?? '', older.value, AGAIN, 'inclusive');
   if (!fresh.ok) return fault(fresh.error);
   if (!coordinatorIdle(latest.value.line, marked.value)) {
     const cleared = await saved(quiet, request, { kind: 'clear-acting' });

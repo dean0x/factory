@@ -48,7 +48,7 @@ export interface StopRequest {
    * for any value.
    */
   readonly allowed?: readonly StopCase[];
-  /** For a planned restart, only this process and an idle report from its lifetime qualify. */
+  /** For a planned restart, the target PID and the first millisecond of its reported start second. */
   readonly process?: { readonly pid: number; readonly startMs: number };
   /** The command that a person runs again after a refusal by `allowed`, without the program name. Default: the stop command of the worker. */
   readonly again?: string;
@@ -248,7 +248,7 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   if (request.process !== undefined) {
     if (row.dead || row.pid !== request.process.pid) return changed();
     if (seen.value.state === 'valid') {
-      const fresh = requireLineAfterStart(seen.value.line.event_at ?? '', request.process.startMs, request.again ?? again);
+      const fresh = requireLineAfterStart(seen.value.line.event_at ?? '', request.process.startMs, request.again ?? again, 'inclusive');
       if (!fresh.ok) return fresh;
     }
   }

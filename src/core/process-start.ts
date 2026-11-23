@@ -10,8 +10,8 @@ import { toolNames } from './tools.js';
  *   service, a resume of a virtual machine) does not move the start of a process that runs.
  * - On macOS and any other platform it is a point in time in milliseconds since the epoch, from `ps -o lstart=`. `ps` prints it with
  *   1 s resolution, so a slow `ps` call does not move it.
- * This module never reads the clock. The pane check in the workers reads the elapsed time instead (`paneProcessStart`) and keeps its
- * own code.
+ * This module never reads the clock. Refresh reads an absolute UTC start second to compare with hook timestamps.
+ * Reset and watch use the elapsed time instead (`paneProcessStart`).
  */
 
 /**
@@ -36,22 +36,22 @@ const FIRST_FIELD_AFTER_NAME = 3;
 const TICKS_TEXT = /^[0-9]+$/;
 
 /** The milliseconds since the epoch for the text that `ps -o lstart=` prints, or null for text of any other form or a time that does not exist. */
-export const startMsOfLstart = (text: string): number | null => {
+export const startMsOfLstart = (text: string, utc = false): number | null => {
   const match = processStart.lstart.exec(text);
   if (match === null) return null;
   const [, monthName = '', dayText = '', hourText = '', minuteText = '', secondText = '', yearText = ''] = match;
   const month = processStart.months.findIndex((name) => name === monthName);
   const [day, hour, minute, second, year] = [dayText, hourText, minuteText, secondText, yearText].map(Number);
   if (month < 0 || day === undefined || hour === undefined || minute === undefined || second === undefined || year === undefined) return null;
-  const date = new Date(year, month, day, hour, minute, second);
-  // A part out of range rolls over into the next part (the 30th of February becomes March), so each part must come back as it went in.
+  const date = utc ? new Date(Date.UTC(year, month, day, hour, minute, second)) : new Date(year, month, day, hour, minute, second);
+  // Date can roll an out-of-range part into the next part. Check each part against the input.
   const sameParts =
-    date.getFullYear() === year &&
-    date.getMonth() === month &&
-    date.getDate() === day &&
-    date.getHours() === hour &&
-    date.getMinutes() === minute &&
-    date.getSeconds() === second;
+    (utc ? date.getUTCFullYear() : date.getFullYear()) === year &&
+    (utc ? date.getUTCMonth() : date.getMonth()) === month &&
+    (utc ? date.getUTCDate() : date.getDate()) === day &&
+    (utc ? date.getUTCHours() : date.getHours()) === hour &&
+    (utc ? date.getUTCMinutes() : date.getMinutes()) === minute &&
+    (utc ? date.getUTCSeconds() : date.getSeconds()) === second;
   const ms = date.getTime();
   return sameParts && ms >= 0 ? ms : null;
 };
@@ -74,13 +74,21 @@ export const startMsOfStat = (text: string): number | null => {
 
 const unreadable = (pid: number, reason: string): string => `cannot read the start of the process ${pid}: ${reason}`;
 
-const startFromPs = async (deps: Deps, pid: number): Promise<Result<number, string>> => {
-  const ran = await deps.run(toolNames.ps, ['-o', 'lstart=', '-p', String(pid)], { timeoutMs: processStart.timeoutMs });
+const startFromPs = async (deps: Deps, pid: number, utc = false): Promise<Result<number, string>> => {
+  const args = ['-o', 'lstart=', '-p', String(pid)];
+  const options = { timeoutMs: processStart.timeoutMs };
+  const ran = utc
+    ? await deps.run(toolNames.env, ['TZ=UTC0', toolNames.ps, ...args], options)
+    : await deps.run(toolNames.ps, args, options);
   if (!ran.ok) return err(ran.error.message);
   if (ran.value.exitCode !== 0) return err(unreadable(pid, `ps ended with code ${ran.value.exitCode}`));
-  const start = startMsOfLstart(ran.value.stdout);
+  const start = startMsOfLstart(ran.value.stdout, utc);
   return start === null ? err(unreadable(pid, 'ps gave text of another form')) : ok(start);
 };
+
+/** The whole start second as Unix milliseconds. UTC prevents ambiguity at a local clock change. */
+export const processStartSecondOf = async (deps: Deps, pid: number): Promise<Result<number, string>> =>
+  Number.isSafeInteger(pid) && pid > 0 ? startFromPs(deps, pid, true) : err(unreadable(pid, 'it is not a pid'));
 
 const startFromStat = async (deps: Deps, pid: number): Promise<Result<number, string>> => {
   const read = await deps.fs.readTextLimited(`/proc/${pid}/stat`, MAX_STAT_BYTES);

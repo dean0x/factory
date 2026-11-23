@@ -102,6 +102,7 @@ const make = (setup: Setup = {}): Made => {
 
 interface Seed {
   readonly event?: HookEvent | null;
+  readonly eventAt?: string;
   /** The session marker of the line. Null: the line has none. Default: alpha. */
   readonly marker?: string | null;
   /** False: the worker has no pointer. */
@@ -127,7 +128,7 @@ const seed = async (deps: FakeDeps, change: Seed = {}): Promise<void> => {
     schema: schemaIds.lastSeen,
     session_id: SESSION,
     event,
-    event_at: event === null ? null : AT,
+    event_at: event === null ? null : (change.eventAt ?? AT),
     context_pct: event === null ? 40 : null,
     pct_at: event === null ? AT : null,
     ...(marker === null ? {} : { session_marker: marker }),
@@ -404,11 +405,21 @@ describe('worker stop: only the cases that the caller allows', () => {
     expect(made.deps.terminated).toEqual([PID]);
   });
 
-  it('does not use an idle report from before the planned process start', async () => {
+  it('uses an idle report exactly at the reported start second', async () => {
+    const made = make();
+    const start = '2030-01-02T03:04:05.000Z';
+    await seed(made.deps, { eventAt: start });
+    const result = await stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', allowed: ['idle'],
+      process: { pid: PID, startMs: Date.parse(start) }, again: 'refresh' });
+    expect(result).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'idle' } });
+    expect(made.deps.terminated).toEqual([PID]);
+  });
+
+  it('does not use an idle report from the second before the planned process start', async () => {
     const made = make();
     await seed(made.deps);
     const result = await stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', allowed: ['idle'],
-      process: { pid: PID, startMs: Date.parse(AT) + 1000 }, again: 'refresh' });
+      process: { pid: PID, startMs: Date.parse('2030-01-02T03:04:06.000Z') }, again: 'refresh' });
     expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('not later than the start'), hint: expect.stringContaining('factory refresh') } });
     expect(made.deps.terminated).toEqual([]);
     expect(killed(made)).toEqual([]);

@@ -37,6 +37,11 @@ const value = <T>(result: CliResult<T>): T => {
 const hook = async (deps: FakeDeps, session: string, marker: string, event: HookEvent) =>
   value(await writeLastSeen(deps, HOME, session, { kind: 'event', event }, marker));
 
+const psStart = (date: Date): string => {
+  const [weekday, day, month, year, time] = date.toUTCString().replace(',', '').split(' ');
+  return `${weekday} ${month} ${day} ${time} ${year}\n`;
+};
+
 const workerPane = (id: string, pid: number): PaneFixture => ({
   session: NODE, pid, options: { '@worker': id }, command: launchWordsOf(HOME, id),
 });
@@ -85,7 +90,9 @@ const make = async (setup: Setup = {}) => {
       const override = await onRun(call);
       if (override !== undefined) return override;
       if (command === 'ps' && args[1] === 'lstart=') return exited(0, 'Wed Jan  2 03:00:00 2030\n');
-      if (command === 'ps' && args[1] === 'etime=') return exited(0, Number(args[3]) === setup.newProcess ? '00:00\n' : '08:00:00\n');
+      if (command === 'env' && args[0] === 'TZ=UTC0' && args[2] === '-o' && args[3] === 'lstart=') {
+        return exited(0, Number(args[5]) === setup.newProcess ? psStart(base.now()) : 'Wed Jan  2 03:00:00 2030\n');
+      }
       if (command !== 'tmux') return missingProgram(command);
       if (args[0] === 'respawn-pane') {
         trace.push('respawn');
@@ -210,12 +217,30 @@ describe('refresh runner', () => {
     expect(record.outcomes).toContainEqual(skipped);
   });
 
+  it('resumes an idle worker whose only report is SessionStart in its start second', async () => {
+    const lab = await make({ events: { alpha: 'SessionStart' } });
+    value(await cancelRefreshRun(lab.deps, HOME));
+    lab.deps.advance(900);
+    const record = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }, {
+      workerIds: ['alpha'], skipped: [],
+    }));
+    lab.deps.advance(500);
+    lab.onRun(async ({ command, args }) => {
+      if (args.at(-1) !== String(WORKER_PID)) return undefined;
+      if (command === 'env' && args.includes('lstart=')) return exited(0, 'Wed Jan  2 03:04:05 2030\n');
+      return undefined;
+    });
+    const result = value(await runRefresh(lab.deps, { ...lab.request, token: record.token }));
+    expect(result.outcomes).toContainEqual({ role: 'worker', id: 'alpha', status: 'resumed' });
+    expect(lab.deps.terminated).toContain(WORKER_PID);
+  });
+
   it('leaves a worker pending if it turns busy just before the idle-only stop', async () => {
     const lab = await make();
     value(await claimed(lab));
     const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
     lab.onRun(async ({ command, args }) => {
-      if (command === 'ps' && args[1] === 'etime=') await hook(lab.deps, ALPHA, 'alpha', 'PreToolUse');
+      if (command === 'env' && args.includes('lstart=')) await hook(lab.deps, ALPHA, 'alpha', 'PreToolUse');
       return undefined;
     });
     expect(value(await actWorker(lab.deps, lab.request, 'alpha', poll.panes))).toBeNull();
@@ -370,13 +395,16 @@ describe('refresh runner', () => {
     });
     lab.deps.advance(1000);
     const record = await finish(lab);
-    expectFault(record, pid === WORKER_PID ? 'alpha' : NODE, 'started after', 'factory refresh');
+    expectFault(record, pid === WORKER_PID ? 'alpha' : NODE, 'cannot confirm the pane process started before', 'factory refresh');
     expect(lab.deps.terminated).not.toContain(pid);
   });
 
   it('does not stop a coordinator on an idle report from an earlier process', async () => {
     const lab = await make({ events: {} });
     lab.deps.advance(10 * 60 * 60 * 1000);
+    const coordinatorStart = psStart(new Date(lab.deps.now().getTime() - 60_000));
+    lab.onRun(async ({ command, args }) =>
+      command === 'env' && args.at(-1) === String(COORDINATOR_PID) ? exited(0, coordinatorStart) : undefined);
     const run = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }));
     const result = value(await runRefresh(lab.deps, { ...lab.request, token: run.token }));
     expectFault(result, NODE, 'not later than the start', 'factory refresh');
@@ -386,7 +414,7 @@ describe('refresh runner', () => {
   it('does not stop a coordinator that turns busy before its launch words are ready', async () => {
     const lab = await make({ events: {} });
     lab.onRun(async ({ command, args }) => {
-      if (command === 'ps' && args[1] === 'etime=') await hook(lab.deps, COORDINATOR, NODE, 'PreToolUse');
+      if (command === 'env' && args.includes('lstart=')) await hook(lab.deps, COORDINATOR, NODE, 'PreToolUse');
       return undefined;
     });
     expectFault(await finish(lab), NODE, 'not idle', 'factory refresh');
