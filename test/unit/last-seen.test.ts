@@ -7,6 +7,7 @@ import {
   parsePercent,
   promptStateOf,
   readLastSeen,
+  readOwnCoordinatorResume,
   readOwnCoordinatorSession,
   readOwnLastSeen,
   readWorkerLastSeen,
@@ -60,6 +61,11 @@ const errorOf = <T>(result: CliResult<T>): { kind: string; message: string } => 
 };
 
 const snapshot = (deps: FakeDeps): string => JSON.stringify([...deps.files.entries()].sort()) + [...deps.dirs].sort().join(',');
+
+const addWorker = async (deps: FakeDeps, id: string): Promise<void> => {
+  const made = await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${HOME}/work-copies/web/${id}`, branch: `worker/${id}` });
+  if (!made.ok) throw new Error(made.error.message);
+};
 
 describe('the names of the last-seen line', () => {
   it('puts the file in the heartbeat folder below the run-time folder, named by the session id', () => {
@@ -723,6 +729,25 @@ describe('removeLastSeen (the free of a worker)', () => {
 });
 
 describe('promptStateOf', () => {
+  it.each([
+    ['startup', 'prompt'], ['resume', 'prompt'], ['clear', 'prompt'], ['compact', 'busy'], [undefined, 'prompt'],
+  ] as const)('reads a session start with source %s as %s', async (source, state) => {
+    const deps = createFakeDeps();
+    seedLine(deps, { event: 'SessionStart', event_at: T0, ...(source === undefined ? {} : { start_source: source }) });
+    const read = await readValue(deps);
+    expect(read.state === 'valid' ? promptStateOf(read.line) : read.state).toBe(state);
+  });
+
+  it('keeps the start source on a percent write, and replaces it with the event', async () => {
+    const deps = createFakeDeps();
+    seedLine(deps, { event: 'SessionStart', event_at: T0, start_source: 'compact' });
+    await writeLastSeen(deps, HOME, ID, percent(30));
+    expect(storedLine(deps)).toMatchObject({ event: 'SessionStart', start_source: 'compact', context_pct: 30 });
+    await writeLastSeen(deps, HOME, ID, event('Stop'));
+    expect(storedLine(deps)).toMatchObject({ event: 'Stop', context_pct: 30 });
+    expect(storedLine(deps)).not.toHaveProperty('start_source');
+  });
+
   const typedLine = (name: HookEvent | null): LastSeen => ({
     schema: schemaIds.lastSeen,
     session_id: ID,
@@ -733,7 +758,6 @@ describe('promptStateOf', () => {
   });
 
   it.each([
-    ['SessionStart', 'prompt'],
     ['Stop', 'prompt'],
     ['UserPromptSubmit', 'busy'],
     ['PreCompact', 'busy'],
@@ -938,11 +962,6 @@ describe('the session pointer of a worker', () => {
     const NODE_ID = 'demo';
     const MARKED_BY_WORKER = { session_marker: WORKER };
 
-    const addWorker = async (deps: FakeDeps, id: string): Promise<void> => {
-      const made = await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${HOME}/work-copies/web/${id}`, branch: `worker/${id}` });
-      if (!made.ok) throw new Error(made.error.message);
-    };
-
     const seedSession = (deps: FakeDeps, session: string, fields: Record<string, unknown> = {}): void => {
       deps.seed(`${FOLDER}/${session}`, `${JSON.stringify(line({ session_id: session, event: 'Stop', event_at: T0, ...fields }))}\n`);
     };
@@ -1063,12 +1082,6 @@ describe('the session pointer of the coordinator', () => {
     deps.seed(`${FOLDER}/${session}`, `${JSON.stringify(line({ session_id: session, event: 'Stop', event_at: T0, ...fields }))}\n`);
   };
 
-  const readOwn = async (deps: Deps): Promise<CoordinatorSessionRead> => {
-    const result = await readOwnCoordinatorSession(deps, HOME, NODE_ID);
-    if (!result.ok) throw new Error(`the read failed: ${result.error.message}`);
-    return result.value;
-  };
-
   const withRuntime = (links: Record<string, string> = {}): FakeDeps => {
     const deps = createFakeDeps({ links });
     deps.seedDir(layoutOf(HOME).stateDir);
@@ -1114,7 +1127,16 @@ describe('the session pointer of the coordinator', () => {
     });
   });
 
-  describe('readOwnCoordinatorSession', () => {
+  describe.each([
+    ['readOwnCoordinatorSession', readOwnCoordinatorSession],
+    ['readOwnCoordinatorResume', readOwnCoordinatorResume],
+  ] as const)('%s', (_name, readCoordinator) => {
+    const readOwn = async (deps: Deps): Promise<CoordinatorSessionRead> => {
+      const result = await readCoordinator(deps, HOME, NODE_ID);
+      if (!result.ok) throw new Error(`the read failed: ${result.error.message}`);
+      return result.value;
+    };
+
     it('gives absent when there is no pointer', async () => {
       expect(await readOwn(withRuntime())).toEqual({ state: 'absent' });
     });
@@ -1199,9 +1221,9 @@ describe('the session pointer of the coordinator', () => {
       expect(await readOwn(deps)).toMatchObject({ state: 'not-owned', reason: expect.stringContaining(WORKER) });
     });
 
-    it('does not read the pointer of a worker', async () => {
+    it('does not use a worker pointer when there is no coordinator pointer', async () => {
       const deps = withRuntime();
-      deps.seedDir(workerPathsOf(HOME, WORKER).dir);
+      await addWorker(deps, WORKER);
       deps.seed(workerPathsOf(HOME, WORKER).lastSessionFile, `${ID}\n`);
       seedSession(deps, ID, { session_marker: NODE_ID });
       expect(await readOwn(deps)).toEqual({ state: 'absent' });
@@ -1210,7 +1232,65 @@ describe('the session pointer of the coordinator', () => {
     it('fails when the file system fails', async () => {
       const deps = withRuntime();
       const broken: Deps = { ...deps, fs: { ...deps.fs, lstat: async () => failure('cannot stat: EIO') } };
-      expect(errorOf(await readOwnCoordinatorSession(broken, HOME, NODE_ID)).message).toContain('EIO');
+      expect(errorOf(await readCoordinator(broken, HOME, NODE_ID)).message).toContain('EIO');
+    });
+  });
+
+  describe('readOwnCoordinatorResume worker pointers', () => {
+    const withCoordinator = async (): Promise<FakeDeps> => {
+      const deps = withRuntime();
+      await writeCoordinatorSession(deps, HOME, ID);
+      seedSession(deps, ID, { session_marker: NODE_ID });
+      await addWorker(deps, 'alpha');
+      await writeWorkerSession(deps, HOME, 'alpha', NEXT);
+      return deps;
+    };
+
+    it('accepts an owned session when workers point to a different session', async () => {
+      const deps = await withCoordinator();
+      expect(await readOwnCoordinatorResume(deps, HOME, NODE_ID)).toMatchObject({ ok: true, value: { state: 'valid', sessionId: ID } });
+    });
+
+    it.each([WORKER, NODE_ID])('refuses a session that worker %s also names', async (workerId) => {
+      const deps = await withCoordinator();
+      await addWorker(deps, workerId);
+      await writeWorkerSession(deps, HOME, workerId, ID);
+      expect(await readOwnCoordinatorSession(deps, HOME, NODE_ID)).toMatchObject({ ok: true, value: { state: 'valid', sessionId: ID } });
+      expect(await readOwnCoordinatorResume(deps, HOME, NODE_ID)).toEqual({
+        ok: true,
+        value: { state: 'not-owned', reason: `the pointer of the worker ${workerId} names the same session` },
+      });
+    });
+
+    it('refuses a shared pointer in a worker folder without a record', async () => {
+      const deps = await withCoordinator();
+      deps.seedDir(workerPathsOf(HOME, WORKER).dir);
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      expect(await readOwnCoordinatorResume(deps, HOME, NODE_ID)).toMatchObject({
+        ok: true, value: { state: 'not-owned', reason: `the pointer of the worker ${WORKER} names the same session` },
+      });
+    });
+
+    it('does not infer ownership from an unreadable worker pointer', async () => {
+      const deps = await withCoordinator();
+      const pointer = workerPathsOf(HOME, 'alpha').lastSessionFile;
+      const linked: Deps = { ...deps, fs: { ...deps.fs, lstat: async (path) => path === pointer ? { ok: true, value: 'link' } : deps.fs.lstat(path) } };
+      expect(await readOwnCoordinatorResume(linked, HOME, NODE_ID)).toMatchObject({
+        ok: false, error: {
+          message: expect.stringContaining('cannot check the session pointer: the pointer is a link'),
+          hint: expect.stringContaining('"factory worker list"'),
+        },
+      });
+    });
+
+    it('fails when a worker pointer cannot be read', async () => {
+      const deps = await withCoordinator();
+      const pointer = workerPathsOf(HOME, 'alpha').lastSessionFile;
+      const broken: Deps = {
+        ...deps,
+        fs: { ...deps.fs, lstat: async (path) => (path === pointer ? failure('cannot stat: EIO') : deps.fs.lstat(path)) },
+      };
+      expect(await readOwnCoordinatorResume(broken, HOME, NODE_ID)).toEqual(failure('cannot stat: EIO'));
     });
   });
 });

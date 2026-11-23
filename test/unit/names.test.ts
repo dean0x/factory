@@ -60,6 +60,9 @@ import {
   powerSources,
   program,
   queueWords,
+  refreshRunPath,
+  refreshText,
+  refreshWait,
   relayedMarker,
   requestCommands,
   requestGroups,
@@ -88,6 +91,7 @@ import {
   workItemDisplayKeys,
   workerRowKeys,
 } from '../../src/names.js';
+import { stopCaseRefused, type FailureCode } from '../../src/cli/errors.js';
 import { isSlug } from '../../src/config/primitives.js';
 import { projectPathIssue } from '../../src/core/project-path.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
@@ -1565,6 +1569,50 @@ describe('the names of the sessions', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).not.toMatch(/secret/i);
     }
+  });
+});
+
+describe('the names and limits of refresh', () => {
+  it('names the command, its flags and its tmux window', () => {
+    expect(commands.refresh).toBe('refresh');
+    expect(flags).toMatchObject({ result: 'result', cancel: 'cancel', runner: 'runner' });
+    expect(tmuxNames.windowRefresh).toBe('refresh');
+  });
+
+  it('names the output and run record schemas', () => {
+    expect(schemaIds.refresh).toBe(`${program}.refresh/v1`);
+    expect(schemaIds.refreshRun).toBe(`${program}.refresh-run/v1`);
+  });
+
+  it('puts the run record in the runtime folder', () => {
+    expect(files.refreshRun).toBe('refresh-run.json');
+    expect(refreshRunPath).toBe('.factory/state/refresh-run.json');
+  });
+
+  it('sets the idle and claim waits and the token size', () => {
+    expect(refreshWait).toEqual({
+      intervalMs: 10_000,
+      idleCapMs: 3_600_000,
+      claimChecks: 10,
+      claimIntervalMs: 1_000,
+      tokenBytes: 16,
+    });
+  });
+
+  it('names factory as the source, approves nothing and asks the session to start its watches and crons again', () => {
+    expect(refreshText).toEqual({
+      continue: 'factory: this session was restarted by factory refresh to apply an update. ' +
+        'This line is not owner input, approves nothing and answers no open question. ' +
+        'Continue the task you had and start your watches and crons again. Run factory refresh --result to read the outcome.',
+    });
+  });
+
+  it('limits the continue text to 300 printable ASCII characters that are valid in the launch prompt', () => {
+    expect(refreshText).toEqual({ continue: expect.stringMatching(/^(?!-)(?!.*[;'"`#$\\%{}~])[ -~]{1,300}$/) });
+  });
+
+  it('gives a refused stop case its own failure code', () => {
+    expect(stopCaseRefused satisfies FailureCode).toBe('stop-case-refused');
   });
 });
 

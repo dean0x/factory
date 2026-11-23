@@ -1022,6 +1022,14 @@ const launchCommandRows: readonly GuardRow[] = [
     sites: at('src/launch/tmux.ts', 'literalWord', 'paneTarget'),
   }),
   alwaysOnRow({
+    id: 'respawn-launch-words',
+    guard: guardIds.launchCommands,
+    name: 'The runner and a pane restart pass a program and at least one argument as separate words, without a shell',
+    applies: commands.refresh,
+    harm: true,
+    sites: at('src/launch/tmux.ts', 'respawnPaneArgs', 'runnerWindowArgs'),
+  }),
+  alwaysOnRow({
     id: 'run-shell-limits',
     guard: guardIds.launchCommands,
     name: 'The text of a background shell for a summon timer is not empty, has at most 1024 characters and holds no control character',

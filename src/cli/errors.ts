@@ -23,8 +23,14 @@ export const gitConfigUnreadable = 'git-config-unreadable';
 /** The code of a resume that is not confirmed because its pane waits on a folder trust question. */
 export const trustQuestionWait = 'trust-question-wait';
 
+/** The code of a stop that the allowed stop cases do not permit. */
+export const stopCaseRefused = 'stop-case-refused';
+
+/** The code of a pane read that confirms the pane is absent. */
+export const paneNotFound = 'pane-not-found';
+
 /** An error that a caller can tell apart from the other errors without its text. */
-export type FailureCode = typeof gitConfigUnreadable | typeof trustQuestionWait;
+export type FailureCode = typeof gitConfigUnreadable | typeof trustQuestionWait | typeof stopCaseRefused | typeof paneNotFound;
 
 export type CliResult<T> = Result<T, CliError>;
 

@@ -1,4 +1,4 @@
-import { failure, notReady, usageError, type CliResult } from '../cli/errors.js';
+import { codedFailure, failure, notReady, stopCaseRefused, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { guardValuesFor, isGuardOn } from '../guards/effective.js';
@@ -9,6 +9,7 @@ import {
   commandText,
   env,
   guardIds,
+  lastSeen,
   roles,
   stopCaseOfState,
   stopFallback,
@@ -21,6 +22,7 @@ import {
 import { promptStateOf, readOwnLastSeen, type OwnSessionRead } from './last-seen.js';
 import { requireBoundPane, type BoundPane } from './panes.js';
 import { closeWorkerPane, readWorkerPanes } from './slot.js';
+import { requireLineAfterStart } from './session-checks.js';
 
 /**
  * The stop of one worker (design 4.11, docs/session-stop.md): `worker stop` and, later, shutdown, restart, reboot and dismiss
@@ -47,6 +49,10 @@ export interface StopRequest {
    * for any value.
    */
   readonly allowed?: readonly StopCase[];
+  /** For a planned restart, the target PID and the first millisecond of its reported start second. */
+  readonly process?: { readonly pid: number; readonly startMs: number };
+  /** Refuse a session start with no recorded source in the final check for refresh. */
+  readonly startSource?: 'required';
   /** The command that a person runs again after a refusal by `allowed`, without the program name. Default: the stop command of the worker. */
   readonly again?: string;
 }
@@ -133,7 +139,8 @@ const sessionWords: Readonly<Record<StopCase, { readonly now: string; readonly w
 const requireAllowedCase = (workerId: string, stopCase: StopCase, allowed: readonly StopCase[] | undefined, again: string): CliResult<void> =>
   allowed === undefined || allowed.includes(stopCase)
     ? ok(undefined)
-    : failure(
+    : codedFailure(
+        stopCaseRefused,
         `the ${roles.worker} ${workerId} ${sessionWords[stopCase].now}`,
         `Wait until it ${allowed.map((allowedCase) => sessionWords[allowedCase].wait).join(' or ')}. Run "${commandText(again)}" again.`,
       );
@@ -231,7 +238,8 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const single = requireOneLivePane(workerId, live, again);
   if (!single.ok) return single;
   const target = single.value;
-  if (target === null) return closeEnded(deps, session, dead.map((row) => row.paneId), guards);
+  const changed = () => failure(`the ${roles.worker} pane process changed before the stop`, `Check the pane. Run "${commandText(request.again ?? again)}" again.`);
+  if (target === null) return request.process === undefined ? closeEnded(deps, session, dead.map((row) => row.paneId), guards) : changed();
   const other = requireOtherCallerPane(deps, workerId, target.paneId, guards);
   if (!other.ok) return other;
 
@@ -240,8 +248,23 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const read = await requireBoundPane(deps, { home, paneId: target.paneId, workerId, again });
   if (!read.ok) return read;
   const row = read.value;
+  if (request.process !== undefined) {
+    if (row.dead || row.pid !== request.process.pid) return changed();
+    if (seen.value.state === 'valid') {
+      const fresh = requireLineAfterStart(seen.value.line.event_at ?? '', request.process.startMs, request.again ?? again, 'inclusive');
+      if (!fresh.ok) return fresh;
+    }
+  }
   if (row.dead) return closeEnded(deps, session, [row.paneId], guards);
 
+  if (request.startSource === 'required' && seen.value.state === 'valid' &&
+    seen.value.line[lastSeen.keys.event] === 'SessionStart' && promptStateOf(seen.value.line, request.startSource) === null) {
+    return codedFailure(
+      stopCaseRefused,
+      `the ${roles.worker} ${workerId} has a session start with no known source`,
+      `Wait until its next hook event. Run "${commandText(request.again ?? again)}" again.`,
+    );
+  }
   const known = requireStopCase(workerId, seen.value, row);
   if (!known.ok) return known;
   const stopCase = known.value;

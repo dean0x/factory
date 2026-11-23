@@ -56,12 +56,15 @@ export const paneProcessStart = async (deps: Deps, pid: number, again: string): 
 };
 
 /**
- * The line check: the time of the last-seen line must be strictly later than the start of the process. A pid that tmux used again
- * gives a later start, so a line of the earlier process is refused. A time that is no time is refused too (exit 3).
+ * Compare the last-seen time with the process start. Reset and watch use a strict bound on the elapsed-time estimate.
+ * Refresh uses the first millisecond of the start second from `ps`. A report in that second counts, but an earlier second does not.
+ * Refuse an invalid timestamp in either case (exit 3).
  */
-export const requireLineAfterStart = (eventAt: string, start: number, again: string): CliResult<void> => {
+export const requireLineAfterStart = (
+  eventAt: string, start: number, again: string, boundary: 'strict' | 'inclusive' = 'strict',
+): CliResult<void> => {
   const at = Date.parse(eventAt);
-  if (Number.isFinite(at) && at > start) return ok(undefined);
+  if (Number.isFinite(at) && (at > start || (boundary === 'inclusive' && at === start))) return ok(undefined);
   return notReady(
     'the last-seen line is not later than the start of the session',
     `Wait until the session reports, or look at the pane in tmux. Then run "${commandText(again)}" again.`,

@@ -475,9 +475,11 @@ const nodeFs: Fs = {
   copyTree: (from, to, skip) => guard('copy', from, () => copyEntry(from, to, skip, 0)),
 };
 
-/** The environment of a program: the one of this process as it is, or with the C locale and no prompt of git. */
-const runEnvOf = (options: RunOptions | undefined): NodeJS.ProcessEnv =>
-  options?.inheritEnv === true ? process.env : { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' };
+/** The child environment, with the C locale and no git prompt by default. The caller can select UTC. */
+const runEnvOf = (options: RunOptions | undefined): NodeJS.ProcessEnv => {
+  const base = options?.inheritEnv === true ? process.env : { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' };
+  return options?.utc === true ? { ...base, TZ: 'UTC0' } : base;
+};
 
 /** Write the text to the standard input of the program, then end that input. With no text, the input stays as it is. */
 const feedInput = (stdin: Writable | null, input: string | undefined): void => {

@@ -661,6 +661,15 @@ describe('the bind right before the keys, and the line of the session (refusals 
     expect(error.hint).toContain(AGAIN_CLEAR);
   });
 
+  it('refuses a compact start as busy and sends no keys', async () => {
+    const world = await make();
+    const line = JSON.parse(lineText('SessionStart', NOW - MINUTE));
+    world.deps.seed(lineFile(SESSION), JSON.stringify({ ...line, start_source: 'compact' }));
+    const error = await refused(world, 'Wait until it waits at its prompt');
+    expect(codeOf(error)).toBe(1);
+    expect(error.message).toContain('busy');
+  });
+
   it('a session that waits at a dialog is exit 1, and the remedy says to answer the dialog', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText('Notification', NOW - MINUTE));
@@ -767,7 +776,6 @@ describe('the guard of the pane safety', () => {
     ['no resume notes', RESUME_FILE, {}, (world: World) => void world.deps.files.delete(RESUME_FILE)],
     ['a busy session', 'busy', {}, (world: World) => world.deps.seed(lineFile(SESSION), lineText('UserPromptSubmit', NOW - MINUTE))],
     ['a line from before the start of the pane process', 'not later than the start', {}, (world: World) => world.deps.seed(lineFile(SESSION), lineText('Stop', START - 1))],
-    ['a numbered list of choices on the screen', 'numbered list', { screen: DIALOG_SCREEN }, () => undefined],
     ['a pane in a mode of tmux', 'is in a mode of tmux', { tmux: { panesInMode: [PANE] } }, () => undefined],
   ];
 
@@ -779,6 +787,26 @@ describe('the guard of the pane safety', () => {
     await change(off);
     valueOf(await compactOff(off));
     expect(off.tmux.typed()).toHaveLength(3);
+  });
+
+  it.each([
+    ['a dialog in the last-seen line', 'waits for an answer', 1, {}, (world: World) => world.deps.seed(lineFile(SESSION), lineText('Notification', NOW - MINUTE))],
+    ['a numbered list of choices on the screen', 'shows a numbered list of choices', 3, { screen: DIALOG_SCREEN }, () => undefined],
+  ] as const)('stops for %s and types no keys with either guard value', async (_name, reason, code, setup, change) => {
+    const on = await make(setup);
+    const off = await make(setup);
+    change(on);
+    change(off);
+    const onResult = await on.reset('compact');
+    const offResult = await compactOff(off);
+    expectNothingTyped(on);
+    expectNothingTyped(off);
+    for (const result of [onResult, offResult]) {
+      const error = errorOf(result);
+      expect(codeOf(error)).toBe(code);
+      expect(error.message).toContain(reason);
+      expect(error.hint).toContain('answer the dialog');
+    }
   });
 
   it('reads no resume notes while the guard is off, and the output names no age of the notes', async () => {

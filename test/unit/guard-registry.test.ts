@@ -237,7 +237,7 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'workersWithoutPane', reason: stoppedReason },
   { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'noPaneWarning', reason: stoppedReason },
   { row: 'machine-warnings', path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'The bounds of the limit values in the config parse, which reads no guard value; makeWorker reads the value.' },
-  { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireLineWithoutDialog', reason: selfResetReason },
+  { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireLineWithoutDialog', reason: 'Takes the value from selfReset and uses it only for the state of the last-seen record, not for a known dialog.' },
   { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireResumeNotes', reason: selfResetReason },
   { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireCoordinatorHooks', reason: selfResetReason },
   { row: 'reset-order', path: 'src/workers/reset.ts', symbol: 'requireOutOfView', reason: resetReason },
@@ -757,6 +757,7 @@ describe('the rows of the registry', () => {
         'child-no-shell',
         'agent-claude-only',
         'tmux-quoting',
+        'respawn-launch-words',
         'run-shell-limits',
       ],
       'machine-limits': [
@@ -844,6 +845,7 @@ describe('the rows of the registry', () => {
         'pane-binding',
         'typed-line-form',
         'typed-line',
+        'reset-dialog',
         'self-reset-checks',
         'reset-order',
         'stop-term-only',
@@ -856,6 +858,7 @@ describe('the rows of the registry', () => {
         'held-pane-stays',
         'worker-resume-checks',
         'resume-owned-session',
+        'refresh-run-bounds',
         'worker-idle-text',
       ],
       'permission-mode': ['auto-permission-mode', 'no-permission-skip-setting', 'settings-check-fails-closed', 'permission-mode-text'],
@@ -982,13 +985,23 @@ describe('the rows of the registry', () => {
     });
   });
 
+  it.each(['resume-owned-session', 'proxy-down-stops'])('lists refresh in the scope of %s', (id) => {
+    expect(software.rows.find((row) => row.id === id)?.applies).toMatch(/\brefresh\b/);
+  });
+
+  it('cites the coordinator resume proof in the owned session row', () => {
+    expect(software.rows.find((row) => row.id === 'resume-owned-session')?.sites).toContainEqual({
+      path: 'src/workers/last-seen.ts', symbol: 'readOwnCoordinatorResume',
+    });
+  });
+
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(237);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(240);
     expect(softwareRecipe.guardRows).toHaveLength(104);
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
-    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(177);
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(180);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
@@ -1018,7 +1031,7 @@ describe('the rows of the registry', () => {
       'hook-runtime': ['hook-never-fails', 'hook-silent-outside', 'hook-session-identity', 'statusline-command', 'statusline-identity'],
       'launch-commands': [
         'launch-values', 'launch-fixed-argv', 'launch-env-clean', 'launch-folder-bounds', 'worker-launch-bounds', 'work-copy-exact-path',
-        'child-no-shell', 'agent-claude-only', 'tmux-quoting', 'run-shell-limits',
+        'child-no-shell', 'agent-claude-only', 'tmux-quoting', 'respawn-launch-words', 'run-shell-limits',
       ],
       'machine-limits': ['lock-bounds', 'lock-place'],
       'task-files': [
@@ -1044,8 +1057,8 @@ describe('the rows of the registry', () => {
         'answered-row-not-proof-text', 'settle-relay-text',
       ],
       'pane-safety': [
-        'own-tmux-session', 'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'stop-term-only',
-        'stop-target-bind', 'signal-limits', 'session-exact-name', 'slot-summon-marks', 'resume-owned-session',
+        'own-tmux-session', 'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'reset-dialog',
+        'stop-term-only', 'stop-target-bind', 'signal-limits', 'session-exact-name', 'slot-summon-marks', 'resume-owned-session', 'refresh-run-bounds',
       ],
       'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],

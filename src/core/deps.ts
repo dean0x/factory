@@ -167,6 +167,8 @@ export interface RunOptions {
    * would pass that environment on to them.
    */
   readonly inheritEnv?: boolean;
+  /** Set the time zone to UTC in the child process only. */
+  readonly utc?: true;
   /**
    * The text for the standard input of the program. It is written as UTF-8, and then the input ends. A program that
    * ends before it reads all of the text is no error. The time limit applies as before. By default the program gets no text.

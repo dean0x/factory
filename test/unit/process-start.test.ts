@@ -1,22 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
-import { processStartOf, startMsOfLstart } from '../../src/core/process-start.js';
+import { processStartOf, processStartSecondOf, startMsOfLstart } from '../../src/core/process-start.js';
 import { createFakeDeps, exited, missingProgram, type RunHandler } from '../helpers/fake-deps.js';
 import { procStatPath, procStatText } from '../helpers/ps-fake.js';
 
-/** The time of 2026-11-11 11:06:58 in the zone of the machine: `ps` prints the start in local time. */
-const LOCAL_START_MS = new Date(2026, 10, 11, 11, 6, 58).getTime();
+const START_MS = Date.UTC(2026, 10, 11, 11, 6, 58);
 
 const withPs = (run: RunHandler) => createFakeDeps({ run, os: 'darwin' });
 
 describe('process start: the parse of the lstart text', () => {
-  it('gives the local time of the text in milliseconds', () => {
-    expect(startMsOfLstart('Wed Nov 11 11:06:58 2026\n')).toBe(LOCAL_START_MS);
+  it('gives the UTC time of the text in milliseconds', () => {
+    expect(startMsOfLstart('Wed Nov 11 11:06:58 2026\n')).toBe(START_MS);
   });
 
   it('accepts a day with a leading space and the spaces that ps puts after the text', () => {
-    expect(startMsOfLstart('Wed Nov  4 09:05:03 2026    \n')).toBe(new Date(2026, 10, 4, 9, 5, 3).getTime());
+    expect(startMsOfLstart('Wed Nov  4 09:05:03 2026    \n')).toBe(Date.UTC(2026, 10, 4, 9, 5, 3));
   });
 
   it.each([
@@ -36,10 +35,30 @@ describe('process start: the parse of the lstart text', () => {
 describe('process start: the read of one pid', () => {
   it('asks ps for the start of the pid with a time limit and the default environment (the C locale)', async () => {
     const deps = withPs(() => exited(0, 'Wed Nov 11 11:06:58 2026\n'));
-    expect(await processStartOf(deps, 321)).toEqual({ ok: true, value: LOCAL_START_MS });
+    expect(await processStartOf(deps, 321)).toEqual({ ok: true, value: START_MS });
     expect(deps.calls).toHaveLength(1);
     expect(deps.calls[0]).toMatchObject({ command: 'ps', args: ['-o', 'lstart=', '-p', '321'], inheritEnv: false });
     expect(deps.calls[0]?.timeoutMs).toBeGreaterThan(0);
+  });
+
+  it.each([processStartSecondOf, processStartOf])('distinguishes both starts in the repeated hour (%s)', async (read) => {
+    vi.stubEnv('TZ', 'America/New_York');
+    try {
+      const utcHours: Readonly<Record<string, string>> = { '321': '05', '322': '06' };
+      const deps: Deps = {
+        ...withPs(() => missingProgram('ps')),
+        run: async (_command, args, options) => {
+          const hour = options?.utc === true ? utcHours[args[3] ?? ''] : '01';
+          return exited(0, `Sun Nov  1 ${hour}:30:00 2026\n`);
+        },
+      };
+      expect([await read(deps, 321), await read(deps, 322)]).toEqual([
+        { ok: true, value: Date.UTC(2026, 10, 1, 5, 30) },
+        { ok: true, value: Date.UTC(2026, 10, 1, 6, 30) },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('does not read the clock, so a slow ps does not move the start', async () => {
@@ -81,7 +100,7 @@ describe('process start: the read on a platform other than Linux', () => {
   it.each(['darwin', 'freebsd', 'win32'])('asks ps on %s, and reads no stat file', async (os) => {
     const deps = createFakeDeps({ os, run: () => exited(0, 'Wed Nov 11 11:06:58 2026\n') });
     deps.seed(procStatPath(321), procStatText(321, 'node', 5));
-    expect(await processStartOf(deps, 321)).toEqual({ ok: true, value: LOCAL_START_MS });
+    expect(await processStartOf(deps, 321)).toEqual({ ok: true, value: START_MS });
     expect(deps.calls).toHaveLength(1);
   });
 });

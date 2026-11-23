@@ -242,16 +242,16 @@ it.each([1, 2])('removes the resume and routine instructions from layer %i when 
 // The coordinator and safety hashes follow the merge and release modes.
 it.each([
   [owner, owner,
-    '39ff53497af3da41fd0310f88c35cd91155dbfc75e8a5eaa7fc5a4a5fb758a2a',
+    '6b1d39aeb48f5aa0f09f5282779be6f1b97503709bcf0f4936ac518a3ad9d611',
     '03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41'],
   [delegated, owner,
-    'b6170b4895534451cf960b23ce7ae6541774748a736af43f22ce20f94527bd72',
+    '81aa7a7d14c48541d774aaa0c7a840ac415f2f6dcf05bafbef4de42e45dd831c',
     'e9ac704b9a1d2d27a1383df7510d755705ca7910d1fab2518a1ed5c7ed53973c'],
   [owner, delegated,
-    'a37997083b3fc94f4ae9770505b17f5ea2d6ce55f1014429a836a99d3e978dfb',
+    '8660a2400fcc809a53a5ce8224d79f6266f1760d93fbcbbbb708f896a8430711',
     '43142523d806d9c7634e6a482661f055ae420e4406312fe93924ed4de187c59d'],
   [delegated, delegated,
-    '729964a74f5faefa156d93a5de2f167009f3e8445ef4ce777022e954f70ea29c',
+    'dfe164733b900bea638bff5e661908d63d2868d6bb721f1e62aa035c2cdeb36f',
     '951bcfac48d42deb37a270018c26164a233b8fa7eeb7314238336f4db18dad59'],
 ] as const)('keeps the base text and block versions with merge %s and release %s when every guard is on',
   (merge, release, coordinatorHash, safetyHash) => {
@@ -267,7 +267,7 @@ it.each([
         ['worker', 5, 'workerFile', 'efd421639502a2c494bf8f5a4b40adb739b7a20517b3446845d0184c198c78cf'],
       ],
       [
-        ['manager', 4, 'claudeFile', '1fc751e1a1500e3673b8c7056c0ba9b8f6592f3da039bc19784ca7d164bf489b'],
+        ['manager', 4, 'claudeFile', 'd42fe6265eebe3518860c31a5ef1584cd204c2cdbd96db720c6d980dc924f875'],
         ['safety', 2, 'claudeFile', safetyHash],
         ['worker', 5, 'workerFile', '55d529e35e679f212fe67dc5b934b9c938b74130ff07f6c13ae88ecf1b6f0214'],
       ],
@@ -1042,6 +1042,10 @@ describe('the resume notes: the section Standing routines', () => {
     const line = resume(name);
     expect(line).toContain('At the start of a session, start only the routines that do not run now.');
     expect(line).toContain('After a compact, start none.');
+  });
+
+  it.each(['coordinator', 'manager'])('counts a refresh resume as a session start for routines in the %s block', (name) => {
+    expect(resume(name)).toContain('A resume after `factory refresh` counts as the start of a session for the routines.');
   });
 
   it.each(['coordinator', 'manager'])('keeps the section when the notes are written again in the %s block', (name) => {

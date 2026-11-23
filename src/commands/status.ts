@@ -3,10 +3,11 @@ import { displayLine, tableLines, type CommandOutput, type OutLine } from '../cl
 import { fileTransport } from '../comms/transport.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, roles, schemaIds, statusWords } from '../names.js';
+import { commands, refreshWords, roles, schemaIds, statusWords } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { readNodeFacts, reportDocOf, type NodeFacts } from '../report/build.js';
 import { writeReportFile } from '../report/outbox.js';
+import { cleanRefreshText, readRefreshRun, refreshActingRemedy, refreshResultCommand } from '../workers/refresh-record.js';
 import { boardRowOf, shownStateOf, type WorkerStatus } from '../workers/status.js';
 import { evidenceOf, type WorkItem, type WorkItemPort } from '../workers/work-items.js';
 import { openBoard } from './board-open.js';
@@ -47,6 +48,27 @@ const refreshReport = async (deps: Deps, home: string, facts: NodeFacts): Promis
   return written.error.kind === 'safety' ? written : notWritten(written.error);
 };
 
+/** The run record adds at most one warning. It does not change the report or the status JSON. */
+const refreshWarning = async (deps: Deps, home: string): Promise<string | null> => {
+  const read = await readRefreshRun(deps, home);
+  if (!read.ok) {
+    const { message, hint } = read.error;
+    return displayLine(`cannot show the refresh run record: ${message}${hint === undefined ? '' : `. ${hint}`}`);
+  }
+  const run = read.value;
+  if (run === null) return null;
+  const { acting, actingRole, fault, outcomes, runId, state, token } = run;
+  const unfinished = state === 'scheduled' || state === 'waiting' || state === 'acting-coordinator';
+  const hasFaults = fault !== null || outcomes.some((outcome) => outcome.status !== 'resumed');
+  const count = outcomes.reduce((total, outcome) => total + (outcome.notices?.length ?? 0), 0);
+  if (!unfinished && state !== 'failed' && !hasFaults && count === 0 && acting === null) return null;
+  const status = unfinished ? `unfinished (${state})` : state;
+  const faults = hasFaults ? ' with faults' : '';
+  const notices = count === 0 ? '' : ` (${count} ${count === 1 ? 'notice' : 'notices'})`;
+  const action = acting === null ? '' : ` Last action: ${actingRole ?? refreshWords.session} ${acting}. ${refreshActingRemedy(run)}`;
+  return cleanRefreshText(`refresh run ${runId}: ${status}${faults}${notices}.${action} Run "${refreshResultCommand}" to see the result.`, token);
+};
+
 /**
  * `status`: each worker with its state, its work item and its idle state. It reads the facts of the node with the one builder of the
  * report (`readNodeFacts`), which reads what `worker list` reads (the registry, one list of the panes and the last-seen line of each
@@ -70,6 +92,7 @@ export const runStatus = async (
   if (!read.ok) return read;
   const refreshed = await refreshReport(deps, home, read.value);
   if (!refreshed.ok) return refreshed;
+  const refresh = await refreshWarning(deps, home);
   const { entries, invalid, running, warnings } = read.value.status;
   return ok({
     lines: entries.length === 0 ? [text(`No ${roles.worker}s yet.`)] : tableLines(Object.values(statusWords.columns), entries.map(cellsOf)),
@@ -91,7 +114,7 @@ export const runStatus = async (
       })),
       invalid,
     },
-    warnings: [...warnings, ...refreshed.value],
+    warnings: [...warnings, ...refreshed.value, ...(refresh === null ? [] : [refresh])],
     failed: false,
   });
 };

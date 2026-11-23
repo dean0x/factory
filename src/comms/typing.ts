@@ -120,10 +120,9 @@ const requireNoMode = async (deps: Deps, pane: string, thenAgain: string, guards
 
 /**
  * One capture of the screen, the last read before the keys: a screen that shows a list of choices is exit 3, because a dialog may
- * take the keys. A failed capture is exit 1 (also for a pane that does not exist). While pane safety is off, nothing is read.
+ * take the keys. A failed capture is exit 1 (also for a pane that does not exist).
  */
-const requireNoChoiceList = async (deps: Deps, pane: string, thenAgain: string, guards: GuardValues): Promise<CliResult<void>> => {
-  if (!isGuardOn(guards, guardIds.paneSafety)) return ok(undefined);
+const requireNoChoiceList = async (deps: Deps, pane: string, thenAgain: string): Promise<CliResult<void>> => {
   const capture = capturePaneArgs(pane);
   if (!capture.ok) return failure(capture.error);
   const screen = await tmuxStep(deps, capture.value);
@@ -145,8 +144,7 @@ const requireNoChoiceList = async (deps: Deps, pane: string, thenAgain: string, 
  * fails (also for a pane that does not exist); a screen that shows a list of choices, which is exit 3, because a dialog may take the
  * keys. The keys go in one tmux run. If the run fails, exactly one clean-up call clears the input line, and the result is exit 1.
  * A mode or a dialog that opens after its read and before the keys is not seen. `guards` are the values of the caller: while pane
- * safety is off, a pane in a mode passes and no screen is read. The line checks, the pane id and an unknown mode answer stop with
- * every value.
+ * safety is off, a pane in a mode passes. The line, pane id, mode answer and screen checks run with every guard value.
  */
 export const typeLine = async (
   deps: Deps,
@@ -161,7 +159,7 @@ export const typeLine = async (
   if (!isPaneId(pane)) return failure('the target of the typed line is not a pane id');
   const noMode = await requireNoMode(deps, pane, thenAgain, guards);
   if (!noMode.ok) return noMode;
-  const noDialog = await requireNoChoiceList(deps, pane, thenAgain, guards);
+  const noDialog = await requireNoChoiceList(deps, pane, thenAgain);
   if (!noDialog.ok) return noDialog;
 
   const typed = await tmuxStep(deps, typeArgs(pane, line));

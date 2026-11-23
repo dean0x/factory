@@ -384,10 +384,28 @@ describe('the guard of the pane safety', () => {
   const withoutNotification = JSON.stringify({ hooks: Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([name]) => name !== 'Notification')) });
 
   it.each([
-    ['a dialog in the last-seen line', { line: { event: 'Notification' } }],
+    ['a dialog in the last-seen line', 'a dialog waits', { line: { event: 'Notification' } }],
+    ['a numbered list of choices on the screen', 'shows a numbered list of choices', { screen: DIALOG_SCREEN }],
+  ] as const)('stops for %s and types no keys with either guard value', async (_name, reason, setup: Setup) => {
+    const on = await make(setup);
+    const off = await make(setup);
+    const onResult = await on.run();
+    const offResult = await runOff(off);
+    expectNothingTyped(on);
+    expectNothingTyped(off);
+    for (const result of [onResult, offResult]) {
+      const error = errorOf(result);
+      expect(codeOf(error)).toBe(3);
+      expect(error.message).toContain(reason);
+      expect(error.hint).toContain('Then run "factory self reset" again.');
+    }
+  });
+
+  it.each([
+    ['no last-seen line', { line: null }],
+    ['a last-seen line with no event', { line: { event: null } }],
     ['no resume notes', { resume: null }],
     ['settings without a hook event', { settings: withoutNotification }],
-    ['a numbered list of choices on the screen', { screen: DIALOG_SCREEN }],
     ['a pane in a mode of tmux', { tmux: { panesInMode: [COORDINATOR_PANE] } }],
   ] as const)('stops for %s only while the guard is on, and else types the line', async (_name, setup: Setup) => {
     expect(codeOf(await refused(await make(setup)))).toBe(3);

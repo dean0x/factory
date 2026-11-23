@@ -1,0 +1,911 @@
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import type { RunOutput } from '../../src/core/deps.js';
+import { failure, type CliResult } from '../../src/cli/errors.js';
+import { guardSourceOf } from '../../src/guards/effective.js';
+import { paneListArgs } from '../../src/launch/tmux.js';
+import { guardIds, guardValues, refreshRunPath, refreshText, refreshWait, type HookEvent } from '../../src/names.js';
+import { layoutOf } from '../../src/state/layout.js';
+import { writeCoordinatorSession, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
+import {
+  cancelRefreshRun, claimRefreshRun, readRefreshRun, scheduleRefreshRun, updateRefreshRun, type RefreshWorkerPlan,
+} from '../../src/workers/refresh-record.js';
+import { actCoordinator, actWorker, pollOnce, refreshExitCode, runRefresh } from '../../src/workers/refresh-run.js';
+import { writeWorkerRecord } from '../../src/workers/registry.js';
+import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
+import { lstartText } from '../helpers/ps-fake.js';
+import { ownSettingsWithRules, seedOwnHooks, seedUnacceptedSetup, settingsFileOf, STATE_ENV } from '../helpers/role-delivery.js';
+import { sampleConfig } from '../helpers/sample-config.js';
+import { startCommandText, tmuxHandler, type PaneFixture, type TmuxFixture } from '../helpers/tmux-fake.js';
+import { coordinatorWordsOf, launchWordsOf } from '../helpers/worker-launch-words.js';
+
+const HOME = '/test/node';
+const NODE = 'demo';
+const FILES = layoutOf(HOME);
+const COORDINATOR_PID = 4000;
+const WORKER_PID = 4800;
+const ALPHA = '00000000-0000-4000-8000-000000000001';
+const BETA = '00000000-0000-4000-8000-000000000002';
+const COORDINATOR = '00000000-0000-4000-8000-000000000003';
+const NEXT = '00000000-0000-4000-8000-000000000004';
+const COPY = `${HOME}/work-copies/web/alpha`;
+const CONFIG = sampleConfig();
+const WORKER_RECOVERY = 'Check the worker pane. If its process ended, run "factory worker resume alpha".';
+const COORDINATOR_RETRY = 'Check the coordinator pane. If its process ended, run "factory start".';
+const COORDINATOR_RECOVERY = 'Check the coordinator pane in the view window. If it still runs, leave the session open. ' +
+  'If the coordinator pane is dead, save work and make the workers safe first. Session removal ends the workers too. ' +
+  'Use a terminal outside this session. Go to the factory folder. ' +
+  'If the pane is dead and the workers are safe, run "factory shutdown". ' +
+  'When the session ends, run "factory start".';
+
+const value = <T>(result: CliResult<T>): T => {
+  if (!result.ok) throw new Error(`${result.error.message} ${result.error.hint ?? ''}`);
+  return result.value;
+};
+
+const hook = async (deps: FakeDeps, session: string, marker: string, event: HookEvent, startSource?: 'startup' | 'compact') =>
+  value(await writeLastSeen(deps, HOME, session, { kind: 'event', event, ...(startSource === undefined ? {} : { startSource }) }, marker));
+
+const workerPane = (id: string, pid: number): PaneFixture & { readonly command: readonly string[] } => ({
+  session: NODE, pid, options: { '@worker': id }, command: launchWordsOf(HOME, id),
+});
+
+interface Setup {
+  readonly events?: Readonly<Record<string, HookEvent>>;
+  readonly tmux?: TmuxFixture;
+  readonly coordinatorPane?: boolean;
+  readonly skipped?: RefreshWorkerPlan['skipped'];
+  readonly workerHook?: HookEvent | null;
+  readonly coordinatorHook?: HookEvent | null;
+  readonly respawned?: 'dead' | 'same pid';
+  readonly termStays?: boolean;
+  readonly newProcess?: number;
+  readonly timing?: 'normal' | 'frozen';
+}
+
+const make = async (setup: Setup = {}) => {
+  const events = setup.events ?? { alpha: 'Stop' };
+  const workerIds = Object.keys(events);
+  const workerSession = new Map([['alpha', ALPHA], ['beta', BETA]]);
+  const panes = workerIds.map((id, i) => workerPane(id, WORKER_PID + i));
+  const { handler, log } = tmuxHandler({
+    sessions: { [NODE]: HOME, foreign: '/test/other' },
+    coordinatorCommands: { [NODE]: coordinatorWordsOf(HOME, NODE) },
+    panes: [...panes, { ...workerPane('intruder', 4999), session: 'foreign' }],
+    ...setup.tmux,
+  });
+  const base = createFakeDeps({
+    os: 'darwin', termEndsAfterChecks: setup.termStays === true ? 31 : 0,
+    env: { ...STATE_ENV, PATH: '/bin', FACTORY_HOME: '/test/other', FACTORY_SESSION: 'foreign', TMUX_PANE: '%0' },
+    fetch: () => failure('no answer'),
+  });
+  const trace: string[] = [];
+  const calls: RunCall[] = [];
+  const atStop: unknown[] = [];
+  const coordinator = log.panes().find((row) => row.session === NODE && row.window === 'view');
+  if (coordinator === undefined) throw new Error('fixture has no coordinator');
+  let respawnWords: readonly string[] | null = null;
+  let onRun: (call: RunCall) => Promise<CliResult<RunOutput> | undefined> = async () => undefined;
+  let onSleep: (ms: number) => Promise<void> = async () => undefined;
+  const deps: FakeDeps = {
+    ...base,
+    run: async (command, args, options) => {
+      const call = { command, args, cwd: options?.cwd };
+      calls.push(call);
+      const override = await onRun(call);
+      if (override !== undefined) return override;
+      if (command === 'ps' && args[1] === 'lstart=') {
+        return exited(0, lstartText(Number(args[3]) === setup.newProcess ? base.now().getTime() : Date.parse('2030-01-02T03:00:00Z')));
+      }
+      if (command !== 'tmux') return missingProgram(command);
+      if (args[0] === 'respawn-pane') {
+        trace.push('respawn');
+        respawnWords = args.slice(args.indexOf('--') + 1);
+        return exited(0);
+      }
+      const reply = handler(call);
+      if (reply.ok && reply.value.exitCode === 0 && args[0] === 'display-message' && args[3]?.includes(':view.{left}')) {
+        if (respawnWords !== null) {
+          const pid = setup.respawned === 'same pid' ? coordinator.pid : 9999;
+          const dead = setup.respawned === 'dead' ? 1 : 0;
+          return exited(0, `${coordinator.id}|${pid}|${dead}|1|${startCommandText(respawnWords)}\n`);
+        }
+        if (base.terminated.includes(coordinator.pid)) {
+          trace.push('dead read');
+          return exited(0, `${coordinator.id}|${coordinator.pid}|1|1|${startCommandText(coordinator.command)}\n`);
+        }
+      }
+      return reply;
+    },
+    sleep: async (ms) => {
+      if (setup.timing === 'frozen') base.sleeps.push(ms);
+      else await base.sleep(ms);
+      await onSleep(ms);
+      for (const pane of log.panes()) {
+        const id = pane.options['@worker'];
+        if (id === undefined || pane.command.indexOf('--resume') < 0 || setup.workerHook === null) continue;
+        const resume = pane.command[pane.command.indexOf('--resume') + 1];
+        if (resume !== undefined) await hook(deps, resume, id, setup.workerHook ?? 'UserPromptSubmit');
+      }
+      if (respawnWords !== null && setup.coordinatorHook !== null) {
+        await hook(deps, COORDINATOR, NODE, setup.coordinatorHook ?? 'UserPromptSubmit');
+      }
+    },
+    terminate: (pid) => {
+      trace.push(`TERM ${pid}`);
+      const stored = base.files.get(join(HOME, refreshRunPath));
+      if (stored !== undefined) atStop.push(JSON.parse(stored));
+      return base.terminate(pid);
+    },
+  };
+  deps.seedDir(FILES.stateDir);
+  deps.seedDir(`${HOME}/web`);
+  seedOwnHooks(deps, FILES.coordinatorDir, HOME);
+  value(await writeCoordinatorSession(deps, HOME, COORDINATOR));
+  await hook(deps, COORDINATOR, NODE, 'Stop');
+  for (const [id, event] of Object.entries(events)) {
+    const session = workerSession.get(id);
+    if (session === undefined) throw new Error('fixture has no worker session');
+    const workCopy = `${HOME}/work-copies/web/${id}`;
+    seedOwnHooks(deps, workCopy, HOME);
+    value(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy, branch: `worker/${id}` }));
+    value(await writeWorkerSession(deps, HOME, id, session));
+    await hook(deps, session, id, event);
+  }
+  const skipped = setup.skipped ?? [];
+  const scheduled = value(await scheduleRefreshRun(deps, HOME, {
+    caller: setup.coordinatorPane === true ? 'pane' : 'terminal', coordinatorPane: setup.coordinatorPane ?? false,
+  }, { workerIds: workerIds.filter((id) => !skipped.some((entry) => entry.id === id)), skipped }));
+  return {
+    deps, log, calls, trace, atStop, coordinator, request: { home: HOME, config: CONFIG, token: scheduled.token },
+    onRun: (fn: typeof onRun) => { onRun = fn; }, onSleep: (fn: typeof onSleep) => { onSleep = fn; },
+    tmux: (args: readonly string[]) => value(handler({ command: 'tmux', args, cwd: undefined })),
+  };
+};
+
+type Lab = Awaited<ReturnType<typeof make>>;
+const claimed = (lab: Lab) => claimRefreshRun(lab.deps, HOME, lab.request.token);
+const run = (lab: Lab) => runRefresh(lab.deps, lab.request);
+const finish = async (lab: Lab) => value(await run(lab));
+const resumes = ({ calls }: Lab) => calls.filter(({ args }) => args[0] === 'split-window' || args[0] === 'respawn-pane');
+const lists = ({ log }: Lab) => log.commands().filter((text) => text.startsWith('list-panes '));
+const found = (call: RunCall, command: string) => call.command === 'tmux' && call.args[0] === command;
+
+const afterMarker = (lab: Lab, effect: () => Promise<void>) => {
+  const { fs } = lab.deps;
+  return { ...lab.deps, fs: { ...fs, rename: async (from: string, to: string) => {
+    const result = await fs.rename(from, to);
+    if (to === join(HOME, refreshRunPath)) await effect();
+    return result;
+  } } };
+};
+
+const reportAfterMarker = (lab: Lab, session: string, marker: string, event: HookEvent, source?: 'startup' | 'compact') =>
+  afterMarker(lab, async () => { await hook(lab.deps, session, marker, event, source); });
+
+const pollWorker = async (lab: Lab) => {
+  value(await claimed(lab));
+  const { panes, workers } = value(await pollOnce(lab.deps, lab.request, ['alpha']));
+  expect(workers).toEqual([{ id: 'alpha', ready: true }]);
+  const pane = panes.find(({ worker, dead }) => worker === 'alpha' && !dead);
+  if (pane === undefined) throw new Error('fixture has no live worker pane');
+  return { panes, paneId: pane.paneId };
+};
+
+const workerBind = (call: RunCall, paneId: string) => found(call, 'display-message') && call.args[3] === paneId;
+const bindWithProcess = (lab: Lab, call: RunCall, pid: number, dead: 0 | 1) =>
+  exited(0, lab.tmux(call.args).stdout.replace(`|${WORKER_PID}|0|`, `|${pid}|${dead}|`));
+
+const expectFault = (result: Awaited<ReturnType<typeof finish>>, id: string, warning: string, remedy: string) => {
+  expect(result.outcomes).toContainEqual(expect.objectContaining({
+    id, status: 'fault', warning: expect.stringContaining(warning), remedy: expect.stringContaining(remedy),
+  }));
+};
+
+describe('refresh runner', () => {
+  it('completes a refresh and saves the final run record', async () => {
+    const lab = await make({ events: {} });
+    const record = await finish(lab);
+    expect(record).toMatchObject({ state: 'done', outcomes: [{ id: NODE, status: 'resumed' }] });
+    expect(value(await readRefreshRun(lab.deps, HOME))).toEqual(record);
+  });
+
+  it.each([
+    ['menu', '❯ /\n  1. /clear\n  2. /compact\n'],
+    ['unsent draft', '❯ Check the last test again\n'],
+  ])('can stop both sessions after Stop with a %s and sends no keys', async (_screen, contents) => {
+    const lab = await make();
+    lab.onRun(async (call) => found(call, 'capture-pane') ? exited(0, contents) : undefined);
+    const record = await finish(lab);
+    expect(refreshExitCode(record)).toBe(0);
+    expect(lab.deps.terminated).toEqual([WORKER_PID, COORDINATOR_PID]);
+    expect(lab.calls.filter((call) => found(call, 'capture-pane') || found(call, 'send-keys'))).toEqual([]);
+  });
+
+  it('resumes a live worker beside a dead board pane without a pid', async () => {
+    const lab = await make({ tmux: { deadPanesWithoutPid: ['%1'] } });
+    expect(lab.tmux(paneListArgs(NODE)).stdout).toContain('%1||1|\n');
+    const record = await finish(lab);
+    expect(record).toMatchObject({
+      state: 'done',
+      outcomes: [{ role: 'worker', id: 'alpha', status: 'resumed' }, { role: 'coordinator', id: NODE, status: 'resumed' }],
+    });
+    expect(lab.deps.terminated).toEqual([WORKER_PID, COORDINATOR_PID]);
+  });
+
+  it('reads the pane list once per poll and polls busy workers again after ten seconds', async () => {
+    const lab = await make({ events: { alpha: 'PreToolUse' } });
+    const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
+    expect(poll.workers.map(({ id, ready }) => ({ id, ready }))).toEqual([{ id: 'alpha', ready: false }]);
+    expect(lists(lab)).toHaveLength(1);
+    lab.onSleep(async (ms) => {
+      if (ms !== refreshWait.intervalMs) return;
+      expect(lab.deps.terminated).toEqual([]);
+      await hook(lab.deps, ALPHA, 'alpha', 'Stop');
+    });
+    expect((await finish(lab)).outcomes.map(({ status }) => status)).toEqual(['resumed', 'resumed']);
+    expect(lab.deps.sleeps[0]).toBe(10_000);
+  });
+
+  it('does not poll or stop a skipped worker even after it gets an owned session id', async () => {
+    const skipped = {
+      role: 'worker', id: 'beta', status: 'skipped', warning: 'The worker beta has no owned session id.', remedy: 'Check its pane.',
+    } as const;
+    const lab = await make({ events: { alpha: 'PreToolUse', beta: 'PreToolUse' }, skipped: [skipped] });
+    await hook(lab.deps, NEXT, 'other', 'PreToolUse');
+    value(await writeWorkerSession(lab.deps, HOME, 'beta', NEXT));
+    const reads: string[] = [];
+    const fs = { ...lab.deps.fs, readTextLimited: (...args: Parameters<FakeDeps['fs']['readTextLimited']>) => {
+      reads.push(args[0]);
+      return lab.deps.fs.readTextLimited(...args);
+    } };
+    lab.onSleep(async (ms) => {
+      if (ms !== refreshWait.intervalMs) return;
+      await hook(lab.deps, ALPHA, 'alpha', 'Stop');
+      await hook(lab.deps, BETA, 'beta', 'Stop');
+      value(await writeWorkerSession(lab.deps, HOME, 'beta', BETA));
+    });
+    const record = value(await runRefresh({ ...lab.deps, fs }, lab.request));
+    expect(lab.deps.terminated).toEqual([WORKER_PID, COORDINATOR_PID]);
+    expect(reads).toContain(join(FILES.heartbeatDir, ALPHA));
+    expect(reads).not.toContain(join(FILES.heartbeatDir, NEXT));
+    expect(reads).not.toContain(join(FILES.heartbeatDir, BETA));
+    expect(record.outcomes).toContainEqual(skipped);
+  });
+
+  it('resumes an idle worker whose only report is SessionStart in its start second', async () => {
+    const lab = await make({ events: { alpha: 'SessionStart' } });
+    await hook(lab.deps, ALPHA, 'alpha', 'SessionStart', 'startup');
+    value(await cancelRefreshRun(lab.deps, HOME));
+    lab.deps.advance(900);
+    const record = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }, {
+      workerIds: ['alpha'], skipped: [],
+    }));
+    lab.deps.advance(500);
+    lab.onRun(async ({ command, args }) => {
+      if (args.at(-1) !== String(WORKER_PID)) return undefined;
+      if (command === 'ps' && args[1] === 'lstart=') return exited(0, lstartText(Date.parse('2030-01-02T03:04:05Z')));
+      return undefined;
+    });
+    const result = value(await runRefresh(lab.deps, { ...lab.request, token: record.token }));
+    expect(result.outcomes).toContainEqual({ role: 'worker', id: 'alpha', status: 'resumed' });
+    expect(lab.deps.terminated).toContain(WORKER_PID);
+  });
+
+  it.each(['compact', undefined] as const)('sends no TERM if a worker reports a session start with source %s after the poll', async (source) => {
+    const lab = await make();
+    value(await claimed(lab));
+    const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
+    expect(poll.workers).toEqual([{ id: 'alpha', ready: true }]);
+    const deps = reportAfterMarker(lab, ALPHA, 'alpha', 'SessionStart', source);
+    const result = value(await actWorker(deps, lab.request, 'alpha', poll.panes));
+    expect(lab.deps.terminated).toEqual([]);
+    expect(result).toBeNull();
+    expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ state: 'waiting', acting: null });
+  });
+
+  it.each(['compact', undefined] as const)('leaves a coordinator pending if its final session start has source %s', async (source) => {
+    const lab = await make({ events: {} });
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    const deps = reportAfterMarker(lab, COORDINATOR, NODE, 'SessionStart', source);
+    expect(value(await actCoordinator(deps, lab.request))).toBeNull();
+    expect(lab.deps.terminated).toEqual([]);
+    expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ state: 'waiting', acting: null });
+  });
+
+  it('leaves a worker pending if it turns busy just before the idle-only stop', async () => {
+    const lab = await make();
+    value(await claimed(lab));
+    const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
+    lab.onRun(async ({ command, args }) => {
+      if (command === 'ps' && args[1] === 'lstart=' && args[3] === String(WORKER_PID)) await hook(lab.deps, ALPHA, 'alpha', 'PreToolUse');
+      return undefined;
+    });
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', poll.panes))).toBeNull();
+    expect(lab.deps.terminated).toEqual([]);
+    expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ acting: null, outcomes: [] });
+  });
+
+  it.each(['Notification', 'PreCompact', 'SessionStart'] as const)('leaves a worker with %s and no source alone at the shared worker cap', async (event) => {
+    const lab = await make({ events: { alpha: event, beta: 'Stop' } });
+    const record = await finish(lab);
+    expect(lab.deps.terminated).toEqual([WORKER_PID + 1, COORDINATOR_PID]);
+    expect(record.deadlines.workerMs).toBe(record.startedAtMs + 3_600_000);
+    expectFault(record, 'alpha', 'not idle', 'factory refresh');
+    expect(refreshExitCode(record)).toBe(1);
+    expect(record.outcomes).toContainEqual({ role: 'worker', id: 'beta', status: 'resumed' });
+  });
+
+  it('bounds both phases even if the clock does not advance', async () => {
+    const lab = await make({ events: { alpha: 'PreToolUse' }, coordinatorPane: true, timing: 'frozen' });
+    const record = await finish(lab);
+    expect(lab.deps.sleeps).toEqual(Array.from({ length: 720 }, () => 10_000));
+    expect(record.deadlines.coordinatorMs).toBe(record.startedAtMs + 3_600_000);
+    expect(lists(lab)).toHaveLength(722);
+    expectFault(record, 'alpha', 'not idle', 'factory refresh');
+    expectFault(record, NODE, 'not idle', 'factory refresh');
+    expect(lab.deps.terminated).toEqual([]);
+  });
+
+  it.each([guardValues.on, guardValues.off])('chooses the same targets and enforces idle with every guard %s', async (guard) => {
+    const lab = await make({ events: { alpha: 'PreToolUse', beta: 'Stop' } });
+    const deps = { ...lab.deps, guards: guardSourceOf({
+      home: HOME, state: null, values: Object.fromEntries(Object.values(guardIds).map((id) => [id, guard])),
+    }) };
+    const workerPane = lab.log.panes().find(({ pid }) => pid === WORKER_PID + 1);
+    expect(workerPane).toBeDefined();
+    const record = value(await runRefresh({ ...deps, env: { ...deps.env, TMUX_PANE: workerPane?.id } }, lab.request));
+    expect(lab.deps.terminated).toEqual([WORKER_PID + 1, COORDINATOR_PID]);
+    expect(record.outcomes.map(({ id }) => id)).toEqual(['beta', 'alpha', NODE]);
+  });
+
+  it('re-reads the worker pointer after TERM and uses only owned launch words from the node', async () => {
+    const lab = await make({ events: { alpha: 'Stop', beta: 'Stop' } });
+    lab.onSleep(async () => {
+      if (!lab.deps.terminated.includes(WORKER_PID) || resumes(lab).length !== 0) return;
+      value(await writeWorkerSession(lab.deps, HOME, 'alpha', NEXT));
+      await hook(lab.deps, NEXT, 'alpha', 'Stop');
+    });
+    const record = await finish(lab);
+    expect(refreshExitCode(record)).toBe(0);
+    expect(lab.trace).toEqual([`TERM ${WORKER_PID}`, `TERM ${WORKER_PID + 1}`, `TERM ${COORDINATOR_PID}`, 'dead read', 'respawn']);
+    expect(resumes(lab).at(-1)?.args.slice(0, 5)).toEqual(['respawn-pane', '-t', lab.coordinator.id, '-c', FILES.coordinatorDir]);
+    expect(lab.atStop).toMatchObject([
+      { actingRole: 'worker', acting: 'alpha', outcomes: [] },
+      { actingRole: 'worker', acting: 'beta', outcomes: [{ id: 'alpha', status: 'resumed' }] },
+      { actingRole: 'coordinator', acting: NODE, outcomes: [{ id: 'alpha', status: 'resumed' }, { id: 'beta', status: 'resumed' }] },
+    ]);
+    const argv = resumes(lab).map(({ args }) => args.slice(args.indexOf('--') + 1));
+    expect(argv.map((words) => words[words.indexOf('--resume') + 1])).toEqual([NEXT, BETA, COORDINATOR]);
+    for (const words of argv) {
+      expect(words.filter((word) => word === refreshText.continue)).toHaveLength(1);
+      expect(words.indexOf(refreshText.continue)).toBeLessThan(words.indexOf('--add-dir'));
+      expect(words).not.toContain('/test/other');
+    }
+    expect(lab.log.typed()).toEqual([]);
+    expect(lab.deps.written).toEqual([]);
+    expect(lab.deps.warned).toEqual([]);
+    expect(lab.log.sessions().get('foreign')).toBe('/test/other');
+  });
+
+  it.each(['marker', 'pointer'] as const)('skips a worker whose %s does not prove ownership', async (broken) => {
+    const lab = await make({ events: { alpha: 'Stop', beta: 'Stop' } });
+    if (broken === 'marker') {
+      await hook(lab.deps, NEXT, 'decoy', 'Stop');
+      value(await writeWorkerSession(lab.deps, HOME, 'alpha', NEXT));
+    } else value(await writeWorkerSession(lab.deps, HOME, 'beta', ALPHA));
+    const record = await finish(lab);
+    expectFault(record, 'alpha', 'no session id', 'factory worker resume alpha');
+    expect(lab.deps.terminated).not.toContain(WORKER_PID);
+    expect(lab.deps.terminated).toContain(COORDINATOR_PID);
+  });
+
+  it.each(['binding', 'copy', 'settings', 'role', 'proxy'] as const)('checks the worker %s before any stop', async (check) => {
+    const lab = await make();
+    let config = CONFIG;
+    if (check === 'binding') lab.onRun(async ({ args }) => args[0] === 'display-message' && args[4]?.includes('@worker')
+      ? exited(0, `${args[3]}|4800|0|1|0|0|0|sh\n`) : undefined);
+    if (check === 'copy') value(await lab.deps.fs.remove(COPY));
+    if (check === 'settings') lab.deps.seed(settingsFileOf(COPY), '{}');
+    if (check === 'role') seedUnacceptedSetup(lab.deps, HOME, 'Text that the owner did not accept.');
+    if (check === 'proxy') config = { ...CONFIG, core: { ...CONFIG.core, workers: { alpha: { proxy: 'p' } }, proxies: [
+      { id: 'p', base_url: 'http://127.0.0.1:8899', health: '/health', on_fail: 'stop' },
+    ] } };
+    const record = value(await runRefresh(lab.deps, { ...lab.request, config }));
+    const text = {
+      binding: ['factory did not start', 'factory refresh'], copy: ['is not a folder', 'factory worker resume alpha'],
+      settings: ['lack the events', 'factory upgrade'], role: ['setup file is not accepted', 'factory init'],
+      proxy: ['does not answer', 'factory refresh'],
+    } as const;
+    const [warning, remedy] = text[check];
+    expectFault(record, 'alpha', warning, remedy);
+    expect(lab.deps.terminated).toEqual([COORDINATOR_PID]);
+  });
+
+  it('keeps the PATH of each pane instead of the caller PATH', async () => {
+    const workerPath = 'PATH=/worker bin:/bin';
+    const coordinatorPath = 'PATH=/coordinator/bin:/bin';
+    const alpha = workerPane('alpha', WORKER_PID);
+    const lab = await make({ tmux: {
+      panes: [{ ...alpha, command: alpha.command.map((word) => word === 'PATH=/bin' ? workerPath : word) }],
+      coordinatorCommands: { [NODE]: coordinatorWordsOf(HOME, NODE).map((word) => word === 'PATH=/bin' ? coordinatorPath : word) },
+    } });
+
+    const record = await finish(lab);
+
+    expect(record.outcomes.map(({ status }) => status)).toEqual(['resumed', 'resumed']);
+    expect(resumes(lab).map(({ args }) => args.filter((word) => word.startsWith('PATH=')))).toEqual([[workerPath], [coordinatorPath]]);
+  });
+
+  it.each(['worker', 'coordinator'] as const)('leaves the %s live if its pane has no PATH word', async (role) => {
+    const alpha = workerPane('alpha', WORKER_PID);
+    const command = coordinatorWordsOf(HOME, NODE);
+    const lab = await make({ tmux: role === 'worker'
+      ? { panes: [{ ...alpha, command: alpha.command.filter((word) => !word.startsWith('PATH=')) }] }
+      : { coordinatorCommands: { [NODE]: command.filter((word) => !word.startsWith('PATH=')) } } });
+
+    const record = await finish(lab);
+
+    expectFault(record, role === 'worker' ? 'alpha' : NODE, 'pane start command has no PATH value', 'factory refresh --result');
+    expect(lab.deps.terminated).toEqual([role === 'worker' ? COORDINATOR_PID : WORKER_PID]);
+    expect(record.outcomes).toContainEqual({
+      role: role === 'worker' ? 'coordinator' : 'worker', id: role === 'worker' ? NODE : 'alpha', status: 'resumed',
+    });
+  });
+
+  it('records the direct fallback for each role when the proxy does not answer', async () => {
+    const lab = await make();
+    const core = { ...CONFIG.core, session: { ...CONFIG.core.session, proxy: 'p' }, workers: { alpha: { proxy: 'p' } }, proxies: [
+      { id: 'p', base_url: 'http://127.0.0.1:8899', health: '/health', on_fail: 'direct' as const },
+    ] };
+
+    const record = value(await runRefresh(lab.deps, { ...lab.request, config: { ...CONFIG, core } }));
+
+    const notices = [expect.stringContaining('the session starts without a proxy')];
+    expect(record.outcomes).toEqual([
+      { role: 'worker', id: 'alpha', status: 'resumed', notices },
+      { role: 'coordinator', id: NODE, status: 'resumed', notices },
+    ]);
+    expect(refreshExitCode(record)).toBe(0);
+    expect(lab.deps.warned).toEqual([]);
+  });
+
+  it('records the instruction notice for the worker that loads the file', async () => {
+    const lab = await make();
+    lab.deps.seed(`${FILES.workCopiesDir}/CLAUDE.md`, '# Project instructions');
+
+    const record = await finish(lab);
+
+    expect(record.outcomes).toEqual([
+      { role: 'worker', id: 'alpha', status: 'resumed', notices: [expect.stringContaining('Agent instruction files')] },
+      { role: 'coordinator', id: NODE, status: 'resumed' },
+    ]);
+    expect(lab.deps.warned).toEqual([]);
+  });
+
+  it('requires the busy hook even when the setup text guard is off', async () => {
+    const lab = await make();
+    const settings = ownSettingsWithRules(HOME, COPY);
+    const { UserPromptSubmit: _, ...hooks } = settings.hooks;
+    lab.deps.seed(settingsFileOf(COPY), JSON.stringify({ ...settings, hooks }));
+    const guards = guardSourceOf({ home: HOME, state: null, values: { [guardIds.setupText]: guardValues.off } });
+    const record = value(await runRefresh({ ...lab.deps, guards }, lab.request));
+    expectFault(record, 'alpha', 'lack the events: UserPromptSubmit', 'factory upgrade');
+    expect(lab.deps.terminated).toEqual([COORDINATOR_PID]);
+  });
+
+  it('rechecks the session owner after the poll', async () => {
+    const lab = await make();
+    value(await claimed(lab));
+    const { panes } = value(await pollOnce(lab.deps, lab.request, ['alpha']));
+    lab.log.sessions().set(NODE, '/test/other');
+    const outcome = value(await actWorker(lab.deps, lab.request, 'alpha', panes));
+    expect(outcome).toMatchObject({ warning: expect.stringContaining('belongs to another'), remedy: expect.stringContaining('factory shutdown') });
+    expect(lab.deps.terminated).toEqual([]);
+  });
+
+  it('refuses a planned worker stop if no live pane remains after the action marker', async () => {
+    const lab = await make();
+    const { panes, paneId } = await pollWorker(lab);
+    const deps = afterMarker(lab, async () => {
+      expect(lab.tmux(['kill-pane', '-t', paneId]).exitCode).toBe(0);
+    });
+
+    expect(value(await actWorker(deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault', warning: 'worker alpha: the worker pane process changed before the stop',
+      remedy: 'Check the pane. Run "factory refresh" again.',
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it.each([
+    { change: 'a dead pane', pid: WORKER_PID, dead: 1 },
+    { change: 'a different pid', pid: WORKER_PID + 1, dead: 0 },
+  ] as const)('refuses a worker stop if the final bind shows $change', async ({ pid, dead }) => {
+    const lab = await make();
+    const { panes, paneId } = await pollWorker(lab);
+    let marked = false;
+    let binds = 0;
+    const deps = afterMarker(lab, async () => { marked = true; });
+    lab.onRun(async (call) => {
+      if (!marked || !workerBind(call, paneId)) return undefined;
+      binds += 1;
+      return binds === 2 ? bindWithProcess(lab, call, pid, dead) : undefined;
+    });
+
+    expect(value(await actWorker(deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault', warning: 'worker alpha: the worker pane process changed before the stop',
+      remedy: 'Check the pane. Run "factory refresh" again.',
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('gives the worker resume remedy if the pane disappears after the poll', async () => {
+    const lab = await make();
+    const { panes, paneId } = await pollWorker(lab);
+    expect(lab.tmux(['kill-pane', '-t', paneId]).exitCode).toBe(0);
+
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault',
+      warning: `worker alpha: cannot read the pane ${paneId}: tmux has no such pane`, remedy: WORKER_RECOVERY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('gives the worker resume remedy if the bind read shows a dead pane after the poll', async () => {
+    const lab = await make();
+    const { panes, paneId } = await pollWorker(lab);
+    lab.onRun(async (call) => workerBind(call, paneId) ? bindWithProcess(lab, call, WORKER_PID, 1) : undefined);
+
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault',
+      warning: 'worker alpha: the worker pane ended before the stop', remedy: WORKER_RECOVERY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('asks for a pane check if the process start read fails after the poll', async () => {
+    const lab = await make();
+    const { panes } = await pollWorker(lab);
+    lab.onRun(async ({ command, args }) =>
+      command === 'ps' && args[1] === 'lstart=' && args[3] === String(WORKER_PID) ? exited(1) : undefined);
+
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault',
+      warning: 'worker alpha: cannot read when the process of the pane started',
+      remedy: 'Look at the pane in tmux. Run "factory refresh" again.',
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it.each([false, true])('checks the original launch if the dead pane has no pid (changed: %s)', async (changed) => {
+    const lab = await make({ events: {} });
+    const { coordinator: pane } = lab;
+    const words = changed ? [...pane.command, '--verbose'] : pane.command;
+    lab.onRun(async (call) =>
+      found(call, 'display-message') && call.args[3]?.includes(':view.{left}') &&
+      lab.deps.terminated.includes(pane.pid) && resumes(lab).length === 0
+        ? exited(0, `${pane.id}||1|1|${startCommandText(words)}\n`)
+        : undefined);
+
+    const record = await finish(lab);
+
+    if (changed) {
+      expectFault(record, NODE, 'dead pane', COORDINATOR_RECOVERY);
+      expect(resumes(lab)).toEqual([]);
+    } else {
+      expect(record.outcomes).toMatchObject([{ id: NODE, status: 'resumed' }]);
+    }
+    expect(lab.deps.terminated).toEqual([pane.pid]);
+  });
+
+  it.each(['live', 'pane', 'pid', 'mark', 'command'] as const)('refuses to respawn a coordinator when the dead read shows %s', async (mismatch) => {
+    const lab = await make({ events: {} });
+    const { coordinator: pane } = lab;
+    lab.onRun(async (call) => {
+      if (!found(call, 'display-message') || !lab.deps.terminated.includes(pane.pid)) return undefined;
+      const fields = [mismatch === 'pane' ? '%90' : pane.id, mismatch === 'pid' ? 9000 : pane.pid,
+        mismatch === 'live' ? 0 : 1, mismatch === 'mark' ? 0 : 1,
+        mismatch === 'command' ? 'sh' : startCommandText(pane.command)];
+      return exited(0, `${fields.join('|')}\n`);
+    });
+    const record = await finish(lab);
+    expectFault(record, NODE, 'dead pane', COORDINATOR_RECOVERY);
+    expect(resumes(lab)).toEqual([]);
+    expect(lab.deps.terminated).toEqual([pane.pid]);
+  });
+
+  it('sends only one TERM and never respawns a coordinator that does not end', async () => {
+    const lab = await make({ events: {}, termStays: true });
+    expectFault(await finish(lab), NODE, 'did not end', 'factory start');
+    expect(lab.deps.terminated).toEqual([COORDINATOR_PID]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it.each([WORKER_PID, COORDINATOR_PID])('never signals process %s if it started after the run', async (pid) => {
+    const lab = await make({ newProcess: pid, coordinatorPane: true });
+    lab.onSleep(async (ms) => {
+      if (ms === refreshWait.intervalMs) await hook(lab.deps, COORDINATOR, NODE, 'Stop');
+    });
+    lab.deps.advance(1000);
+    const record = await finish(lab);
+    expectFault(record, pid === WORKER_PID ? 'alpha' : NODE, 'cannot confirm the pane process started before', 'factory refresh');
+    expect(lab.deps.terminated).not.toContain(pid);
+  });
+
+  it('does not stop a coordinator on an idle report from an earlier process', async () => {
+    const lab = await make({ events: {} });
+    lab.deps.advance(10 * 60 * 60 * 1000);
+    const coordinatorStart = lstartText(lab.deps.now().getTime() - 60_000);
+    lab.onRun(async ({ command, args }) =>
+      command === 'ps' && args[1] === 'lstart=' && args[3] === String(COORDINATOR_PID) ? exited(0, coordinatorStart) : undefined);
+    const run = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }));
+    const result = value(await runRefresh(lab.deps, { ...lab.request, token: run.token }));
+    expectFault(result, NODE, 'not later than the start', 'factory refresh');
+    expect(lab.deps.terminated).toEqual([]);
+  });
+
+  it('does not stop a coordinator that turns busy before its launch words are ready', async () => {
+    const lab = await make({ events: {} });
+    lab.onRun(async ({ command, args }) => {
+      if (command === 'ps' && args[1] === 'lstart=' && args[3] === String(COORDINATOR_PID)) {
+        await hook(lab.deps, COORDINATOR, NODE, 'PreToolUse');
+      }
+      return undefined;
+    });
+    expectFault(await finish(lab), NODE, 'not idle', 'factory refresh');
+    expect(lab.deps.terminated).toEqual([]);
+  });
+
+  it('leaves the coordinator pending if its turn starts during the action marker write', async () => {
+    const lab = await make({ events: {} });
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    const deps = reportAfterMarker(lab, COORDINATOR, NODE, 'UserPromptSubmit');
+    expect(value(await actCoordinator(deps, lab.request))).toBeNull();
+    expect(lab.deps.terminated).toEqual([]);
+    expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ state: 'waiting', acting: null });
+    expect(value(await cancelRefreshRun(lab.deps, HOME)).state).toBe('cancelled');
+  });
+
+  it('refuses a coordinator stop if a worker pointer already names its session id', async () => {
+    const lab = await make();
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    value(await writeWorkerSession(lab.deps, HOME, 'alpha', COORDINATOR));
+
+    expect(value(await actCoordinator(lab.deps, lab.request))).toEqual({
+      role: 'coordinator', id: NODE, status: 'fault',
+      warning: `coordinator ${NODE}: no owned coordinator session id: the pointer of the worker alpha names the same session`,
+      remedy: COORDINATOR_RETRY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('refuses a coordinator stop if the pane pid changes after the action marker', async () => {
+    const lab = await make();
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    const { coordinator } = lab;
+    const deps = afterMarker(lab, async () => {
+      lab.onRun(async (call) => found(call, 'display-message') && call.args[3]?.includes(':view.{left}')
+        ? exited(0, `${coordinator.id}|${coordinator.pid + 1}|0|1|${startCommandText(coordinator.command)}\n`) : undefined);
+    });
+
+    expect(value(await actCoordinator(deps, lab.request))).toEqual({
+      role: 'coordinator', id: NODE, status: 'fault',
+      warning: `coordinator ${NODE}: the coordinator pane changed before the stop`, remedy: COORDINATOR_RETRY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('refuses a coordinator stop if a worker pointer names its session id after the action marker', async () => {
+    const lab = await make();
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    const deps = afterMarker(lab, async () => { value(await writeWorkerSession(lab.deps, HOME, 'alpha', COORDINATOR)); });
+
+    expect(value(await actCoordinator(deps, lab.request))).toEqual({
+      role: 'coordinator', id: NODE, status: 'fault',
+      warning: `coordinator ${NODE}: the coordinator session id changed before the stop`, remedy: COORDINATOR_RETRY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('does not resume a coordinator id shared with a worker after TERM', async () => {
+    const lab = await make();
+    lab.onSleep(async () => {
+      if (lab.deps.terminated.includes(COORDINATOR_PID)) value(await writeWorkerSession(lab.deps, HOME, 'alpha', COORDINATOR));
+    });
+    expectFault(await finish(lab), NODE, 'no longer owns the session id', 'factory start');
+    expect(lab.trace).not.toContain('respawn');
+  });
+
+  it('does not create a second pane if a worker already runs at the resume step', async () => {
+    const lab = await make();
+    lab.onSleep(async () => {
+      if (lab.deps.terminated.at(-1) !== WORKER_PID) return;
+      const split = lab.tmux(['split-window', '-d', '-P', '-F', '#{pane_id}', '-t', `${NODE}:workers`, '--', ...launchWordsOf(HOME, 'alpha')]);
+      lab.tmux(['set-option', '-p', '-t', split.stdout.trim(), '@worker', 'alpha']);
+    });
+    expectFault(await finish(lab), 'alpha', 'live pane', 'factory worker resume alpha');
+    expect(resumes(lab).map(({ args }) => args[0])).toEqual(['respawn-pane']);
+  });
+
+  it('does not split if the worker session pointer changes during the launch checks', async () => {
+    const lab = await make();
+    const { panes } = await pollWorker(lab);
+    await hook(lab.deps, NEXT, 'alpha', 'Stop');
+    let changed = false;
+    lab.onRun(async (call) => {
+      if (!changed && found(call, 'list-panes') && call.args.at(-1) === paneListArgs(NODE).at(-1) &&
+        lab.deps.terminated.includes(WORKER_PID)) {
+        value(await writeWorkerSession(lab.deps, HOME, 'alpha', NEXT));
+        changed = true;
+      }
+      return undefined;
+    });
+
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault',
+      warning: 'worker alpha: the worker no longer owns the session id for its restart', remedy: WORKER_RECOVERY,
+    });
+    expect(lab.deps.terminated).toEqual([WORKER_PID]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('does not split if a live worker appears during the launch checks', async () => {
+    const lab = await make();
+    let added = false;
+    lab.onRun(async ({ args }) => {
+      if (added || args[0] !== 'list-panes' || !args.at(-1)?.includes('#{pane_pid}') || !lab.deps.terminated.includes(WORKER_PID)) return undefined;
+      const before = lab.tmux(args);
+      const split = lab.tmux(['split-window', '-d', '-P', '-F', '#{pane_id}', '-t', `${NODE}:workers`, '--', ...launchWordsOf(HOME, 'alpha')]);
+      lab.tmux(['set-option', '-p', '-t', split.stdout.trim(), '@worker', 'alpha']);
+      added = true;
+      return exited(before.exitCode, before.stdout, before.stderr);
+    });
+    expectFault(await finish(lab), 'alpha', 'live pane', 'factory worker resume alpha');
+    expect(resumes(lab).map(({ args }) => args[0])).toEqual(['respawn-pane']);
+  });
+
+  it.each([null, 'SessionStart'] as const)('does not confirm the worker continue line on %s', async (workerHook) => {
+    const lab = await make({ workerHook });
+    const record = await finish(lab);
+    expectFault(record, 'alpha', 'not confirmed', 'factory worker resume alpha');
+    expect(record.outcomes.at(-1)).toEqual({ role: 'coordinator', id: NODE, status: 'resumed' });
+  });
+
+  it('keeps the coordinator live if the worker needs an answer to a folder trust question', async () => {
+    const lab = await make({ workerHook: null, tmux: { newPaneScreen: 'Do you trust this folder?\n❯ 1. Yes\n  2. No\n' } });
+    const record = await finish(lab);
+    expect(record.outcomes).toEqual([expect.objectContaining({ id: 'alpha', status: 'trust-wait', remedy: expect.stringContaining('answers each folder trust question') })]);
+    expect(lab.deps.terminated).toEqual([WORKER_PID]);
+    expect(refreshExitCode(record)).toBe(3);
+  });
+
+  it.each(['SessionStart', 'Notification'] as const)('keeps the coordinator live when a folder question holds the line after %s', async (workerHook) => {
+    const screen = 'Adding a new directory\n/project\n\n❯ 1. Yes\n  2. No\n';
+    const lab = await make({ workerHook, tmux: { newPaneScreen: screen } });
+    const record = await finish(lab);
+    expect(record.outcomes).toEqual([expect.objectContaining({ status: 'trust-wait', remedy: expect.stringContaining('answers each folder trust question') })]);
+    expect(lab.deps.terminated).toEqual([WORKER_PID]);
+    expect(lab.log.typed()).toEqual([]);
+  });
+
+  it('names the coordinator pane when a folder question holds its continue line', async () => {
+    const lab = await make({ events: {}, coordinatorHook: 'SessionStart' });
+    lab.onRun(async (call) => found(call, 'capture-pane') ? exited(0, 'Do you trust this folder?\n❯ 1. Yes\n  2. No\n') : undefined);
+    const run = await finish(lab);
+    expect(run.outcomes).toEqual([expect.objectContaining({ id: NODE, status: 'trust-wait', remedy: expect.stringContaining(`pane ${lab.coordinator.id}`) })]);
+    expect(refreshExitCode(run)).toBe(3);
+    expect(lab.log.typed()).toEqual([]);
+  });
+
+  it('records the remedy if a coordinator does not confirm its continue line', async () => {
+    const lab = await make({ events: {}, coordinatorHook: 'SessionStart' });
+    const record = await finish(lab);
+    expectFault(record, NODE, 'not confirmed', COORDINATOR_RECOVERY);
+    expect(value(await readRefreshRun(lab.deps, HOME))).toEqual(record);
+  });
+
+  it('gives the coordinator recovery steps when the pane cannot respawn', async () => {
+    const lab = await make({ events: {} });
+    lab.onRun(async (call) => found(call, 'respawn-pane') ? exited(1, '', 'cannot respawn pane') : undefined);
+
+    const record = await finish(lab);
+
+    expectFault(record, NODE, 'cannot respawn pane', COORDINATOR_RECOVERY);
+    expect(lab.calls.some((call) => found(call, 'kill-session'))).toBe(false);
+  });
+
+  it.each(['dead', 'same pid'] as const)('saves a fault when the respawned coordinator shows %s', async (respawned) => {
+    const lab = await make({ events: {}, respawned });
+
+    const record = await finish(lab);
+
+    expect(lab.trace).toContain('respawn');
+    expect(lab.deps.terminated).toEqual([COORDINATOR_PID]);
+    expect(record.outcomes).toEqual([{
+      role: 'coordinator', id: NODE, status: 'fault',
+      warning: `coordinator ${NODE}: the coordinator pane did not start again`, remedy: COORDINATOR_RECOVERY,
+    }]);
+    expect(value(await readRefreshRun(lab.deps, HOME))).toEqual(record);
+  });
+
+  it('fails the run if the tmux session ends during the idle wait', async () => {
+    const lab = await make({ events: { alpha: 'PreToolUse' } });
+    lab.onSleep(async () => { lab.tmux(['kill-session', '-t', `=${NODE}`]); });
+    expect(await finish(lab)).toMatchObject({ state: 'failed', fault: { warning: expect.stringContaining('does not run') } });
+    expect(lab.deps.terminated).toEqual([]);
+  });
+
+  it('ends at the next token check when cancelled before a coordinator stop', async () => {
+    const lab = await make({ coordinatorPane: true });
+    lab.onSleep(async (ms) => {
+      if (ms !== refreshWait.intervalMs) return;
+      await hook(lab.deps, COORDINATOR, NODE, 'Stop');
+      value(await cancelRefreshRun(lab.deps, HOME));
+    });
+    expect((await finish(lab)).state).toBe('cancelled');
+    expect(lab.deps.terminated).toEqual([WORKER_PID]);
+  });
+
+  it('restarts every live session on the next run after a partial run', async () => {
+    const lab = await make({ events: { alpha: 'Stop', beta: 'PreToolUse' } });
+    let alphaStart = '';
+    lab.onRun(async (call) => {
+      if (found(call, 'split-window')) alphaStart = lstartText(lab.deps.now().getTime());
+      return undefined;
+    });
+    lab.onSleep(async (ms) => {
+      if (ms === refreshWait.intervalMs) value(await cancelRefreshRun(lab.deps, HOME));
+    });
+    const partial = await finish(lab);
+    expect(partial).toMatchObject({ state: 'cancelled', outcomes: [{ role: 'worker', id: 'alpha', status: 'resumed' }] });
+    expect(lab.deps.terminated).toEqual([WORKER_PID]);
+
+    const alpha = lab.log.panes().find(({ options }) => options['@worker'] === 'alpha');
+    expect(alpha).toMatchObject({ dead: false, pid: expect.any(Number) });
+    expect(alpha?.pid).not.toBe(WORKER_PID);
+    lab.onRun(async ({ command, args }) =>
+      command === 'ps' && args[1] === 'lstart=' && args[3] === String(alpha?.pid) ? exited(0, alphaStart) : undefined);
+    lab.onSleep(async () => {});
+    await hook(lab.deps, ALPHA, 'alpha', 'Stop');
+    await hook(lab.deps, BETA, 'beta', 'Stop');
+    const next = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }, {
+      workerIds: ['alpha', 'beta'], skipped: [],
+    }));
+    expect(next.token).not.toBe(partial.token);
+    const record = value(await runRefresh(lab.deps, { ...lab.request, token: next.token }));
+
+    expect(record).toMatchObject({ state: 'done', workerIds: ['alpha', 'beta'], outcomes: [
+      { role: 'worker', id: 'alpha', status: 'resumed' },
+      { role: 'worker', id: 'beta', status: 'resumed' },
+      { role: 'coordinator', id: NODE, status: 'resumed' },
+    ] });
+    expect(lab.deps.terminated.slice(1)).toEqual([alpha?.pid, WORKER_PID + 1, COORDINATOR_PID]);
+    expect(resumes(lab).map(({ args }) => args[args.indexOf('--resume') + 1])).toEqual([ALPHA, ALPHA, BETA, COORDINATOR]);
+  });
+
+  it('refuses cancel after the coordinator action marker and confirms the respawn', async () => {
+    const lab = await make({ events: {} });
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    lab.onSleep(async () => {
+      const cancel = await cancelRefreshRun(lab.deps, HOME);
+      expect(cancel).toMatchObject({ ok: false, error: { message: 'cannot cancel refresh after the coordinator act has started' } });
+    });
+    expect(value(await actCoordinator(lab.deps, lab.request))).toEqual({ role: 'coordinator', id: NODE, status: 'resumed' });
+    expect(lab.atStop[0]).toMatchObject({ acting: NODE, actingRole: 'coordinator' });
+  });
+});
