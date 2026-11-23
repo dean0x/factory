@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { coordinatorLaunchWords } from '../../src/commands/start.js';
 import {
   capturePaneArgs,
   chainedArgs,
@@ -19,6 +20,9 @@ import {
   parsePaneListSoft,
   parseSlotList,
   parseSummonMark,
+  respawnPaneArgs,
+  runnerWindowArgs,
+  runnerWindowExitArgs,
   runShellBackgroundArgs,
   setPaneOptionArgs,
   slotListArgs,
@@ -32,6 +36,9 @@ import {
   type TmuxArgs,
 } from '../../src/launch/tmux.js';
 import type { Result } from '../../src/core/result.js';
+import { refreshText } from '../../src/names.js';
+import { createFakeDeps } from '../helpers/fake-deps.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const argvOf = (result: Result<TmuxArgs, string>): TmuxArgs => {
@@ -267,6 +274,44 @@ describe('the tmux call that ends a pane', () => {
   });
 });
 
+describe('the tmux call that respawns a pane', () => {
+  const cwd = '/w/node dir;';
+  const words = ['env', 'claude', '--resume', 'owned-id', 'Continue here;'];
+
+  it('targets the pane by id and gives each launch word to tmux without force or environment flags', () => {
+    expect(argvOf(respawnPaneArgs('%12', cwd, words))).toEqual([
+      'respawn-pane', '-t', '%12', '-c', '/w/node dir\\;', '--', 'env', 'claude', '--resume', 'owned-id', 'Continue here\\;',
+    ]);
+  });
+
+  it.each([{ words: [] }, { words: ['claude'] }, { words: ['', 'arg'] }])(
+    'refuses words that cannot start a program directly: $words', ({ words }) => {
+      expect(respawnPaneArgs('%12', cwd, words)).toEqual({
+        ok: false, error: 'the tmux call refuses a respawn without a program and at least one argument',
+      });
+    },
+  );
+
+  it.each(badPaneIds)('refuses a target that is not a pane id: %j', (target) => {
+    expect(respawnPaneArgs(target, cwd, words)).toEqual({
+      ok: false, error: 'the tmux call refuses a pane id that is not a percent sign and digits',
+    });
+  });
+
+  it('starts a new process in the dead pane and keeps its id and marks', () => {
+    const { handler, log } = tmuxHandler({ sessions: { demo: '/w/node' }, endedCoordinators: ['demo'] });
+    const before = log.panes();
+    const call = { command: 'tmux', args: ['respawn-pane', '-t', '%0', '-c', '/w/node dir', '--', ...words.slice(0, -1)], cwd: undefined };
+    expect(handler(call)).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(log.panes()).toEqual([
+      { ...before[0], pid: expect.any(Number), dead: false, cwd: '/w/node dir', command: words.slice(0, -1) },
+      ...before.slice(1),
+    ]);
+    expect(log.panes()[0]?.pid).not.toBe(before[0]?.pid);
+    expect(handler(call)).toMatchObject({ ok: true, value: { exitCode: 1, stderr: expect.stringContaining('still active') } });
+  });
+});
+
 describe('the tmux call that starts a worker pane', () => {
   it('splits the workers window, starts in the folder, and prints the id of the new pane', () => {
     expect(
@@ -450,6 +495,72 @@ describe('the tmux call that makes a window', () => {
       program: ['/opt/bin/node', '/opt/lib/factory.js'],
     });
     expect(steps.at(-1)).toEqual(newWindowArgs('demo', 'workers', '/w/node/coordinator'));
+  });
+});
+
+describe('the tmux calls for the refresh runner window', () => {
+  const request = {
+    id: 'demo', cwd: '/w/node dir', path: '/opt/my tools:/bin;',
+    command: ['/opt/my node/bin/node', '/opt/$HOME/factory.js', 'refresh', '--home', '/w/node dir'],
+  };
+
+  it('starts the runner detached with a window-local PATH and prints its pane id', () => {
+    const args = argvOf(runnerWindowArgs(request));
+    expect(args).toEqual([
+      'new-window', '-d', '-P', '-F', '#{pane_id}', '-t', '=demo:', '-n', 'refresh',
+      '-c', request.cwd, '-e', 'PATH=/opt/my tools:/bin\\;', '--', ...request.command,
+    ]);
+    const { handler, log } = tmuxHandler({ sessions: { demo: '/w/node', other: '/w/other' } });
+    const reply = handler({ command: 'tmux', args, cwd: undefined });
+    expect(reply).toMatchObject({ ok: true, value: { exitCode: 0, stdout: '%6\n' } });
+    expect(log.panes().at(-1)).toMatchObject({ id: '%6', session: 'demo', window: 'refresh', cwd: request.cwd, command: request.command });
+  });
+
+  it.each([{ command: [] }, { command: ['factory refresh'] }, { command: ['', 'refresh'] }])(
+    'refuses a command that cannot start a runner directly: $command', ({ command }) => {
+      expect(runnerWindowArgs({ ...request, command })).toEqual({
+        ok: false, error: 'the tmux call refuses a runner window without a program and at least one argument',
+      });
+    },
+  );
+
+  it.each(['\n', '\u0000', '\t', '\u007f', '\u0085'])('refuses a PATH with the control character %j', (character) => {
+    expect(runnerWindowArgs({ ...request, path: `${request.path}${character}` })).toEqual({
+      ok: false, error: 'the tmux call refuses a runner PATH with a control character',
+    });
+  });
+
+  it('turns off remain-on-exit only in the window of the printed pane id', () => {
+    expect(argvOf(runnerWindowExitArgs('%6'))).toEqual(['set-option', '-w', '-t', '%6', 'remain-on-exit', 'off']);
+  });
+
+  it('refuses a window name in place of a pane id for the option', () => {
+    expect(runnerWindowExitArgs('=demo:refresh')).toEqual({
+      ok: false, error: 'the tmux call refuses a pane id that is not a percent sign and digits',
+    });
+  });
+});
+
+describe('the coordinator launch words', () => {
+  const home = '/w/node';
+  const resumeId = '12345678-1234-4234-8234-123456789abc';
+  const config = sampleConfig();
+
+  it('passes the resume prompt as one word before the state and present project folders', async () => {
+    const deps = createFakeDeps({ env: { PATH: '/opt/my tools:/bin' } });
+    deps.seedDir(`${home}/web`);
+    const result = await coordinatorLaunchWords(deps, { home, config, proxyBaseUrl: null, resumeId, prompt: refreshText.continue });
+    expect(result).toMatchObject({ ok: true, value: expect.arrayContaining(['PATH=/opt/my tools:/bin', 'FACTORY_SESSION=demo']) });
+    if (result.ok) expect(result.value.slice(result.value.indexOf('--resume'))).toEqual([
+      '--resume', resumeId, '--name', 'demo', refreshText.continue, '--add-dir', `${home}/.factory`, '--add-dir', `${home}/web`,
+    ]);
+  });
+
+  it('refuses a prompt that reads as a flag', async () => {
+    const deps = createFakeDeps();
+    deps.seedDir(`${home}/web`);
+    const result = await coordinatorLaunchWords(deps, { home, config, proxyBaseUrl: null, resumeId, prompt: '--flag' });
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('refuses a prompt') } });
   });
 });
 

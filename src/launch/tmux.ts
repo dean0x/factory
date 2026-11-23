@@ -351,6 +351,17 @@ export const killPaneArgs = (pane: string): Result<TmuxArgs, string> => {
   return target.ok ? ok(call('kill-pane', '-t', target.value)) : target;
 };
 
+/** tmux passes a single command word to a shell. Two or more words go directly to the program. */
+const directCommand = (words: readonly string[]): boolean => words.length >= 2 && words[0] !== '';
+
+/** Restarts a dead pane in place. If the pane is still active, tmux refuses the call. */
+export const respawnPaneArgs = (paneId: string, cwd: string, words: readonly string[]): Result<TmuxArgs, string> => {
+  const target = paneTarget(paneId);
+  if (!target.ok) return target;
+  if (!directCommand(words)) return refuse('a respawn without a program and at least one argument');
+  return ok(call('respawn-pane', '-t', target.value, '-c', cwd, '--', ...words));
+};
+
 /**
  * Makes a pane in the workers window of the session, in the folder, with the command as an argument list and no shell.
  * The pane does not become the active pane. The call prints the id of the new pane. A command that is empty makes tmux
@@ -542,6 +553,28 @@ export const runShellBackgroundArgs = (text: string): Result<TmuxArgs, string> =
 /** Makes a window in the background, in the folder. The empty window in the target makes it a window of the session. */
 export const newWindowArgs = (id: string, name: string, cwd: string): TmuxArgs =>
   call('new-window', '-d', '-t', windowTarget(id, ''), '-n', name, '-c', cwd);
+
+/** Starts the detached refresh runner and prints its pane id. The caller then uses `runnerWindowExitArgs`. */
+export const runnerWindowArgs = (input: {
+  readonly id: string;
+  readonly cwd: string;
+  readonly path: string;
+  readonly command: readonly string[];
+}): Result<TmuxArgs, string> => {
+  const { id, cwd, path, command } = input;
+  if (!directCommand(command)) return refuse('a runner window without a program and at least one argument');
+  if (/\p{Cc}/u.test(path)) return refuse('a runner PATH with a control character');
+  return ok(call(
+    'new-window', '-d', '-P', '-F', PANE_ID_FORMAT, '-t', windowTarget(id, ''), '-n', tmuxNames.windowRefresh,
+    '-c', cwd, '-e', `${env.path}=${path}`, '--', ...command,
+  ));
+};
+
+/** Use the pane id from `runnerWindowArgs`. The window name is not unique and the active window does not change. */
+export const runnerWindowExitArgs = (paneId: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(paneId);
+  return target.ok ? ok(call('set-option', '-w', '-t', target.value, 'remain-on-exit', 'off')) : target;
+};
 
 /**
  * The tmux calls that start the session of a node, in order. Each call is an argument list for a program that runs with no shell.

@@ -513,7 +513,7 @@ export const tmuxHandler = (
   const expand = (format: string, pane: FakePane): string => expandFormat(format, (key) => valueOf(key, pane));
 
   const printed = (command: readonly string[], pane: FakePane) =>
-    command.includes('-P') ? exited(0, `${expand(after(command, '-F') || DEFAULT_LIST_FORMAT, pane)}\n`) : exited(0);
+    hasFlag(command, '-P') ? exited(0, `${expand(after(command, '-F') || DEFAULT_LIST_FORMAT, pane)}\n`) : exited(0);
 
   const cantFindPane = (target: string) => exited(1, '', `can't find pane: ${target}\n`);
 
@@ -542,11 +542,10 @@ export const tmuxHandler = (
           const pane = resolvePane(targetOf(command));
           return exited(0, `${pane === undefined ? expandFormat(command.at(-1) ?? '', () => '') : expand(command.at(-1) ?? '', pane)}\n`);
         }
-        // A position in a window (the left pane of the view window) prints the format of the pane that holds it. A format of the
-        // one key that asks if the coordinator ended keeps the answer of the fixture.
+        // A position in a window prints the format of the pane at that position.
         const format = command.at(-1) ?? '';
         const held = resolvePane(targetOf(command));
-        if (held !== undefined && format !== '#{pane_dead}') return exited(0, `${expand(format, held)}\n`);
+        if (held !== undefined) return exited(0, `${expand(format, held)}\n`);
         return exited(0, `${endedCoordinators.has(targetSession(command)) ? 1 : 0}\n`);
       }
       case 'new-session': {
@@ -631,6 +630,16 @@ export const tmuxHandler = (
           if (!result.ok || result.value.exitCode !== 0) return result;
         }
         return result;
+      }
+      case 'respawn-pane': {
+        const pane = resolvePane(targetOf(command));
+        if (pane === undefined) return cantFindPane(targetOf(command));
+        if (!pane.dead) return exited(1, '', `pane ${pane.id} is still active\n`);
+        panes[panes.indexOf(pane)] = {
+          ...pane, pid: nextPid++, dead: false, cwd: after(rest, '-c') || pane.cwd, command: programOf(rest), screen: '',
+        };
+        modeScreens.delete(pane.id);
+        return exited(0);
       }
       case 'kill-pane': {
         const pane = resolvePane(targetOf(command));

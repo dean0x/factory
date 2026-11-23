@@ -134,6 +134,46 @@ const renderAcceptedSetup = async (
   return ok(undefined);
 };
 
+interface CoordinatorLaunchRequest {
+  readonly home: string;
+  readonly config: FactoryConfig;
+  readonly proxyBaseUrl: string | null;
+  readonly resumeId: string | null;
+  readonly prompt?: string;
+}
+
+/** Builds the coordinator launch. Start can reuse the project folders that it already checked for warnings. */
+export const coordinatorLaunchWords = async (
+  deps: Deps,
+  { home, config, proxyBaseUrl, resumeId, prompt }: CoordinatorLaunchRequest,
+  projectFolders?: readonly string[],
+): Promise<CliResult<readonly string[]>> => {
+  let folders = projectFolders;
+  if (folders === undefined) {
+    const projects = await presentProjects(deps, home, config.recipe.projects);
+    if (!projects.ok) return projects;
+    folders = projects.value.folders;
+  }
+  const { coordinatorDir, stateDir } = layoutOf(home);
+  const { node, session } = config.core;
+  const path = deps.env[env.path];
+  const launch = launchArgv({
+    home,
+    coordinatorDir,
+    stateDir,
+    sessionId: node.id,
+    effort: session.effort,
+    model: session.model,
+    proxyBaseUrl,
+    path: path === undefined || path === '' ? null : path,
+    agent: session.agent,
+    projects: folders,
+    ...(resumeId === null ? {} : { resumeId }),
+    ...(prompt === undefined ? {} : { prompt }),
+  });
+  return launch.ok ? launch : failure(launch.error);
+};
+
 /**
  * The tmux calls that start the session, once with the real proxy URL and once with the label of the proxy. The coordinator
  * resumes its newest session when the pointer passes the owner check, and else it starts a new conversation (`coordinatorResumeOf`).
@@ -146,7 +186,7 @@ const planStart = async (
   answers: ProxyAnswers,
   guards: GuardValues,
 ): Promise<CliResult<StartPlan>> => {
-  const { coordinatorDir, stateDir } = layoutOf(home);
+  const { coordinatorDir } = layoutOf(home);
   // The slot pane starts this program. A path that is not known gives no pane that works, and a made-up path starts another program.
   const [programFile, ...programRest] = deps.programArgv;
   if (programFile === undefined) {
@@ -158,28 +198,15 @@ const planStart = async (
   const projects = await presentProjects(deps, home, recipe.projects);
   if (!projects.ok) return projects;
   const resume = await coordinatorResumeOf(deps, home, core.node.id);
-  const path = deps.env[env.path];
-  const stepsFor = (proxyBaseUrl: string | null): CliResult<readonly TmuxArgs[]> => {
-    const launch = launchArgv({
-      home,
-      coordinatorDir,
-      stateDir,
-      sessionId: core.node.id,
-      effort: core.session.effort,
-      model: core.session.model,
-      proxyBaseUrl,
-      path: path === undefined || path === '' ? null : path,
-      agent: core.session.agent,
-      projects: projects.value.folders,
-      ...(resume.resumeId === null ? {} : { resumeId: resume.resumeId }),
-    });
+  const stepsFor = async (proxyBaseUrl: string | null): Promise<CliResult<readonly TmuxArgs[]>> => {
+    const launch = await coordinatorLaunchWords(deps, { home, config, proxyBaseUrl, resumeId: resume.resumeId }, projects.value.folders);
     return launch.ok
       ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value, program: [programFile, ...programRest] }))
-      : failure(launch.error);
+      : launch;
   };
-  const steps = stepsFor(proxy.value.baseUrl);
+  const steps = await stepsFor(proxy.value.baseUrl);
   if (!steps.ok) return steps;
-  const shown = stepsFor(proxy.value.label === null ? null : `<${proxy.value.label}>`);
+  const shown = await stepsFor(proxy.value.label === null ? null : `<${proxy.value.label}>`);
   if (!shown.ok) return shown;
   return ok({
     proxy: proxy.value,
