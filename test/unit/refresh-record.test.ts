@@ -7,6 +7,7 @@ import { layoutOf } from '../../src/state/layout.js';
 import {
   cancelRefreshRun,
   claimRefreshRun,
+  failUnclaimedRefreshRun,
   readOwnRefreshRun,
   readRefreshRun,
   refreshRunIsLive,
@@ -90,6 +91,27 @@ describe('refresh run record', () => {
     expect(await claimRefreshRun(deps, HOME, record.token)).toMatchObject({ ok: false, error: { kind: 'safety' } });
     const next = value(await schedule(deps));
     expect(next.token).not.toBe(record.token);
+  });
+
+  it('leaves a claimed run unchanged when the scheduler reports a missed claim', async () => {
+    const { deps } = make();
+    const runner = await claim(deps);
+    const before = deps.files.get(PATH);
+    const fault = { warning: 'the claim wait ended', remedy: 'Run "factory refresh --result".' };
+    expect(await failUnclaimedRefreshRun(deps, HOME, runner.token, fault)).toEqual(ok(runner));
+    expect(deps.files.get(PATH)).toBe(before);
+  });
+
+  it('does not fail a new schedule with the previous run token', async () => {
+    const { deps } = make();
+    const previous = value(await schedule(deps));
+    deps.advance(CLAIM_MS);
+    const next = value(await schedule(deps));
+    const fault = { warning: 'the claim wait ended', remedy: 'Run "factory refresh --result".' };
+    expect(await failUnclaimedRefreshRun(deps, HOME, previous.token, fault)).toMatchObject({
+      ok: false, error: { message: expect.stringContaining('run changed'), hint: expect.stringContaining('factory refresh --result') },
+    });
+    expect(await readRefreshRun(deps, HOME)).toEqual(ok(next));
   });
 
   it.each(['ended', 'reused'] as const)('frees a partial record when the runner PID has %s', async (kind) => {

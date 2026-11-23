@@ -19,7 +19,7 @@ import { promptStateOf, readOwnCoordinatorResume, readOwnLastSeen, readWorkerLas
 import { runsInside, workersWithPanes } from '../workers/lifecycle.js';
 import { readPanes, requireCoordinatorPane } from '../workers/panes.js';
 import {
-  cancelRefreshRun, readRefreshRun, refreshActingRemedy, refreshResultCommand, refreshRunIsLive, scheduleRefreshRun,
+  cancelRefreshRun, failUnclaimedRefreshRun, readRefreshRun, refreshActingRemedy, refreshResultCommand, refreshRunIsLive, scheduleRefreshRun,
   type RefreshCaller, type RefreshRunRecord,
 } from '../workers/refresh-record.js';
 import { refreshExitCode, runRefresh, type RefreshTarget } from '../workers/refresh-run.js';
@@ -236,17 +236,23 @@ const startRunner = async (deps: Deps, { home, config }: RefreshTarget, run: Ref
   if (!window.ok) return failure('cannot start the refresh runner window', SHOW_RESULT);
   const exit = runnerWindowExitArgs(window.value.trim());
   if (!exit.ok || !(await tmuxStep(deps, exit.value)).ok) return failure('cannot set the exit option of the refresh runner window', SHOW_RESULT);
+  const acknowledged = () => ok(output(
+    [text(`SCHEDULED: ${run.runId}. ${SHOW_RESULT}`)], { runId: run.runId, state: 'scheduled', warnings: [END_WARNING] },
+  ));
   for (let check = 0; check <= refreshWait.claimChecks; check += 1) {
     const read = await readRefreshRun(deps, home);
     if (!read.ok) return read;
-    if (read.value?.runId !== run.runId || read.value.token !== run.token || read.value.state === 'cancelled') break;
-    if (read.value.runner !== null) {
-      return ok(output([text(`SCHEDULED: ${run.runId}. ${SHOW_RESULT}`)], { runId: run.runId, state: 'scheduled', warnings: [END_WARNING] }));
+    if (read.value?.runId !== run.runId || read.value.token !== run.token || read.value.state === 'cancelled') {
+      return failure(CLAIM_FAULT, SHOW_RESULT);
     }
+    if (read.value.runner !== null) return acknowledged();
     const left = run.deadlines.claimMs - deps.now().getTime();
     if (check === refreshWait.claimChecks || left <= 0) break;
     await deps.sleep(Math.min(left, refreshWait.claimIntervalMs));
   }
+  const failed = await failUnclaimedRefreshRun(deps, home, run.token, { warning: CLAIM_FAULT, remedy: RETRY });
+  if (!failed.ok) return failed;
+  if (failed.value.runner !== null && failed.value.state !== 'cancelled') return acknowledged();
   return failure(CLAIM_FAULT, SHOW_RESULT);
 };
 

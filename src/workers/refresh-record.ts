@@ -211,6 +211,14 @@ export const claimRefreshRun = async (deps: Deps, home: string, token: string): 
     });
   });
 
+export const failUnclaimedRefreshRun = async (
+  deps: Deps, home: string, token: string, fault: RefreshFault,
+): Promise<CliResult<RefreshRunRecord>> => changeRecord(deps, home, async (current) => {
+  if (current?.token !== token) return failure('the scheduled refresh run changed', RESULT_REMEDY);
+  if (current.state !== 'scheduled') return ok(current);
+  return ok({ ...current, state: 'failed', fault });
+});
+
 const runnerOwns = async (deps: Deps, record: RefreshRunRecord, token: string): Promise<boolean> => {
   if (record.token !== token || record.runner?.pid !== deps.pid) return false;
   const start = await processStartOf(deps, deps.pid);

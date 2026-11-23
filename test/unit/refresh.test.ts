@@ -184,7 +184,7 @@ it('renders start files before it starts one detached runner with argument words
   expect(lab.deps.terminated).toEqual([]);
 });
 
-it('refuses an unclaimed runner after at most the claim wait', async () => {
+it('saves a failed run when the runner does not claim in time', async () => {
   const lab = await make('own', { inside: true });
   const result = await lab.run();
   expect(result.code, result.err).toBe(1);
@@ -192,6 +192,10 @@ it('refuses an unclaimed runner after at most the claim wait', async () => {
   expect(result.err).toContain('"factory refresh --result"');
   expect(lab.deps.sleeps).toEqual(Array.from({ length: refreshWait.claimChecks }, () => refreshWait.claimIntervalMs));
   expect(lab.deps.terminated).toEqual([]);
+  expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({
+    state: 'failed', runner: null,
+    fault: { warning: expect.stringContaining('did not claim'), remedy: 'Run "factory refresh" again.' },
+  });
   const shown = await lab.run('--result');
   expect(shown.code).toBe(1);
   expect(shown.out).toContain('failed');
