@@ -149,13 +149,14 @@ export interface RecordWorkInput {
   readonly project: string | undefined;
 }
 
-export interface RecordBoard {
+interface RecordContext {
   readonly home: string;
   readonly config: FactoryConfig;
-  readonly connector: Pick<LocalBoard, 'listItems' | 'checkApproval' | 'recordChecked'>;
 }
 
-type RecordContext = Pick<RecordBoard, 'home' | 'config'>;
+export interface RecordBoard extends RecordContext {
+  readonly connector: Pick<LocalBoard, 'listItems' | 'checkApproval' | 'recordChecked'>;
+}
 
 /** An off guard gives the record point the same rules as delegated mode. The delegation check acts on the same guard read. */
 export const recordApprovalMode = async (deps: Deps, { home, config }: RecordContext, point: string): Promise<ApprovalMode | undefined> => {

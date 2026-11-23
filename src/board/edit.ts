@@ -692,7 +692,7 @@ const queueWithout = (doc: BoardDoc, id: string): { readonly rows: readonly Stor
 };
 
 /** Give the reason for a head conflict, or null. If the item already has this head, do not check other items. */
-export const headConflictIn = (items: readonly Pick<BoardItem, 'id' | 'record'>[], id: string, head: string): string | null => {
+export const headConflictIn = (items: readonly Pick<BoardItem, typeof boardKeys.id | 'record'>[], id: string, head: string): string | null => {
   const record = items.find((item) => item.id === id)?.record;
   if (record !== undefined) {
     if (record[boardKeys.mergedPrHead] === head) return null;
