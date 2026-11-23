@@ -38,7 +38,7 @@ const hook = async (deps: FakeDeps, session: string, marker: string, event: Hook
   value(await writeLastSeen(deps, HOME, session, { kind: 'event', event }, marker));
 
 const psStart = (date: Date): string => {
-  const [weekday, day, month, year, time] = date.toUTCString().replace(',', '').split(' ');
+  const [weekday, month, day, year, time] = date.toString().split(' ');
   return `${weekday} ${month} ${day} ${time} ${year}\n`;
 };
 
@@ -89,9 +89,8 @@ const make = async (setup: Setup = {}) => {
       calls.push(call);
       const override = await onRun(call);
       if (override !== undefined) return override;
-      if (command === 'ps' && args[1] === 'lstart=') return exited(0, 'Wed Jan  2 03:00:00 2030\n');
-      if (command === 'env' && args[0] === 'TZ=UTC0' && args[2] === '-o' && args[3] === 'lstart=') {
-        return exited(0, Number(args[5]) === setup.newProcess ? psStart(base.now()) : 'Wed Jan  2 03:00:00 2030\n');
+      if (command === 'ps' && args[1] === 'lstart=') {
+        return exited(0, psStart(Number(args[3]) === setup.newProcess ? base.now() : new Date('2030-01-02T03:00:00Z')));
       }
       if (command !== 'tmux') return missingProgram(command);
       if (args[0] === 'respawn-pane') {
@@ -227,7 +226,7 @@ describe('refresh runner', () => {
     lab.deps.advance(500);
     lab.onRun(async ({ command, args }) => {
       if (args.at(-1) !== String(WORKER_PID)) return undefined;
-      if (command === 'env' && args.includes('lstart=')) return exited(0, 'Wed Jan  2 03:04:05 2030\n');
+      if (command === 'ps' && args[1] === 'lstart=') return exited(0, psStart(new Date('2030-01-02T03:04:05Z')));
       return undefined;
     });
     const result = value(await runRefresh(lab.deps, { ...lab.request, token: record.token }));
@@ -240,7 +239,7 @@ describe('refresh runner', () => {
     value(await claimed(lab));
     const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
     lab.onRun(async ({ command, args }) => {
-      if (command === 'env' && args.includes('lstart=')) await hook(lab.deps, ALPHA, 'alpha', 'PreToolUse');
+      if (command === 'ps' && args[1] === 'lstart=' && args[3] === String(WORKER_PID)) await hook(lab.deps, ALPHA, 'alpha', 'PreToolUse');
       return undefined;
     });
     expect(value(await actWorker(lab.deps, lab.request, 'alpha', poll.panes))).toBeNull();
@@ -404,7 +403,7 @@ describe('refresh runner', () => {
     lab.deps.advance(10 * 60 * 60 * 1000);
     const coordinatorStart = psStart(new Date(lab.deps.now().getTime() - 60_000));
     lab.onRun(async ({ command, args }) =>
-      command === 'env' && args.at(-1) === String(COORDINATOR_PID) ? exited(0, coordinatorStart) : undefined);
+      command === 'ps' && args[1] === 'lstart=' && args[3] === String(COORDINATOR_PID) ? exited(0, coordinatorStart) : undefined);
     const run = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }));
     const result = value(await runRefresh(lab.deps, { ...lab.request, token: run.token }));
     expectFault(result, NODE, 'not later than the start', 'factory refresh');
@@ -414,7 +413,9 @@ describe('refresh runner', () => {
   it('does not stop a coordinator that turns busy before its launch words are ready', async () => {
     const lab = await make({ events: {} });
     lab.onRun(async ({ command, args }) => {
-      if (command === 'env' && args.includes('lstart=')) await hook(lab.deps, COORDINATOR, NODE, 'PreToolUse');
+      if (command === 'ps' && args[1] === 'lstart=' && args[3] === String(COORDINATOR_PID)) {
+        await hook(lab.deps, COORDINATOR, NODE, 'PreToolUse');
+      }
       return undefined;
     });
     expectFault(await finish(lab), NODE, 'not idle', 'factory refresh');
