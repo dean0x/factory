@@ -10,7 +10,7 @@ import { ADD_DIR_FLAG } from '../launch/argv.js';
 import { runnerWindowArgs, runnerWindowExitArgs, type PaneRow } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
 import {
-  commandLines, commands, commandText, env, flags, flagText, hookSessions, program, refreshText, refreshWait, workerRecord,
+  commandLines, commands, commandText, env, flags, flagText, hookSessions, refreshText, refreshWait, schemaIds, workerRecord,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { hasOwnerPrefix } from '../safety/owner-prefix.js';
@@ -38,7 +38,6 @@ const SKIP_REMEDY = `Check its pane. ${RETRY}`;
 const UPGRADE = `Run "${commandText(commands.upgrade)}" to check the coordinator hook settings. Then run "${REFRESH}" again.`;
 const END_WARNING = 'The background tasks, crons and watches of each restarted session end.';
 const CLAIM_FAULT = 'the refresh runner did not claim its token in time';
-const SCHEMA = `${program}.${commands.refresh}/v1`;
 
 export interface RefreshOptions {
   readonly home: string | undefined;
@@ -76,7 +75,7 @@ const workerPlanOf = (rows: readonly PlanRow[]): RefreshWorkerPlan => {
 const skipNotice = ({ warning, remedy }: RefreshFault): string => `${warning} ${remedy}`;
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 const output = (lines: readonly OutLine[], fields: Readonly<Record<string, unknown>>, exitCode = 0, warnings: readonly string[] = []): CommandOutput =>
-  ({ lines, json: { ...fields, schema: SCHEMA }, warnings, failed: exitCode !== 0, exitCode });
+  ({ lines, json: { ...fields, schema: schemaIds.refresh }, warnings, failed: exitCode !== 0, exitCode });
 
 const checkContinue = ({ core: { owner } }: FactoryConfig): CliResult<void> =>
   hasOwnerPrefix(refreshText.continue, owner.prefix, owner.display)
