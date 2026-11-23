@@ -49,7 +49,7 @@ How to read the table:
 | Fix the six conflicts of design §1.3 | §1.3 | Conflicts 1, 2, 3, 5 and 6 have their own rows above: the merge rule, the ways to stop a session, the window of the workers, the reads under `~/.claude`, and the coordinator instructions that a worker loads. Conflict 4 (context in percent): FAC-M4 `worker list` marks `PREPARE` and `MAX` | covered |
 | The last-seen hook comes with the worker control milestone | §4.6 | FAC-M4: hook test and static test | covered |
 | Merge at the approved head; `--admin` only at that head | §6.1 | `pr merge` tests the head pin, the approval proof and the explicit `--admin` flag. Delegated mode needs an owner store decision for that PR and head. | covered |
-| What counts as approval and assignment | §6.1 | FAC-M5: one test for each proof (decision, ask, plan approved through an ask), with direct and decision assignment; a commit author is refused | covered |
+| What counts as approval and assignment | §6.1 | With the proof checks on, delegated mode refuses a merge without a matching owner store decision. Assignment and approved-plan proofs are separate work. | partly covered |
 | Unapproved work, or a PR with a question for the owner, still waits | §6.1 | FAC-M5: refusal tests; `check` exits 3 with `NOT READY` while the PR has an open ask or an open request | covered |
 | Releases are not in the merge rule; they wait for his go | §6.2 | FAC-M5b: the `release check` no-publish test and the `approval.release` config test | covered |
 | factory offers the rule as an owner choice | §4.4 | FAC-M5: `pr merge` tests for `owner` and `delegated` | covered |

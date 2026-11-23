@@ -56,6 +56,14 @@ it('does not mark check or pr merge as unbuilt in the README or design', () => {
   }
 });
 
+it('marks the approval and assignment proofs as partly covered', () => {
+  const rows = readFileSync(join(ROOT, 'docs', 'intent-trace.md'), 'utf8').split('\n');
+  const row = rows.find((line) => line.startsWith('| What counts as approval and assignment |'));
+  expect(row).toMatch(/\| partly covered \|$/);
+  expect(row).toMatch(/proof checks on.*delegated mode refuses a merge without a matching owner store decision/i);
+  expect(row).toMatch(/assignment and approved-plan proofs are separate work/i);
+});
+
 describe('scripts/check-intent-docs.sh', () => {
   it('passes on the docs of the repo', () => {
     const result = check(join(ROOT, 'docs'));
