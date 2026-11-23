@@ -87,8 +87,8 @@ describe('guard list', () => {
     expect(result.err).toBe('');
     expect(cellsOf(lines[0] ?? '')).toEqual(['GUARD', 'VALUE', 'DEFAULT', 'H', 'SET IN']);
     expect(lines.slice(1, -2).map((line) => rowCells(lines[0] ?? '', line))).toEqual(guards.slice(0, 17).map((guard) => [guard.id, 'on', guard.newNode, guard.harm ? 'H' : '', placeOf(guard)]));
-    expect(lines.at(-2)).toBe('and 15 more: run with --all or --json');
-    expect(lines.at(-1)).toBe('0 of 32 guards are off. 0 of them have the mark H.');
+    expect(lines.at(-2)).toBe('and 16 more: run with --all or --json');
+    expect(lines.at(-1)).toBe('0 of 33 guards are off. 0 of them have the mark H.');
     expectShortOutput(result.out);
   });
 
@@ -154,6 +154,21 @@ describe('guard list', () => {
       rows: guardRowsFor(recipes[0]),
       unmatched: [],
       loosened: [],
+    });
+  });
+
+  it('lists the marked merge checks and reads a missing admin merge key as on', async () => {
+    const result = await run(make(), ['--json']);
+    expect(result.code, result.err).toBe(0);
+    const doc: unknown = JSON.parse(result.out);
+    expect(doc).toMatchObject({
+      guards: expect.arrayContaining([expect.objectContaining({
+        id: 'admin-merge', name: 'Owner proof for an admin merge',
+        keepsSafe: 'A merge that skips the branch rules of GitHub needs the admin flag and an owner decision for that PR and head.',
+        settable: true, harm: true, newNode: 'off', value: 'on', source: 'missing',
+      })]),
+      rows: expect.arrayContaining(['merge-caller', 'merge-owner-proof', 'merge-approval-point', 'admin-merge-proof']
+        .map((id) => expect.objectContaining({ id, harm: true }))),
     });
   });
 
@@ -224,7 +239,7 @@ describe('guard list', () => {
     const result = await run(target.deps);
     expect(result.code).toBe(0);
     expect(result.err).toContain(STORE);
-    expect(result.out).toContain('0 of 32 guards are off.');
+    expect(result.out).toContain('0 of 33 guards are off.');
     expect(target.count()).toBe(0);
   });
 
@@ -237,7 +252,7 @@ describe('guard list', () => {
     expect(result.code).toBe(0);
     expect(result.err).toContain(STORE);
     expect(result.err.trim().split('\n')).toHaveLength(1);
-    expect(result.out).toContain('0 of 32 guards are off.');
+    expect(result.out).toContain('0 of 33 guards are off.');
     expectShortOutput(result.out);
     expect(counted.count()).toBe(1);
     const all = linesOf((await run(deps, ['--all'])).out);
@@ -394,7 +409,7 @@ describe('guard list', () => {
     deps.seed(`${HOME}/${files.localConfig}`, 'schema: [');
     const result = await run(deps);
     expect(result.code).toBe(1);
-    expect(linesOf(result.out).at(-1)).toBe('The off count is unknown for 29 guards. The off count with the mark H is unknown.');
+    expect(linesOf(result.out).at(-1)).toBe('The off count is unknown for 30 guards. The off count with the mark H is unknown.');
   });
 
   it.each([
@@ -477,7 +492,7 @@ describe('guard list', () => {
     for (const flags of [['--all'], ['--family', recipe.guards[0]?.id ?? '', '--all']]) {
       const result = await run(deps, flags, registry);
       expect(result.code).toBe(0);
-      expect(result.out).not.toMatch(/[\u001b‮\t]/);
+      expect(['\u001b', String.fromCodePoint(0x202e), '\t'].filter((char) => result.out.includes(char))).toEqual([]);
       expect(result.out).toContain(flags.includes('--family') ? 'Data  stays private.' : 'sample [31m');
     }
   });

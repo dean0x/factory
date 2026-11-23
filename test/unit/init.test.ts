@@ -141,12 +141,13 @@ describe('init in an own folder: the owner prefix record', () => {
     expect(config.value.core.guards).toEqual(Object.fromEntries(guards.map(({ id }) => [id, 'off'])));
     expect(config.value.core.shared_guards).toEqual({});
     const local = deps.files.get(`${HOME}/factory.local.yaml`) ?? '';
+    expect(local).toContain('  admin-merge: "off"    # H: ');
     for (const guard of guards) {
       expect(local).toContain(`  ${guard.id}: "off"    # ${guard.harm ? 'H: ' : ''}${guard.keepsSafe}`);
     }
     const lines = result.value.lines.map((line) => line.text);
     expect(lines.filter((line) => line.startsWith('Guards:'))).toEqual([
-      'Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
+      'Guards: 30 off; 29 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
     ]);
     expectNoGuardIds([...lines, ...result.value.warnings, ...deps.warned].join('\n'), guards);
     expectShortOutput(lines.join('\n'));
@@ -3920,7 +3921,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     expect(result.ok).toBe(true);
     expect(deps.files.has(ACCEPTANCES)).toBe(false);
     expect.soft(linesOf(result)).toContain(
-      'Guards: 28 off; 27 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
+      'Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
     );
     expect.soft(await loadConfig(deps, HOME)).toMatchObject({ ok: true, value: { core: { guards: { 'setup-text': 'on' }, shared_guards: {} } } });
     const store = await readGuardStore(deps, GUARD_STORE);

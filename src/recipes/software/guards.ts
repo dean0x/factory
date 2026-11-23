@@ -1,6 +1,6 @@
-import { alwaysOnRow, at, fixedTextRow, guardOf, textRow } from '../../guards/build.js';
+import { alwaysOnRow, at, codeRow, fixedTextRow, guardOf, textRow } from '../../guards/build.js';
 import type { GuardDefinition, GuardRow } from '../../guards/types.js';
-import { commandLines, guardIds, keys, requestWords, roles } from '../../names.js';
+import { capitalize, commandLines, guardIds, keys, requestWords, roles } from '../../names.js';
 import { softwareApprovalPoints } from './approval.js';
 import { CONFIG_FILE, COORDINATOR_FILE, SAFETY_FILE, WORKER_FILE, WORK_RULES_FILE, softwareGuardIds } from './guard-parts.js';
 import { softwareRuleRows } from './rule-rows.js';
@@ -15,8 +15,14 @@ export { softwareGuardIds } from './guard-parts.js';
 
 const { coordinator, manager, owner, worker } = roles;
 const [mergePoint, releasePoint] = softwareApprovalPoints;
+const PR_MERGE_FILE = 'src/recipes/software/pr-merge.ts';
 
 export const softwareGuards: readonly GuardDefinition[] = [
+  guardOf(
+    softwareGuardIds.adminMerge,
+    `${capitalize(owner)} proof for an admin merge`,
+    `A merge that skips the branch rules of GitHub needs the admin flag and an ${owner} decision for that PR and head.`,
+  ),
   guardOf(
     softwareGuardIds.approvalMerge,
     'Approval of a merge',
@@ -90,6 +96,40 @@ export const softwareGuardRows: readonly GuardRow[] = [
     applies: 'Each release',
     harm: true,
     sites: [...APPROVAL_FILES, ...at(COORDINATOR_FILE, 'coordinatorLines'), ...at(SAFETY_FILE, 'safetyLines')],
+  }),
+
+  // Pull request merge checks.
+  codeRow({
+    id: 'merge-caller',
+    guard: guardIds.sessionChecks,
+    name: `Only the ${coordinator} pane or an ${owner} terminal can call the merge command`,
+    applies: 'Pull request merge',
+    harm: true,
+    sites: at(PR_MERGE_FILE, 'requireMergeCaller'),
+  }),
+  codeRow({
+    id: 'merge-owner-proof',
+    guard: guardIds.ownerGo,
+    name: 'When the merge approval rule applies, the command needs a go for this PR and head',
+    applies: 'Pull request merge',
+    harm: true,
+    sites: at(PR_MERGE_FILE, 'proofNeedOf'),
+  }),
+  codeRow({
+    id: 'merge-approval-point',
+    guard: softwareGuardIds.approvalMerge,
+    name: 'The merge approval point uses the proof rule of its mode',
+    applies: 'Pull request merge',
+    harm: true,
+    sites: at(PR_MERGE_FILE, 'proofNeedOf'),
+  }),
+  codeRow({
+    id: 'admin-merge-proof',
+    guard: softwareGuardIds.adminMerge,
+    name: `An admin merge needs an ${owner} store go for this PR and head`,
+    applies: 'Admin merge of a pull request',
+    harm: true,
+    sites: at(PR_MERGE_FILE, 'proofNeedOf'),
   }),
 
   // Board edits.
