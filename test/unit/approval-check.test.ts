@@ -68,13 +68,16 @@ const proofCases = [
 ] as const;
 
 describe('approval check: static checks of the source', () => {
-  it.each(['board/decide.ts', 'board/local.ts', 'commands/item.ts'])('%s imports no decision command module', (path) => {
+  it.each(['board/decide.ts', 'board/local.ts', 'board/record-flow.ts', 'commands/item.ts'])('%s has no command import outside its layer', (path) => {
     const file = join(__dirname, '..', '..', 'src', path);
     const source = readFileSync(file, 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const imported = [...code.matchAll(/\b(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g)]
       .map((match) => resolve(dirname(file), match[1] ?? ''));
-    expect(imported.filter((name) => /[/\\](?:decide-read|commands[/\\]decide)(?:\.[cm]?[jt]s)?$/.test(name))).toEqual([]);
+    const forbidden = path === 'board/record-flow.ts'
+      ? /[/\\]commands[/\\]/
+      : /[/\\](?:decide-read|commands[/\\]decide)(?:\.[cm]?[jt]s)?$/;
+    expect(imported.filter((name) => forbidden.test(name))).toEqual([]);
   });
 });
 

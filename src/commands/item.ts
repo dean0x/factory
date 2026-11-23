@@ -1,17 +1,17 @@
-import type { BoardConnector, BoardItem, DocLinked, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, ItemRecorded } from '../board/contract.js';
+import type { BoardConnector, BoardItem, DocLinked, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery } from '../board/contract.js';
 import { checkItemId, checkNoteText, docPathIssue } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
 import { followBoard } from '../board/follow.js';
 import { boardView, trackView } from '../board/list-view.js';
 import { requireLocalKind } from '../board/local.js';
-import { recordWork, type RecordAction } from '../board/record-flow.js';
+import { recordWork, type RecordedWork, type RecordWorkInput } from '../board/record-flow.js';
 import { stageShown } from '../board/stages.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import { guardValuesFor } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import {
   boardKeys,
@@ -29,7 +29,7 @@ import {
   roles,
   schemaIds,
 } from '../names.js';
-import type { CheckedRecord } from '../recipes/entry.js';
+import type { RecordGuard } from '../recipes/entry.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { hasOwnerPrefix } from '../safety/owner-prefix.js';
 import { layoutOf } from '../state/layout.js';
@@ -70,7 +70,7 @@ type Action =
   | { readonly kind: typeof itemCommands.move; readonly id: string; readonly move: ItemMove }
   | { readonly kind: typeof itemCommands.close; readonly id: string; readonly reason: string | undefined }
   | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean }
-  | RecordAction
+  | ({ readonly kind: typeof itemCommands.record } & RecordWorkInput)
   | { readonly kind: typeof itemCommands.unassign; readonly id: string }
   | { readonly kind: typeof itemCommands.doc; readonly id: string; readonly path: string }
   | { readonly kind: typeof itemCommands.note; readonly id: string; readonly text: string };
@@ -315,7 +315,7 @@ const UNAPPROVED_LINE = textLine(
   `The guard ${guardIds.ownerGo} is off, so this record did not check the linked approval ${requestWords.requests} of the item.`,
 );
 
-const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded, guards: GuardValues, offLines: readonly OutLine[]): CommandOutput => {
+const recordedAnswer = ({ checked, recorded, offGuards }: RecordedWork, guard: RecordGuard | undefined): CommandOutput => {
   const id = displayLine(recorded.item.id);
   const summary = displayLine(checked.summary);
   const done = answer(recorded.changed ? `Recorded ${id}: ${summary}` : `${id}: ${summary} already recorded`, {
@@ -328,12 +328,16 @@ const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded, guards: 
     summary: checked.summary,
     changed: recorded.changed,
   });
-  const lines = [...offLines, ...(isGuardOn(guards, guardIds.ownerGo) ? [] : [UNAPPROVED_LINE])];
+  const lines: OutLine[] = [];
+  if (guard !== undefined && offGuards.includes(guard.id)) lines.push(textLine(guard.offLine));
+  if (offGuards.includes(guardIds.ownerGo)) lines.push(UNAPPROVED_LINE);
   return lines.length === 0 ? done : { ...done, lines: [...done.lines, ...lines] };
 };
 
-const recordChecked = (deps: Deps, board: OpenBoard, action: RecordAction): Promise<CliResult<CommandOutput>> =>
-  recordWork(deps, board, action, recordedAnswer, textLine);
+const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordWorkInput): Promise<CliResult<CommandOutput>> => {
+  const result = await recordWork(deps, board, action);
+  return result.ok ? ok(recordedAnswer(result.value, board.config.entry.recordCheck?.guard)) : result;
+};
 
 /**
  * `item unassign`: only the coordinator pane runs it, and the caller rule runs before the board is read. The id is checked first, so

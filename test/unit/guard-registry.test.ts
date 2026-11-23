@@ -263,7 +263,6 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'coordinator-caller', path: 'src/commands/request.ts', symbol: 'execute', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'freeUnproved', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'dismissAskOwner', reason: coordinatorCallerReason },
-  { row: 'item-record-approval', path: 'src/commands/item.ts', symbol: 'recordChecked', reason: 'Calls checkApproval and recordChecked of the board, whose approval check calls recordNeedsApproval, which reads the value.' },
   { row: 'item-record-approval', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Its approval check of a record calls recordNeedsApproval, which reads the value.' },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'linkedApprovalsOf', reason: recordApprovalReason },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'approvalVerdict', reason: recordApprovalReason },
@@ -1114,6 +1113,10 @@ describe('the rows of the registry', () => {
     {
       id: 'item-record-approval', applies: commandLines.itemRecord,
       site: { path: 'src/board/decide.ts', symbol: 'approvalVerdict' },
+    },
+    {
+      id: 'item-record-approval', applies: commandLines.itemRecord,
+      site: { path: 'src/board/record-flow.ts', symbol: 'recordWork' },
     },
   ])('lists $id as an owner go code check with a harm mark', ({ id, applies, site }) => {
     const row = software.rows.find((candidate) => candidate.id === id);
