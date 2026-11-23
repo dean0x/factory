@@ -44,6 +44,7 @@ export const commands = {
   shutdown: 'shutdown',
   restart: 'restart',
   reboot: 'reboot',
+  refresh: 'refresh',
   status: 'status',
   report: 'report',
   dismiss: 'dismiss',
@@ -254,6 +255,9 @@ export const flags = {
   epic: 'epic',
   releaseGroup: 'release-group',
   dryRun: 'dry-run',
+  result: 'result',
+  cancel: 'cancel',
+  runner: 'runner',
   overwrite: 'overwrite',
   json: 'json',
   quiet: 'quiet',
@@ -289,6 +293,8 @@ export const files = {
   coordinatorLastSession: 'coordinator-last-session',
   /** The run marker of `worker watch`, in the run-time folder: it holds the token of the newest watch run of the node. */
   watchRun: 'worker-watch-run',
+  /** The run record of `refresh`, in the run-time folder. */
+  refreshRun: 'refresh-run.json',
   /** The id of this machine, in the run-time folder: made once, and never shared. */
   machineId: 'machine-id',
   /** The mark of the active machine, in the state folder: the state repo tracks it, so it travels with the state. */
@@ -351,6 +357,9 @@ export const dirs = {
   /** The folder of the setup text that a person shares. The root repo tracks it. */
   setup: 'setup',
 } as const;
+
+/** The path of the refresh run record relative to the node home. */
+export const refreshRunPath = `${dirs.state}/${dirs.runtime}/${files.refreshRun}`;
 
 /** The instruction file names of agents that sit directly in a folder, apart from `CLAUDE.md`. */
 const agentFiles = { claudeLocal: 'CLAUDE.local.md', agents: 'AGENTS.md', gemini: 'GEMINI.md' } as const;
@@ -1138,12 +1147,12 @@ export const setupAcceptance = {
 } as const;
 
 /**
- * The names that factory gives to the tmux session of a node: two windows, and options that tell
- * a session of this node home from any other tmux session.
+ * The names of the tmux windows and the options that identify the session and panes of a node.
  */
 export const tmuxNames = {
   windowView: 'view',
   windowWorkers: 'workers',
+  windowRefresh: commands.refresh,
   /** The session option that holds the node home. */
   optionHome: '@factory_home',
   /** The pane option that holds the node id, on the pane of the coordinator. */
@@ -1410,6 +1419,23 @@ export const watchRun = {
   tokenBytes: 16,
   maxBytes: 128,
   tokenPattern: /^[0-9a-f]{32}\n$/,
+} as const;
+
+/** Refresh polls for idle up to one hour per phase. The runner has a separate wait to claim its token. */
+export const refreshWait = {
+  intervalMs: 10_000,
+  idleCapMs: 3_600_000,
+  claimChecks: 10,
+  claimIntervalMs: 1_000,
+  tokenBytes: 16,
+} as const;
+
+/** The single launch prompt that refresh gives to each session. */
+export const refreshText = {
+  continue: `${program}: this session was restarted by ${program} ${commands.refresh} to apply an update. ` +
+    'This line is not owner input, approves nothing and answers no open question. ' +
+    'Continue the task you had and start your watches and crons again. ' +
+    `Run ${program} ${commands.refresh} --${flags.result} to read the outcome.`,
 } as const;
 
 /**
@@ -2351,13 +2377,15 @@ export const schema2 = { workersKey: 'cells', approvalKey: 'land' } as const;
 /** Markers of managed blocks: `<!-- factory:begin <name> v<n> sha256=<hex> -->` and `<!-- factory:end <name> -->`. */
 export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash: 'sha256' } as const;
 
-/** The ids of the JSON documents that commands print. */
+/** The ids of the JSON documents that commands print or write. */
 export const schemaIds = {
   init: `${program}.init/v1`,
   start: `${program}.start/v1`,
   shutdown: `${program}.shutdown/v1`,
   restart: `${program}.restart/v1`,
   reboot: `${program}.reboot/v1`,
+  refresh: `${program}.${commands.refresh}/v1`,
+  refreshRun: `${program}.${commands.refresh}-run/v1`,
   status: `${program}.status/v1`,
   report: `${program}.report/v1`,
   dismiss: `${program}.dismiss/v1`,
