@@ -220,6 +220,14 @@ describe.each(values.approvalModes)('approval text with mode %s', (mode) => {
   });
 });
 
+it.each([
+  ['delegated mode', { modes: { merge: delegated, release: owner } }],
+  ['the merge approval guard off', { guards: { 'approval-merge': guardValues.off } }],
+] as const)('requires the factory merge command with %s', (_case, overrides) => {
+  const body = blockTemplatesFor(blockInput(1, overrides)).find((block) => block.name === 'coordinator')?.body ?? '';
+  expect(body).toContain(`- Use \`${prMergeCommand}\` for each merge. Never run \`gh pr merge\` directly.`);
+});
+
 it('with the merge approval guard off, the coordinator text keeps the head SHA, green CI and review rule, because the merge quality guard stays on', () => {
   const blocks = blockTemplatesFor(withGuards(1, { 'approval-merge': guardValues.off }));
   const body = blocks.find((block) => block.name === 'coordinator')?.body ?? '';
@@ -242,16 +250,16 @@ it.each([1, 2])('removes the resume and routine instructions from layer %i when 
 // The coordinator and safety hashes follow the merge and release modes.
 it.each([
   [owner, owner,
-    'b37beee703beca1da5fcf8737fd2bde369eda9d2345fac640fa20d9ee3ad4e13',
+    'b93c23e23c088138af0d58108f3784d2ce2d107c612c588fd98efaeecdf20e90',
     '03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41'],
   [delegated, owner,
-    'b6170b4895534451cf960b23ce7ae6541774748a736af43f22ce20f94527bd72',
+    '88b255c96269a2ffb357ba9ea2467e9f95de4300da412c88585428f355ef6dd4',
     'e9ac704b9a1d2d27a1383df7510d755705ca7910d1fab2518a1ed5c7ed53973c'],
   [owner, delegated,
-    '0c8e1d51a92a8394953aa986f04c4ffacc58c7925c6a2cd521eb2a2d9ff147b6',
+    '00494cbfff552cd121a8c3079c62faf0ffb5dc70750e95f4d0ddb2582c2b9e7e',
     '43142523d806d9c7634e6a482661f055ae420e4406312fe93924ed4de187c59d'],
   [delegated, delegated,
-    '729964a74f5faefa156d93a5de2f167009f3e8445ef4ce777022e954f70ea29c',
+    'd7adf28265c4d1e77a261e6181c526ba1da2eeca66177818d5a8810995609150',
     '951bcfac48d42deb37a270018c26164a233b8fa7eeb7314238336f4db18dad59'],
 ] as const)('keeps the base text and block versions with merge %s and release %s when every guard is on',
   (merge, release, coordinatorHash, safetyHash) => {
@@ -1266,9 +1274,10 @@ describe('the coordinator text: the board records', () => {
     `For ${point}, use only \`${commandText(commands.decide)} <id> <option>\`, run by the owner.`;
   const delegatedCoordinator = delegatedBlocks.find((template) => template.name === 'coordinator')?.body ?? '';
 
-  it('gives no role a manual merge command or the admin flag', () => {
+  it('names the direct merge command only in the rule that forbids it and omits the admin flag', () => {
+    const rule = `- Use \`${prMergeCommand}\` for each merge. Never run \`gh pr merge\` directly.`;
     for (const [, body] of texts) {
-      expect(body).not.toContain('gh pr merge');
+      expect(body.replace(rule, '')).not.toContain('gh pr merge');
       expect(body).not.toContain(flagText(prFlags.admin));
     }
   });

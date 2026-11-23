@@ -186,7 +186,12 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
       '- Merge only at the full head SHA that you checked, with CI green at that SHA. Before a merge, check on the primary source that the review is posted and the change is releasable at merge.',
     ],
   },
-  { guards: [softwareGuardIds.prRules], lines: ['- Tell the {{owner}} the result of each merge and each release.'] },
+  {
+    segments: [
+      '- Use `{{prMergeCommand}}` for each merge. Never run `gh pr merge` directly.',
+      { guards: [softwareGuardIds.prRules], text: ' Tell the {{owner}} the result of each merge and each release.' },
+    ],
+  },
   '',
   ...workerSectionParts,
   '',
