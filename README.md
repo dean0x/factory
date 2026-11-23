@@ -464,7 +464,7 @@ factory worker list --json
 | --- | --- |
 | `ID`, `PROJECT` | The id of the worker and its project. |
 | `PANE` | The id of the pane of the worker in the window `workers`. `dead` means that the program of the pane has ended. `none` means that the worker has no pane, also when no tmux session of the node runs. |
-| `STATE` | `at prompt` after the hook events `SessionStart` and `Stop`. `busy` after `UserPromptSubmit`, `PreCompact` and `PreToolUse`. `waits` after `Notification`: a dialog waits for an answer. `unknown` when the worker has no valid last-seen line that belongs to it. |
+| `STATE` | `at prompt` after `Stop` or a `SessionStart` with source `startup`, `resume` or `clear`. `busy` after `UserPromptSubmit`, `PreCompact`, `PreToolUse` or a `SessionStart` with source `compact`. `waits` after `Notification`: a dialog waits for an answer. `unknown` when the worker has no valid last-seen line of its own, no event, or a start with no known source. |
 | `CONTEXT` | The context percent of the last-seen line, or `?` when it is not known. |
 | `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. With the guard `context-limits` off, no percent has a mark. |
 
@@ -807,7 +807,9 @@ Then it ends the session as `shutdown` does and starts it again with the recover
 
 `factory refresh` applies an update to a factory that runs. It restarts the live workers first, then the coordinator in its own pane. It keeps the tmux session and each conversation. It does not start workers that have no live pane.
 
-Before each restart, `refresh` waits for the session to return to its prompt. It checks every 10 seconds. The worker phase and the coordinator phase each have a 60-minute cap. The total idle wait is at most 2 hours. Stop and start checks take extra time.
+Before each restart, `refresh` waits for a hook event that reports an idle prompt. It checks every 10 seconds. The worker phase and the coordinator phase each have a 60-minute cap. The total idle wait is at most 2 hours. Stop and start checks take extra time.
+
+Refresh cannot see unsent drafts or menus that send no hook event. Save drafts before refresh. Do not type in the panes until it ends.
 
 Run `factory refresh` outside the factory session to wait for the result in the same terminal. From a pane of the session, it starts a separate runner window and reports that the run is scheduled. From the coordinator pane, the runner waits for that turn to end before it restarts the coordinator.
 

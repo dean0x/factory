@@ -266,8 +266,10 @@ const requireIdleSession = async (
   const state = promptStateOf(line);
   if (!checked && state !== 'waits') return ok(line[lastSeen.keys.sessionId]);
   switch (state) {
-    case null:
-      return notReady(`the last-seen line of the ${roles.worker} ${workerId} holds no event`, wait);
+    case null: {
+      const reason = line[lastSeen.keys.event] === null ? 'holds no event' : 'has a session start with no known source';
+      return notReady(`the last-seen line of the ${roles.worker} ${workerId} ${reason}`, wait);
+    }
     case 'busy':
       return failure(
         `the ${roles.worker} ${workerId} is busy: its session works now`,

@@ -18,6 +18,7 @@ import {
   flags,
   flagText,
   guardIds,
+  lastSeen,
   roles,
   schemaIds,
   selfCommands,
@@ -91,23 +92,16 @@ const requireLineWithoutDialog = async (deps: Deps, home: string, nodeId: string
     case 'not-owned':
       return checked ? notReady(`cannot use the last-seen line of the ${roles.coordinator}: ${found.reason}`, wait) : ok(undefined);
     case 'valid': {
-      const state = promptStateOf(found.line);
-      switch (state) {
-        case null:
-          return checked ? notReady(`the last-seen line of the ${roles.coordinator} holds no event`, wait) : ok(undefined);
-        case 'waits':
-          return notReady(
-            `a dialog waits in the pane ${paneId} of the ${roles.coordinator}`,
-            `Answer the dialog in the pane ${paneId}. ${THEN_AGAIN}`,
-          );
-        case 'busy':
-        case 'prompt':
-          return ok(undefined);
-        default: {
-          const unreachable: never = state;
-          return unreachable;
-        }
+      if (checked && found.line[lastSeen.keys.event] === null) {
+        return notReady(`the last-seen line of the ${roles.coordinator} holds no event`, wait);
       }
+      if (promptStateOf(found.line) === 'waits') {
+        return notReady(
+          `a dialog waits in the pane ${paneId} of the ${roles.coordinator}`,
+          `Answer the dialog in the pane ${paneId}. ${THEN_AGAIN}`,
+        );
+      }
+      return ok(undefined);
     }
     default: {
       const unreachable: never = found;

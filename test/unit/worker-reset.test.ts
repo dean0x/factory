@@ -661,6 +661,15 @@ describe('the bind right before the keys, and the line of the session (refusals 
     expect(error.hint).toContain(AGAIN_CLEAR);
   });
 
+  it('refuses a compact start as busy and sends no keys', async () => {
+    const world = await make();
+    const line = JSON.parse(lineText('SessionStart', NOW - MINUTE));
+    world.deps.seed(lineFile(SESSION), JSON.stringify({ ...line, start_source: 'compact' }));
+    const error = await refused(world, 'Wait until it waits at its prompt');
+    expect(codeOf(error)).toBe(1);
+    expect(error.message).toContain('busy');
+  });
+
   it('a session that waits at a dialog is exit 1, and the remedy says to answer the dialog', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText('Notification', NOW - MINUTE));

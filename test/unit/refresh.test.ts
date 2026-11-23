@@ -124,6 +124,14 @@ const refuse = async (lab: Lab, code: number, reason: string, remedy: string, ..
 };
 
 const warning = 'background tasks, crons and watches';
+const draftLimit = 'Refresh cannot see unsent drafts or menus that send no hook event. Save drafts before refresh. Do not type in the panes until it ends.';
+
+it('warns in the dry run that drafts and menus can go unseen', async () => {
+  const lab = await make('own');
+  const result = await lab.run('--dry-run');
+  expect(result.code, result.err).toBe(0);
+  expect(result.out).toContain(draftLimit);
+});
 
 it('shows pane, state, resume id state, order, caps and the folder count without a change', async () => {
   const lab = await make('own', { inside: true, terminal: true, workerEvent: 'PreToolUse' });

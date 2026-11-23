@@ -729,6 +729,25 @@ describe('removeLastSeen (the free of a worker)', () => {
 });
 
 describe('promptStateOf', () => {
+  it.each([
+    ['startup', 'prompt'], ['resume', 'prompt'], ['clear', 'prompt'], ['compact', 'busy'], [undefined, null],
+  ] as const)('reads a session start with source %s as %s', async (source, state) => {
+    const deps = createFakeDeps();
+    seedLine(deps, { event: 'SessionStart', event_at: T0, ...(source === undefined ? {} : { start_source: source }) });
+    const read = await readValue(deps);
+    expect(read.state === 'valid' ? promptStateOf(read.line) : read.state).toBe(state);
+  });
+
+  it('keeps the start source on a percent write, and replaces it with the event', async () => {
+    const deps = createFakeDeps();
+    seedLine(deps, { event: 'SessionStart', event_at: T0, start_source: 'compact' });
+    await writeLastSeen(deps, HOME, ID, percent(30));
+    expect(storedLine(deps)).toMatchObject({ event: 'SessionStart', start_source: 'compact', context_pct: 30 });
+    await writeLastSeen(deps, HOME, ID, event('Stop'));
+    expect(storedLine(deps)).toMatchObject({ event: 'Stop', context_pct: 30 });
+    expect(storedLine(deps)).not.toHaveProperty('start_source');
+  });
+
   const typedLine = (name: HookEvent | null): LastSeen => ({
     schema: schemaIds.lastSeen,
     session_id: ID,
@@ -739,7 +758,6 @@ describe('promptStateOf', () => {
   });
 
   it.each([
-    ['SessionStart', 'prompt'],
     ['Stop', 'prompt'],
     ['UserPromptSubmit', 'busy'],
     ['PreCompact', 'busy'],

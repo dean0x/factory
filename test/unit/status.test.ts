@@ -315,7 +315,7 @@ describe('status: the builder', () => {
     });
 
     it.each([
-      ['SessionStart', 'at prompt'],
+      ['SessionStart', 'unknown'],
       ['Stop', 'at prompt'],
       ['UserPromptSubmit', 'busy'],
       ['Notification', 'waits'],

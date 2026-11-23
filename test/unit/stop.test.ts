@@ -105,6 +105,7 @@ interface Seed {
   readonly eventAt?: string;
   /** The session marker of the line. Null: the line has none. Default: alpha. */
   readonly marker?: string | null;
+  readonly startSource?: 'startup' | 'compact';
   /** False: the worker has no pointer. */
   readonly pointer?: boolean;
   /** The text of the line file, in place of the line that the other fields make. Null: the session has no line file. */
@@ -132,6 +133,7 @@ const seed = async (deps: FakeDeps, change: Seed = {}): Promise<void> => {
     context_pct: event === null ? 40 : null,
     pct_at: event === null ? AT : null,
     ...(marker === null ? {} : { session_marker: marker }),
+    ...(change.startSource === undefined ? {} : { start_source: change.startSource }),
   };
   if (change.text !== null) deps.seed(`${layoutOf(HOME).heartbeatDir}/${SESSION}`, change.text ?? `${JSON.stringify(line)}\n`);
 };
@@ -224,7 +226,7 @@ describe('stopCaseOf', () => {
   });
 
   it.each([
-    ['SessionStart', 'idle'],
+    ['SessionStart', null],
     ['Stop', 'idle'],
     ['UserPromptSubmit', 'busy'],
     ['PreCompact', 'busy'],
@@ -303,10 +305,12 @@ describe('worker stop: a session at the prompt', () => {
     expect(made.deps.terminated).toEqual([PID]);
   });
 
-  it.each(['SessionStart', 'Stop'] as const)('names the case idle for the last event %s', async (event) => {
+  it.each([
+    ['SessionStart', 'startup', 'idle'], ['SessionStart', 'compact', 'busy'], ['Stop', undefined, 'idle'],
+  ] as const)('reports %s with source %s as %s', async (event, startSource, state) => {
     const made = make();
-    await seed(made.deps, { event });
-    expect(await succeeded(made)).toMatchObject({ state: 'idle' });
+    await seed(made.deps, { event, ...(startSource === undefined ? {} : { startSource }) });
+    expect(await run(made)).toMatchObject({ ok: true, value: { state } });
   });
 
   it('sends no signal but TERM, and starts no program but tmux', async () => {

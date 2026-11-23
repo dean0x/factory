@@ -38,6 +38,7 @@ const RETRY = `Run "${REFRESH}" again.`;
 const SKIP_REMEDY = `Check its pane. ${RETRY}`;
 const UPGRADE = `Run "${commandText(commands.upgrade)}" to check the ${roles.coordinator} hook settings. Then run "${REFRESH}" again.`;
 const END_WARNING = 'The background tasks, crons and watches of each restarted session end.';
+const INPUT_WARNING = 'Refresh cannot see unsent drafts or menus that send no hook event. Save drafts before refresh. Do not type in the panes until it ends.';
 const CLAIM_FAULT = 'the refresh runner did not claim its token in time';
 
 export interface RefreshOptions {
@@ -220,7 +221,8 @@ const dryOutput = (plan: RefreshPlan, warnings: readonly string[]): CommandOutpu
       return text(`${position}${role} ${id}: pane ${pane}; ${state}; resume id ${resume}${skip === undefined ? '' : '; skip'}`);
     }),
     { level: 'warn', text: END_WARNING },
-  ], { dryRun: true, ...plan, rows: publicRows, idleCapMs: refreshWait.idleCapMs, pollMs: refreshWait.intervalMs, warnings: [END_WARNING, ...warnings] }, 0, warnings);
+    { level: 'warn', text: INPUT_WARNING },
+  ], { dryRun: true, ...plan, rows: publicRows, idleCapMs: refreshWait.idleCapMs, pollMs: refreshWait.intervalMs, warnings: [END_WARNING, INPUT_WARNING, ...warnings] }, 0, warnings);
 };
 
 /** Project public fields. The record itself must never go to the output renderer. */

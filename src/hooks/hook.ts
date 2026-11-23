@@ -6,7 +6,7 @@ import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok, type Err } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
-import { commands, env, hookNames, lastSeen, roles, roleText, type HookEvent } from '../names.js';
+import { commands, env, hookNames, lastSeen, roles, roleText, type HookEvent, type HookStartSource } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import { writeCoordinatorSession, writeLastSeen, writeWorkerSession } from '../workers/last-seen.js';
@@ -15,9 +15,8 @@ import { readRoleText, roleFaultReason } from '../workers/role-text.js';
 
 /**
  * The hook of Claude Code (design 4.6): Claude Code runs `<program> hook <event>` at the events of the fixed list and passes
- * the event as JSON on stdin. The hook records the last-seen line of the session. It reads three fields of the input and no
- * other: the schema has no field for the path of the transcript, so that path is dropped unread and nothing opens the file.
- * The third field is the type of a `Notification`: the hook records that event only for a type that means a dialog waits.
+ * the event as JSON on stdin. The hook reads only the fields in `hookNames.inputKeys`. It does not open the transcript.
+ * It records a `Notification` only for a type that means a dialog waits. It records a known source for `SessionStart`.
  * Every refusal writes nothing. A person never runs it, and it never fails the session that runs it: the caller turns every
  * result into exit 0.
  * One event prints an output: the `SessionStart` of a worker that has a record. Its context is the role text of the worker, or
@@ -34,6 +33,7 @@ const inputSchema = z.object({
   [keys.sessionId]: z.string().regex(lastSeen.sessionIdPattern, 'must be a UUID with lower case letters'),
   [keys.eventName]: z.enum(hookNames.events),
   [keys.notificationType]: z.string().optional(),
+  [keys.source]: z.enum(hookNames.startSources).optional().catch(undefined),
 });
 
 const isHookEvent = (word: string | undefined): word is HookEvent => hookNames.events.some((event) => event === word);
@@ -67,6 +67,7 @@ export const hookOutputOf = (context: string) => ({
 interface HookInput {
   readonly sessionId: string;
   readonly notificationType: string | undefined;
+  readonly startSource: HookStartSource | undefined;
 }
 
 /** The fields of the stdin of the hook. The input must name the event that the command line names. */
@@ -80,7 +81,11 @@ const readInput = async (deps: Deps, event: HookEvent): Promise<CliResult<HookIn
   if (parsed.data[keys.eventName] !== event) {
     return failure(`the event of the input is not the event of the command line (${event})`);
   }
-  return ok({ sessionId: parsed.data[keys.sessionId], notificationType: parsed.data[keys.notificationType] });
+  return ok({
+    sessionId: parsed.data[keys.sessionId],
+    notificationType: parsed.data[keys.notificationType],
+    startSource: event === startEvent ? parsed.data[keys.source] : undefined,
+  });
 };
 
 /**
@@ -148,11 +153,13 @@ export const sessionIdentityOf = async (deps: Deps, registry: RecipeRegistry): P
 const recordSession = async (
   deps: Deps,
   identity: SessionIdentity,
-  sessionId: string,
+  { sessionId, startSource }: HookInput,
   event: HookEvent,
 ): Promise<CliResult<void>> => {
   const { home, worker, marker } = identity;
-  const written = await writeLastSeen(deps, home, sessionId, { kind: 'event', event }, marker);
+  const written = await writeLastSeen(deps, home, sessionId, {
+    kind: 'event', event, ...(startSource === undefined ? {} : { startSource }),
+  }, marker);
   if (!written.ok) return written;
   return worker === null ? writeCoordinatorSession(deps, home, sessionId) : writeWorkerSession(deps, home, worker, sessionId);
 };
@@ -189,11 +196,11 @@ const startOfWorker = async (
   deps: Deps,
   registry: RecipeRegistry,
   identity: SessionIdentity,
-  sessionId: string,
+  input: HookInput,
 ): Promise<CliResult<HookOutcome>> => {
   try {
     const role = await roleOutcomeOf(deps, identity.home, registry);
-    const recorded = await recordSession(deps, identity, sessionId, startEvent);
+    const recorded = await recordSession(deps, identity, input, startEvent);
     return ok(recorded.ok ? role : { ...role, problems: [...role.problems, recorded.error.message] });
   } catch {
     return ok(refusedWith(roleText.reasons.readFailed));
@@ -231,12 +238,10 @@ export const runHook = async (deps: Deps, args: readonly string[], registry: Rec
   const input = await readInput(deps, event);
   if (!input.ok) return event === startEvent ? startWithBadInput(deps, registry, input) : input;
   if (!recordsState(event, input.value)) return ok(SILENT);
-  const { sessionId } = input.value;
-
   const identity = await sessionIdentityOf(deps, registry);
   if (!identity.ok) return identity;
-  if (identity.value.worker !== null && event === startEvent) return startOfWorker(deps, registry, identity.value, sessionId);
+  if (identity.value.worker !== null && event === startEvent) return startOfWorker(deps, registry, identity.value, input.value);
 
-  const recorded = await recordSession(deps, identity.value, sessionId, event);
+  const recorded = await recordSession(deps, identity.value, input.value, event);
   return recorded.ok ? ok(SILENT) : recorded;
 };

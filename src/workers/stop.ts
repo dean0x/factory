@@ -9,6 +9,7 @@ import {
   commandText,
   env,
   guardIds,
+  lastSeen,
   roles,
   stopCaseOfState,
   stopFallback,
@@ -101,7 +102,9 @@ export const requireStopCase = (
 ): CliResult<StopCase> => {
   const stopCase = stopCaseOf(seen);
   if (stopCase !== null) return ok(stopCase);
-  const reason = seen.state === 'unknown' ? seen.reason : 'the last-seen line holds no event';
+  let reason = 'the last-seen line holds no event';
+  if (seen.state === 'unknown') reason = seen.reason;
+  else if (seen.line[lastSeen.keys.event] === 'SessionStart') reason = 'the session start has no known source';
   return notReady(
     `cannot tell if the ${roles.worker} ${workerId} waits at its prompt or works: ${reason}. The pane ${pane.paneId} runs the process ${pane.pid}`,
     `Look at the pane. When the ${roles.worker} waits at its prompt, run "${stopLine(workerId)}" again after its next hook event. ` +

@@ -36,8 +36,8 @@ const value = <T>(result: CliResult<T>): T => {
   return result.value;
 };
 
-const hook = async (deps: FakeDeps, session: string, marker: string, event: HookEvent) =>
-  value(await writeLastSeen(deps, HOME, session, { kind: 'event', event }, marker));
+const hook = async (deps: FakeDeps, session: string, marker: string, event: HookEvent, startSource?: 'startup' | 'compact') =>
+  value(await writeLastSeen(deps, HOME, session, { kind: 'event', event, ...(startSource === undefined ? {} : { startSource }) }, marker));
 
 const workerPane = (id: string, pid: number): PaneFixture => ({
   session: NODE, pid, options: { '@worker': id }, command: launchWordsOf(HOME, id),
@@ -159,6 +159,15 @@ const resumes = ({ calls }: Lab) => calls.filter(({ args }) => args[0] === 'spli
 const lists = ({ log }: Lab) => log.commands().filter((text) => text.startsWith('list-panes '));
 const found = (call: RunCall, command: string) => call.command === 'tmux' && call.args[0] === command;
 
+const reportAfterMarker = (lab: Lab, session: string, marker: string, event: HookEvent, source?: 'startup' | 'compact') => {
+  const { fs } = lab.deps;
+  return { ...lab.deps, fs: { ...fs, rename: async (from: string, to: string) => {
+    const result = await fs.rename(from, to);
+    if (to === join(HOME, refreshRunPath)) await hook(lab.deps, session, marker, event, source);
+    return result;
+  } } };
+};
+
 const expectFault = (result: Awaited<ReturnType<typeof finish>>, id: string, warning: string, remedy: string) => {
   expect(result.outcomes).toContainEqual(expect.objectContaining({
     id, status: 'fault', warning: expect.stringContaining(warning), remedy: expect.stringContaining(remedy),
@@ -171,6 +180,18 @@ describe('refresh runner', () => {
     const record = await finish(lab);
     expect(record).toMatchObject({ state: 'done', outcomes: [{ id: NODE, status: 'resumed' }] });
     expect(value(await readRefreshRun(lab.deps, HOME))).toEqual(record);
+  });
+
+  it.each([
+    ['menu', '❯ /\n  1. /clear\n  2. /compact\n'],
+    ['unsent draft', '❯ Check the last test again\n'],
+  ])('can stop both sessions after Stop with a %s and sends no keys', async (_screen, contents) => {
+    const lab = await make();
+    lab.onRun(async (call) => found(call, 'capture-pane') ? exited(0, contents) : undefined);
+    const record = await finish(lab);
+    expect(refreshExitCode(record)).toBe(0);
+    expect(lab.deps.terminated).toEqual([WORKER_PID, COORDINATOR_PID]);
+    expect(lab.calls.filter((call) => found(call, 'capture-pane') || found(call, 'send-keys'))).toEqual([]);
   });
 
   it('resumes a live worker beside a dead board pane without a pid', async () => {
@@ -226,6 +247,7 @@ describe('refresh runner', () => {
 
   it('resumes an idle worker whose only report is SessionStart in its start second', async () => {
     const lab = await make({ events: { alpha: 'SessionStart' } });
+    await hook(lab.deps, ALPHA, 'alpha', 'SessionStart', 'startup');
     value(await cancelRefreshRun(lab.deps, HOME));
     lab.deps.advance(900);
     const record = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }, {
@@ -240,6 +262,31 @@ describe('refresh runner', () => {
     const result = value(await runRefresh(lab.deps, { ...lab.request, token: record.token }));
     expect(result.outcomes).toContainEqual({ role: 'worker', id: 'alpha', status: 'resumed' });
     expect(lab.deps.terminated).toContain(WORKER_PID);
+  });
+
+  it.each(['compact', undefined] as const)('sends no TERM if a worker reports a session start with source %s after the poll', async (source) => {
+    const lab = await make();
+    value(await claimed(lab));
+    const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
+    expect(poll.workers).toEqual([{ id: 'alpha', ready: true }]);
+    const deps = reportAfterMarker(lab, ALPHA, 'alpha', 'SessionStart', source);
+    const result = value(await actWorker(deps, lab.request, 'alpha', poll.panes));
+    expect(lab.deps.terminated).toEqual([]);
+    if (source === undefined) {
+      expect(result).toMatchObject({ status: 'fault', warning: expect.stringContaining('has no known source'), remedy: expect.stringContaining('factory worker stop alpha') });
+    } else {
+      expect(result).toBeNull();
+    }
+  });
+
+  it.each(['compact', undefined] as const)('leaves a coordinator pending if its final session start has source %s', async (source) => {
+    const lab = await make({ events: {} });
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    const deps = reportAfterMarker(lab, COORDINATOR, NODE, 'SessionStart', source);
+    expect(value(await actCoordinator(deps, lab.request))).toBeNull();
+    expect(lab.deps.terminated).toEqual([]);
+    expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ state: 'waiting', acting: null });
   });
 
   it('leaves a worker pending if it turns busy just before the idle-only stop', async () => {
@@ -455,12 +502,7 @@ describe('refresh runner', () => {
     const lab = await make({ events: {} });
     value(await claimed(lab));
     value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
-    const { fs } = lab.deps;
-    const deps = { ...lab.deps, fs: { ...fs, rename: async (from: string, to: string) => {
-      const result = await fs.rename(from, to);
-      if (to === join(HOME, refreshRunPath)) await hook(lab.deps, COORDINATOR, NODE, 'UserPromptSubmit');
-      return result;
-    } } };
+    const deps = reportAfterMarker(lab, COORDINATOR, NODE, 'UserPromptSubmit');
     expect(value(await actCoordinator(deps, lab.request))).toBeNull();
     expect(lab.deps.terminated).toEqual([]);
     expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ state: 'waiting', acting: null });

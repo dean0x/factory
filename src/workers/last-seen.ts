@@ -6,7 +6,10 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { commandLines, commandText, eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, watchPoll, type HookEvent, type HookState } from '../names.js';
+import {
+  commandLines, commandText, eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, sessionStartState,
+  watchPoll, type HookEvent, type HookStartSource, type HookState,
+} from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
 import { listWorkerRecords, readCheckedFile, readWorkerFile, type WorkerFileRead } from './registry.js';
@@ -37,6 +40,7 @@ const lastSeenSchema = z
     [keys.sessionId]: z.string().regex(lastSeen.sessionIdPattern, 'must be a UUID with lower case letters'),
     [keys.event]: z.enum(hookNames.events).nullable(),
     [keys.eventAt]: time.nullable(),
+    [keys.startSource]: z.enum(hookNames.startSources).optional(),
     [keys.finishedAt]: time.optional(),
     [keys.contextPct]: z.number().min(lastSeen.minPercent).max(lastSeen.maxPercent).nullable(),
     [keys.pctAt]: time.nullable(),
@@ -45,6 +49,9 @@ const lastSeenSchema = z
   .superRefine((line, ctx) => {
     if ((line[keys.event] === null) !== (line[keys.eventAt] === null)) {
       ctx.addIssue({ code: 'custom', path: [keys.eventAt], message: 'must be set when the event is set, and only then' });
+    }
+    if (line[keys.startSource] !== undefined && line[keys.event] !== 'SessionStart') {
+      ctx.addIssue({ code: 'custom', path: [keys.startSource], message: 'must only be set for SessionStart' });
     }
     if (line[keys.finishedAt] !== undefined && line[keys.eventAt] === null) {
       ctx.addIssue({ code: 'custom', path: [keys.finishedAt], message: 'must have an event time' });
@@ -69,7 +76,7 @@ export type LastSeenRead =
 
 /** What a write sets: the hook event with the time now, or the context percent (null for no percent) with the time now. */
 export type LastSeenChange =
-  | { readonly kind: 'event'; readonly event: HookEvent }
+  | { readonly kind: 'event'; readonly event: HookEvent; readonly startSource?: HookStartSource }
   | { readonly kind: 'percent'; readonly percent: number | null };
 
 /**
@@ -153,11 +160,13 @@ const lineWith = (
   percent: number | null,
   percentAt: string | null,
   marker: string | undefined,
+  startSource: HookStartSource | undefined,
 ): LastSeen => ({
   [keys.schema]: schemaIds.lastSeen,
   [keys.sessionId]: sessionId,
   [keys.event]: event,
   [keys.eventAt]: eventAt,
+  ...(startSource === undefined ? {} : { [keys.startSource]: startSource }),
   ...(finishedAt === null ? {} : { [keys.finishedAt]: finishedAt }),
   [keys.contextPct]: percent,
   [keys.pctAt]: percentAt,
@@ -187,6 +196,7 @@ const changedLine = (
       stored?.[keys.contextPct] ?? null,
       stored?.[keys.pctAt] ?? null,
       marker,
+      change.startSource,
     );
   }
   return lineWith(
@@ -197,6 +207,7 @@ const changedLine = (
     change.percent,
     change.percent === null ? null : at,
     marker,
+    stored?.[keys.startSource],
   );
 };
 
@@ -486,10 +497,11 @@ export const readOwnCoordinatorResume = async (
 
 /**
  * What the last event of a line says: the session waits at the prompt (`prompt`), it works (`busy`), or a dialog waits for an
- * answer (`waits`). A line with no event, which holds only a percent, says nothing (null). The rule is the table `eventState` of
- * names.ts.
+ * answer (`waits`). No event or a session start with no known source gives no state.
  */
 export const promptStateOf = (line: LastSeen): HookState | null => {
   const event = line[keys.event];
+  const source = line[keys.startSource];
+  if (event === 'SessionStart' && source !== undefined) return sessionStartState[source];
   return event === null ? null : eventState[event];
 };

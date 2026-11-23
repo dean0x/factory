@@ -1296,7 +1296,8 @@ export const hookNames = {
   statusline: keys.session.statusline,
   events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact', 'Notification', 'PreToolUse'],
   /** The only keys that the hook reads from the input of Claude Code. Every other key of the input is dropped unread. */
-  inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name', notificationType: 'notification_type' },
+  inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name', notificationType: 'notification_type', source: 'source' },
+  startSources: ['startup', 'resume', 'clear', 'compact'],
   /**
    * The keys of the one JSON object that the hook prints for the start of a worker session: `hookSpecificOutput` holds
    * `hookEventName` and `additionalContext`. The hooks page of Claude Code (https://code.claude.com/docs/en/hooks) names them.
@@ -1349,19 +1350,25 @@ export type HookEvent = (typeof hookNames.events)[number];
 /** What a hook event says about a session: it waits at the prompt, it works, or a dialog in its window waits for an answer. */
 export type HookState = 'prompt' | 'busy' | 'waits';
 
-/**
- * What the last hook event says about a session: it waits at the prompt (a session that started, or a turn that ended), it
- * works (a turn that began, a compact that is about to run, or a tool that is about to run), or a dialog waits for an answer (a
- * notice of one of the types of `hookNames.notificationTypes`). Every event has an entry.
- */
+export type HookStartSource = (typeof hookNames.startSources)[number];
+
+/** A turn can continue after a compact. A start with no known source does not give a state. */
+export const sessionStartState = {
+  startup: 'prompt',
+  resume: 'prompt',
+  clear: 'prompt',
+  compact: 'busy',
+} as const satisfies Readonly<Record<HookStartSource, HookState>>;
+
+/** State for each hook event. SessionStart needs its source to give a state. */
 export const eventState = {
-  SessionStart: 'prompt',
+  SessionStart: null,
   Stop: 'prompt',
   UserPromptSubmit: 'busy',
   PreCompact: 'busy',
   Notification: 'waits',
   PreToolUse: 'busy',
-} as const satisfies Readonly<Record<HookEvent, HookState>>;
+} as const satisfies Readonly<Record<HookEvent, HookState | null>>;
 
 /**
  * The ways that the stop code uses to end a session. Each is a way of the table of docs/session-stop.md that has the verdict
@@ -1908,6 +1915,7 @@ export const lastSeen = {
     sessionId: 'session_id',
     event: 'event',
     eventAt: 'event_at',
+    startSource: 'start_source',
     /** The time of the last Stop event, if one occurred. */
     finishedAt: 'finished_at',
     contextPct: 'context_pct',
