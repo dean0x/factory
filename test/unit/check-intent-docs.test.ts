@@ -47,6 +47,15 @@ const change = async (name: string, edit: (text: string) => string, folder: stri
 /** The checks that failed, by number. */
 const failedChecks = (out: string): string[] => [...out.matchAll(/^FAIL (\d+)/gm)].map((match) => match[1] ?? '');
 
+it('does not mark check or pr merge as unbuilt in the README or design', () => {
+  const unbuiltCommand =
+    /(?:`(?:factory )?(?:check|pr merge)`|\b(?:factory check|pr merge)\b|^\s*(?:[-*] +)?(?:the command +)?check\b)(?: +(?:is|are) +| *[:|–—-] *)not (?:yet )?built\b/i;
+  for (const name of ['README.md', 'docs/design.md']) {
+    const lines = readFileSync(join(ROOT, name), 'utf8').split('\n');
+    expect(lines.filter((line) => unbuiltCommand.test(line)), name).toEqual([]);
+  }
+});
+
 describe('scripts/check-intent-docs.sh', () => {
   it('passes on the docs of the repo', () => {
     const result = check(join(ROOT, 'docs'));
