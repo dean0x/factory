@@ -21,6 +21,7 @@ import {
 import { promptStateOf, readOwnLastSeen, type OwnSessionRead } from './last-seen.js';
 import { requireBoundPane, type BoundPane } from './panes.js';
 import { closeWorkerPane, readWorkerPanes } from './slot.js';
+import { requireLineAfterStart } from './session-checks.js';
 
 /**
  * The stop of one worker (design 4.11, docs/session-stop.md): `worker stop` and, later, shutdown, restart, reboot and dismiss
@@ -47,6 +48,8 @@ export interface StopRequest {
    * for any value.
    */
   readonly allowed?: readonly StopCase[];
+  /** For a planned restart, only this process and an idle report from its lifetime qualify. */
+  readonly process?: { readonly pid: number; readonly startMs: number };
   /** The command that a person runs again after a refusal by `allowed`, without the program name. Default: the stop command of the worker. */
   readonly again?: string;
 }
@@ -232,7 +235,8 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const single = requireOneLivePane(workerId, live, again);
   if (!single.ok) return single;
   const target = single.value;
-  if (target === null) return closeEnded(deps, session, dead.map((row) => row.paneId), guards);
+  const changed = () => failure('the worker pane process changed before the stop', `Check the pane. Run "${commandText(request.again ?? again)}" again.`);
+  if (target === null) return request.process === undefined ? closeEnded(deps, session, dead.map((row) => row.paneId), guards) : changed();
   const other = requireOtherCallerPane(deps, workerId, target.paneId, guards);
   if (!other.ok) return other;
 
@@ -241,6 +245,13 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const read = await requireBoundPane(deps, { home, paneId: target.paneId, workerId, again });
   if (!read.ok) return read;
   const row = read.value;
+  if (request.process !== undefined) {
+    if (row.dead || row.pid !== request.process.pid) return changed();
+    if (seen.value.state === 'valid') {
+      const fresh = requireLineAfterStart(seen.value.line.event_at ?? '', request.process.startMs, request.again ?? again);
+      if (!fresh.ok) return fresh;
+    }
+  }
   if (row.dead) return closeEnded(deps, session, [row.paneId], guards);
 
   const known = requireStopCase(workerId, seen.value, row);

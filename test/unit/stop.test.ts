@@ -404,6 +404,16 @@ describe('worker stop: only the cases that the caller allows', () => {
     expect(made.deps.terminated).toEqual([PID]);
   });
 
+  it('does not use an idle report from before the planned process start', async () => {
+    const made = make();
+    await seed(made.deps);
+    const result = await stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', allowed: ['idle'],
+      process: { pid: PID, startMs: Date.parse(AT) + 1000 }, again: 'refresh' });
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('not later than the start'), hint: expect.stringContaining('factory refresh') } });
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
+  });
+
   it('stops a busy session when the busy case is allowed', async () => {
     const made = make();
     await seed(made.deps, { event: 'UserPromptSubmit' });

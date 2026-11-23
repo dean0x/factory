@@ -193,6 +193,15 @@ describe('refresh run record', () => {
     expect((await schedule(deps)).ok).toBe(true);
   });
 
+  it('reopens the original wait when the coordinator is not idle at the final check', async () => {
+    const { deps } = make();
+    const { token } = await claim(deps);
+    const phase = value(await updateRefreshRun(deps, HOME, token, { kind: 'wait-coordinator' }));
+    value(await updateRefreshRun(deps, HOME, token, { kind: 'acting', role: 'coordinator', id: 'node' }));
+    expect(value(await updateRefreshRun(deps, HOME, token, { kind: 'clear-acting' }))).toEqual(phase);
+    expect(value(await cancelRefreshRun(deps, HOME)).state).toBe('cancelled');
+  });
+
   it('sets the coordinator cap once and refuses cancellation after the coordinator act starts', async () => {
     const { deps } = make();
     const { token } = await claim(deps);

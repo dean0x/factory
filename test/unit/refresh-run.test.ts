@@ -374,6 +374,15 @@ describe('refresh runner', () => {
     expect(lab.deps.terminated).not.toContain(pid);
   });
 
+  it('does not stop a coordinator on an idle report from an earlier process', async () => {
+    const lab = await make({ events: {} });
+    lab.deps.advance(10 * 60 * 60 * 1000);
+    const run = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }));
+    const result = value(await runRefresh(lab.deps, { ...lab.request, token: run.token }));
+    expectFault(result, NODE, 'not later than the start', 'factory refresh');
+    expect(lab.deps.terminated).toEqual([]);
+  });
+
   it('does not stop a coordinator that turns busy before its launch words are ready', async () => {
     const lab = await make({ events: {} });
     lab.onRun(async ({ command, args }) => {
@@ -382,6 +391,31 @@ describe('refresh runner', () => {
     });
     expectFault(await finish(lab), NODE, 'not idle', 'factory refresh');
     expect(lab.deps.terminated).toEqual([]);
+  });
+
+  it('leaves the coordinator pending if its turn starts during the action marker write', async () => {
+    const lab = await make({ events: {} });
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    const { fs } = lab.deps;
+    const deps = { ...lab.deps, fs: { ...fs, rename: async (from: string, to: string) => {
+      const result = await fs.rename(from, to);
+      if (to === join(HOME, refreshRunPath)) await hook(lab.deps, COORDINATOR, NODE, 'UserPromptSubmit');
+      return result;
+    } } };
+    expect(value(await actCoordinator(deps, lab.request))).toBeNull();
+    expect(lab.deps.terminated).toEqual([]);
+    expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ state: 'waiting', acting: null });
+    expect(value(await cancelRefreshRun(lab.deps, HOME)).state).toBe('cancelled');
+  });
+
+  it('does not resume a coordinator id shared with a worker after TERM', async () => {
+    const lab = await make();
+    lab.onSleep(async () => {
+      if (lab.deps.terminated.includes(COORDINATOR_PID)) value(await writeWorkerSession(lab.deps, HOME, 'alpha', COORDINATOR));
+    });
+    expectFault(await finish(lab), NODE, 'no longer owns the session id', 'factory start');
+    expect(lab.trace).not.toContain('respawn');
   });
 
   it('does not create a second pane if a worker already runs at the resume step', async () => {

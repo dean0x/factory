@@ -22,7 +22,7 @@ import {
   type RefreshFault, type RefreshOutcome, type RefreshRunChange, type RefreshRunRecord,
 } from './refresh-record.js';
 import { requireRecord } from './registry.js';
-import { paneProcessStart, requireOwnHooks } from './session-checks.js';
+import { paneProcessStart, requireLineAfterStart, requireOwnHooks } from './session-checks.js';
 import { readWorkerPanes } from './slot.js';
 import { stopWorker, terminatePane } from './stop.js';
 
@@ -98,17 +98,11 @@ export const pollOnce = async (
   return ok({ panes: panes.value, workers });
 };
 
-const requireOlderProcess = async (deps: Deps, pid: number, startedAtMs: number): Promise<CliResult<void>> => {
+const requireOlderProcess = async (deps: Deps, pid: number, startedAtMs: number): Promise<CliResult<number>> => {
   const started = await paneProcessStart(deps, pid, AGAIN);
   if (!started.ok) return started;
-  return started.value < startedAtMs ? ok(undefined) : failure('the pane process started after the refresh run began', RETRY);
+  return started.value < startedAtMs ? started : failure('the pane process started after the refresh run began', RETRY);
 };
-
-/** A stop can rebind its pid. Refuse a different process from the one that passed the start check. */
-const forWorkerProcess = (deps: Deps, expectedPid: number): Deps => ({
-  ...deps,
-  terminate: (pid) => pid === expectedPid ? deps.terminate(pid) : failure('the worker pane process changed before the stop', RETRY),
-});
 
 /** Run checks and act on one ready worker. Null means the idle gate refused; the worker stays pending. */
 export const actWorker = async (
@@ -143,8 +137,8 @@ export const actWorker = async (
   if (!older.ok) return fault(older.error);
   const marked = await saved(quiet, request, { kind: 'acting', role: 'worker', id });
   if (!marked.ok) return marked;
-  const stopped = await stopWorker(forWorkerProcess(quiet, pane.value.pid), {
-    home, session, workerId: id, panes: workerPanes, allowed: ['idle'], again: AGAIN,
+  const stopped = await stopWorker(quiet, {
+    home, session, workerId: id, process: { pid: pane.value.pid, startMs: older.value }, allowed: ['idle'], again: AGAIN,
   });
   if (!stopped.ok && hasCode(stopped.error, stopCaseRefused)) {
     const cleared = await saved(quiet, request, { kind: 'clear-acting' });
@@ -230,6 +224,27 @@ const confirmCoordinator = async (
   return await showsTrustQuestion(deps, pane.paneId, true) ? coordinatorQuestion(pane) : failure('the coordinator resume or its continue line was not confirmed');
 };
 
+const respawnCoordinator = async (
+  deps: Deps, target: RefreshTarget, pane: CoordinatorPane, sessionId: string, words: readonly string[],
+): Promise<CliResult<void>> => {
+  const node = nodeOf(target);
+  const seen = await readOwnCoordinatorResume(deps, target.home, node);
+  if (!seen.ok) return seen;
+  if (seen.value.state !== 'valid' || seen.value.sessionId !== sessionId) {
+    return failure('the coordinator no longer owns the session id for its restart');
+  }
+  const dead = await readCoordinatorPane(deps, node);
+  if (!dead.ok) return dead;
+  if (!ownCoordinatorPane(dead.value, target, pane.paneId) || !dead.value.dead || dead.value.pid !== pane.pid) {
+    return failure('the dead pane read did not confirm the coordinator pane that received TERM');
+  }
+  const args = respawnPaneArgs(pane.paneId, layoutOf(target.home).coordinatorDir, words);
+  if (!args.ok) return failure(args.error);
+  const launchedAt = deps.now().getTime();
+  const spawned = await tmuxStep(deps, args.value);
+  return spawned.ok ? confirmCoordinator(deps, target, pane, launchedAt) : spawned;
+};
+
 /** Stop and respawn only the original coordinator pane. Null means it is not yet idle. */
 export const actCoordinator = async (deps: Deps, request: RefreshRequest): Promise<CliResult<RefreshOutcome | null>> => {
   const { home, config, token } = request;
@@ -259,34 +274,29 @@ export const actCoordinator = async (deps: Deps, request: RefreshRequest): Promi
     home, config, proxyBaseUrl: proxy.value.baseUrl, resumeId: seen.value.sessionId, prompt: refreshText.continue,
   });
   if (!words.ok) return fault(words.error);
-  // The hook state and pane can change while the launch checks run.
-  const latest = await readOwnCoordinatorResume(quiet, home, node);
-  if (!latest.ok) return fault(latest.error);
-  if (latest.value.state !== 'valid' || latest.value.sessionId !== seen.value.sessionId) {
-    return fault(failure('the coordinator session id changed before the stop').error);
-  }
-  if (!coordinatorIdle(latest.value.line, own.value)) return ok(null);
+  const marked = await saved(quiet, request, { kind: 'acting', role: 'coordinator', id: node });
+  if (!marked.ok) return marked;
+  // The marker write can wait for the record lock. Check the pane and idle state after it.
   const current = await readCoordinatorPane(quiet, node);
   if (!current.ok) return fault(current.error);
   if (!ownCoordinatorPane(current.value, request, pane.value.paneId) || current.value.dead || current.value.pid !== pane.value.pid) {
     return fault(failure('the coordinator pane changed before the stop').error);
   }
-  const marked = await saved(quiet, request, { kind: 'acting', role: 'coordinator', id: node });
-  if (!marked.ok) return marked;
-  const stopped = await terminatePane(quiet, pane.value, commands.start);
-  if (!stopped.ok) return fault(stopped.error);
-  const dead = await readCoordinatorPane(quiet, node);
-  if (!dead.ok) return fault(dead.error);
-  if (!ownCoordinatorPane(dead.value, request, pane.value.paneId) || !dead.value.dead || dead.value.pid !== pane.value.pid) {
-    return fault(failure('the dead pane read did not confirm the coordinator pane that received TERM').error);
+  const latest = await readOwnCoordinatorResume(quiet, home, node);
+  if (!latest.ok) return fault(latest.error);
+  if (latest.value.state !== 'valid' || latest.value.sessionId !== seen.value.sessionId) {
+    return fault(failure('the coordinator session id changed before the stop').error);
   }
-  const args = respawnPaneArgs(dead.value.paneId, coordinatorDir, words.value);
-  if (!args.ok) return fault(failure(args.error).error);
-  const launchedAt = quiet.now().getTime();
-  const spawned = await tmuxStep(quiet, args.value);
-  if (!spawned.ok) return fault(spawned.error);
-  const confirmed = await confirmCoordinator(quiet, request, pane.value, launchedAt);
-  return confirmed.ok ? ok(resumed('coordinator', node)) : fault(confirmed.error);
+  const fresh = requireLineAfterStart(latest.value.line[keys.eventAt] ?? '', older.value, AGAIN);
+  if (!fresh.ok) return fault(fresh.error);
+  if (!coordinatorIdle(latest.value.line, marked.value)) {
+    const cleared = await saved(quiet, request, { kind: 'clear-acting' });
+    return cleared.ok ? ok(null) : cleared;
+  }
+  const stopped = await terminatePane(quiet, current.value, commands.start);
+  if (!stopped.ok) return fault(stopped.error);
+  const launched = await respawnCoordinator(quiet, request, current.value, seen.value.sessionId, words.value);
+  return launched.ok ? ok(resumed('coordinator', node)) : fault(launched.error);
 };
 
 /** A refresh reports through its record only. The caller pane never supplies a target or veto. */

@@ -276,7 +276,8 @@ const applyChange = (current: RefreshRunRecord, change: RefreshRunChange, now: n
       return ok({ ...current, acting: change.id, actingRole: change.role, state: phase === 'worker' ? 'waiting' : 'acting-coordinator' });
     }
     case 'clear-acting':
-      return current.acting === null ? ok(current) : ok(clearAction(current));
+      if (current.acting === null) return ok(current);
+      return ok({ ...clearAction(current), state: current.state === 'acting-coordinator' ? 'waiting' : current.state });
     case 'outcome':
       return addOutcome(current, change.outcome);
     case 'done':
