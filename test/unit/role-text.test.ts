@@ -3,11 +3,13 @@ import { exitCodeFor, failure, type CliResult } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { entryOfText, manifestOf } from '../../src/core/setup-acceptance.js';
-import { commandLines, commandText, files, guardIds, roleText } from '../../src/names.js';
+import { commandLines, commandText, commands, files, flagText, guardIds, guardValues, roleText } from '../../src/names.js';
 import { allOn } from '../../src/guards/effective.js';
 import type { GuardValues } from '../../src/guards/types.js';
 import { recipes } from '../../src/recipes/index.js';
-import { workerFileTemplatesFor } from '../../src/templates/index.js';
+import { softwareGuardIds } from '../../src/recipes/software/guard-parts.js';
+import { prFlags, prMergeCommand } from '../../src/recipes/software/words.js';
+import { blockTemplatesFor, workerFileTemplatesFor } from '../../src/templates/index.js';
 import {
   composeRoleText,
   readRoleText,
@@ -18,6 +20,7 @@ import {
   type RoleFault,
   type RoleRead,
 } from '../../src/workers/role-text.js';
+import { blockInput } from '../helpers/blocks.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { FOLDER_ORIGINS, GUARD_STORE, guardStoreText, OTHER_NODE_ID } from '../helpers/guarded-node.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -124,6 +127,23 @@ describe('worker role text with guard values', () => {
     const warning = roleTextSizeWarning(templates, 'factory upgrade', workerFileTemplatesFor(config, null, allOn));
     expect(warning).toContain(roleText.remedies.shorten(FREE, 'factory upgrade'));
     expect(warning).toContain(roleText.tooLargeText(composeRoleText(templates).length, 'characters'));
+  });
+});
+
+describe('coordinator role text with guard values', () => {
+  it.each([allOn, { [guardIds.ownerGo]: guardValues.off }])('keeps the pinned merge steps with guards %j', (guards) => {
+    const body = blockTemplatesFor(blockInput(1, { guards })).find((block) => block.name === 'coordinator')?.body ?? '';
+    expect(body).toContain(`\`${commandText(commands.check)} N\``);
+    expect(body).toContain(`\`${prMergeCommand} N ${flagText(prFlags.head)} SHA\``);
+    expect(body.includes('In owner mode, an open linked request blocks the record.')).toBe(guards[guardIds.ownerGo] !== guardValues.off);
+  });
+
+  it('omits the owner merge steps when the merge approval guard is off', () => {
+    const guards = { [softwareGuardIds.approvalMerge]: guardValues.off };
+    const body = blockTemplatesFor(blockInput(1, { guards })).find((block) => block.name === 'coordinator')?.body ?? '';
+    expect(body).toContain('No approval is needed for a merge');
+    expect(body).not.toContain(`\`${commandText(commands.check)} N\``);
+    expect(body).not.toContain(`\`${prMergeCommand} N ${flagText(prFlags.head)} SHA\``);
   });
 });
 

@@ -1,4 +1,4 @@
-import { blockNames, guardValues, layers, values } from '../../names.js';
+import { blockNames, commandText, commands, guardValues, layers, values } from '../../names.js';
 import { coordinatorValuesFor, fillTemplate, linesFor, workerValuesFor } from '../../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../../templates/types.js';
 import { approvalLines, type RecipeRoles } from '../entry.js';
@@ -7,6 +7,7 @@ import { softwareRecordCheck } from './record.js';
 import { coordinatorLines } from './roles/coordinator.js';
 import { MANAGER_PARTS } from './roles/manager.js';
 import { workerPartsFor } from './roles/worker.js';
+import { prMergeCommand } from './words.js';
 
 type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeof blockNames.manager;
 
@@ -46,7 +47,7 @@ const coordinatorFor = (input: BlockInput): BlockTemplate => ({
       input.guards,
       input.guards[mergeApproval.guard] !== guardValues.off && input.modes[softwareRecordCheck.point] !== values.approvalModes[1],
     ),
-    coordinatorValuesFor(input),
+    { ...coordinatorValuesFor(input), checkCommand: commandText(commands.check), prMergeCommand },
   ),
 });
 

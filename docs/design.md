@@ -1721,8 +1721,13 @@ The same limit covers a board plugin. It runs inside factory with the rights of 
 2. On a typed go, close the linked request with `factory request close <id> --relayed --decision approve`. If the go comes before the request, add the linked request and close it at once. The relayed row records the go (§4.10).
    - If the close refuses, do not merge. Show the refusal to the owner. If an owner store answer exists, ask the owner to run `factory decide` again with the same option. For any other refusal, wait for the owner to resolve it.
    - An owner store answer takes priority over a typed go. Never use a typed go to override a store answer with another option. If the answer is `stop`, do not merge. Ask the owner what must change. If the owner uses `factory decide`, use only a settled `approve` whose request hash matches.
-3. Before the merge, check that the settled approval matches the PR number and full head SHA. Merge with `gh pr merge --match-head-commit HEAD N`, with the head from the approval row. If the head changes, check the new head and ask for a new approval on a linked request. If the merge fails for another reason, stop and show the owner the failure.
-4. After the merge succeeds, run `factory item record <id> --ref N`. If the record refuses, show the refusal to the owner and follow the remedy before you try again. For an item merged before the upgrade, add a linked request with the merged head and get an answer.
+3. Before the merge, check that the settled approval matches the PR number and full head SHA. Run `factory check N`. If the result is not `READY`, stop and show the owner the result.
+4. Run `factory pr merge N --head SHA` with the full SHA from the approval row.
+   - If the head changes, check the new head and ask for a new approval on a linked request.
+   - If the result is `MERGED NOT RECORDED`, run `factory item record <id> --ref N` instead of another merge. If the record refuses, show the refusal to the owner and follow the remedy before you try again.
+   - If the merge fails for another reason, stop and show the owner the failure.
+
+For an item merged before the upgrade, add a linked request with the merged head and get an answer.
 
 In either mode, the merge uses the exact head SHA that passed the checks. Only the node can use `--admin`, and only at that head.
 
