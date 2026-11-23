@@ -31,6 +31,8 @@ export interface WorkItemQuery {
   readonly point: string;
   readonly ref: string;
   readonly branch: string;
+  /** Allow a closed branch match only at this confirmed head. */
+  readonly recordedHead?: string;
   readonly closed: string | undefined;
   readonly workerField: string | undefined;
   readonly remedy: BranchRemedy;
@@ -114,7 +116,7 @@ const linkedIdsOf = (
 const branchItemsOf = (items: readonly BoardItem[], query: WorkItemQuery): CliResult<readonly BoardItem[]> => {
   const matches: BoardItem[] = [];
   for (const item of items) {
-    if (item.status === query.closed) continue;
+    if (item.status === query.closed && (query.recordedHead === undefined || item.record[boardKeys.mergedPrHead] !== query.recordedHead)) continue;
     const worker = workerOf(item, query.workerField);
     if (!worker.ok) return worker;
     const branches = branchesOf(item, worker.value, query.remedy);

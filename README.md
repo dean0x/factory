@@ -1096,6 +1096,8 @@ With `session-checks` on, run the command in the coordinator pane or in an owner
 
 Factory checks that its tracker permits the board write before it contacts GitHub. It makes at most one merge call. The confirmation and the board record must both match the given head. After it records the merge, the command can write one event file in `.factory/outbox/` beside `report.json`. A repeat at an already merged head does not merge again. If the result is `MERGED NOT RECORDED`, run `factory item record ID --ref PR` instead. If GitHub puts the PR in a merge queue, the result is `NOT MERGED` while it stays open. After GitHub merges it, use `factory item record`.
 
+A request link takes priority over a branch match. If the link and branch name different items, the command refuses. For an open PR, only open items can match by branch. For a PR already merged at the given head, a closed item can also match. Its current or former worker branch must match the PR branch, and its recorded head must equal the given head. Without a link, the branch must identify exactly one item.
+
 ### Watch a pull request
 
 `factory pr watch` is a command of the software recipe. It watches the checks of one pull request at one head commit, and it ends when the checks end. It is made to run as a background task after a push. It only reads. It never merges, never approves and never writes a file or a comment. A pass is a fact about the checks at the head. It is no approval to merge.

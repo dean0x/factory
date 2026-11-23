@@ -278,8 +278,55 @@ describe('pr merge through the local work host', () => {
   it('recognizes a completed merge on a repeat without a linked request', async () => {
     const world = await mergeFixture({ realGit: true, off: [guardIds.ownerGo] });
     await world.commitBase();
+    const outbox = layoutOf(world.home).outboxDir;
+    const event = join(outbox, mergeEventName);
     expect(await world.run()).toMatchObject({ code: 0, out: expect.stringMatching(/^MERGED AND RECORDED\n/) });
+    const text = await readFile(event, 'utf8');
+    expect(JSON.parse(text)).toMatchObject({ item, head, proof: 'none', request: null, decider: null });
     expect(await world.run()).toMatchObject({ code: 0, out: expect.stringMatching(/^MERGED AND ALREADY RECORDED\n/) });
+    expect(await world.git('rev-list', '--count', 'HEAD')).toBe('2');
+    expect(world.gh().slice(5).map(({ args }) => args[1])).toEqual(['view', 'view']);
+    expect(await readdir(outbox)).toEqual([mergeEventName]);
+    expect(await readFile(event, 'utf8')).toBe(text);
+  });
+
+  const recorded = { status: 'done', stage: 'merged', [boardKeys.mergedPrHead]: head };
+  const closedItem = itemRecord(item, { ...recorded, lane: worker });
+  const decoys = [itemRecord('B-2', { lane: 'beta' }), itemRecord('B-3', { lane: 'beta' })] as const;
+
+  it('writes the first event for a recorded merge from a former worker branch', async () => {
+    const world = await mergeFixture({ view: { state: 'MERGED' }, realGit: true, off: [guardIds.ownerGo] });
+    await world.writeState(files.board, boardText([itemRecord(item, { ...recorded, unassigned_from: [worker] })]));
+    await world.commitBase();
+    const outbox = layoutOf(world.home).outboxDir;
+    expect(await world.run()).toMatchObject({ code: 0, out: expect.stringMatching(/^MERGED AND ALREADY RECORDED\n/) });
+    expect(await world.git('rev-list', '--count', 'HEAD')).toBe('1');
+    expect(world.gh().map(({ args }) => args[1])).toEqual(['view', 'view']);
+    expect(await readdir(outbox)).toEqual([mergeEventName]);
+    expect(JSON.parse(await readFile(join(outbox, mergeEventName), 'utf8')))
+      .toMatchObject({ item, head, proof: 'none', request: null, decider: null });
+  });
+
+  it.each([
+    {
+      name: 'the closed item records another head', state: 'MERGED',
+      rows: [{ ...closedItem, [boardKeys.mergedPrHead]: 'b'.repeat(40) }], cause: 'no item matches the reference or head branch',
+    },
+    {
+      name: 'two closed items match', state: 'MERGED',
+      rows: [closedItem, { ...closedItem, id: 'B-4' }], cause: 'several items match the head branch',
+    },
+    { name: 'the PR is open', state: 'OPEN', rows: [closedItem], cause: 'no item matches the reference or head branch' },
+  ] as const)('refuses a closed branch match when $name', async ({ state, rows, cause }) => {
+    const world = await mergeFixture({ view: { state }, off: [guardIds.ownerGo] });
+    const board = boardText([decoys[0], ...rows, decoys[1]]);
+    await world.writeState(files.board, board);
+    expect(await world.run()).toMatchObject({
+      code: 1, out: expect.stringContaining(`${cause}\nCheck the board and its request links. Run check again.`),
+    });
+    expect(world.gh().map(({ args }) => args[0])).toEqual(state === 'MERGED' ? ['pr'] : ['pr', 'api']);
+    expect(await readFile(join(layoutOf(world.home).stateDir, files.board), 'utf8')).toBe(board);
+    await expect(stat(layoutOf(world.home).outboxDir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('refuses an absent proof before any merge, board commit or event', async () => {
