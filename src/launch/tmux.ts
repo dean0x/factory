@@ -246,17 +246,18 @@ export const coordinatorReadArgs = (id: string): TmuxArgs =>
     [PANE_ID_FORMAT, '#{pane_pid}', '#{pane_dead}', optionIs(tmuxNames.optionNode, id), '#{pane_start_command}'].join(FIELD_SEPARATOR),
   );
 
-/** What the read of `coordinatorReadArgs` finds. */
-export interface CoordinatorPane {
+interface CoordinatorPaneInfo {
   readonly paneId: string;
-  /** The pid that tmux gave in this read. */
-  readonly pid: number;
-  readonly dead: boolean;
   /** True when the pane carries the node mark of the session: it is the pane that `start` made for the coordinator. */
   readonly node: boolean;
   /** The command that made the pane, as tmux shows it. Empty for a pane that runs the shell. */
   readonly startCommand: string;
 }
+
+export type LiveCoordinatorPane = CoordinatorPaneInfo & { readonly dead: false; readonly pid: number };
+
+/** tmux can omit the pid after the process ends. */
+export type CoordinatorPane = LiveCoordinatorPane | (CoordinatorPaneInfo & { readonly dead: true; readonly pid: number | null });
 
 /** The count of fields before the start command in the read of the coordinator pane: the id, the pid, the end flag and the node flag. */
 const COORDINATOR_FIELDS_BEFORE_START = 4;
@@ -266,27 +267,19 @@ const COORDINATOR_FIELDS_BEFORE_START = 4;
  * after the fourth separator. The start command is the rest of the line, as in `parsePaneBind`. The error names no text of the output.
  */
 export const parseCoordinatorPane = (text: string): Result<CoordinatorPane, string> => {
+  const malformed = err('the read gives text that is not the line of one pane');
   const line = text.endsWith('\n') ? text.slice(0, -1) : text;
   const fields = line.split(FIELD_SEPARATOR);
   const [paneId = '', pid = ''] = fields;
   const flags = flagsOf(fields.slice(2, COORDINATOR_FIELDS_BEFORE_START));
-  if (
-    line.includes('\n') ||
-    fields.length <= COORDINATOR_FIELDS_BEFORE_START ||
-    !isPaneId(paneId) ||
-    !PID_PATTERN.test(pid) ||
-    flags === null
-  ) {
-    return err('the read gives text that is not the line of one pane');
+  if (line.includes('\n') || fields.length <= COORDINATOR_FIELDS_BEFORE_START || !isPaneId(paneId) || flags === null) {
+    return malformed;
   }
   const [dead = false, node = false] = flags;
-  return ok({
-    paneId,
-    pid: Number(pid),
-    dead,
-    node,
-    startCommand: fields.slice(COORDINATOR_FIELDS_BEFORE_START).join(FIELD_SEPARATOR),
-  });
+  const info = { paneId, node, startCommand: fields.slice(COORDINATOR_FIELDS_BEFORE_START).join(FIELD_SEPARATOR) };
+  if (dead && pid === '') return ok({ ...info, dead: true, pid: null });
+  if (!PID_PATTERN.test(pid)) return malformed;
+  return ok({ ...info, dead, pid: Number(pid) });
 };
 
 export interface PaneRow {

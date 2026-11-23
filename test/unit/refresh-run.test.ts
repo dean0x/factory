@@ -364,6 +364,27 @@ describe('refresh runner', () => {
     expect(lab.deps.terminated).toEqual([]);
   });
 
+  it.each([false, true])('checks the original launch if the dead pane has no pid (changed: %s)', async (changed) => {
+    const lab = await make({ events: {} });
+    const { coordinator: pane } = lab;
+    const words = changed ? [...pane.command, '--verbose'] : pane.command;
+    lab.onRun(async (call) =>
+      found(call, 'display-message') && call.args[3]?.includes(':view.{left}') &&
+      lab.deps.terminated.includes(pane.pid) && resumes(lab).length === 0
+        ? exited(0, `${pane.id}||1|1|${startCommandText(words)}\n`)
+        : undefined);
+
+    const record = await finish(lab);
+
+    if (changed) {
+      expectFault(record, NODE, 'dead pane', 'factory start');
+      expect(resumes(lab)).toEqual([]);
+    } else {
+      expect(record.outcomes).toMatchObject([{ id: NODE, status: 'resumed' }]);
+    }
+    expect(lab.deps.terminated).toEqual([pane.pid]);
+  });
+
   it.each(['live', 'pane', 'pid', 'mark', 'command'] as const)('refuses to respawn a coordinator when the dead read shows %s', async (mismatch) => {
     const lab = await make({ events: {} });
     const { coordinator: pane } = lab;

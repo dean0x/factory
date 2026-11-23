@@ -230,6 +230,19 @@ describe('the coordinator pane that the read gives', () => {
     });
   });
 
+  it('reads a dead coordinator pane when tmux omits its pid', () => {
+    expect(parseCoordinatorPane(line('1|1', START, '%3|'))).toEqual({
+      ok: true,
+      value: { paneId: '%3', pid: null, dead: true, node: true, startCommand: START },
+    });
+  });
+
+  it('refuses a live coordinator pane without a pid', () => {
+    expect(parseCoordinatorPane(line('0|1', START, '%3|'))).toEqual({
+      ok: false, error: 'the read gives text that is not the line of one pane',
+    });
+  });
+
   it('reads the end flag and the node flag from their own places', () => {
     expect(parseCoordinatorPane(line('1|0'))).toMatchObject({ ok: true, value: { dead: true, node: false } });
   });

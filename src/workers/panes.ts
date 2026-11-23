@@ -16,6 +16,7 @@ import {
   parsePaneBind,
   parsePaneListSoft,
   type CoordinatorPane,
+  type LiveCoordinatorPane,
   type PaneRow,
 } from '../launch/tmux.js';
 import { requireOwnSession, requireSession, sessionExists, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
@@ -168,7 +169,7 @@ export const requireCoordinatorPane = async (
   home: string,
   config: FactoryConfig,
   again: string,
-): Promise<CliResult<CoordinatorPane>> => {
+): Promise<CliResult<LiveCoordinatorPane>> => {
   const nodeId = config.core.node.id;
   const session = await requireSession(deps, nodeId, home, commandText(again));
   if (!session.ok) return session;
@@ -202,7 +203,7 @@ export const checkCoordinatorCaller = async (
   home: string,
   config: FactoryConfig,
   again: string,
-): Promise<CliResult<CoordinatorPane>> => {
+): Promise<CliResult<LiveCoordinatorPane>> => {
   const nodeId = config.core.node.id;
   const callerPane = deps.env[env.tmuxPane];
   const coordinatorPlace = `the pane of the ${roles.coordinator}`;

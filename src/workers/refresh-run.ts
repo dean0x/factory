@@ -6,7 +6,7 @@ import type { Deps } from '../core/deps.js';
 import { processStartSecondOf } from '../core/process-start.js';
 import { ok } from '../core/result.js';
 import { guardValuesFor } from '../guards/effective.js';
-import { respawnPaneArgs, type CoordinatorPane, type PaneRow } from '../launch/tmux.js';
+import { respawnPaneArgs, type CoordinatorPane, type LiveCoordinatorPane, type PaneRow } from '../launch/tmux.js';
 import { requireSession, tmuxStep } from '../launch/tmux-run.js';
 import { commands, commandText, env, lastSeen, launchConfirm, refreshText, refreshWait, roles, stopCaseOfState, workerRecord } from '../names.js';
 import { layoutOf } from '../state/layout.js';
@@ -233,7 +233,7 @@ const confirmCoordinator = async (
 };
 
 const respawnCoordinator = async (
-  deps: Deps, target: RefreshTarget, pane: CoordinatorPane, sessionId: string, words: readonly string[],
+  deps: Deps, target: RefreshTarget, pane: LiveCoordinatorPane, sessionId: string, words: readonly string[],
 ): Promise<CliResult<void>> => {
   const node = nodeOf(target);
   const seen = await readOwnCoordinatorResume(deps, target.home, node);
@@ -243,7 +243,11 @@ const respawnCoordinator = async (
   }
   const dead = await readCoordinatorPane(deps, node);
   if (!dead.ok) return dead;
-  if (!ownCoordinatorPane(dead.value, target, pane.paneId) || !dead.value.dead || dead.value.pid !== pane.pid) {
+  // TERM has finished. If tmux omits the pid, the same dead pane must still show the original launch.
+  if (
+    !ownCoordinatorPane(dead.value, target, pane.paneId) || !dead.value.dead ||
+    (dead.value.pid === null ? dead.value.startCommand !== pane.startCommand : dead.value.pid !== pane.pid)
+  ) {
     return failure(`the dead pane read did not confirm the ${roles.coordinator} pane that received TERM`);
   }
   const args = respawnPaneArgs(pane.paneId, layoutOf(target.home).coordinatorDir, words);
