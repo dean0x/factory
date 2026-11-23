@@ -1025,7 +1025,7 @@ describe('the launch of a worker: a resume with a prompt', () => {
     const result = await launchWorker(made.deps, request(resume));
     expect(result).toMatchObject({ ok: true, value: { lineConfirmed: false } });
     expect(made.deps.sleeps).toHaveLength(launchConfirm.attempts);
-    expect(made.events).not.toContain('tmux capture-pane');
+    expect(made.events.at(-1)).toBe('tmux capture-pane');
   });
 
   it('does not confirm a line from an event at the time of launch', async () => {

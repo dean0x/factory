@@ -1,4 +1,4 @@
-import { failure, hasCode, stopCaseRefused, trustQuestionWait, type CliError, type CliResult } from '../cli/errors.js';
+import { codedNotReady, failure, hasCode, stopCaseRefused, trustQuestionWait, type CliError, type CliResult } from '../cli/errors.js';
 import { displayLine } from '../cli/output.js';
 import { coordinatorLaunchWords } from '../commands/start.js';
 import type { FactoryConfig } from '../config/schema.js';
@@ -10,6 +10,7 @@ import { requireSession, tmuxStep } from '../launch/tmux-run.js';
 import { commands, commandText, env, lastSeen, launchConfirm, refreshText, refreshWait, workerRecord } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { startsCoordinator } from './binding.js';
+import { showsTrustQuestion } from './confirm.js';
 import {
   promptStateOf, readOwnCoordinatorResume, readOwnCoordinatorSession, readOwnLastSeen, readWorkerLastSeen, type LastSeen,
 } from './last-seen.js';
@@ -202,6 +203,9 @@ const ownCoordinatorPane = (pane: CoordinatorPane | null, target: RefreshTarget,
   pane !== null && pane.paneId === paneId && pane.node &&
   startsCoordinator(pane.startCommand, target.home, nodeOf(target), layoutOf(target.home).stateDir);
 
+const coordinatorQuestion = (pane: CoordinatorPane) => codedNotReady(trustQuestionWait,
+  'the coordinator waits on a folder question', `Answer the folder question in pane ${pane.paneId}. Check that the coordinator continues its task.`);
+
 const confirmCoordinator = async (
   deps: Deps, target: RefreshTarget, pane: CoordinatorPane, launchedAt: number,
 ): Promise<CliResult<void>> => {
@@ -217,9 +221,10 @@ const confirmCoordinator = async (
     if (!seen.ok) return seen;
     if (seen.value.state !== 'valid' || !eventAfter(seen.value.line, launchedAt)) continue;
     const event = seen.value.line[keys.event];
+    if (event === 'Notification' && await showsTrustQuestion(deps, pane.paneId, true)) return coordinatorQuestion(pane);
     if (event === 'UserPromptSubmit' || event === 'PreToolUse' || event === 'Stop' || event === 'Notification') return ok(undefined);
   }
-  return failure('the coordinator resume or its continue line was not confirmed');
+  return await showsTrustQuestion(deps, pane.paneId, true) ? coordinatorQuestion(pane) : failure('the coordinator resume or its continue line was not confirmed');
 };
 
 /** Stop and respawn only the original coordinator pane. Null means it is not yet idle. */

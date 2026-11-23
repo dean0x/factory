@@ -114,14 +114,17 @@ const notConfirmed = (request: LaunchConfirmRequest, reason: string): CliResult<
 };
 
 /**
- * True when a line of a dialog with choices holds the words of the folder trust question (`trustQuestion`). It reads the screen
- * once and types nothing. A capture that fails counts as no question, so the caller keeps its own verdict.
+ * Read the pane once. Look for folder trust choices or, for a prompted launch, the dialog for an added directory.
+ * A capture that fails counts as no question, so the caller keeps its own verdict.
  */
-const showsTrustQuestion = async (deps: Deps, paneId: string): Promise<boolean> => {
+export const showsTrustQuestion = async (deps: Deps, paneId: string, prompted: boolean): Promise<boolean> => {
   const args = capturePaneArgs(paneId);
   if (!args.ok) return false;
   const screen = await tmuxStep(deps, args.value);
-  return screen.ok && showsChoiceList(screen.value, (line) => trustQuestion.pattern.test(line));
+  if (!screen.ok) return false;
+  const addedFolder = prompted ? /^[ \t]*Adding a new directory:?[ \t]*$/im.exec(screen.value) : null;
+  return showsChoiceList(screen.value, (line) => trustQuestion.pattern.test(line)) ||
+    (addedFolder !== null && showsChoiceList(screen.value.slice(addedFolder.index)));
 };
 
 /**
@@ -134,7 +137,7 @@ const waitsOnTrust = (request: LaunchConfirmRequest, reason: string): CliResult<
   return codedNotReady(
     trustQuestionWait,
     `resume not confirmed: the pane ${paneId} of the ${roles.worker} ${workerId} waits on a folder trust question, ` +
-      `so its session wrote no ${launchConfirm.event} line within ${SECONDS} seconds (${reason})`,
+      (request.prompt === undefined ? `so its session wrote no ${launchConfirm.event} line within ${SECONDS} seconds (${reason})` : 'so factory cannot confirm its continue line'),
     `The ${roles.owner} answers each folder trust question in the pane ${paneId}. ` +
       `Then run "${commandText(commandLines.workerWatch)} ${flagText(flags.ready)} ${workerId}". ` +
       `If the ${roles.owner} sees no question in the pane and the earlier conversation did not load, ${recoverySteps(request)}`,
@@ -179,8 +182,8 @@ const confirmEvent = async (deps: Deps, home: string, workerId: string, expected
  * ended, or that does not run the launch is a failure (exit 1). A launch with no session to resume is confirmed by the first check
  * of the pane if it has no prompt. A resume without a prompt needs SessionStart. A launch with a prompt accepts SessionStart
  * or a later launch event. The last-seen line can already hold that later event at the first check. If only SessionStart appears
- * within the bound, the session started but no event confirms the prompt. If no event confirms the start, one screen read can
- * identify a folder trust question and select its remedy (exit 3). The check types nothing and closes no pane.
+ * within the bound, the session started but no event confirms the prompt. A screen check distinguishes a folder question from
+ * another notification or a missing hook event. The check types nothing and closes no pane.
  */
 export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): Promise<CliResult<LaunchConfirmation | undefined>> => {
   const { home, paneId, workerId, launchedAt, resuming, prompt } = request;
@@ -207,11 +210,14 @@ export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): 
       continue;
     }
     if (!prompted) return ok(undefined);
-    if (seen.value !== launchConfirm.event) return ok({ lineConfirmed: true });
+    if (seen.value !== launchConfirm.event) {
+      if (seen.value === 'Notification' && await showsTrustQuestion(deps, paneId, true)) return waitsOnTrust(request, 'the prompt waits');
+      return ok({ lineConfirmed: true });
+    }
     sawSessionStart = true;
   }
-  if (sawSessionStart) return ok({ lineConfirmed: false });
-  return (await showsTrustQuestion(deps, paneId)) ? waitsOnTrust(request, reason) : notConfirmed(request, reason);
+  if (await showsTrustQuestion(deps, paneId, prompted)) return waitsOnTrust(request, sawSessionStart ? 'the prompt waits' : reason);
+  return sawSessionStart ? ok({ lineConfirmed: false }) : notConfirmed(request, reason);
 };
 
 /** What the confirm of a reset needs to know. */

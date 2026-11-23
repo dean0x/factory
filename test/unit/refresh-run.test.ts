@@ -414,6 +414,24 @@ describe('refresh runner', () => {
     expect(refreshExitCode(record)).toBe(3);
   });
 
+  it.each(['SessionStart', 'Notification'] as const)('keeps the coordinator live when a folder question holds the line after %s', async (workerHook) => {
+    const screen = 'Adding a new directory\n/project\n\n❯ 1. Yes\n  2. No\n';
+    const lab = await make({ workerHook, tmux: { newPaneScreen: screen } });
+    const record = await finish(lab);
+    expect(record.outcomes).toEqual([expect.objectContaining({ status: 'trust-wait', remedy: expect.stringContaining('answers each folder trust question') })]);
+    expect(lab.deps.terminated).toEqual([WORKER_PID]);
+    expect(lab.log.typed()).toEqual([]);
+  });
+
+  it('names the coordinator pane when a folder question holds its continue line', async () => {
+    const lab = await make({ events: {}, coordinatorHook: 'SessionStart' });
+    lab.onRun(async (call) => found(call, 'capture-pane') ? exited(0, 'Do you trust this folder?\n❯ 1. Yes\n  2. No\n') : undefined);
+    const run = await finish(lab);
+    expect(run.outcomes).toEqual([expect.objectContaining({ id: NODE, status: 'trust-wait', remedy: expect.stringContaining(`pane ${lab.coordinator.id}`) })]);
+    expect(refreshExitCode(run)).toBe(3);
+    expect(lab.log.typed()).toEqual([]);
+  });
+
   it('records the remedy if a coordinator does not confirm its continue line', async () => {
     const lab = await make({ events: {}, coordinatorHook: 'SessionStart' });
     const record = await finish(lab);
