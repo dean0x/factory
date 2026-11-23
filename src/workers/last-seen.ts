@@ -360,9 +360,12 @@ const readPointerFile = (deps: Deps, home: string, owner: PointerOwner): Promise
   );
 };
 
-const readPointer = async (deps: Deps, home: string, owner: PointerOwner): Promise<CliResult<PointerRead>> => {
+const readPointer = async (deps: Deps, home: string, owner: PointerOwner, requireReadable = false): Promise<CliResult<PointerRead>> => {
   const pointer = await readPointerFile(deps, home, owner);
   if (!pointer.ok) return pointer;
+  if (requireReadable && pointer.value.state === 'invalid') {
+    return failure(`cannot check the session pointer: ${pointer.value.reason}`, 'Check the worker pointer. Then try again.');
+  }
   if (pointer.value.state !== 'text') return ok(pointer.value);
   const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;
   return isSessionId(sessionId)
@@ -390,11 +393,14 @@ const foreignMarkerReason = (marker: string | undefined): string =>
 const otherHolderOf = async (deps: Deps, home: string, skipId: string | null, sessionId: string): Promise<CliResult<string | null>> => {
   const listed = await listWorkerRecords(deps, home);
   if (!listed.ok) return listed;
-  for (const record of listed.value.workers) {
-    if (record.id === skipId) continue;
-    const pointer = await readPointer(deps, home, workerPointer(record.id));
+  const ids = listed.value.workers.map(({ id }) => id);
+  // A worker folder can retain its session pointer even if it has no usable record.
+  if (skipId === null) ids.push(...listed.value.invalid.map(({ name }) => name).filter(isSlug));
+  for (const id of ids) {
+    if (id === skipId) continue;
+    const pointer = await readPointer(deps, home, workerPointer(id), skipId === null);
     if (!pointer.ok) return pointer;
-    if (pointer.value.state === 'found' && pointer.value.sessionId === sessionId) return ok(record.id);
+    if (pointer.value.state === 'found' && pointer.value.sessionId === sessionId) return ok(id);
   }
   return ok(null);
 };
@@ -462,7 +468,7 @@ export const readOwnCoordinatorSession = async (
     : ok({ state: 'not-owned', reason: foreignMarkerReason(marker) });
 };
 
-/** Read the owned coordinator session for refresh. A pointer of any recorded worker to the same session makes it not owned. */
+/** Read the owned coordinator session for refresh. No worker folder may have a pointer to the same session. */
 export const readOwnCoordinatorResume = async (
   deps: Deps,
   home: string,

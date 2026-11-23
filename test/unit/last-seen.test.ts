@@ -1244,6 +1244,24 @@ describe('the session pointer of the coordinator', () => {
       });
     });
 
+    it('refuses a shared pointer in a worker folder without a record', async () => {
+      const deps = await withCoordinator();
+      deps.seedDir(workerPathsOf(HOME, WORKER).dir);
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      expect(await readOwnCoordinatorResume(deps, HOME, NODE_ID)).toMatchObject({
+        ok: true, value: { state: 'not-owned', reason: `the pointer of the worker ${WORKER} names the same session` },
+      });
+    });
+
+    it('does not infer ownership from an unreadable worker pointer', async () => {
+      const deps = await withCoordinator();
+      const pointer = workerPathsOf(HOME, 'alpha').lastSessionFile;
+      const linked: Deps = { ...deps, fs: { ...deps.fs, lstat: async (path) => path === pointer ? { ok: true, value: 'link' } : deps.fs.lstat(path) } };
+      expect(await readOwnCoordinatorResume(linked, HOME, NODE_ID)).toMatchObject({
+        ok: false, error: { message: expect.stringContaining('cannot check the session pointer: the pointer is a link'), hint: 'Check the worker pointer. Then try again.' },
+      });
+    });
+
     it('fails when a worker pointer cannot be read', async () => {
       const deps = await withCoordinator();
       const pointer = workerPathsOf(HOME, 'alpha').lastSessionFile;
