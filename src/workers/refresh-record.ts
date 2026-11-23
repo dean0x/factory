@@ -92,7 +92,7 @@ export type RefreshRunChange =
 
 export const refreshResultCommand = commandText(`${commands.refresh} ${flagText(flags.result)}`);
 const CANCEL_COMMAND = commandText(`${commands.refresh} ${flagText(flags.cancel)}`);
-const RECORD_REMEDY = `Check ${files.refreshRun}. Replace or remove it only when no refresh runner is active.`;
+const RECORD_REMEDY = `Check ${files.refreshRun}. Replace or remove it only when no refresh runner is active. Then run "${refreshResultCommand}".`;
 const RESULT_REMEDY = `Run "${refreshResultCommand}" to see the last refresh run.`;
 
 /** The same remedy applies to the result and status if an action has no outcome yet. */
@@ -123,10 +123,16 @@ const checkFolders = async (deps: Deps, { parent, folder }: FolderTarget): Promi
     if (info.value.kind !== 'dir') return failure(`the refresh record folder ${path} is not a folder`, RECORD_REMEDY);
     const { mode, uid } = info.value;
     if (deps.uid !== null && (uid !== deps.uid || (mode & privateFile.groupOtherWrite) !== 0)) {
-      return safetyRefusal(`the refresh record folder ${path} ${refreshWords.folderOwnerOnly}`, RECORD_REMEDY);
+      return safetyRefusal(
+        `the refresh record folder ${path} ${refreshWords.folderOwnerOnly}`,
+        `Correct the folder owner and permissions. Then run "${refreshResultCommand}".`,
+      );
     }
     if (deps.uid !== null && path === folder && mode !== privateFile.folderMode) {
-      return safetyRefusal(`the refresh run-time folder ${path} does not have mode 700`, RECORD_REMEDY);
+      return safetyRefusal(
+        `the refresh run-time folder ${path} does not have mode 700`,
+        `Set the folder mode to 700. Then run "${refreshResultCommand}".`,
+      );
     }
   }
   return ok(undefined);
@@ -143,7 +149,10 @@ export const readRefreshRun = async (deps: Deps, home: string): Promise<CliResul
   if (info.value.kind === 'link') return safetyRefusal(`the refresh run record ${path} is a link`, LINK_REMEDY);
   if (info.value.kind !== 'file') return failure(`the refresh run record ${path} is not a file`, RECORD_REMEDY);
   if (deps.uid !== null && info.value.mode !== privateFile.fileMode) {
-    return safetyRefusal(`the refresh run record ${path} does not have mode 600`, RECORD_REMEDY);
+    return safetyRefusal(
+      `the refresh run record ${path} does not have mode 600`,
+      `Set the record mode to 600. Then run "${refreshResultCommand}".`,
+    );
   }
   const read = await readPrivateText(deps, path, maxFileBytes);
   if (!read.ok) return failure(`cannot read the refresh run record: ${read.error}`, RECORD_REMEDY);
