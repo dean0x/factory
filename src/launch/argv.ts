@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { isSlug } from '../config/primitives.js';
 import { isSameOrInside } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
@@ -22,6 +23,8 @@ interface SessionInput {
   readonly agent: string;
   /** The id of an earlier session that this start resumes: a UUID. It is absent for a new session. */
   readonly resumeId?: string;
+  /** One positional prompt. When present, it precedes every added folder. */
+  readonly prompt?: string;
 }
 
 export interface LaunchInput extends SessionInput {
@@ -56,6 +59,8 @@ const MODEL_NAME = /^(?!-)[^\s\u0000-\u001f\u007f]+$/;
  */
 const PROGRAM_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+const launchPromptSchema = z.string().regex(/^(?!-)[ -~]{1,300}$/);
+
 /** The flag of the program that adds a folder to the scope of a session. */
 export const ADD_DIR_FLAG = '--add-dir';
 
@@ -76,6 +81,9 @@ const checkSession = (input: SessionInput): Result<void, string> => {
   if (!PROGRAM_NAME.test(input.agent)) return refuse('an agent program name that is not one plain word');
   if (input.resumeId !== undefined && !lastSeen.sessionIdPattern.test(input.resumeId)) {
     return refuse('a resume id that is not a UUID with lower case letters');
+  }
+  if (input.prompt !== undefined && !launchPromptSchema.safeParse(input.prompt).success) {
+    return refuse('a prompt that is not 1 to 300 printable ASCII characters without a leading dash');
   }
   return ok(undefined);
 };
@@ -107,8 +115,8 @@ export const stripScript = `s=$(awk '${STRIP_PROGRAM}' 2>/dev/null) || exit 1; e
  * in auto mode, and no input adds a flag that skips the permission checks: each flag comes from this function, and each
  * input is one value of one flag. The values are checked before they come here, because a value that starts with a dash
  * could read as a flag. The program is the agent of the input, and the start of a coordinator and the start of a worker are
- * the only callers, so no other name of a program is in an argument list. The name of the session comes after the resume part
- * and before the folders.
+ * the only callers, so no other name of a program is in an argument list. The name of the session comes after the resume part.
+ * A prompt follows the name and precedes every folder, because `--add-dir` can take more than one value.
  */
 const startArgv = (
   input: SessionInput,
@@ -135,6 +143,7 @@ const startArgv = (
   ...(input.resumeId === undefined ? [] : ['--resume', input.resumeId]),
   sessionNames.flag,
   name,
+  ...(input.prompt === undefined ? [] : [input.prompt]),
   ...folders.flatMap((folder) => [ADD_DIR_FLAG, folder]),
 ];
 

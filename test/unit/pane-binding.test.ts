@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { coordinatorLaunchMarks, launchArgv, stripScript, workerLaunchArgv } from '../../src/launch/argv.js';
-import { paneBinding } from '../../src/names.js';
+import { paneBinding, refreshText } from '../../src/names.js';
 import { startsCoordinator, startsWorker, wordsOfStartCommand } from '../../src/workers/binding.js';
 import { startCommandText } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
 const NODE = 'demo';
 const STATE = `${HOME}/.factory/state`;
+const PROMPTED_RESUME = {
+  resumeId: '0b9f3c1e-5d2a-4e7b-9c10-a1b2c3d4e5f6',
+  prompt: refreshText.continue,
+};
 
 const session = { effort: 'high', model: 'default', proxyBaseUrl: null, path: '/bin', agent: 'claude' } as const;
 
@@ -24,8 +28,8 @@ const coordinatorStartOf = (more: Partial<Parameters<typeof launchArgv>[0]> = {}
 };
 
 /** The start command that tmux shows for the launch of a worker: the argument list of the launch, as tmux renders it. */
-const startCommandOf = (workerId: string, home = HOME): string => {
-  const argv = workerLaunchArgv({ ...session, home, nodeId: 'node', workerId });
+const startCommandOf = (workerId: string, home = HOME, more: Partial<Parameters<typeof workerLaunchArgv>[0]> = {}): string => {
+  const argv = workerLaunchArgv({ ...session, home, nodeId: 'node', workerId, ...more });
   if (!argv.ok) throw new Error(argv.error);
   return startCommandText(argv.value);
 };
@@ -184,6 +188,20 @@ describe('the name of the session is not a mark of the pane binding', () => {
     expect(wordsOfStartCommand(named)).toContain('--name');
     expect(startsCoordinator(named, HOME, NODE, STATE)).toBe(true);
     expect(startsCoordinator(withoutName(named), HOME, NODE, STATE)).toBe(true);
+  });
+});
+
+describe('the start command of a resume with a prompt', () => {
+  it('keeps the whole prompt and binds the worker pane', () => {
+    const start = startCommandOf('alpha', HOME, PROMPTED_RESUME);
+    expect(wordsOfStartCommand(start)).toContain(refreshText.continue);
+    expect(startsWorker(start, HOME, 'alpha')).toBe(true);
+  });
+
+  it('keeps the whole prompt and binds the coordinator pane', () => {
+    const start = coordinatorStartOf(PROMPTED_RESUME);
+    expect(wordsOfStartCommand(start)).toContain(refreshText.continue);
+    expect(startsCoordinator(start, HOME, NODE, STATE)).toBe(true);
   });
 });
 

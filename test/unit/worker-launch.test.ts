@@ -5,7 +5,8 @@ import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { launchConfirm, roleText, statuslineKeyPath } from '../../src/names.js';
+import { launchConfirm, refreshText, roleText, statuslineKeyPath, type HookEvent } from '../../src/names.js';
+import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import {
   launchWorker,
   newProxyAnswers,
@@ -983,6 +984,91 @@ describe('the launch of a worker: a launch with a resume id', () => {
   });
 });
 
+describe('the launch of a worker: a resume with a prompt', () => {
+  const resume = { resumeId: UUID, prompt: refreshText.continue };
+  const recordEvent = async (deps: FakeDeps, event: HookEvent, marker = 'alpha'): Promise<void> => {
+    const pointer = await writeWorkerSession(deps, HOME, 'alpha', UUID);
+    if (!pointer.ok) throw new Error(pointer.error.message);
+    const line = await writeLastSeen(deps, HOME, UUID, { kind: 'event', event }, marker);
+    if (!line.ok) throw new Error(line.error.message);
+  };
+
+  it('passes the prompt as one word and waits for the event after SessionStart without any typed key', async () => {
+    const starts = atWait(1, startsSession(HOME, 'alpha'));
+    const submits = atWait(launchConfirm.attempts, ({ deps }) => recordEvent(deps, 'UserPromptSubmit'));
+    const made = make({
+      program: async (wait) => {
+        await starts(wait);
+        await submits(wait);
+      },
+    });
+    const result = await launchWorker(made.deps, request(resume));
+    const words = wordsOf(made.tmux);
+    expect(words.slice(words.indexOf('--name'))).toEqual(['--name', 'demo_alpha', refreshText.continue, '--add-dir', INBOX]);
+    expect(made.tmux.typed()).toEqual([]);
+    expect(made.deps.sleeps).toEqual(Array(launchConfirm.attempts).fill(launchConfirm.intervalMs));
+    expect(result).toMatchObject({ ok: true, value: { lineConfirmed: true } });
+  });
+
+  it.each(['UserPromptSubmit', 'PreToolUse', 'Stop', 'Notification'] as const)(
+    'confirms the line when %s is the first event the poll sees',
+    async (event) => {
+      const made = make({ program: atWait(1, ({ deps }) => recordEvent(deps, event)) });
+      const result = await launchWorker(made.deps, request(resume));
+      expect(result).toMatchObject({ ok: true, value: { lineConfirmed: true } });
+      expect(made.deps.sleeps).toEqual([launchConfirm.intervalMs]);
+    },
+  );
+
+  it('confirms the resume but not the line when only SessionStart shows within the bound', async () => {
+    const made = make({ program: atWait(1, startsSession(HOME, 'alpha')) });
+    const result = await launchWorker(made.deps, request(resume));
+    expect(result).toMatchObject({ ok: true, value: { lineConfirmed: false } });
+    expect(made.deps.sleeps).toHaveLength(launchConfirm.attempts);
+    expect(made.events).not.toContain('tmux capture-pane');
+  });
+
+  it('does not confirm a line from an event at the time of launch', async () => {
+    const made = make({ program: () => undefined });
+    await recordEvent(made.deps, 'UserPromptSubmit');
+    const result = await launchWorker(made.deps, request(resume));
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: 'not-ready',
+        message: expect.stringContaining('the last UserPromptSubmit came before the start of the pane'),
+        hint: expect.stringContaining('"factory worker summon alpha"'),
+      },
+    });
+  });
+
+  it('does not confirm a line from a session of another worker', async () => {
+    const made = make({ program: atWait(1, ({ deps }) => recordEvent(deps, 'UserPromptSubmit', 'beta')) });
+    const result = await launchWorker(made.deps, request(resume));
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: 'not-ready',
+        message: expect.stringContaining('the last-seen line belongs to the session of beta'),
+        hint: expect.stringContaining('"factory worker summon alpha"'),
+      },
+    });
+  });
+
+  it('does not confirm a line from PreCompact alone', async () => {
+    const made = make({ program: atWait(1, ({ deps }) => recordEvent(deps, 'PreCompact')) });
+    const result = await launchWorker(made.deps, request(resume));
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: 'not-ready',
+        message: expect.stringContaining('the last event is PreCompact, not SessionStart'),
+        hint: expect.stringContaining('"factory worker summon alpha"'),
+      },
+    });
+  });
+});
+
 describe('the launch of a worker: a resume whose pane shows a folder trust question', () => {
   /** A screen like the question of Claude Code about a folder that the user did not trust. The session holds back every hook until the answer. */
   const TRUST_SCREEN = [
@@ -1011,6 +1097,22 @@ describe('the launch of a worker: a resume whose pane shows a folder trust quest
     expect(error.hint?.startsWith(TRUST_REMEDY)).toBe(true);
     expect(made.events).not.toContain('tmux kill-pane');
     expect(panesOf(made)).toBe(START_PANES + 1);
+  });
+
+  it('does not confirm a resume with a prompt that waits on folder trust', async () => {
+    const made = make({ tmux: { newPaneScreen: TRUST_SCREEN }, program: noLine });
+    const result = await launchWorker(made.deps, request({ resumeId: UUID, prompt: refreshText.continue }));
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: 'not-ready',
+        code: 'trust-question-wait',
+        message: expect.stringContaining('waits on a folder trust question'),
+        hint: expect.stringContaining(TRUST_REMEDY),
+      },
+    });
+    expect(made.deps.sleeps).toHaveLength(launchConfirm.attempts);
+    expect(made.tmux.typed()).toEqual([]);
   });
 
   it('keeps the last check reason without printing the pane text', async () => {

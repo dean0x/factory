@@ -131,6 +131,8 @@ export interface WorkerLaunchRequest {
   readonly workCopy: string;
   /** The id of the earlier session to resume: a UUID. Absent for a new worker. */
   readonly resumeId?: string;
+  /** One positional prompt for the session. */
+  readonly prompt?: string;
   /** The command that a person runs again after a fix of the proxy, without the program name: for example `worker new`. */
   readonly retry: string;
   /** The answers of the run, for the proxy check. Absent: this launch asks its proxy by itself. */
@@ -144,6 +146,8 @@ export interface WorkerLaunch {
   readonly proxy: string | null;
   /** The warnings that can wait for the output of the command: a proxy that did not answer and the config allows to go direct. */
   readonly warnings: readonly string[];
+  /** For a launch with a prompt, true when an own hook after SessionStart confirms the line. */
+  readonly lineConfirmed?: boolean;
 }
 
 /** The place that the warning for a settings file names. */
@@ -319,17 +323,18 @@ const markPane = async (deps: Deps, request: PaneFailureRequest): Promise<CliRes
  *    session start, so this check is where a launch with no role text fails, before any pane;
  * 3. the instruction files above the work copy (a warning);
  * 4. the proxy of the worker, with its health check while the guard of the proxy is on;
- * 5. the argument list, with auto mode, the resume id when there is one, and the name of the session;
+ * 5. the argument list, with auto mode, the resume id when there is one, the session name and the prompt when there is one;
  * 6. the pane, and the worker mark on the pane id;
  * 7. the tile of the workers window, so that the next launch finds room (a failed tile is a warning);
- * 8. the wait for the pane to prove itself (`confirmLaunch`): the pane must still run the launch after the first wait, and a launch
- *    with a resume id must also see the SessionStart line of the new session. A pane that ends is exit 1. A resume that the line
+ * 8. the wait for the pane to prove itself (`confirmLaunch`): the pane must still run the launch after the first wait. A resume
+ *    needs an own SessionStart, or a later launch event if it has a prompt. A pane that ends is exit 1. A resume that the line
  *    does not confirm is exit 3 with "resume not confirmed", and a pane that shows a folder trust question then gets a remedy that
  *    names the pane and `worker watch --ready`. Nothing is typed or undone: the pane stays for a person to read.
  * The caller makes the work copy and the record, and it checks that the tmux session is its own.
  */
 export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Promise<CliResult<WorkerLaunch>> => {
-  const { home, config, workerId, workCopy, resumeId } = request;
+  const { home, config, workerId, workCopy, resumeId, prompt } = request;
+  const promptInput = prompt === undefined ? {} : { prompt };
   if (!isSlug(workerId)) return failure(`the launch refuses a ${roles.worker} id that is not a slug`);
   const folder = await requireWorkCopy(deps, home, workerId, workCopy);
   if (!folder.ok) return folder;
@@ -352,6 +357,7 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
     path: path === undefined || path === '' ? null : path,
     agent: config.core.session.agent,
     ...(resumeId === undefined ? {} : { resumeId }),
+    ...promptInput,
   });
   if (!argv.ok) return failure(argv.error);
 
@@ -368,12 +374,14 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
     workerId,
     launchedAt,
     resuming: resumeId !== undefined,
+    ...promptInput,
   });
   if (!confirmed.ok) return confirmed;
   return ok({
     paneId: pane.value,
     proxy: proxy.value.label,
     warnings: [...(proxy.value.warning === undefined ? [] : [proxy.value.warning]), ...tileWarnings],
+    ...confirmed.value,
   });
 };
 

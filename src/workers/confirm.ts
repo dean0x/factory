@@ -1,7 +1,7 @@
 import { codedNotReady, failure, notReady, trustQuestionWait, type CliResult } from '../cli/errors.js';
 import { showsChoiceList } from '../comms/typing.js';
 import type { Deps } from '../core/deps.js';
-import { ok } from '../core/result.js';
+import { err, ok, type Result } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
 import { capturePaneArgs } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
@@ -33,6 +33,7 @@ import { readPaneLife, type PaneLife } from './panes.js';
  */
 
 const keys = lastSeen.keys;
+const PROMPT_EVENTS: readonly HookEvent[] = [launchConfirm.event, 'UserPromptSubmit', 'PreToolUse', 'Stop', 'Notification'];
 
 /** What the failure of a pane of a launch needs to know. */
 export interface PaneFailureRequest {
@@ -41,13 +42,20 @@ export interface PaneFailureRequest {
   /** The id of the pane that the launch made. */
   readonly paneId: string;
   readonly workerId: string;
-  /** True for a launch with `--resume`. The pane and the last-seen line must confirm it. False: one check of the pane only. */
+  /** True for a launch with `--resume`. The pane and the last-seen line must confirm it. */
   readonly resuming: boolean;
 }
 
 export interface LaunchConfirmRequest extends PaneFailureRequest {
   /** The time before the pane was made. A hook event counts only when it is after this time. */
   readonly launchedAt: Date;
+  /** The positional prompt, if the launch has one. */
+  readonly prompt?: string;
+}
+
+export interface LaunchConfirmation {
+  /** True when an own event after SessionStart confirms the prompt. */
+  readonly lineConfirmed: boolean;
 }
 
 /** The command that a person runs for the worker: a command line of `commandLines` and the id. */
@@ -146,39 +154,44 @@ interface Expected {
 }
 
 /**
- * Null when the last-seen line of the worker confirms what is expected, else the reason that it does not. The line must belong to
- * the worker (`readOwnLastSeen` checks the session marker), hold one of the expected events, have a time after the given time, and
- * for `newSessionOf` hold the id of another session. A line that is not valid, and a line that can not be read, count as not
- * confirmed.
+ * The hook event that confirms what the caller expects, or the reason it does not confirm. The last-seen line must belong to
+ * the worker, hold one of the expected events, have a time after the given time, and for `newSessionOf` name another session.
  */
-const unconfirmedReason = async (deps: Deps, home: string, workerId: string, expected: Expected): Promise<string | null> => {
+const confirmEvent = async (deps: Deps, home: string, workerId: string, expected: Expected): Promise<Result<HookEvent, string>> => {
   const seen = await readOwnLastSeen(deps, home, workerId);
-  if (!seen.ok) return `the last-seen line can not be read: ${seen.error.message}`;
-  if (seen.value.state === 'unknown') return seen.value.reason;
+  if (!seen.ok) return err(`the last-seen line can not be read: ${seen.error.message}`);
+  if (seen.value.state === 'unknown') return err(seen.value.reason);
   const { line } = seen.value;
   const event = line[keys.event];
   if (event === null || !expected.events.includes(event)) {
-    return `the last event is ${event ?? 'none'}, not ${expected.events.join(' or ')}`;
+    return err(`the last event is ${event ?? 'none'}, not ${expected.events.join(' or ')}`);
   }
   const at = Date.parse(line[keys.eventAt] ?? '');
-  if (!(at > expected.after.getTime())) return `the last ${event} came before ${expected.afterWords}`;
+  if (!(at > expected.after.getTime())) return err(`the last ${event} came before ${expected.afterWords}`);
   if (expected.newSessionOf !== undefined && line[keys.sessionId] === expected.newSessionOf) {
-    return `the pointer of the ${roles.worker} still names the earlier session`;
+    return err(`the pointer of the ${roles.worker} still names the earlier session`);
   }
-  return null;
+  return ok(event);
 };
 
 /**
  * Waits for the pane to prove itself. Each check comes after a wait of `launchConfirm.intervalMs`. A pane that is gone, that
  * ended, or that does not run the launch is a failure (exit 1). A launch with no session to resume is confirmed by the first check
- * of the pane. A launch with a session to resume is confirmed when a check finds the pane and the line of the new session, and
- * it is "not confirmed" (exit 3) when no check does within `launchConfirm.attempts` checks. Then one read of the screen of the pane
- * picks the remedy: a folder trust question names the pane and `worker watch --ready`, and any other screen, or a read that fails,
- * keeps the remedy of a resume that did not load. Nothing is typed, closed or undone.
+ * of the pane if it has no prompt. A resume without a prompt needs SessionStart. A launch with a prompt accepts SessionStart
+ * or a later launch event. The last-seen line can already hold that later event at the first check. If only SessionStart appears
+ * within the bound, the session started but no event confirms the prompt. If no event confirms the start, one screen read can
+ * identify a folder trust question and select its remedy (exit 3). The check types nothing and closes no pane.
  */
-export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): Promise<CliResult<void>> => {
-  const { home, paneId, workerId, launchedAt, resuming } = request;
-  const checks = resuming ? launchConfirm.attempts : 1;
+export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): Promise<CliResult<LaunchConfirmation | undefined>> => {
+  const { home, paneId, workerId, launchedAt, resuming, prompt } = request;
+  const prompted = prompt !== undefined;
+  const checks = resuming || prompted ? launchConfirm.attempts : 1;
+  const expected: Expected = {
+    events: prompted ? PROMPT_EVENTS : [launchConfirm.event],
+    after: launchedAt,
+    afterWords: 'the start of the pane',
+  };
+  let sawSessionStart = false;
   let reason = '';
   for (let check = 1; check <= checks; check += 1) {
     await deps.sleep(launchConfirm.intervalMs);
@@ -187,15 +200,17 @@ export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): 
       return failure(life.error.message, `Run "${commandText(commandLines.workerList)}" to see if the ${roles.worker} ${workerId} has a live pane.`);
     }
     if (life.value !== 'running') return paneFailure(request, life.value);
-    if (!resuming) return ok(undefined);
-    const missing = await unconfirmedReason(deps, home, workerId, {
-      events: [launchConfirm.event],
-      after: launchedAt,
-      afterWords: 'the start of the pane',
-    });
-    if (missing === null) return ok(undefined);
-    reason = missing;
+    if (!resuming && !prompted) return ok(undefined);
+    const seen = await confirmEvent(deps, home, workerId, expected);
+    if (!seen.ok) {
+      reason = seen.error;
+      continue;
+    }
+    if (!prompted) return ok(undefined);
+    if (seen.value !== launchConfirm.event) return ok({ lineConfirmed: true });
+    sawSessionStart = true;
   }
+  if (sawSessionStart) return ok({ lineConfirmed: false });
   return (await showsTrustQuestion(deps, paneId)) ? waitsOnTrust(request, reason) : notConfirmed(request, reason);
 };
 
@@ -260,14 +275,14 @@ export const confirmReset = async (deps: Deps, request: ResetConfirmRequest): Pr
       return failure(life.error.message, `Run "${commandText(commandLines.workerList)}" to see if the ${roles.worker} ${workerId} has a live pane.`);
     }
     if (life.value !== 'running') return resetPaneFailure(request, life.value);
-    const missing = await unconfirmedReason(deps, home, workerId, {
+    const seen = await confirmEvent(deps, home, workerId, {
       events: words.events,
       after: typedAt,
       afterWords: 'the typed line',
       ...(words.newSession ? { newSessionOf: sessionBefore } : {}),
     });
-    if (missing === null) return ok(undefined);
-    reason = missing;
+    if (seen.ok) return ok(undefined);
+    reason = seen.error;
   }
   return resetNotConfirmed(request, reason);
 };
