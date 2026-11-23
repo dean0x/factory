@@ -476,10 +476,22 @@ const paneSafetyRows: readonly GuardRow[] = [
   codeRow({
     id: 'typed-line',
     guard: guardIds.paneSafety,
-    name: 'A pane in a mode or with a numbered dialog gets no typed line',
+    name: 'A pane in a mode of tmux gets no typed line',
     applies: `${commandLines.workerReset} and ${commandLines.selfReset}`,
     harm: true,
-    sites: at('src/comms/typing.ts', 'requireNoMode', 'requireNoChoiceList'),
+    sites: at('src/comms/typing.ts', 'requireNoMode'),
+  }),
+  alwaysOnRow({
+    id: 'reset-dialog',
+    guard: guardIds.paneSafety,
+    name: 'A reset types no keys if the session reports a dialog or the pane shows a numbered list of choices',
+    applies: `${commandLines.workerReset} and ${commandLines.selfReset}`,
+    harm: true,
+    sites: [
+      ...at('src/comms/typing.ts', 'requireNoChoiceList'),
+      ...at('src/commands/self.ts', 'requireLineWithoutDialog'),
+      ...at('src/workers/reset.ts', 'requireIdleSession'),
+    ],
   }),
   codeRow({
     id: 'self-reset-checks',

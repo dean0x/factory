@@ -237,7 +237,7 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'workersWithoutPane', reason: stoppedReason },
   { row: 'stopped-worker-stays', path: 'src/workers/recovery.ts', symbol: 'noPaneWarning', reason: stoppedReason },
   { row: 'machine-warnings', path: 'src/config/schema.ts', symbol: 'limitsSchema', reason: 'The bounds of the limit values in the config parse, which reads no guard value; makeWorker reads the value.' },
-  { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireLineWithoutDialog', reason: selfResetReason },
+  { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireLineWithoutDialog', reason: 'Takes the value from selfReset and uses it only for the state of the last-seen record, not for a known dialog.' },
   { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireResumeNotes', reason: selfResetReason },
   { row: 'self-reset-checks', path: 'src/commands/self.ts', symbol: 'requireCoordinatorHooks', reason: selfResetReason },
   { row: 'reset-order', path: 'src/workers/reset.ts', symbol: 'requireOutOfView', reason: resetReason },
@@ -845,6 +845,7 @@ describe('the rows of the registry', () => {
         'pane-binding',
         'typed-line-form',
         'typed-line',
+        'reset-dialog',
         'self-reset-checks',
         'reset-order',
         'stop-term-only',
@@ -995,12 +996,12 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(239);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(240);
     expect(softwareRecipe.guardRows).toHaveLength(104);
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
-    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(179);
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(180);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
@@ -1056,8 +1057,8 @@ describe('the rows of the registry', () => {
         'answered-row-not-proof-text', 'settle-relay-text',
       ],
       'pane-safety': [
-        'own-tmux-session', 'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'stop-term-only',
-        'stop-target-bind', 'signal-limits', 'session-exact-name', 'slot-summon-marks', 'resume-owned-session', 'refresh-run-bounds',
+        'own-tmux-session', 'pane-list-fails-closed', 'pane-mode-fails-closed', 'pane-binding', 'typed-line-form', 'reset-dialog',
+        'stop-term-only', 'stop-target-bind', 'signal-limits', 'session-exact-name', 'slot-summon-marks', 'resume-owned-session', 'refresh-run-bounds',
       ],
       'permission-mode': ['auto-permission-mode', 'settings-check-fails-closed'],
       proxy: ['proxy-from-config', 'proxy-url-form', 'tmux-drops-proxy-env', 'proxy-health-no-redirect', 'proxy-from-config-text'],

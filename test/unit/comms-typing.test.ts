@@ -244,11 +244,14 @@ describe('the guard of the pane safety', () => {
   const off = { [guardIds.paneSafety]: guardValues.off };
   const modeAnswer = (answer: string): Wrap => (handler) => (call) => (call.args.includes('#{pane_in_mode}') ? exited(0, answer) : handler(call));
 
-  it('types into a pane in a mode with a dialog on its screen while the guard is off, and reads no screen', async () => {
-    const { deps, log } = setup('Do you want to proceed?\n❯ 1. Yes\n  2. No\n', undefined, true);
-    expect((await typeLine(deps, PANE, typing.lines.clear, AGAIN, off)).ok).toBe(true);
-    expect(log.commands().some((command) => command.startsWith('capture-pane'))).toBe(false);
-    expect(log.typed()).toEqual([KEY_CLEAR, text('/clear'), KEY_ENTER]);
+  it('refuses a dialog in a pane in a mode while the guard is off', async () => {
+    const { deps, sent } = setup('Do you want to proceed?\n❯ 1. Yes\n  2. No\n', undefined, true);
+    const result = await typeLine(deps, PANE, typing.lines.clear, AGAIN, off);
+    expect(sent()).toEqual([]);
+    const error = errorOf(result);
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain('shows a numbered list of choices');
+    expect(error.hint).toContain(AGAIN);
   });
 
   it.each(['2\n', 'copy-mode\n'])('exits 3 for the mode answer %j also while the guard is off', async (answer) => {
