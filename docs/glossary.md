@@ -66,7 +66,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **pull request**: A pull request is a proposed change to a project that waits for a review. The merge check reads it.
 - **merge**: To merge is to add the change of a pull request to the main line of the project. The approval point `merge` guards it.
 - **merge order**: In the software recipe, the merge order is the queue of the pull requests that are READY, first item first.
-- **merge check**: The merge check reads a pull request and says READY or NOT READY, with reasons. It is `factory check <pr>`.
+- **merge check**: The merge check reads a pull request and its board item at one head. It gives a readiness verdict, not approval. Run `factory check <pr>`.
 - **merge record**: A merge record shows that the pull request of a work item is merged. `factory item record` writes it after a check on GitHub.
 - **release**: A release is a version of a project that you publish. The approval point `release` guards it.
 - **release check** (was: ship): The release check tests that a release is ready and works after it is out. It never publishes. Not built yet.

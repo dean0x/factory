@@ -59,7 +59,7 @@ export const softwareGlossary: readonly GlossaryEntry[] = [
   },
   {
     term: 'merge check',
-    text: 'The merge check reads a pull request and says READY or NOT READY, with reasons. It is `{{program}} check <pr>`.',
+    text: 'The merge check reads a pull request and its board item at one head. It gives a readiness verdict, not approval. Run `{{program}} check <pr>`.',
   },
   {
     term: 'merge record',
@@ -86,6 +86,7 @@ export const softwareSafetyLines: readonly TextPart[] = [
 
 /** The subcommands of the `pr` command. */
 export const prCommands = { watch: 'watch', merge: 'merge' } as const;
+/** The `pr merge` command as a person types it. */
 export const prMergeCommand = commandText(`${commands.pr} ${prCommands.merge}`);
 
 /** The `pr watch` command as a person types it. The remedy lines and the role text name it. */

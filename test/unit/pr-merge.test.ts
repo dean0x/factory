@@ -6,6 +6,7 @@ import { guardIds } from '../../src/names.js';
 import type { BoardItem } from '../../src/board/contract.js';
 import type { CheckedRecord, RecipeHost, WorkHost } from '../../src/recipes/entry.js';
 import { recipes } from '../../src/recipes/index.js';
+import { checkCommandFor } from '../../src/recipes/software/check.js';
 import { proofNeedOf } from '../../src/recipes/software/pr-merge.js';
 import type { ReadinessPr } from '../../src/recipes/software/merge-ready.js';
 import { prCommandFor } from '../../src/recipes/software/pr-command.js';
@@ -80,7 +81,8 @@ const setup = (options: Setup = {}) => {
   } });
   const command: Command = prCommandFor(host);
   const run = (flags: Readonly<Record<string, string | boolean>> = args, words: readonly string[] = ['merge', ref]) => command.run(givenOf(words, flags), deps);
-  return { run, calls, log, ghCalls: deps.calls, command };
+  const check = () => checkCommandFor(host).run(givenOf([ref], args), deps);
+  return { run, check, calls, log, ghCalls: deps.calls, command };
 };
 
 const output = async (run: ReturnType<typeof setup>['run'], flags?: Readonly<Record<string, string | boolean>>) => {
@@ -320,10 +322,17 @@ describe('pr merge', () => {
     expect(await output(world.run)).toMatchObject({ exitCode: 0, warnings: [expect.stringContaining('event file')] });
   });
 
-  it('keeps the success output within its token budget', async () => {
-    const result = await output(setup().run);
+  it('keeps the check and merge output within the token budget', async () => {
+    const world = setup();
+    const check = await world.check();
+    expect(check).toMatchObject({ ok: true, value: { exitCode: 0, lines: [{ text: 'READY' }] } });
+    if (!check.ok) throw new Error(check.error.message);
+    const merge = await output(world.run);
+    expect(merge.exitCode).toBe(0);
+    const checkText = check.value.lines.map(({ text }) => `${text}\n`).join('');
+    const tokens = tokensOf(checkText + merge.text);
     const { budget, measured } = budgetRow(1);
-    expect(tokensOf(result.text)).toBeLessThan(budget);
-    if (measured !== null) expect(tokensOf(result.text)).toBe(measured);
+    expect(tokens).toBeLessThan(budget);
+    expect(tokens).toBe(measured);
   });
 });

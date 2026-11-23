@@ -79,6 +79,7 @@ export const helpTopics = { words: 'words' } as const;
 /**
  * The words that have a plain description in `src/glossary.ts` and in `docs/glossary.md`.
  * A test fails for a term with no entry, and for a term that has another text in the two places.
+ * The term `check` applies to every recipe. Each recipe defines what its check reads.
  */
 export const terms = [
   'node',
