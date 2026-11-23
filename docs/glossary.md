@@ -20,7 +20,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **assignment** (was: work order): An assignment is a written task for a worker or a child node. A worker gets it as a file in its assignment folder.
 - **session reset** (was: changeover): A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state.
 - **queue** (was: staging): A queue is the order of the finished work that waits for an approval point, first item first.
-- **check** (was: inspect): A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.
+- **check** (was: inspect): A check looks at one piece of finished work. It says READY or NOT READY, with the reasons.
 - **guard**: A guard is a group of code checks and rule texts that keep one thing safe. The guard list shows each guard.
 - **work item**: A work item is one unit of work on the board.
 - **track**: A track is a named stream of work with its own roadmap. A worker is not a track.
@@ -66,7 +66,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **pull request**: A pull request is a proposed change to a project that waits for a review. The merge check reads it.
 - **merge**: To merge is to add the change of a pull request to the main line of the project. The approval point `merge` guards it.
 - **merge order**: In the software recipe, the merge order is the queue of the pull requests that are READY, first item first.
-- **merge check**: The merge check reads a pull request and says READY or NOT READY, with reasons. It is `factory check <pr>`. Not built yet.
+- **merge check**: The merge check reads a pull request and says READY or NOT READY, with reasons. It is `factory check <pr>`.
 - **merge record**: A merge record shows that the pull request of a work item is merged. `factory item record` writes it after a check on GitHub.
 - **release**: A release is a version of a project that you publish. The approval point `release` guards it.
 - **release check** (was: ship): The release check tests that a release is ready and works after it is out. It never publishes. Not built yet.

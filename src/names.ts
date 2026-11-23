@@ -59,6 +59,7 @@ export const commands = {
   queue: 'queue',
   lock: 'lock',
   pr: 'pr',
+  check: 'check',
   self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
@@ -1011,14 +1012,12 @@ export const workerFieldGuard = {
 /** The time limit of one run of `gh`, in milliseconds. */
 export const ghTimeoutMs = 10_000;
 
-/** The verdict keys of the PR readiness read. */
-export const readinessKinds = {
-  ready: 'ready',
-  notReady: 'not-ready',
-  headMoved: 'head-moved',
-  mergedAtPin: 'merged-at-pin',
-  unreadable: 'unreadable',
-  lookup: 'lookup',
+/** The fixed causes for a work item lookup that does not find one item. */
+export const workLookupReasons = {
+  severalLinks: 'several items link to the reference',
+  severalBranches: 'several items match the head branch',
+  differentItems: 'the linked item and the head branch match different items',
+  noItem: 'no item matches the reference or head branch',
 } as const;
 
 /**

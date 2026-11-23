@@ -8,9 +8,11 @@ import { guardReadOf } from '../core/guard-source.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { guardValuesFor, isGuardOn } from '../guards/effective.js';
+import { isRecord } from '../migrate/inspect.js';
 import {
-  boardKeys, commandLines, commands, commandText, decisionKeys, decisionLogKeys, files, flags, flagText,
-  guardIds, guardValues, itemCommands, requestWords, roles, values, waitingKeys,
+  approvalLinkLabels, boardIds, boardKeys, boardTextLimits, commandLines, commands, commandText, decisionKeys,
+  decisionLogKeys, files, flags, flagText, guardIds, guardValues, itemCommands, requestFieldKeys, requestWords,
+  roles, values, waitingKeys, workLookupReasons,
 } from '../names.js';
 import type { ApprovalMode, CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import { branchOf, readWorkerRecord, type WorkerRecord } from '../workers/registry.js';
@@ -43,9 +45,30 @@ const invalidLink = (id: string | null): CliResult<never> => failure(
   approvalLinkRemedy,
 );
 
-const waitingLinkOf = ({ id, record }: WaitingItem, rules: RequestLinkRules): CliResult<RequestLink | null> => {
-  const link = linkOfFields(record[decisionKeys.fields], rules);
-  return link.ok ? link : invalidLink(id);
+const linkLabels: ReadonlySet<unknown> = new Set(Object.values(approvalLinkLabels));
+
+/** An item name without any other link field blocks work on that item. It gives no reference or approval proof. */
+const itemMentionOf = (fields: unknown): string | null => {
+  if (!Array.isArray(fields) || fields.length > boardTextLimits.maxRequestFields) return null;
+  const list: readonly unknown[] = fields;
+  let item: string | null = null;
+  for (const field of list) {
+    if (!isRecord(field) || !linkLabels.has(field[requestFieldKeys.label])) continue;
+    const text = field[requestFieldKeys.text];
+    if (item !== null || field[requestFieldKeys.label] !== approvalLinkLabels.item || typeof text !== 'string' || !boardIds.item.test(text)) return null;
+    item = text;
+  }
+  return item;
+};
+
+const waitingTargetOf = ({ id, record }: WaitingItem, rules: RequestLinkRules): CliResult<{
+  readonly item: string; readonly point?: string; readonly ref?: string;
+} | null> => {
+  const fields = record[decisionKeys.fields];
+  const link = linkOfFields(fields, rules);
+  if (link.ok) return link;
+  const item = itemMentionOf(fields);
+  return item === null ? invalidLink(id) : ok({ item });
 };
 
 /** Take the link of an answer from its request text, not from display fields. A link is no approval proof. */
@@ -69,7 +92,7 @@ const linkedIdsOf = (
 ): CliResult<ReadonlySet<string>> => {
   const ids = new Set<string>();
   for (const row of waiting.items) {
-    const link = waitingLinkOf(row, rules);
+    const link = waitingTargetOf(row, rules);
     if (!link.ok) return link;
     if (link.value?.point === point && link.value.ref === ref) ids.add(link.value.item);
   }
@@ -107,18 +130,18 @@ export const findWorkItem = (
   // Match ids exactly. Do not fall back to the branch if a link names no exact item.
   const linked = items.filter((item) => ids.value.has(item.id));
   if (linked.length < ids.value.size) return failure(`a linked ${requestWords.request} names an item that is not on the board`, approvalLinkRemedy);
-  if (linked.length > 1) return lookupRefusal('several items link to the reference');
+  if (linked.length > 1) return lookupRefusal(workLookupReasons.severalLinks);
 
   const branches = branchItemsOf(items, query);
   if (!branches.ok) return branches;
-  if (branches.value.length > 1) return lookupRefusal('several items match the head branch');
+  if (branches.value.length > 1) return lookupRefusal(workLookupReasons.severalBranches);
   const fromLink = linked[0];
   const fromBranch = branches.value[0];
   if (fromLink !== undefined && fromBranch !== undefined && fromLink.id !== fromBranch.id) {
-    return lookupRefusal('the linked item and the head branch match different items');
+    return lookupRefusal(workLookupReasons.differentItems);
   }
   const item = fromLink ?? fromBranch;
-  return item === undefined ? lookupRefusal('no item matches the reference or head branch') : ok({ kind: 'found', item });
+  return item === undefined ? lookupRefusal(workLookupReasons.noItem) : ok({ kind: 'found', item });
 };
 
 /** List ids of open requests that name the item or link the reference. A link fault stops the read. */
@@ -129,7 +152,7 @@ export const openRequestsOf = (
   if (!ref.ok) return ref;
   const ids: string[] = [];
   for (const row of waiting.items) {
-    const link = waitingLinkOf(row, rules);
+    const link = waitingTargetOf(row, rules);
     if (!link.ok) return link;
     if (link.value !== null && (link.value.item === target.item || link.value.ref === ref.value)) ids.push(row.id);
   }

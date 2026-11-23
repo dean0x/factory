@@ -9,6 +9,7 @@ import type { GuardValues } from '../../guards/types.js';
 import { commandLines, commandText, flags, flagText, ghTimeoutMs, keys, type CommandText } from '../../names.js';
 import { parseJsonText } from '../../state/load.js';
 import { softwareGuardIds } from './guard-parts.js';
+import { checkReasons } from './words.js';
 
 /*
  * The merge check is a guard against a mistake, not a proof. The session that runs it controls PATH and the environment, so it
@@ -191,7 +192,7 @@ export const runCompare = async (deps: Deps, { repo, base, head }: CompareReques
   const path = `repos/${repo}/compare/${encodeURIComponent(base)}...${head}?per_page=1`;
   const read = await readGhJson(deps, ['api', '--hostname', mergeCheck.host, '--method', 'GET', path, '--jq', '{behind_by}'], MAX_COMPARE_CHARS);
   const parsed = read.kind === 'parsed' ? compareSchema.safeParse(read.value) : null;
-  return parsed?.success === true ? ok(parsed.data.behind_by) : failure('could not read how far the PR is behind its base branch');
+  return parsed?.success === true ? ok(parsed.data.behind_by) : failure(checkReasons.compareUnreadable);
 };
 
 const isSha = (text: string): boolean => mergeCheck.shaPattern.test(text);
@@ -205,9 +206,9 @@ export const otherPrReason = (
   input: Pick<MergeReadInput, typeof keys.project.repo | 'number'>,
 ): string | null => {
   const expectedUrl = `https://${mergeCheck.host}/${input.repo}/pull/${input.number}`;
-  if (pr.number !== input.number) return 'gh gave another PR';
-  if (pr.url.toLowerCase() !== expectedUrl.toLowerCase()) return 'the PR is not in this repo';
-  return pr.isCrossRepository ? 'the PR comes from another repo' : null;
+  if (pr.number !== input.number) return checkReasons.otherNumber;
+  if (pr.url.toLowerCase() !== expectedUrl.toLowerCase()) return checkReasons.otherRepo;
+  return pr.isCrossRepository ? checkReasons.fork : null;
 };
 
 /**
@@ -215,7 +216,7 @@ export const otherPrReason = (
  * check runs with every guard value, because the PR of another branch would close the item.
  */
 export const headBranchReason = (headRefName: string, heads: readonly string[] | undefined): string | null =>
-  heads !== undefined && !heads.includes(headRefName) ? 'the PR comes from another head branch' : null;
+  heads !== undefined && !heads.includes(headRefName) ? checkReasons.otherBranch : null;
 
 /**
  * Read the PR with `gh pr view` and check that it is the merged PR that the caller expects. Each of these is a failure (exit 1)

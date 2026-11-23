@@ -1119,7 +1119,7 @@ Limits:
 - `SKIPPED` and `NEUTRAL` count as passed, as GitHub counts them for a required check.
 - A printed word can be up to 60 seconds old.
 - A KILL ends the watch with no word, because no program can catch it.
-- The commands `factory check` and `factory pr merge` are not built yet.
+- Use `factory check <pr>` for one readiness verdict. The command reads the PR and the board. It gives no approval.
 
 ### Run a heavy command
 
