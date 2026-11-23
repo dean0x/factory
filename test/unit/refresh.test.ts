@@ -257,6 +257,41 @@ it('prints a saved fault, the acting worker and its remedy, but no token or runn
   expectNoAct(lab);
 });
 
+it('shows session notices in the result text and JSON without the run token', async () => {
+  const lab = await make('received');
+  const { token } = value(await scheduleRefreshRun(lab.deps, HOME, CALLER));
+  const record = value(await claimRefreshRun(lab.deps, HOME, token));
+  lab.deps.seed(RUN_FILE, JSON.stringify({ ...record, state: 'done', outcomes: [
+    { role: 'worker', id: 'alpha', status: 'resumed', notices: [`Direct launch: ${token}`] },
+  ] }));
+
+  const text = await lab.run('--result');
+  const json = await lab.run('--result', '--json');
+
+  expect(text.code).toBe(0);
+  expect(text.out).toContain('worker alpha: Direct launch: [private]');
+  expect(json.code).toBe(0);
+  expect(JSON.parse(json.out)).toMatchObject({ outcomes: [{ id: 'alpha', notices: ['Direct launch: [private]'] }] });
+  expect(`${text.out}${text.err}${json.out}${json.err}`).not.toContain(token);
+});
+
+it('tells the owner how to inspect and recover an interrupted coordinator action', async () => {
+  const lab = await make('received');
+  const { token } = value(await scheduleRefreshRun(lab.deps, HOME, CALLER));
+  value(await claimRefreshRun(lab.deps, HOME, token));
+  value(await updateRefreshRun(lab.deps, HOME, token, { kind: 'wait-coordinator' }));
+  value(await updateRefreshRun(lab.deps, HOME, token, { kind: 'acting', role: 'coordinator', id: NODE }));
+  value(await updateRefreshRun(lab.deps, HOME, token, { kind: 'failed', fault: { warning: 'The runner ended.', remedy: 'Check the result.' } }));
+
+  const result = await lab.run('--result');
+
+  expect(result.out).toContain('Inspect the coordinator pane in the view window. If it still runs, leave the session open.');
+  expect(result.out).toContain('If the coordinator pane is dead, save work and make the workers safe first.');
+  expect(result.out).toContain('"factory shutdown"');
+  expect(result.out).toContain('"factory start"');
+  expectNoAct(lab);
+});
+
 it('cancels a scheduled run without a pane operation', async () => {
   const lab = await make('received');
   value(await scheduleRefreshRun(lab.deps, HOME, CALLER));
@@ -272,6 +307,17 @@ describe.each(FOLDER_ORIGINS)('refresh in %s', (_name, origin) => {
       await refuse(lab, 4, 'start command does not hold the launch of the worker', 'refresh', ...args);
     },
   );
+
+  it('reports a missing launch PATH and leaves the worker live', async () => {
+    const alpha = { ...ALPHA_PANE, command: ALPHA_PANE.command.filter((word) => !word.startsWith('PATH=')) };
+    const lab = await make(origin, { tmux: { panes: [alpha, OTHER_PANE] } });
+
+    const result = await lab.run();
+
+    expect(result.out).toContain('pane start command has no PATH value for refresh');
+    expect(result.out).toContain('"factory refresh --result"');
+    expect(lab.deps.terminated).not.toContain(alpha.pid);
+  });
 
   it('refuses a second live pane of a worker', async () => {
     const lab = await make(origin, { tmux: { panes: [ALPHA_PANE, { ...ALPHA_PANE, id: '%11' }, OTHER_PANE] } });

@@ -30,6 +30,11 @@ const COORDINATOR = '00000000-0000-4000-8000-000000000003';
 const NEXT = '00000000-0000-4000-8000-000000000004';
 const COPY = `${HOME}/work-copies/web/alpha`;
 const CONFIG = sampleConfig();
+const COORDINATOR_RECOVERY = 'Inspect the coordinator pane in the view window. If it still runs, leave the session open. ' +
+  'If the coordinator pane is dead, save work and make the workers safe first. Session removal ends the workers too. ' +
+  'Use a terminal outside this session. Go to the factory folder. ' +
+  'If the pane is dead and the workers are safe, run "factory shutdown". ' +
+  'When the session ends, run "factory start".';
 
 const value = <T>(result: CliResult<T>): T => {
   if (!result.ok) throw new Error(`${result.error.message} ${result.error.hint ?? ''}`);
@@ -39,7 +44,7 @@ const value = <T>(result: CliResult<T>): T => {
 const hook = async (deps: FakeDeps, session: string, marker: string, event: HookEvent, startSource?: 'startup' | 'compact') =>
   value(await writeLastSeen(deps, HOME, session, { kind: 'event', event, ...(startSource === undefined ? {} : { startSource }) }, marker));
 
-const workerPane = (id: string, pid: number): PaneFixture => ({
+const workerPane = (id: string, pid: number): PaneFixture & { readonly command: readonly string[] } => ({
   session: NODE, pid, options: { '@worker': id }, command: launchWordsOf(HOME, id),
 });
 
@@ -398,6 +403,67 @@ describe('refresh runner', () => {
     expect(lab.deps.terminated).toEqual([COORDINATOR_PID]);
   });
 
+  it('keeps the PATH of each pane instead of the caller PATH', async () => {
+    const workerPath = 'PATH=/worker bin:/bin';
+    const coordinatorPath = 'PATH=/coordinator/bin:/bin';
+    const alpha = workerPane('alpha', WORKER_PID);
+    const lab = await make({ tmux: {
+      panes: [{ ...alpha, command: alpha.command.map((word) => word === 'PATH=/bin' ? workerPath : word) }],
+      coordinatorCommands: { [NODE]: coordinatorWordsOf(HOME, NODE).map((word) => word === 'PATH=/bin' ? coordinatorPath : word) },
+    } });
+
+    const record = await finish(lab);
+
+    expect(record.outcomes.map(({ status }) => status)).toEqual(['resumed', 'resumed']);
+    expect(resumes(lab).map(({ args }) => args.filter((word) => word.startsWith('PATH=')))).toEqual([[workerPath], [coordinatorPath]]);
+  });
+
+  it.each(['worker', 'coordinator'] as const)('leaves the %s live if its pane has no PATH word', async (role) => {
+    const alpha = workerPane('alpha', WORKER_PID);
+    const command = coordinatorWordsOf(HOME, NODE);
+    const lab = await make({ tmux: role === 'worker'
+      ? { panes: [{ ...alpha, command: alpha.command.filter((word) => !word.startsWith('PATH=')) }] }
+      : { coordinatorCommands: { [NODE]: command.filter((word) => !word.startsWith('PATH=')) } } });
+
+    const record = await finish(lab);
+
+    expectFault(record, role === 'worker' ? 'alpha' : NODE, 'pane start command has no PATH value', 'factory refresh --result');
+    expect(lab.deps.terminated).toEqual([role === 'worker' ? COORDINATOR_PID : WORKER_PID]);
+    expect(record.outcomes).toContainEqual({
+      role: role === 'worker' ? 'coordinator' : 'worker', id: role === 'worker' ? NODE : 'alpha', status: 'resumed',
+    });
+  });
+
+  it('records the direct fallback for each role when the proxy does not answer', async () => {
+    const lab = await make();
+    const core = { ...CONFIG.core, session: { ...CONFIG.core.session, proxy: 'p' }, workers: { alpha: { proxy: 'p' } }, proxies: [
+      { id: 'p', base_url: 'http://127.0.0.1:8899', health: '/health', on_fail: 'direct' as const },
+    ] };
+
+    const record = value(await runRefresh(lab.deps, { ...lab.request, config: { ...CONFIG, core } }));
+
+    const notices = [expect.stringContaining('the session starts without a proxy')];
+    expect(record.outcomes).toEqual([
+      { role: 'worker', id: 'alpha', status: 'resumed', notices },
+      { role: 'coordinator', id: NODE, status: 'resumed', notices },
+    ]);
+    expect(refreshExitCode(record)).toBe(0);
+    expect(lab.deps.warned).toEqual([]);
+  });
+
+  it('records the instruction notice for the worker that loads the file', async () => {
+    const lab = await make();
+    lab.deps.seed(`${FILES.workCopiesDir}/CLAUDE.md`, '# Project instructions');
+
+    const record = await finish(lab);
+
+    expect(record.outcomes).toEqual([
+      { role: 'worker', id: 'alpha', status: 'resumed', notices: [expect.stringContaining('Agent instruction files')] },
+      { role: 'coordinator', id: NODE, status: 'resumed' },
+    ]);
+    expect(lab.deps.warned).toEqual([]);
+  });
+
   it('requires the busy hook even when the setup text guard is off', async () => {
     const lab = await make();
     const settings = ownSettingsWithRules(HOME, COPY);
@@ -432,7 +498,7 @@ describe('refresh runner', () => {
     const record = await finish(lab);
 
     if (changed) {
-      expectFault(record, NODE, 'dead pane', 'factory start');
+      expectFault(record, NODE, 'dead pane', COORDINATOR_RECOVERY);
       expect(resumes(lab)).toEqual([]);
     } else {
       expect(record.outcomes).toMatchObject([{ id: NODE, status: 'resumed' }]);
@@ -451,7 +517,7 @@ describe('refresh runner', () => {
       return exited(0, `${fields.join('|')}\n`);
     });
     const record = await finish(lab);
-    expectFault(record, NODE, 'dead pane', 'factory start');
+    expectFault(record, NODE, 'dead pane', COORDINATOR_RECOVERY);
     expect(resumes(lab)).toEqual([]);
     expect(lab.deps.terminated).toEqual([pane.pid]);
   });
@@ -580,8 +646,18 @@ describe('refresh runner', () => {
   it('records the remedy if a coordinator does not confirm its continue line', async () => {
     const lab = await make({ events: {}, coordinatorHook: 'SessionStart' });
     const record = await finish(lab);
-    expectFault(record, NODE, 'not confirmed', 'factory start');
+    expectFault(record, NODE, 'not confirmed', COORDINATOR_RECOVERY);
     expect(value(await readRefreshRun(lab.deps, HOME))).toEqual(record);
+  });
+
+  it('gives the coordinator recovery steps when the pane cannot respawn', async () => {
+    const lab = await make({ events: {} });
+    lab.onRun(async (call) => found(call, 'respawn-pane') ? exited(1, '', 'cannot respawn pane') : undefined);
+
+    const record = await finish(lab);
+
+    expectFault(record, NODE, 'cannot respawn pane', COORDINATOR_RECOVERY);
+    expect(lab.calls.some((call) => found(call, 'kill-session'))).toBe(false);
   });
 
   it('fails the run if the tmux session ends during the idle wait', async () => {

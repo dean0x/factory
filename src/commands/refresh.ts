@@ -1,5 +1,5 @@
 import { exitCodeFor, failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
-import { displayLine, type CommandOutput, type OutLine } from '../cli/output.js';
+import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { ensureHookSettings, ownDenyRulesOf } from '../core/claude-settings.js';
@@ -20,7 +20,7 @@ import { promptStateOf, readOwnCoordinatorResume, readOwnLastSeen, readWorkerLas
 import { runsInside, workersWithPanes } from '../workers/lifecycle.js';
 import { readPanes, requireCoordinatorPane } from '../workers/panes.js';
 import {
-  cancelRefreshRun, failUnclaimedRefreshRun, readRefreshRun, refreshActingRemedy, refreshResultCommand, refreshRunIsLive, scheduleRefreshRun,
+  cancelRefreshRun, cleanRefreshText, failUnclaimedRefreshRun, readRefreshRun, refreshActingRemedy, refreshResultCommand, refreshRunIsLive, scheduleRefreshRun,
   type RefreshCaller, type RefreshFault, type RefreshRole, type RefreshRunRecord, type RefreshWorkerPlan,
 } from '../workers/refresh-record.js';
 import { refreshExitCode, runRefresh, type RefreshTarget } from '../workers/refresh-run.js';
@@ -227,19 +227,26 @@ const dryOutput = (plan: RefreshPlan, warnings: readonly string[]): CommandOutpu
 
 /** Project public fields. The record itself must never go to the output renderer. */
 const resultOutput = (record: RefreshRunRecord, missedClaim: boolean, warnings: readonly string[] = []): CommandOutput => {
-  const { runId, caller, acting, actingRole, token } = record;
+  const { runId, caller, actingRole, token } = record;
   const state = missedClaim ? 'failed' : record.state;
-  const clean = (line: string) => displayLine(line.replaceAll(token, '[private]'), 1024);
+  const clean = (line: string) => cleanRefreshText(line, token);
+  const acting = record.acting === null ? null : clean(record.acting);
   const cleanFault = (fault: { readonly warning: string; readonly remedy: string }) => ({ warning: clean(fault.warning), remedy: clean(fault.remedy) });
   const fault = missedClaim ? { warning: CLAIM_FAULT, remedy: RETRY } : record.fault === null ? null : cleanFault(record.fault);
-  const outcomes = record.outcomes.map((entry) => entry.status === 'resumed' ? entry : { ...entry, ...cleanFault(entry) });
+  const outcomes = record.outcomes.map(({ role, id, status, notices, ...detail }) => ({
+    role, id: clean(id), status,
+    ...(notices === undefined ? {} : { notices: notices.map(clean) }),
+    ...('warning' in detail ? cleanFault(detail) : {}),
+  }));
   const lines: OutLine[] = [text(`Refresh ${runId}: ${state}`)];
   for (const outcome of outcomes) {
-    lines.push(outcome.status === 'resumed' ? text(`${outcome.role} ${outcome.id}: resumed`)
-      : text(`${outcome.role} ${outcome.id}: ${outcome.warning} ${outcome.remedy}`));
+    const session = `${outcome.role} ${outcome.id}`;
+    lines.push(outcome.status === 'resumed' ? text(`${session}: resumed`)
+      : text(`${session}: ${outcome.warning} ${outcome.remedy}`));
+    for (const notice of outcome.notices ?? []) lines.push(text(`${session}: ${notice}`));
   }
   if (fault !== null) lines.push(text(`${fault.warning}. ${fault.remedy}`));
-  if (acting !== null) lines.push(text(`acting: ${actingRole} ${acting}. ${refreshActingRemedy(record)}`));
+  if (acting !== null) lines.push(text(`acting: ${actingRole} ${acting}. ${clean(refreshActingRemedy(record))}`));
   return output(lines, { runId, caller, state, acting, actingRole, outcomes, fault, warnings }, refreshExitCode(record), warnings);
 };
 

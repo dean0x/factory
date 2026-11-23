@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { displayLine } from '../cli/output.js';
 import { slug } from '../config/primitives.js';
 import type { Deps } from '../core/deps.js';
 import { readPrivateText, userFileLock } from '../core/private-file.js';
@@ -9,7 +10,7 @@ import { ok } from '../core/result.js';
 import { LINK_REMEDY, withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
 import {
   commandText, commands, files, flags, flagText, maxFileBytes, privateFile, processStart,
-  refreshOutcomeKey, refreshRunPath, refreshWait, refreshWords, roles, schemaIds, workerRecord,
+  refreshOutcomeKey, refreshRunPath, refreshWait, refreshWords, roles, schemaIds, tmuxNames, workerRecord,
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
@@ -18,13 +19,20 @@ import { resumeLine } from './launch.js';
 const CLAIM_MS = refreshWait.claimChecks * refreshWait.claimIntervalMs;
 const RUN_ID_BYTES = 8;
 const FAULT_TEXT_LIMIT = 1024;
+const NOTICE_TEXT_LIMIT = 240;
+export const refreshNoticeLimit = 3;
+
+export const cleanRefreshText = (text: string, token: string, width = FAULT_TEXT_LIMIT): string =>
+  displayLine(displayLine(text, text.length).replaceAll(token, '[private]'), width);
+
 const hexOf = (bytes: number) => z.string().length(bytes * 2).regex(/^[0-9a-f]+$/);
 const time = z.int().nonnegative();
 const roleSchema = z.enum([roles.worker, roles.coordinator]);
 const faultFields = { warning: z.string().min(1).max(FAULT_TEXT_LIMIT), remedy: z.string().min(1).max(FAULT_TEXT_LIMIT) };
 const faultSchema = z.strictObject(faultFields).readonly();
-const outcomeFields = { role: roleSchema, id: slug };
-const skippedWorkerSchema = z.strictObject({ role: z.literal(roles.worker), id: slug, [refreshOutcomeKey]: z.literal('skipped'), ...faultFields });
+const noticeFields = { notices: z.array(z.string().min(1).max(NOTICE_TEXT_LIMIT)).max(refreshNoticeLimit).readonly().optional() };
+const outcomeFields = { role: roleSchema, id: slug, ...noticeFields };
+const skippedWorkerSchema = z.strictObject({ ...outcomeFields, role: z.literal(roles.worker), [refreshOutcomeKey]: z.literal('skipped'), ...faultFields });
 const outcomeSchema = z.discriminatedUnion(refreshOutcomeKey, [
   z.strictObject({ ...outcomeFields, [refreshOutcomeKey]: z.literal('resumed') }),
   z.strictObject({ ...outcomeFields, [refreshOutcomeKey]: z.enum(['fault', 'trust-wait']), ...faultFields }),
@@ -95,11 +103,18 @@ const CANCEL_COMMAND = commandText(`${commands.refresh} ${flagText(flags.cancel)
 const RECORD_REMEDY = `Check ${files.refreshRun}. Replace or remove it only when no refresh runner is active. Then run "${refreshResultCommand}".`;
 const RESULT_REMEDY = `Run "${refreshResultCommand}" to see the last refresh run.`;
 
+export const refreshCoordinatorRemedy =
+  `Inspect the ${roles.coordinator} pane in the ${tmuxNames.windowView} window. If it still runs, leave the session open. ` +
+  `If the ${roles.coordinator} pane is dead, save work and make the ${roles.worker}s safe first. Session removal ends the ${roles.worker}s too. ` +
+  `Use a terminal outside this session. Go to the factory folder. ` +
+  `If the pane is dead and the ${roles.worker}s are safe, run "${commandText(commands.shutdown)}". ` +
+  `When the session ends, run "${commandText(commands.start)}".`;
+
 /** The same remedy applies to the result and status if an action has no outcome yet. */
 export const refreshActingRemedy = ({ acting, actingRole }: RefreshRunRecord): string => {
   if (acting === null) return RESULT_REMEDY;
-  const retry = actingRole === roles.worker ? resumeLine(acting) : commands.start;
-  return `If the session stopped, run "${commandText(retry)}".`;
+  if (actingRole === roles.coordinator) return refreshCoordinatorRemedy;
+  return `If the session stopped, run "${commandText(resumeLine(acting))}".`;
 };
 
 const RUN_LOCK = {
@@ -267,7 +282,11 @@ const addOutcome = (current: RefreshRunRecord, outcome: RefreshOutcome): CliResu
   const same = (entry: RefreshOutcome) => entry.role === outcome.role && entry.id === outcome.id;
   if (current.acting !== null && (current.acting !== outcome.id || current.actingRole !== outcome.role)) return invalidChange();
   if (current.outcomes.some(same)) return invalidChange();
-  return ok({ ...clearAction(current), outcomes: [...current.outcomes, outcome] });
+  const notices = outcome.notices?.slice(0, refreshNoticeLimit)
+    .map((notice) => cleanRefreshText(notice, current.token, NOTICE_TEXT_LIMIT).trim())
+    .filter((notice) => notice !== '');
+  const cleaned = notices === undefined ? outcome : { ...outcome, notices };
+  return ok({ ...clearAction(current), outcomes: [...current.outcomes, cleaned] });
 };
 
 const applyChange = (current: RefreshRunRecord, change: RefreshRunChange, now: number): CliResult<RefreshRunRecord> => {

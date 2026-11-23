@@ -10,16 +10,16 @@ import { respawnPaneArgs, type CoordinatorPane, type LiveCoordinatorPane, type P
 import { requireSession, tmuxStep } from '../launch/tmux-run.js';
 import { commands, commandText, env, lastSeen, launchConfirm, refreshText, refreshWait, roles, stopCaseOfState, workerRecord } from '../names.js';
 import { layoutOf } from '../state/layout.js';
-import { startsCoordinator } from './binding.js';
+import { startsCoordinator, wordsOfStartCommand } from './binding.js';
 import { showsTrustQuestion } from './confirm.js';
 import {
   promptStateOf, readOwnCoordinatorResume, readOwnCoordinatorSession, readOwnLastSeen, readWorkerLastSeen, type LastSeen,
 } from './last-seen.js';
 import { chooseProxy, newProxyAnswers, resumeLine, resumeWorker, sessionProxyWish, workerProxyWish } from './launch.js';
-import { checkTargets, requireProxies } from './lifecycle.js';
+import { checkTargets } from './lifecycle.js';
 import { readCoordinatorPane, readPanes, requireBoundPane, requireCoordinatorPane } from './panes.js';
 import {
-  claimRefreshRun, readOwnRefreshRun, readRefreshRun, refreshResultCommand, updateRefreshRun,
+  claimRefreshRun, readOwnRefreshRun, readRefreshRun, refreshCoordinatorRemedy, refreshNoticeLimit, refreshResultCommand, updateRefreshRun,
   type RefreshFault, type RefreshOutcome, type RefreshRole, type RefreshRunChange, type RefreshRunRecord,
 } from './refresh-record.js';
 import { requireRecord } from './registry.js';
@@ -71,6 +71,22 @@ const sessionFault = (role: RefreshRole, id: string, error: CliError, remedy: st
 });
 
 const resumed = (role: RefreshRole, id: string): RefreshOutcome => ({ role, id, status: 'resumed' });
+
+const withNotices = (outcome: RefreshOutcome, notices: readonly string[]): RefreshOutcome =>
+  notices.length === 0 ? outcome : { ...outcome, notices: [...new Set(notices)].slice(0, refreshNoticeLimit) };
+
+const restartPath = (startCommand: string, home: string): CliResult<string> => {
+  const words = wordsOfStartCommand(startCommand);
+  // The launch puts the PATH assignment immediately before the home assignment.
+  const assignment = words?.[words.indexOf(`${env.home}=${home}`) - 1];
+  const prefix = `${env.path}=`;
+  const path = assignment?.startsWith(prefix) === true ? assignment.slice(prefix.length) : '';
+  return path === '' || path.includes('\0')
+    ? failure(`the pane start command has no ${env.path} value for refresh`,
+        `Leave the pane open until you can restart it from a terminal. Run "${refreshResultCommand}" for the result.`)
+    : ok(path);
+};
+
 const idleFault = (role: RefreshRole, id: string): RefreshOutcome => ({
   role, id, status: 'fault', warning: `${role} ${id} was not idle before the refresh wait ended`,
   remedy: `Wait until it returns to its prompt. ${RETRY}`,
@@ -120,8 +136,8 @@ export const actWorker = async (
   const session = nodeOf(request);
   const own = await readOwnRefreshRun(deps, home, token);
   if (!own.ok) return own;
-  const fault = (error: CliError) => ok(sessionFault(roles.worker, id, error, resumeRemedy(id)));
-  const quiet = quietDeps(deps);
+  const { quiet, notices } = collectNotices(deps);
+  const fault = (error: CliError) => ok(withNotices(sessionFault(roles.worker, id, error, resumeRemedy(id)), [...notices]));
   const ownedSession = await requireSession(quiet, session, home, REFRESH);
   if (!ownedSession.ok) return fault(ownedSession.error);
   const record = await requireRecord(quiet, home, id, commandText(resumeLine(id)));
@@ -134,13 +150,15 @@ export const actWorker = async (
   const hooks = await requireOwnHooks(quiet, { home, folder: record.value.workCopy, then: AGAIN });
   if (!hooks.ok) return fault(hooks.error);
   const proxyAnswers = newProxyAnswers();
-  const proxy = await requireProxies(quiet, config, [workerProxyWish(config, id, AGAIN)], proxyAnswers, guards);
+  const proxy = await chooseProxy(quiet, config, workerProxyWish(config, id, AGAIN), proxyAnswers, guards);
   if (!proxy.ok) return fault(proxy.error);
   const row = workerPanes.find(({ dead }) => !dead);
   if (row === undefined) return fault(failure(`the ${roles.worker} has no live pane to refresh`).error);
   const pane = await requireBoundPane(quiet, { home, paneId: row.paneId, workerId: id, again: AGAIN });
   if (!pane.ok) return fault(pane.error);
   if (pane.value.dead) return fault(failure(`the ${roles.worker} pane ended before the stop`).error);
+  const path = restartPath(pane.value.startCommand, home);
+  if (!path.ok) return fault(path.error);
   const older = await requireOlderProcess(quiet, pane.value.pid, own.value.startedAtMs);
   if (!older.ok) return fault(older.error);
   const marked = await saved(quiet, request, { kind: 'acting', role: roles.worker, id });
@@ -153,7 +171,11 @@ export const actWorker = async (
     return cleared.ok ? ok(null) : cleared;
   }
   if (!stopped.ok) return fault(stopped.error);
-  return resumeStoppedWorker(quiet, request, id, record.value.workCopy, proxyAnswers, guards);
+  const launchDeps = { ...quiet, env: { ...quiet.env, [env.path]: path.value } };
+  const launched = await resumeStoppedWorker(launchDeps, request, id, record.value.workCopy, proxyAnswers, guards);
+  if (!launched.ok) return launched;
+  const launchNotices = launched.value.notices ?? (proxy.value.warning === undefined ? [] : [proxy.value.warning]);
+  return ok(withNotices(launched.value, [...launchNotices, ...notices]));
 };
 
 const requireStoppedResume = async (deps: Deps, target: RefreshTarget, id: string, sessionId: string): Promise<CliResult<void>> => {
@@ -196,8 +218,9 @@ const resumeStoppedWorker = async (
     const error = hasCode(launched.error, trustQuestionWait) ? launched.error : failure(launched.error.message).error;
     return ok(sessionFault(roles.worker, id, error, remedy));
   }
-  return ok(launched.value.lineConfirmed === true ? resumed(roles.worker, id)
-    : sessionFault(roles.worker, id, failure('the continue line was not confirmed').error, remedy));
+  const outcome = launched.value.lineConfirmed === true ? resumed(roles.worker, id)
+    : sessionFault(roles.worker, id, failure('the continue line was not confirmed').error, remedy);
+  return ok(withNotices(outcome, launched.value.warnings));
 };
 
 const eventAfter = (line: LastSeen, time: number): boolean => Date.parse(line[keys.eventAt] ?? '') > time;
@@ -263,8 +286,8 @@ export const actCoordinator = async (deps: Deps, request: RefreshRequest): Promi
   const node = nodeOf(request);
   const own = await readOwnRefreshRun(deps, home, token);
   if (!own.ok) return own;
-  const quiet = quietDeps(deps);
-  const fault = (error: CliError) => ok(sessionFault(roles.coordinator, node, error, START));
+  const { quiet, notices } = collectNotices(deps);
+  const fault = (error: CliError) => ok(withNotices(sessionFault(roles.coordinator, node, error, START), [...notices]));
   const seen = await readOwnCoordinatorResume(quiet, home, node);
   if (!seen.ok) return fault(seen.error);
   if (seen.value.state !== 'valid') {
@@ -274,6 +297,8 @@ export const actCoordinator = async (deps: Deps, request: RefreshRequest): Promi
   if (!coordinatorIdle(seen.value.line, own.value)) return ok(null);
   const pane = await requireCoordinatorPane(quiet, home, config, AGAIN);
   if (!pane.ok) return fault(pane.error);
+  const path = restartPath(pane.value.startCommand, home);
+  if (!path.ok) return fault(path.error);
   const older = await requireOlderProcess(quiet, pane.value.pid, own.value.startedAtMs);
   if (!older.ok) return fault(older.error);
   const { coordinatorDir } = layoutOf(home);
@@ -282,7 +307,8 @@ export const actCoordinator = async (deps: Deps, request: RefreshRequest): Promi
   const guards = await guardValuesFor(quiet, home);
   const proxy = await chooseProxy(quiet, config, sessionProxyWish(config, AGAIN), undefined, guards);
   if (!proxy.ok) return fault(proxy.error);
-  const words = await coordinatorLaunchWords(quiet, {
+  const launchDeps = { ...quiet, env: { ...quiet.env, [env.path]: path.value } };
+  const words = await coordinatorLaunchWords(launchDeps, {
     home, config, proxyBaseUrl: proxy.value.baseUrl, resumeId: seen.value.sessionId, prompt: refreshText.continue,
   });
   if (!words.ok) return fault(words.error);
@@ -291,7 +317,8 @@ export const actCoordinator = async (deps: Deps, request: RefreshRequest): Promi
   // The marker write can wait for the record lock. Check the pane and idle state after it.
   const current = await readCoordinatorPane(quiet, node);
   if (!current.ok) return fault(current.error);
-  if (!ownCoordinatorPane(current.value, request, pane.value.paneId) || current.value.dead || current.value.pid !== pane.value.pid) {
+  if (!ownCoordinatorPane(current.value, request, pane.value.paneId) || current.value.dead ||
+    current.value.pid !== pane.value.pid || current.value.startCommand !== pane.value.startCommand) {
     return fault(failure(`the ${roles.coordinator} pane changed before the stop`).error);
   }
   const latest = await readOwnCoordinatorResume(quiet, home, node);
@@ -305,14 +332,27 @@ export const actCoordinator = async (deps: Deps, request: RefreshRequest): Promi
     const cleared = await saved(quiet, request, { kind: 'clear-acting' });
     return cleared.ok ? ok(null) : cleared;
   }
+  const recoveryFault = (error: CliError) => sessionFault(roles.coordinator, node,
+    hasCode(error, trustQuestionWait) ? error : { ...error, hint: refreshCoordinatorRemedy }, refreshCoordinatorRemedy);
   const stopped = await terminatePane(quiet, current.value, commands.start);
-  if (!stopped.ok) return fault(stopped.error);
+  if (!stopped.ok) return ok(withNotices(recoveryFault(stopped.error), [...notices]));
   const launched = await respawnCoordinator(quiet, request, current.value, seen.value.sessionId, words.value);
-  return launched.ok ? ok(resumed(roles.coordinator, node)) : fault(launched.error);
+  const outcome = launched.ok ? resumed(roles.coordinator, node) : recoveryFault(launched.error);
+  const launchNotices = proxy.value.warning === undefined ? [] : [proxy.value.warning];
+  return ok(withNotices(outcome, [...launchNotices, ...notices]));
 };
 
 /** A refresh reports through its record only. The caller pane never supplies a target or veto. */
-const quietDeps = (deps: Deps): Deps => ({ ...deps, env: { ...deps.env, [env.tmuxPane]: undefined }, warn: () => undefined });
+const quietDeps = (deps: Deps, warn: Deps['warn'] = () => undefined): Deps =>
+  ({ ...deps, env: { ...deps.env, [env.tmuxPane]: undefined }, warn });
+
+const collectNotices = (deps: Deps) => {
+  const notices = new Set<string>();
+  const quiet = quietDeps(deps, (note) => {
+    if (notices.size < refreshNoticeLimit) notices.add(faultText(note));
+  });
+  return { quiet, notices };
+};
 
 const waitForPoll = async (deps: Deps, deadline: number, poll: number): Promise<boolean> => {
   const left = deadline - deps.now().getTime();

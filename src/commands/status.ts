@@ -7,7 +7,7 @@ import { commands, refreshWords, roles, schemaIds, statusWords } from '../names.
 import type { RecipeRegistry } from '../recipes/index.js';
 import { readNodeFacts, reportDocOf, type NodeFacts } from '../report/build.js';
 import { writeReportFile } from '../report/outbox.js';
-import { readRefreshRun, refreshActingRemedy, refreshResultCommand } from '../workers/refresh-record.js';
+import { cleanRefreshText, readRefreshRun, refreshActingRemedy, refreshResultCommand } from '../workers/refresh-record.js';
 import { boardRowOf, shownStateOf, type WorkerStatus } from '../workers/status.js';
 import { evidenceOf, type WorkItem, type WorkItemPort } from '../workers/work-items.js';
 import { openBoard } from './board-open.js';
@@ -57,14 +57,16 @@ const refreshWarning = async (deps: Deps, home: string): Promise<string | null> 
   }
   const run = read.value;
   if (run === null) return null;
-  const { acting, actingRole, fault, outcomes, runId, state } = run;
+  const { acting, actingRole, fault, outcomes, runId, state, token } = run;
   const unfinished = state === 'scheduled' || state === 'waiting' || state === 'acting-coordinator';
   const hasFaults = fault !== null || outcomes.some((outcome) => outcome.status !== 'resumed');
-  if (!unfinished && state !== 'failed' && !hasFaults && acting === null) return null;
+  const count = outcomes.reduce((total, outcome) => total + (outcome.notices?.length ?? 0), 0);
+  if (!unfinished && state !== 'failed' && !hasFaults && count === 0 && acting === null) return null;
   const status = unfinished ? `unfinished (${state})` : state;
   const faults = hasFaults ? ' with faults' : '';
+  const notices = count === 0 ? '' : ` (${count} ${count === 1 ? 'notice' : 'notices'})`;
   const action = acting === null ? '' : ` Last action: ${actingRole ?? refreshWords.session} ${acting}. ${refreshActingRemedy(run)}`;
-  return `refresh run ${runId}: ${status}${faults}.${action} Run "${refreshResultCommand}" to see the result.`;
+  return cleanRefreshText(`refresh run ${runId}: ${status}${faults}${notices}.${action} Run "${refreshResultCommand}" to see the result.`, token);
 };
 
 /**

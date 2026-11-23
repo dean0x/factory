@@ -908,6 +908,19 @@ describe('status: the refresh run record', () => {
     expect((await statusOf(made)).warnings).toEqual([expect.stringMatching(/refresh run .*faults.*"factory refresh --result"/)]);
   });
 
+  it('signals the number of notices even when all sessions resumed', async () => {
+    const made = await make();
+    const { deps, token } = await claim(made);
+    expect((await updateRefreshRun(deps, HOME, token, {
+      kind: 'outcome', outcome: { role: 'worker', id: 'alpha', status: 'resumed', notices: ['Launch notice.', 'Second notice.'] },
+    })).ok).toBe(true);
+    expect((await updateRefreshRun(deps, HOME, token, { kind: 'done' })).ok).toBe(true);
+
+    const status = await statusOf(made);
+
+    expect(status.warnings).toEqual([expect.stringMatching(/refresh run .*done.*2 notices.*"factory refresh --result"/)]);
+  });
+
   it('names the acting worker and its resume command even after cancellation', async () => {
     const made = await make();
     const { deps, token } = await claim(made);

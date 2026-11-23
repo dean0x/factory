@@ -805,7 +805,7 @@ Then it ends the session as `shutdown` does and starts it again with the recover
 
 `reboot` warns for each worker that did not start again. If a pane matches a folder trust question, its warning gives the same remedy as `start`, even if another worker fails for a different reason. The exit code is 1 if any worker did not start again. If every such worker matches the question, the exit code is 3 instead.
 
-`factory refresh` applies an update to a factory that runs. It restarts the live workers first, then the coordinator in its own pane. It keeps the tmux session and each conversation. It does not start workers that have no live pane.
+`factory refresh` applies an update to a factory that runs. It restarts the live workers first, then the coordinator in its own pane. It keeps the tmux session, each conversation and each pane's launch `PATH`. If a pane has no launch `PATH`, refresh leaves that pane open. It does not start workers that have no live pane.
 
 Before each restart, `refresh` waits for a hook event that reports an idle prompt. It checks every 10 seconds. The worker phase and the coordinator phase each have a 60-minute cap. The total idle wait is at most 2 hours. Stop and start checks take extra time.
 
@@ -819,7 +819,7 @@ factory refresh --result
 factory refresh --cancel
 ```
 
-`--dry-run` shows the sessions, their state, the order, the caller mode, the wait limits and any warnings. It changes nothing. `--result` shows the latest run and reports any faults with their remedies. Only one run can be active for each factory. `--cancel` stops the run from starting more restarts. A worker restart in progress can finish. You cannot cancel after the coordinator restart starts.
+`--dry-run` shows the sessions, their state, the order, the caller mode, the wait limits and any warnings. It changes nothing. `--result` shows the latest run, session notices and any faults with their remedies. `factory status` shows the notice count. Only one run can be active for each factory. `--cancel` stops the run from starting more restarts. A worker restart in progress can finish. You cannot cancel after the coordinator restart starts.
 
 A folder question at a session start holds that resume. `refresh` never answers the question. If a worker waits at a folder question, the coordinator does not restart. The background tasks, crons and watches of each restarted session end.
 

@@ -82,7 +82,9 @@ export interface BindRequest {
  * in the pane can change, shows the launch of this worker (`startsWorker`). A pane that fails a check is a security stop (exit 4),
  * and the command sends nothing to it. The pid of the value is the pid of this read.
  */
-export const requireBoundPane = async (deps: Deps, request: BindRequest): Promise<CliResult<BoundPane>> => {
+export const requireBoundPane = async (
+  deps: Deps, request: BindRequest,
+): Promise<CliResult<BoundPane & { readonly startCommand: string }>> => {
   const { home, paneId, workerId, again } = request;
   const args = paneBindArgs(paneId, workerId);
   if (!args.ok) return failure(args.error);
@@ -109,7 +111,7 @@ export const requireBoundPane = async (deps: Deps, request: BindRequest): Promis
   if (!startsWorker(bind.value.startCommand, home, workerId)) {
     return refuse(`${program} did not start it for that ${roles.worker}: its start command does not hold the launch of the ${roles.worker}`);
   }
-  return ok({ paneId, pid: bind.value.pid, dead: bind.value.dead, inView: bind.value.view });
+  return ok({ paneId, pid: bind.value.pid, dead: bind.value.dead, inView: bind.value.view, startCommand: bind.value.startCommand });
 };
 
 /**

@@ -172,6 +172,19 @@ describe('refresh run record', () => {
     expect(deps.files.get(PATH)).toBe(broken);
   });
 
+  it('cleans and bounds a session notice before it writes the record', async () => {
+    const { deps } = make();
+    const { token } = await claim(deps);
+    const notices = [`A notice:\n${token}${'x'.repeat(300)}`, 'Two', 'Three', 'Four'];
+    const outcome = { role: 'worker', id: 'alpha', status: 'resumed', notices } as const;
+
+    const saved = await updateRefreshRun(deps, HOME, token, { kind: 'outcome', outcome });
+
+    expect(saved).toMatchObject({ ok: true });
+    const record = value(await readRefreshRun(deps, HOME));
+    expect(record?.outcomes).toEqual([{ ...outcome, notices: [`A notice: [private]${'x'.repeat(221)}`, 'Two', 'Three'] }]);
+  });
+
   it('keeps the acting worker ID after the runner ends without an outcome', async () => {
     const { deps, endRunner } = make();
     const runner = await claim(deps);
