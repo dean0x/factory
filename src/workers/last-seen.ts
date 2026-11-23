@@ -386,18 +386,20 @@ const unknown = (why: 'no-line' | 'not-owned', reason: string): CliResult<OwnSes
 const foreignMarkerReason = (marker: string | undefined): string =>
   marker === undefined ? 'the last-seen line records no session marker' : `the last-seen line belongs to the session of ${marker}`;
 
-/** The id of another worker whose pointer names the session, or null when no other pointer names it. */
-const otherHolderOf = async (deps: Deps, home: string, workerId: string, sessionId: string): Promise<CliResult<string | null>> => {
+/** The id of a worker whose pointer names the session. Skip only the worker whose id the caller gives, if any. */
+const otherHolderOf = async (deps: Deps, home: string, skipId: string | null, sessionId: string): Promise<CliResult<string | null>> => {
   const listed = await listWorkerRecords(deps, home);
   if (!listed.ok) return listed;
   for (const record of listed.value.workers) {
-    if (record.id === workerId) continue;
+    if (record.id === skipId) continue;
     const pointer = await readPointer(deps, home, workerPointer(record.id));
     if (!pointer.ok) return pointer;
     if (pointer.value.state === 'found' && pointer.value.sessionId === sessionId) return ok(record.id);
   }
   return ok(null);
 };
+
+const otherHolderReason = (id: string): string => `the pointer of the ${roles.worker} ${id} names the same session`;
 
 /**
  * The last-seen line of the newest session of a worker, for a command that acts on that session (stop, resume). A program in a
@@ -420,7 +422,7 @@ export const readOwnLastSeen = async (deps: Deps, home: string, workerId: string
   if (!holder.ok) return holder;
   return holder.value === null
     ? ok({ state: 'valid', line })
-    : unknown('not-owned', `the pointer of the ${roles.worker} ${holder.value} names the same session`);
+    : unknown('not-owned', otherHolderReason(holder.value));
 };
 
 /** What a command may use of the newest session of the coordinator: its id and line, or the reason that there is none it may use. */
@@ -430,7 +432,7 @@ export type CoordinatorSessionRead =
   | { readonly state: 'absent' }
   /** The pointer, or the line that it names, can not be used: not valid, a link, or a pointer to a session with no line. */
   | { readonly state: 'invalid'; readonly reason: string }
-  /** There is a valid line, and it does not belong to the coordinator of this node. */
+  /** The line has no matching marker, or a worker pointer also names the session. */
   | { readonly state: 'not-owned'; readonly reason: string };
 
 /**
@@ -458,6 +460,19 @@ export const readOwnCoordinatorSession = async (
   return marker === nodeId
     ? ok({ state: 'valid', sessionId, line })
     : ok({ state: 'not-owned', reason: foreignMarkerReason(marker) });
+};
+
+/** Read the owned coordinator session for refresh. A pointer of any recorded worker to the same session makes it not owned. */
+export const readOwnCoordinatorResume = async (
+  deps: Deps,
+  home: string,
+  nodeId: string,
+): Promise<CliResult<CoordinatorSessionRead>> => {
+  const read = await readOwnCoordinatorSession(deps, home, nodeId);
+  if (!read.ok || read.value.state !== 'valid') return read;
+  const holder = await otherHolderOf(deps, home, null, read.value.sessionId);
+  if (!holder.ok) return holder;
+  return holder.value === null ? read : ok({ state: 'not-owned', reason: otherHolderReason(holder.value) });
 };
 
 /**
