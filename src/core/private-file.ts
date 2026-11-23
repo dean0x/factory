@@ -2,9 +2,10 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { safetyRefusal, type CliResult } from '../cli/errors.js';
 import { commands, commandText, dirs, env, places, privateFile, program } from '../names.js';
 import type { Deps, PathInfo } from './deps.js';
-import { freeLock, holdsLock, takeLock, type LockPolicy } from './file-lock.js';
+import { freeLock, holdsLock, takeLock } from './file-lock.js';
 import { isWrittenInside } from './paths.js';
 import { err, ok, type Err, type Result } from './result.js';
+import type { FolderLock } from './safe-write.js';
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -119,7 +120,8 @@ export const preparePrivateFolder = async (deps: Deps, path: string): Promise<Re
 };
 
 /** The bounds of the lock file beside a per-user file. */
-export const userFileLock: LockPolicy = {
+export const userFileLock: FolderLock = {
+  suffix: privateFile.lockSuffix,
   attempts: privateFile.lockAttempts,
   waitMs: privateFile.lockWaitMs,
   staleMs: privateFile.lockStaleMs,
@@ -128,7 +130,7 @@ export const userFileLock: LockPolicy = {
 };
 
 /** The lock file beside a per-user file. */
-export const userFileLockPath = (path: string): string => `${path}${privateFile.lockSuffix}`;
+export const userFileLockPath = (path: string): string => `${path}${userFileLock.suffix}`;
 
 /**
  * Take the lock file beside the file. The lock file is new, so only one process holds it. A stale lock is taken over. The

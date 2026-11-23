@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { slug } from '../config/primitives.js';
 import type { Deps } from '../core/deps.js';
-import { readPrivateText } from '../core/private-file.js';
+import { readPrivateText, userFileLock } from '../core/private-file.js';
 import { processStartOf } from '../core/process-start.js';
 import { ok } from '../core/result.js';
 import { LINK_REMEDY, withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
@@ -103,13 +103,9 @@ export const refreshActingRemedy = ({ acting, actingRole }: RefreshRunRecord): s
 };
 
 const RUN_LOCK = {
-  suffix: privateFile.lockSuffix,
-  mode: privateFile.fileMode,
-  attempts: privateFile.lockAttempts,
-  waitMs: privateFile.lockWaitMs,
+  ...userFileLock,
   // A check of a runner can use the full process-start timeout under this lock.
-  staleMs: privateFile.lockStaleMs + processStart.timeoutMs,
-  takeoverSuffix: privateFile.takeoverSuffix,
+  staleMs: userFileLock.staleMs + processStart.timeoutMs,
 } as const;
 
 const recordTarget = (home: string): FolderTarget => {
