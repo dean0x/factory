@@ -384,6 +384,21 @@ describe('refresh runner', () => {
     expect(resumes(lab).map(({ args }) => args[0])).toEqual(['respawn-pane']);
   });
 
+  it('does not split if a live worker appears during the launch checks', async () => {
+    const lab = await make();
+    let added = false;
+    lab.onRun(async ({ args }) => {
+      if (added || args[0] !== 'list-panes' || !args.at(-1)?.includes('#{pane_pid}') || !lab.deps.terminated.includes(WORKER_PID)) return undefined;
+      const before = lab.tmux(args);
+      const split = lab.tmux(['split-window', '-d', '-P', '-F', '#{pane_id}', '-t', `${NODE}:workers`, '--', ...launchWordsOf(HOME, 'alpha')]);
+      lab.tmux(['set-option', '-p', '-t', split.stdout.trim(), '@worker', 'alpha']);
+      added = true;
+      return exited(before.exitCode, before.stdout, before.stderr);
+    });
+    expectFault(await finish(lab), 'alpha', 'live pane', 'factory worker resume alpha');
+    expect(resumes(lab).map(({ args }) => args[0])).toEqual(['respawn-pane']);
+  });
+
   it.each([null, 'SessionStart'] as const)('does not confirm the worker continue line on %s', async (workerHook) => {
     const lab = await make({ workerHook });
     const record = await finish(lab);

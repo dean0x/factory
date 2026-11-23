@@ -137,6 +137,8 @@ export interface WorkerLaunchRequest {
   readonly retry: string;
   /** The answers of the run, for the proxy check. Absent: this launch asks its proxy by itself. */
   readonly proxyAnswers?: ProxyAnswers;
+  /** Recheck a planned resume after the launch checks and immediately before the pane starts. */
+  readonly beforeStart?: () => Promise<CliResult<void>>;
 }
 
 export interface WorkerLaunch {
@@ -362,6 +364,10 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   if (!argv.ok) return failure(argv.error);
 
   const session = config.core.node.id;
+  if (request.beforeStart !== undefined) {
+    const ready = await request.beforeStart();
+    if (!ready.ok) return ready;
+  }
   const launchedAt = deps.now();
   const pane = await startPane(deps, session, workerId, workCopy, argv.value);
   if (!pane.ok) return pane;

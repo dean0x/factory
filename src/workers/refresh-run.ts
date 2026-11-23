@@ -150,6 +150,17 @@ export const actWorker = async (
   return resumeStoppedWorker(quiet, request, id, record.value.workCopy, proxyAnswers, guards);
 };
 
+const requireStoppedResume = async (deps: Deps, target: RefreshTarget, id: string, sessionId: string): Promise<CliResult<void>> => {
+  const seen = await readOwnLastSeen(deps, target.home, id);
+  if (!seen.ok) return seen;
+  if (seen.value.state !== 'valid' || seen.value.line[keys.sessionId] !== sessionId) {
+    return failure('the worker no longer owns the session id for its restart');
+  }
+  const panes = await readRunningPanes(deps, target);
+  if (!panes.ok) return panes;
+  return panes.value.some((pane) => pane.worker === id && !pane.dead) ? failure('the worker already has a live pane') : ok(undefined);
+};
+
 const resumeStoppedWorker = async (
   deps: Deps, request: RefreshRequest, id: string, workCopy: string,
   proxyAnswers: ReturnType<typeof newProxyAnswers>, guards: Awaited<ReturnType<typeof guardValuesFor>>,
@@ -170,9 +181,10 @@ const resumeStoppedWorker = async (
   if (bound.value.live.length !== 0) {
     return ok(sessionFault('worker', id, failure('the worker already has a live pane').error, remedy));
   }
+  const resumeId = seen.value.line[keys.sessionId];
   const launched = await resumeWorker(deps, {
     home, config, guards, retry, workerId: id, workCopy, proxyAnswers, deadPanes: bound.value.dead,
-    resumeId: seen.value.line[keys.sessionId], prompt: refreshText.continue,
+    resumeId, prompt: refreshText.continue, beforeStart: () => requireStoppedResume(deps, request, id, resumeId),
   });
   if (!launched.ok) {
     const error = hasCode(launched.error, trustQuestionWait) ? launched.error : failure(launched.error.message).error;
