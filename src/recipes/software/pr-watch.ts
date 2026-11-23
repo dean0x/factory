@@ -8,6 +8,7 @@ import { ok } from '../../core/result.js';
 import { onPath, toolNames } from '../../core/tools.js';
 import { commands, commandText, flags, flagText } from '../../names.js';
 import type { RecipeHost } from '../entry.js';
+import { checkSchema, countsOf, totalOf, type Counts } from './check-runs.js';
 import { githubRepoOf, mergeCheck, parsePrNumber, runPrView, type PrReader } from './github-pr.js';
 import {
   prCommands,
@@ -26,26 +27,7 @@ import {
  * head. It is no proof that the PR may merge.
  */
 
-/**
- * The answer of `gh pr view --json` for the four fields of the watch. The objects strip every key that the watch does not read, so
- * no name, link or login of a check is kept. An unknown value of an enum fails the parse. A check run has an empty conclusion while
- * it runs; gh can also give null, and both mean no conclusion yet. A PR with no checks can give null for the list.
- */
-const checkRunSchema = z.object({
-  __typename: z.literal('CheckRun'),
-  status: z.enum(['QUEUED', 'IN_PROGRESS', 'COMPLETED', 'WAITING', 'PENDING', 'REQUESTED']),
-  conclusion: z
-    .enum(['', 'SUCCESS', 'NEUTRAL', 'SKIPPED', 'FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'])
-    .nullable(),
-});
-
-const statusContextSchema = z.object({
-  __typename: z.literal('StatusContext'),
-  state: z.enum(['EXPECTED', 'PENDING', 'SUCCESS', 'FAILURE', 'ERROR']),
-});
-
-const checkSchema = z.discriminatedUnion('__typename', [checkRunSchema, statusContextSchema]);
-
+/** The four fields of `gh pr view --json` for the watch. A PR with no checks can give null for the list. */
 const snapshotSchema = z.object({
   headRefOid: z.string().regex(mergeCheck.shaPattern),
   state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
@@ -53,46 +35,10 @@ const snapshotSchema = z.object({
   reviewDecision: z.enum(['', 'APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']),
 });
 
-type Check = z.infer<typeof checkSchema>;
 type Snapshot = z.infer<typeof snapshotSchema>;
 
 /** The `--json` field list of `gh pr view`: the keys of the schema, in its order. */
 const SNAPSHOT_FIELDS = Object.keys(snapshotSchema.shape).join(',');
-
-const PASSED_VALUES: ReadonlySet<string> = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
-const FAILED_VALUES: ReadonlySet<string> = new Set(['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE', 'ERROR']);
-
-type CheckClass = 'passed' | 'failed' | 'pending';
-
-interface Counts {
-  readonly passed: number;
-  readonly failed: number;
-  readonly pending: number;
-}
-
-/** A passed value is SUCCESS, NEUTRAL or SKIPPED, as GitHub counts them for a required check. A failed value is listed. Any other value is pending. */
-const classOfValue = (value: string | null): CheckClass => {
-  if (value !== null && PASSED_VALUES.has(value)) return 'passed';
-  if (value !== null && FAILED_VALUES.has(value)) return 'failed';
-  return 'pending';
-};
-
-/** A check run counts by its conclusion once it is completed. Before that it is pending. */
-const classOf = (check: Check): CheckClass => {
-  if (check.__typename === 'StatusContext') return classOfValue(check.state);
-  return check.status === 'COMPLETED' ? classOfValue(check.conclusion) : 'pending';
-};
-
-const countsOf = (checks: readonly Check[]): Counts =>
-  checks.reduce<Counts>(
-    (counts, check) => {
-      const kind = classOf(check);
-      return { ...counts, [kind]: counts[kind] + 1 };
-    },
-    { passed: 0, failed: 0, pending: 0 },
-  );
-
-const totalOf = (counts: Counts): number => counts.passed + counts.failed + counts.pending;
 
 /** One read: the answer of gh as a snapshot, or null for a read failure. A read failure is never a pass. */
 const readSnapshot = async (deps: Deps, repo: string, number: number): Promise<Snapshot | null> => {
