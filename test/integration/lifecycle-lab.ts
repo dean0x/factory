@@ -2,11 +2,13 @@ import { execFile, spawnSync } from 'node:child_process';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, expect } from 'vitest';
+import { shellWord } from '../../src/core/shell-word.js';
+import { refreshText } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
 import { loadNote, scaled } from './load.js';
 
 /**
- * The setup that the files of `shutdown`, `restart`, `reboot` and `status` share: a throw-away node, a separate tmux server, a fake program
+ * The setup that the lifecycle and status tests share: a throw-away node, a separate tmux server, a fake program
  * for `claude`, and a node with a session, two workers and a session line for each of them.
  */
 
@@ -59,12 +61,16 @@ export const expectLaunchRule = (argv: readonly string[], proxy: string): void =
  * new session writes its last-seen line. A launch whose marker has a file `record-term-<marker>` in the folder records the signal TERM in
  * `termed-<marker>` and ends with the code 143. A hang-up ends it too, but records nothing. A launch whose marker has a file
  * `trust-question-<marker>` in the folder prints a folder trust question and never runs the hook, as a session that waits on the
- * answer of the owner. The file `proxy-<marker>` comes first, so a wait for any other file of the launch also covers it.
+ * answer of the owner. An exact continue argument on a resume makes the fake send the prompt and stop hooks in order.
+ * The file `refresh-events` records each of those calls. The file `proxy-<marker>` comes before any other launch file.
  */
 const fakeClaude = (dir: string): string =>
   [
     '#!/bin/sh',
-    `dir='${dir}'`,
+    `dir=${shellWord(dir)}`,
+    `node=${shellWord(process.execPath)}`,
+    `factory=${shellWord(DIST)}`,
+    `continue_text=${shellWord(refreshText.continue)}`,
     'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/proxy-$FACTORY_SESSION"; else echo no > "$dir/proxy-$FACTORY_SESSION"; fi',
     'printf \'%s\\n\' "$@" > "$dir/argv-$FACTORY_SESSION"',
     'if [ -e "$dir/trust-question-$FACTORY_SESSION" ]; then',
@@ -73,13 +79,24 @@ const fakeClaude = (dir: string): string =>
     '  exec sleep 300',
     'fi',
     'resume=""',
+    'continue=no',
     'prev=""',
     'for arg in "$@"; do',
     '  if [ "$prev" = "--resume" ]; then resume="$arg"; fi',
+    '  if [ "$arg" = "$continue_text" ]; then continue=yes; fi',
     '  prev="$arg"',
     'done',
+    'hook() {',
+    '  printf \'{"session_id":"%s","hook_event_name":"%s"}\' "$resume" "$1" | "$node" "$factory" hook "$1"',
+    '}',
     'if [ -n "$resume" ]; then',
-    `  printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$resume" | '${process.execPath}' '${DIST}' hook SessionStart`,
+    '  hook SessionStart',
+    '  if [ "$continue" = yes ]; then',
+    '    for event in UserPromptSubmit Stop; do',
+    '      hook "$event" || exit 1',
+    '      printf \'%s %s\\n\' "$FACTORY_SESSION" "$event" >> "$dir/refresh-events"',
+    '    done',
+    '  fi',
     'fi',
     'if [ -e "$dir/record-term-$FACTORY_SESSION" ]; then',
     `  trap 'echo termed >> "$dir/termed-$FACTORY_SESSION"; kill "$child"; exit 143' TERM`,
