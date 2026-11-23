@@ -579,13 +579,24 @@ const paneSafetyRows: readonly GuardRow[] = [
     id: 'resume-owned-session',
     guard: guardIds.paneSafety,
     name: `A resume uses only a session line that carries the own mark and that no other pointer and no live pane of the ${worker} holds, and never a guess`,
-    applies: `${commandLines.workerResume}, ${commands.restart}, ${commands.reboot} and the recovery at ${commands.start}`,
+    applies: `${commandLines.workerResume}, ${commands.restart}, ${commands.reboot}, ${commands.refresh} and the recovery at ${commands.start}`,
     harm: true,
     sites: [
       ...at('src/workers/lifecycle.ts', 'resumeIdOf'),
       ...at('src/workers/recovery.ts', 'recoverWorker'),
-      ...at('src/workers/last-seen.ts', 'readOwnLastSeen', 'otherHolderOf', 'foreignMarkerReason'),
+      ...at('src/workers/last-seen.ts', 'readOwnLastSeen', 'readOwnCoordinatorResume', 'otherHolderOf', 'foreignMarkerReason'),
       ...at('src/commands/worker.ts', 'chooseSession'),
+    ],
+  }),
+  alwaysOnRow({
+    id: 'refresh-run-bounds',
+    guard: guardIds.paneSafety,
+    name: `Refresh stops a session only at its idle prompt. Each phase has a fixed wait limit. The runner checks its token before each act. The ${coordinator} goes last.`,
+    applies: commands.refresh,
+    harm: true,
+    sites: [
+      ...at('src/workers/refresh-run.ts', 'actWorker', 'actCoordinator', 'waitForPoll', 'runClaimed'),
+      ...at('src/workers/refresh-record.ts', 'claimRefreshRun', 'readOwnRefreshRun'),
     ],
   }),
 ];
@@ -653,7 +664,7 @@ const proxyRows: readonly GuardRow[] = [
     id: 'proxy-down-stops',
     guard: guardIds.proxy,
     name: 'A named proxy that does not answer stops the launch, and a session goes direct only when the config says so and a warning shows it',
-    applies: `${commands.start}, ${commands.restart}, ${commands.reboot}, ${commandLines.workerNew}, ${commandLines.workerResume} and recovery`,
+    applies: `${commands.start}, ${commands.restart}, ${commands.reboot}, ${commands.refresh}, ${commandLines.workerNew}, ${commandLines.workerResume} and recovery`,
     harm: true,
     sites: [
       ...at('src/workers/launch.ts', 'proxyHealthOf', 'chooseProxy'),
