@@ -305,7 +305,7 @@ const prRuleRows: readonly GuardRow[] = [
     applies: commandLines.itemRecord,
     harm: true,
     sites: [
-      ...at('src/commands/item.ts', 'checkInputOf'),
+      ...at('src/board/record-flow.ts', 'checkInputOf'),
       ...at('src/board/edit.ts', 'checkRecordSetup', 'recordCheckedIn'),
     ],
   }),
@@ -347,7 +347,7 @@ const prRuleRows: readonly GuardRow[] = [
     name: `The head branch of a recorded pull request is the branch of the ${worker} of the item, or of a former ${worker}, so another pull request cannot close the item`,
     applies: commandLines.itemRecord,
     harm: true,
-    sites: [...at('src/recipes/software/github-pr.ts', 'headBranchReason'), ...at('src/commands/item.ts', 'branchesOf')],
+    sites: [...at('src/recipes/software/github-pr.ts', 'headBranchReason'), ...at('src/board/record-flow.ts', 'branchesOf')],
   }),
   textRow({
     id: 'record-after-merge-text',
