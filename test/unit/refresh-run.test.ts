@@ -32,7 +32,7 @@ const COPY = `${HOME}/work-copies/web/alpha`;
 const CONFIG = sampleConfig();
 const WORKER_RECOVERY = 'Check the worker pane. If its process ended, run "factory worker resume alpha".';
 const COORDINATOR_RETRY = 'Check the coordinator pane. If its process ended, run "factory start".';
-const COORDINATOR_RECOVERY = 'Inspect the coordinator pane in the view window. If it still runs, leave the session open. ' +
+const COORDINATOR_RECOVERY = 'Check the coordinator pane in the view window. If it still runs, leave the session open. ' +
   'If the coordinator pane is dead, save work and make the workers safe first. Session removal ends the workers too. ' +
   'Use a terminal outside this session. Go to the factory folder. ' +
   'If the pane is dead and the workers are safe, run "factory shutdown". ' +
@@ -300,11 +300,8 @@ describe('refresh runner', () => {
     const deps = reportAfterMarker(lab, ALPHA, 'alpha', 'SessionStart', source);
     const result = value(await actWorker(deps, lab.request, 'alpha', poll.panes));
     expect(lab.deps.terminated).toEqual([]);
-    if (source === undefined) {
-      expect(result).toMatchObject({ status: 'fault', warning: expect.stringContaining('has no known source'), remedy: expect.stringContaining('factory worker stop alpha') });
-    } else {
-      expect(result).toBeNull();
-    }
+    expect(result).toBeNull();
+    expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ state: 'waiting', acting: null });
   });
 
   it.each(['compact', undefined] as const)('leaves a coordinator pending if its final session start has source %s', async (source) => {
@@ -330,7 +327,7 @@ describe('refresh runner', () => {
     expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({ acting: null, outcomes: [] });
   });
 
-  it.each(['Notification', 'PreCompact'] as const)('leaves a worker with %s alone at the shared worker cap', async (event) => {
+  it.each(['Notification', 'PreCompact', 'SessionStart'] as const)('leaves a worker with %s and no source alone at the shared worker cap', async (event) => {
     const lab = await make({ events: { alpha: event, beta: 'Stop' } });
     const record = await finish(lab);
     expect(lab.deps.terminated).toEqual([WORKER_PID + 1, COORDINATOR_PID]);

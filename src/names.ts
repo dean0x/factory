@@ -1352,7 +1352,7 @@ export type HookState = 'prompt' | 'busy' | 'waits';
 
 export type HookStartSource = (typeof hookNames.startSources)[number];
 
-/** A turn can continue after a compact. A start with no known source does not give a state. */
+/** A turn can continue after a compact. */
 export const sessionStartState = {
   startup: 'prompt',
   resume: 'prompt',
@@ -1360,15 +1360,15 @@ export const sessionStartState = {
   compact: 'busy',
 } as const satisfies Readonly<Record<HookStartSource, HookState>>;
 
-/** State for each hook event. SessionStart needs its source to give a state. */
+/** State for each hook event. SessionStart here is the default for lines with no source. */
 export const eventState = {
-  SessionStart: null,
+  SessionStart: 'prompt',
   Stop: 'prompt',
   UserPromptSubmit: 'busy',
   PreCompact: 'busy',
   Notification: 'waits',
   PreToolUse: 'busy',
-} as const satisfies Readonly<Record<HookEvent, HookState | null>>;
+} as const satisfies Readonly<Record<HookEvent, HookState>>;
 
 /**
  * The ways that the stop code uses to end a session. Each is a way of the table of docs/session-stop.md that has the verdict

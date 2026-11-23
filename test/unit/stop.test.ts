@@ -226,7 +226,7 @@ describe('stopCaseOf', () => {
   });
 
   it.each([
-    ['SessionStart', null],
+    ['SessionStart', 'idle'],
     ['Stop', 'idle'],
     ['UserPromptSubmit', 'busy'],
     ['PreCompact', 'busy'],
@@ -306,7 +306,7 @@ describe('worker stop: a session at the prompt', () => {
   });
 
   it.each([
-    ['SessionStart', 'startup', 'idle'], ['SessionStart', 'compact', 'busy'], ['Stop', undefined, 'idle'],
+    ['SessionStart', 'startup', 'idle'], ['SessionStart', 'compact', 'busy'], ['SessionStart', undefined, 'idle'], ['Stop', undefined, 'idle'],
   ] as const)('reports %s with source %s as %s', async (event, startSource, state) => {
     const made = make();
     await seed(made.deps, { event, ...(startSource === undefined ? {} : { startSource }) });

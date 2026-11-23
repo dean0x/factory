@@ -88,7 +88,7 @@ const checkContinue = ({ core: { owner } }: FactoryConfig): CliResult<void> =>
     : ok(undefined);
 
 const stateOf = (line: LastSeen): PlanState => {
-  const state = promptStateOf(line);
+  const state = promptStateOf(line, 'required');
   return state === 'prompt' ? refreshWords.idle : state ?? 'unknown';
 };
 

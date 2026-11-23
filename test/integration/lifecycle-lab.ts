@@ -87,7 +87,11 @@ const fakeClaude = (dir: string): string =>
     '  prev="$arg"',
     'done',
     'hook() {',
-    '  printf \'{"session_id":"%s","hook_event_name":"%s"}\' "$resume" "$1" | "$node" "$factory" hook "$1"',
+    '  if [ "$1" = SessionStart ]; then',
+    '    printf \'{"session_id":"%s","hook_event_name":"SessionStart","source":"resume"}\' "$resume" | "$node" "$factory" hook SessionStart',
+    '  else',
+    '    printf \'{"session_id":"%s","hook_event_name":"%s"}\' "$resume" "$1" | "$node" "$factory" hook "$1"',
+    '  fi',
     '}',
     'if [ -n "$resume" ]; then',
     '  hook SessionStart',
@@ -272,7 +276,7 @@ export const useLab = (): Lab => {
     sandbox().run(['hook', name], {
       cwd: sandbox().node,
       env: { FACTORY_HOME: sandbox().node, FACTORY_SESSION: marker },
-      input: JSON.stringify({ session_id: SESSIONS[marker], hook_event_name: name }),
+      input: JSON.stringify({ session_id: SESSIONS[marker], hook_event_name: name, ...(name === 'SessionStart' ? { source: 'startup' } : {}) }),
     });
 
   const sessionStarted = (marker: Marker): Promise<RunResult> => event(marker, 'SessionStart');

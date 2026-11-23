@@ -497,11 +497,14 @@ export const readOwnCoordinatorResume = async (
 
 /**
  * What the last event of a line says: the session waits at the prompt (`prompt`), it works (`busy`), or a dialog waits for an
- * answer (`waits`). No event or a session start with no known source gives no state.
+ * answer (`waits`). No event gives no state. Refresh also requires the source of a session start.
  */
-export const promptStateOf = (line: LastSeen): HookState | null => {
+export const promptStateOf = (line: LastSeen, startSource?: 'required'): HookState | null => {
   const event = line[keys.event];
-  const source = line[keys.startSource];
-  if (event === 'SessionStart' && source !== undefined) return sessionStartState[source];
+  if (event === 'SessionStart') {
+    const source = line[keys.startSource];
+    if (source !== undefined) return sessionStartState[source];
+    if (startSource === 'required') return null;
+  }
   return event === null ? null : eventState[event];
 };

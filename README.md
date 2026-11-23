@@ -464,7 +464,7 @@ factory worker list --json
 | --- | --- |
 | `ID`, `PROJECT` | The id of the worker and its project. |
 | `PANE` | The id of the pane of the worker in the window `workers`. `dead` means that the program of the pane has ended. `none` means that the worker has no pane, also when no tmux session of the node runs. |
-| `STATE` | `at prompt` after `Stop` or a `SessionStart` with source `startup`, `resume` or `clear`. `busy` after `UserPromptSubmit`, `PreCompact`, `PreToolUse` or a `SessionStart` with source `compact`. `waits` after `Notification`: a dialog waits for an answer. `unknown` when the worker has no valid last-seen line of its own, no event, or a start with no known source. |
+| `STATE` | `at prompt` after `Stop` or a `SessionStart` with source `startup`, `resume`, `clear` or no recorded source. `busy` after `UserPromptSubmit`, `PreCompact`, `PreToolUse` or a `SessionStart` with source `compact`. `waits` after `Notification`: a dialog waits for an answer. `unknown` when the worker has no valid last-seen line of its own or no event. |
 | `CONTEXT` | The context percent of the last-seen line, or `?` when it is not known. |
 | `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. With the guard `context-limits` off, no percent has a mark. |
 

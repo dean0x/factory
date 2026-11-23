@@ -9,7 +9,7 @@ import { processStartOf } from '../core/process-start.js';
 import { ok } from '../core/result.js';
 import { LINK_REMEDY, withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
 import {
-  commandText, commands, files, flags, flagText, maxFileBytes, privateFile, processStart,
+  commandText, commands, files, flags, flagText, maxFileBytes, places, privateFile, processStart,
   refreshOutcomeKey, refreshRunPath, refreshWait, refreshWords, roles, schemaIds, tmuxNames, workerRecord,
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
@@ -104,9 +104,9 @@ const RECORD_REMEDY = `Check ${files.refreshRun}. Replace or remove it only when
 const RESULT_REMEDY = `Run "${refreshResultCommand}" to see the last refresh run.`;
 
 export const refreshCoordinatorRemedy =
-  `Inspect the ${roles.coordinator} pane in the ${tmuxNames.windowView} window. If it still runs, leave the session open. ` +
+  `Check the ${roles.coordinator} pane in the ${tmuxNames.windowView} window. If it still runs, leave the session open. ` +
   `If the ${roles.coordinator} pane is dead, save work and make the ${roles.worker}s safe first. Session removal ends the ${roles.worker}s too. ` +
-  `Use a terminal outside this session. Go to the factory folder. ` +
+  `Use a terminal outside this session. Go to the ${places.folder}. ` +
   `If the pane is dead and the ${roles.worker}s are safe, run "${commandText(commands.shutdown)}". ` +
   `When the session ends, run "${commandText(commands.start)}".`;
 

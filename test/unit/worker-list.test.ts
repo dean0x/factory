@@ -354,7 +354,7 @@ describe('worker mark: the guard of file and link safety', () => {
 
 describe('worker list: the state from the last event', () => {
   it.each([
-    ['SessionStart', 'unknown'],
+    ['SessionStart', 'at prompt'],
     ['Stop', 'at prompt'],
     ['UserPromptSubmit', 'busy'],
     ['PreCompact', 'busy'],

@@ -285,7 +285,7 @@ it('tells the owner how to inspect and recover an interrupted coordinator action
 
   const result = await lab.run('--result');
 
-  expect(result.out).toContain('Inspect the coordinator pane in the view window. If it still runs, leave the session open.');
+  expect(result.out).toContain('Check the coordinator pane in the view window. If it still runs, leave the session open.');
   expect(result.out).toContain('If the coordinator pane is dead, save work and make the workers safe first.');
   expect(result.out).toContain('"factory shutdown"');
   expect(result.out).toContain('"factory start"');

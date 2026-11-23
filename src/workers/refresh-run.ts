@@ -110,7 +110,7 @@ export const pollOnce = async (
   for (const id of pending) {
     const seen = await readWorkerLastSeen(deps, target.home, id);
     workers.push(seen.ok
-      ? { id, ready: seen.value.state === 'valid' && promptStateOf(seen.value.line) === 'prompt' }
+      ? { id, ready: seen.value.state === 'valid' && promptStateOf(seen.value.line, 'required') === 'prompt' }
       : { id, ready: false, fault: seen.error });
   }
   return ok({ panes: panes.value, workers });
@@ -168,7 +168,8 @@ export const actWorker = async (
   const marked = await saved(quiet, request, { kind: 'acting', role: roles.worker, id });
   if (!marked.ok) return marked;
   const stopped = await stopWorker(quiet, {
-    home, session, workerId: id, process: { pid: pane.value.pid, startMs: older.value }, allowed: [stopCaseOfState.prompt], again: AGAIN,
+    home, session, workerId: id, process: { pid: pane.value.pid, startMs: older.value },
+    allowed: [stopCaseOfState.prompt], startSource: 'required', again: AGAIN,
   });
   if (!stopped.ok && hasCode(stopped.error, stopCaseRefused)) {
     const cleared = await saved(quiet, request, { kind: 'clear-acting' });
@@ -229,7 +230,7 @@ const resumeStoppedWorker = async (
 
 const eventAfter = (line: LastSeen, time: number): boolean => Date.parse(line[keys.eventAt] ?? '') > time;
 const coordinatorIdle = (line: LastSeen, run: RefreshRunRecord): boolean =>
-  promptStateOf(line) === 'prompt' && (!run.coordinatorPane || (line[keys.event] === 'Stop' && eventAfter(line, run.startedAtMs)));
+  promptStateOf(line, 'required') === 'prompt' && (!run.coordinatorPane || (line[keys.event] === 'Stop' && eventAfter(line, run.startedAtMs)));
 
 const ownCoordinatorPane = (pane: CoordinatorPane | null, target: RefreshTarget, paneId: string): pane is CoordinatorPane =>
   pane !== null && pane.paneId === paneId && pane.node &&

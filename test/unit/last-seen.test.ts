@@ -730,7 +730,7 @@ describe('removeLastSeen (the free of a worker)', () => {
 
 describe('promptStateOf', () => {
   it.each([
-    ['startup', 'prompt'], ['resume', 'prompt'], ['clear', 'prompt'], ['compact', 'busy'], [undefined, null],
+    ['startup', 'prompt'], ['resume', 'prompt'], ['clear', 'prompt'], ['compact', 'busy'], [undefined, 'prompt'],
   ] as const)('reads a session start with source %s as %s', async (source, state) => {
     const deps = createFakeDeps();
     seedLine(deps, { event: 'SessionStart', event_at: T0, ...(source === undefined ? {} : { start_source: source }) });

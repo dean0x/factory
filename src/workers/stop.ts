@@ -51,6 +51,8 @@ export interface StopRequest {
   readonly allowed?: readonly StopCase[];
   /** For a planned restart, the target PID and the first millisecond of its reported start second. */
   readonly process?: { readonly pid: number; readonly startMs: number };
+  /** Refuse a session start with no recorded source in the final check for refresh. */
+  readonly startSource?: 'required';
   /** The command that a person runs again after a refusal by `allowed`, without the program name. Default: the stop command of the worker. */
   readonly again?: string;
 }
@@ -102,9 +104,7 @@ export const requireStopCase = (
 ): CliResult<StopCase> => {
   const stopCase = stopCaseOf(seen);
   if (stopCase !== null) return ok(stopCase);
-  let reason = 'the last-seen line holds no event';
-  if (seen.state === 'unknown') reason = seen.reason;
-  else if (seen.line[lastSeen.keys.event] === 'SessionStart') reason = 'the session start has no known source';
+  const reason = seen.state === 'unknown' ? seen.reason : 'the last-seen line holds no event';
   return notReady(
     `cannot tell if the ${roles.worker} ${workerId} waits at its prompt or works: ${reason}. The pane ${pane.paneId} runs the process ${pane.pid}`,
     `Look at the pane. When the ${roles.worker} waits at its prompt, run "${stopLine(workerId)}" again after its next hook event. ` +
@@ -257,6 +257,14 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   }
   if (row.dead) return closeEnded(deps, session, [row.paneId], guards);
 
+  if (request.startSource === 'required' && seen.value.state === 'valid' &&
+    seen.value.line[lastSeen.keys.event] === 'SessionStart' && promptStateOf(seen.value.line, request.startSource) === null) {
+    return codedFailure(
+      stopCaseRefused,
+      `the ${roles.worker} ${workerId} has a session start with no known source`,
+      `Wait until its next hook event. Run "${commandText(request.again ?? again)}" again.`,
+    );
+  }
   const known = requireStopCase(workerId, seen.value, row);
   if (!known.ok) return known;
   const stopCase = known.value;
