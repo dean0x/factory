@@ -52,6 +52,18 @@ describe('refresh run record', () => {
     expect(record.deadlines.claimMs - record.startedAtMs).toBe(CLAIM_MS);
   });
 
+  it('refuses a record that also names a skipped worker as a target', async () => {
+    const { deps } = make();
+    const skipped = { role: 'worker', id: 'alpha', status: 'skipped', warning: 'No owned session id.', remedy: 'Check its pane.' } as const;
+    const record = value(await scheduleRefreshRun(deps, HOME, { caller: 'terminal', coordinatorPane: false }, {
+      workerIds: ['beta'], skipped: [skipped],
+    }));
+    deps.seed(PATH, JSON.stringify({ ...record, workerIds: ['beta', 'alpha'] }));
+    expect(await readRefreshRun(deps, HOME)).toMatchObject({
+      ok: false, error: { message: expect.stringContaining('invalid fields'), hint: expect.stringContaining('Check refresh-run.json') },
+    });
+  });
+
   it('refuses a second schedule while the claim is pending or the runner is live', async () => {
     const { deps } = make();
     const [first, second] = await Promise.all([schedule(deps), schedule(deps)]);

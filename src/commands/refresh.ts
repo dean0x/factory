@@ -20,7 +20,7 @@ import { runsInside, workersWithPanes } from '../workers/lifecycle.js';
 import { readPanes, requireCoordinatorPane } from '../workers/panes.js';
 import {
   cancelRefreshRun, failUnclaimedRefreshRun, readRefreshRun, refreshActingRemedy, refreshResultCommand, refreshRunIsLive, scheduleRefreshRun,
-  type RefreshCaller, type RefreshRunRecord,
+  type RefreshCaller, type RefreshFault, type RefreshRunRecord, type RefreshWorkerPlan,
 } from '../workers/refresh-record.js';
 import { refreshExitCode, runRefresh, type RefreshTarget } from '../workers/refresh-run.js';
 import { readWorkerRecord } from '../workers/registry.js';
@@ -34,6 +34,7 @@ const REFRESH = commandText(commands.refresh);
 const CANCEL = commandText(`${commands.refresh} ${flagText(flags.cancel)}`);
 const SHOW_RESULT = `Run "${refreshResultCommand}" to see the last refresh run.`;
 const RETRY = `Run "${REFRESH}" again.`;
+const SKIP_REMEDY = `Check its pane. ${RETRY}`;
 const UPGRADE = `Run "${commandText(commands.upgrade)}" to check the coordinator hook settings. Then run "${REFRESH}" again.`;
 const END_WARNING = 'The background tasks, crons and watches of each restarted session end.';
 const CLAIM_FAULT = 'the refresh runner did not claim its token in time';
@@ -53,7 +54,7 @@ interface PlanRow {
   readonly pane: string;
   readonly state: 'idle' | 'busy' | 'waits' | 'unknown';
   readonly resume: 'owned' | 'not owned' | 'missing';
-  readonly skip?: string;
+  readonly skip?: RefreshFault;
 }
 
 interface RefreshPlan extends RefreshCaller {
@@ -61,6 +62,18 @@ interface RefreshPlan extends RefreshCaller {
   readonly folderQuestions: number;
 }
 
+const workerPlanOf = (rows: readonly PlanRow[]): RefreshWorkerPlan => {
+  const workerIds: string[] = [];
+  const skipped: RefreshWorkerPlan['skipped'][number][] = [];
+  for (const { id, role, skip } of rows) {
+    if (role !== 'worker') continue;
+    if (skip === undefined) workerIds.push(id);
+    else skipped.push({ role, id, status: 'skipped', ...skip });
+  }
+  return { workerIds, skipped };
+};
+
+const skipNotice = ({ warning, remedy }: RefreshFault): string => `${warning} ${remedy}`;
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 const output = (lines: readonly OutLine[], fields: Readonly<Record<string, unknown>>, exitCode = 0, warnings: readonly string[] = []): CommandOutput =>
   ({ lines, json: { ...fields, schema: SCHEMA }, warnings, failed: exitCode !== 0, exitCode });
@@ -89,7 +102,7 @@ const checkWorker = async (
   const record = await readWorkerRecord(deps, home, id);
   if (!record.ok) return record;
   if (record.value.state === 'absent') {
-    return ok({ ...row, state: 'unknown', resume: 'missing', skip: `The worker ${id} has no record. Check its pane. ${RETRY}` });
+    return ok({ ...row, state: 'unknown', resume: 'missing', skip: { warning: `The worker ${id} has no record.`, remedy: SKIP_REMEDY } });
   }
   if (record.value.state === 'invalid') {
     const message = `the record of the worker ${id} is not valid: ${record.value.reason}`;
@@ -104,7 +117,7 @@ const checkWorker = async (
   return ok({
     ...row, state: reported.value.state === 'valid' ? stateOf(reported.value.line) : 'unknown',
     resume: seen.value.why === 'not-owned' ? 'not owned' : 'missing',
-    skip: `The worker ${id} has no owned session id: ${seen.value.reason}. Check its pane. ${RETRY}`,
+    skip: { warning: `The worker ${id} has no owned session id: ${seen.value.reason}.`, remedy: SKIP_REMEDY },
   });
 };
 
@@ -186,12 +199,13 @@ const checkPlan = async (deps: Deps, home: string, registry: RecipeRegistry) => 
   const target = { home, config };
   const plan = await checkSession(prepared.value.deps, target);
   if (!plan.ok) return plan;
-  const skips = plan.value?.rows.flatMap(({ skip }) => skip === undefined ? [] : [skip]) ?? [];
+  const skips = plan.value?.rows.flatMap(({ skip }) => skip === undefined ? [] : [skipNotice(skip)]) ?? [];
   return ok({ prepared: prepared.value, target, plan: plan.value, notices: [...warnings, ...notes, ...skips] });
 };
 
 const dryOutput = (plan: RefreshPlan, warnings: readonly string[]): CommandOutput => {
   const { caller, coordinatorPane, rows, folderQuestions } = plan;
+  const publicRows = rows.map(({ skip, ...row }) => skip === undefined ? row : { ...row, skip: skipNotice(skip) });
   let order = 0;
   return output([
     text('Dry run: no file changes and no session restarts.'),
@@ -204,7 +218,7 @@ const dryOutput = (plan: RefreshPlan, warnings: readonly string[]): CommandOutpu
       return text(`${position}${role} ${id}: pane ${pane}; ${state}; resume id ${resume}${skip === undefined ? '' : '; skip'}`);
     }),
     { level: 'warn', text: END_WARNING },
-  ], { dryRun: true, ...plan, idleCapMs: refreshWait.idleCapMs, pollMs: refreshWait.intervalMs, warnings: [END_WARNING, ...warnings] }, 0, warnings);
+  ], { dryRun: true, ...plan, rows: publicRows, idleCapMs: refreshWait.idleCapMs, pollMs: refreshWait.intervalMs, warnings: [END_WARNING, ...warnings] }, 0, warnings);
 };
 
 /** Project public fields. The record itself must never go to the output renderer. */
@@ -297,7 +311,9 @@ export const runRefreshCommand = async (base: Deps, options: RefreshOptions, reg
   const rendered = await renderStartFiles(actingDeps, home, config, commands.refresh, guards);
   if (!rendered.ok) return rendered;
   for (const note of [END_WARNING, ...notices]) base.warn(note);
-  const scheduled = await scheduleRefreshRun(actingDeps, home, { caller: plan.caller, coordinatorPane: plan.coordinatorPane });
+  const scheduled = await scheduleRefreshRun(
+    actingDeps, home, { caller: plan.caller, coordinatorPane: plan.coordinatorPane }, workerPlanOf(plan.rows),
+  );
   if (!scheduled.ok) return scheduled;
   if (plan.caller === 'pane') return startRunner(actingDeps, target, scheduled.value);
   const ran = await runRefresh(actingDeps, { ...target, token: scheduled.value.token });

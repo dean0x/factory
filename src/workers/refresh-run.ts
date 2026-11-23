@@ -14,7 +14,7 @@ import {
   promptStateOf, readOwnCoordinatorResume, readOwnCoordinatorSession, readOwnLastSeen, readWorkerLastSeen, type LastSeen,
 } from './last-seen.js';
 import { chooseProxy, newProxyAnswers, resumeLine, resumeWorker, sessionProxyWish, workerProxyWish } from './launch.js';
-import { checkTargets, requireProxies, workersWithPanes } from './lifecycle.js';
+import { checkTargets, requireProxies } from './lifecycle.js';
 import { readCoordinatorPane, readPanes, requireBoundPane, requireCoordinatorPane } from './panes.js';
 import {
   claimRefreshRun, readOwnRefreshRun, readRefreshRun, refreshResultCommand, updateRefreshRun,
@@ -80,16 +80,15 @@ const readRunningPanes = async (deps: Deps, target: RefreshTarget): Promise<CliR
   return panes.value === null ? failure(`the tmux session ${session} does not run`, START) : ok(panes.value);
 };
 
-/** Read one own pane list and one hook line per pending worker. The first poll sets the live target set. */
+/** Read one own pane list and one hook line per pending worker. */
 export const pollOnce = async (
-  deps: Deps, target: RefreshTarget, pending?: readonly string[],
+  deps: Deps, target: RefreshTarget, pending: readonly string[],
 ): Promise<CliResult<RefreshPoll>> => {
   const panes = await readRunningPanes(deps, target);
   if (!panes.ok) return panes;
-  const ids = pending ?? workersWithPanes(panes.value.filter(({ dead }) => !dead));
-  if (ids.length > workerRecord.maxEntries) return failure('too many workers in the refresh run', RESULT);
+  if (pending.length > workerRecord.maxEntries) return failure('too many workers in the refresh run', RESULT);
   const workers: WorkerCheck[] = [];
-  for (const id of ids) {
+  for (const id of pending) {
     const seen = await readWorkerLastSeen(deps, target.home, id);
     workers.push(seen.ok
       ? { id, ready: seen.value.state === 'valid' && promptStateOf(seen.value.line) === 'prompt' }
@@ -280,8 +279,10 @@ const waitForPoll = async (deps: Deps, deadline: number, poll: number): Promise<
   return true;
 };
 
-const runWorkers = async (deps: Deps, request: RefreshRequest, deadline: number): Promise<CliResult<RefreshRunRecord>> => {
-  let pending: readonly string[] | undefined;
+const runWorkers = async (
+  deps: Deps, request: RefreshRequest, deadline: number, workerIds: readonly string[],
+): Promise<CliResult<RefreshRunRecord>> => {
+  let pending = workerIds;
   for (let poll = 0; poll <= MAX_SLEEPS; poll += 1) {
     const own = await readOwnRefreshRun(deps, request.home, request.token);
     if (!own.ok) return own;
@@ -306,7 +307,7 @@ const runWorkers = async (deps: Deps, request: RefreshRequest, deadline: number)
     pending = next;
     if (pending.length === 0 || !await waitForPoll(deps, deadline, poll)) break;
   }
-  for (const id of pending ?? []) {
+  for (const id of pending) {
     const recorded = await saved(deps, request, { kind: 'outcome', outcome: idleFault('worker', id) });
     if (!recorded.ok) return recorded;
   }
@@ -336,7 +337,7 @@ const runCoordinator = async (deps: Deps, request: RefreshRequest, deadline: num
 const runClaimed = async (deps: Deps, request: RefreshRequest, run: RefreshRunRecord): Promise<CliResult<RefreshRunRecord>> => {
   const workerDeadline = run.deadlines.workerMs;
   if (workerDeadline === null) return failure('the worker refresh wait has no deadline', RESULT);
-  const workers = await runWorkers(deps, request, workerDeadline);
+  const workers = await runWorkers(deps, request, workerDeadline, run.workerIds);
   if (!workers.ok) return workers;
   if (!workers.value.outcomes.some(({ status }) => status === 'trust-wait')) {
     const waiting = await saved(deps, request, { kind: 'wait-coordinator' });
@@ -366,6 +367,6 @@ export const runRefresh = async (deps: Deps, request: RefreshRequest): Promise<C
 
 /** The foreground command uses the record, not the detached runner exit, for its verdict. */
 export const refreshExitCode = (run: RefreshRunRecord): 0 | 1 | 3 => {
-  if (run.state !== 'done' || run.fault !== null || run.outcomes.some(({ status }) => status === 'fault')) return 1;
+  if (run.state !== 'done' || run.fault !== null || run.outcomes.some(({ status }) => status === 'fault' || status === 'skipped')) return 1;
   return run.outcomes.some(({ status }) => status === 'trust-wait') ? 3 : 0;
 };

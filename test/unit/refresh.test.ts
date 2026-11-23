@@ -154,6 +154,22 @@ it('shows only live targets, and names a bound pane with no record as skipped', 
   expectNoAct(lab);
 });
 
+it('saves a skip for a live pane with no worker record without an idle wait', async () => {
+  const ghost = { ...ALPHA_PANE, id: '%11', options: { '@worker': 'ghost' }, command: launchWordsOf(HOME, 'ghost') };
+  const lab = await make('received', { tmux: { panes: [ghost, OTHER_PANE] } });
+  await lab.run();
+  expect(lab.deps.warned).toContain('The worker ghost has no record. Check its pane. Run "factory refresh" again.');
+  expect(lab.deps.sleeps).not.toContain(refreshWait.intervalMs);
+  expect(lab.deps.terminated).not.toContain(ghost.pid);
+  expect(value(await readRefreshRun(lab.deps, HOME))).toMatchObject({
+    workerIds: [],
+    outcomes: expect.arrayContaining([{
+      role: 'worker', id: 'ghost', status: 'skipped', warning: 'The worker ghost has no record.',
+      remedy: 'Check its pane. Run "factory refresh" again.',
+    }]),
+  });
+});
+
 it('says that nothing runs when the node has no session', async () => {
   const lab = await make('received', { tmux: { sessions: {}, panes: [] } });
   const result = await lab.run();
@@ -180,7 +196,7 @@ it('renders start files before it starts one detached runner with argument words
   expect(args.slice(args.indexOf('--') + 1)).toEqual([...FAKE_PROGRAM_ARGV, 'refresh', '--runner', record?.token, '--home', HOME]);
   expect(lab.changes().map(({ args }) => args[0])).toEqual(['new-window', 'set-option']);
   expect(lab.renderedBeforeWindow[0]).toContain('"statusLine"');
-  expect(record).toMatchObject({ ...CALLER, state: 'waiting' });
+  expect(record).toMatchObject({ ...CALLER, state: 'waiting', workerIds: ['alpha'] });
   expect(lab.deps.terminated).toEqual([]);
 });
 

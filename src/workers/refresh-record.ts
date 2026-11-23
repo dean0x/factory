@@ -23,9 +23,11 @@ const role = z.enum(['worker', 'coordinator']);
 const faultFields = { warning: z.string().min(1).max(FAULT_TEXT_LIMIT), remedy: z.string().min(1).max(FAULT_TEXT_LIMIT) };
 const faultSchema = z.strictObject(faultFields).readonly();
 const outcomeFields = { role, id: slug };
+const skippedWorkerSchema = z.strictObject({ role: z.literal('worker'), id: slug, status: z.literal('skipped'), ...faultFields });
 const outcomeSchema = z.discriminatedUnion('status', [
   z.strictObject({ ...outcomeFields, status: z.literal('resumed') }),
   z.strictObject({ ...outcomeFields, status: z.enum(['fault', 'trust-wait']), ...faultFields }),
+  skippedWorkerSchema,
 ]).readonly();
 
 const recordSchema = z.strictObject({
@@ -40,6 +42,7 @@ const recordSchema = z.strictObject({
   deadlines: z.strictObject({ claimMs: time, workerMs: time.nullable(), coordinatorMs: time.nullable() }).readonly(),
   acting: slug.nullable(),
   actingRole: role.nullable(),
+  workerIds: z.array(slug).max(workerRecord.maxEntries).readonly(),
   outcomes: z.array(outcomeSchema).max(workerRecord.maxEntries + 1).readonly(),
   fault: faultSchema.nullable(),
 }).refine((record) => {
@@ -49,6 +52,14 @@ const recordSchema = z.strictObject({
   if (deadlines.claimMs !== startedAtMs + CLAIM_MS) return false;
   if ((runner === null) !== (deadlines.workerMs === null)) return false;
   if (deadlines.coordinatorMs !== null && deadlines.workerMs === null) return false;
+  const planned = new Set(record.workerIds);
+  if (planned.size !== record.workerIds.length) return false;
+  for (const outcome of record.outcomes) {
+    if (outcome.status !== 'skipped') continue;
+    if (planned.has(outcome.id)) return false;
+    planned.add(outcome.id);
+  }
+  if (planned.size > workerRecord.maxEntries) return false;
   if (state === 'scheduled') return runner === null && acting === null;
   if (state === 'waiting') return runner !== null && actingRole !== 'coordinator';
   if (state === 'acting-coordinator') return runner !== null && deadlines.coordinatorMs !== null && actingRole !== 'worker';
@@ -62,6 +73,11 @@ export type RefreshFault = z.infer<typeof faultSchema>;
 export interface RefreshCaller {
   readonly caller: RefreshRunRecord['caller'];
   readonly coordinatorPane: boolean;
+}
+
+export interface RefreshWorkerPlan {
+  readonly workerIds: readonly string[];
+  readonly skipped: readonly Extract<RefreshOutcome, { status: 'skipped' }>[];
 }
 
 export type RefreshRunChange =
@@ -175,7 +191,9 @@ const changeRecord = async (deps: Deps, home: string, change: Change): Promise<C
   });
 };
 
-export const scheduleRefreshRun = async (deps: Deps, home: string, caller: RefreshCaller): Promise<CliResult<RefreshRunRecord>> =>
+export const scheduleRefreshRun = async (
+  deps: Deps, home: string, caller: RefreshCaller, workers: RefreshWorkerPlan = { workerIds: [], skipped: [] },
+): Promise<CliResult<RefreshRunRecord>> =>
   changeRecord(deps, home, async (current) => {
     if (current !== null) {
       const live = await refreshRunIsLive(deps, current);
@@ -192,7 +210,7 @@ export const scheduleRefreshRun = async (deps: Deps, home: string, caller: Refre
     return ok({
       schema: schemaIds.refreshRun, runId: runId.value, token: token.value, startedAtMs, ...caller, state: 'scheduled', runner: null,
       deadlines: { claimMs: startedAtMs + CLAIM_MS, workerMs: null, coordinatorMs: null },
-      acting: null, actingRole: null, outcomes: [], fault: null,
+      acting: null, actingRole: null, workerIds: workers.workerIds, outcomes: workers.skipped, fault: null,
     });
   });
 

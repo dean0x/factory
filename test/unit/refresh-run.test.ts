@@ -6,7 +6,9 @@ import { guardSourceOf } from '../../src/guards/effective.js';
 import { guardIds, guardValues, refreshRunPath, refreshText, refreshWait, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
-import { cancelRefreshRun, claimRefreshRun, readRefreshRun, scheduleRefreshRun, updateRefreshRun } from '../../src/workers/refresh-record.js';
+import {
+  cancelRefreshRun, claimRefreshRun, readRefreshRun, scheduleRefreshRun, updateRefreshRun, type RefreshWorkerPlan,
+} from '../../src/workers/refresh-record.js';
 import { actCoordinator, actWorker, pollOnce, refreshExitCode, runRefresh } from '../../src/workers/refresh-run.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
@@ -43,6 +45,7 @@ interface Setup {
   readonly events?: Readonly<Record<string, HookEvent>>;
   readonly tmux?: TmuxFixture;
   readonly coordinatorPane?: boolean;
+  readonly skipped?: RefreshWorkerPlan['skipped'];
   readonly workerHook?: HookEvent | null;
   readonly coordinatorHook?: HookEvent | null;
   readonly termStays?: boolean;
@@ -134,9 +137,10 @@ const make = async (setup: Setup = {}) => {
     value(await writeWorkerSession(deps, HOME, id, session));
     await hook(deps, session, id, event);
   }
+  const skipped = setup.skipped ?? [];
   const scheduled = value(await scheduleRefreshRun(deps, HOME, {
     caller: setup.coordinatorPane === true ? 'pane' : 'terminal', coordinatorPane: setup.coordinatorPane ?? false,
-  }));
+  }, { workerIds: workerIds.filter((id) => !skipped.some((entry) => entry.id === id)), skipped }));
   return {
     deps, log, calls, trace, atStop, coordinator, request: { home: HOME, config: CONFIG, token: scheduled.token },
     onRun: (fn: typeof onRun) => { onRun = fn; }, onSleep: (fn: typeof onSleep) => { onSleep = fn; },
@@ -168,7 +172,7 @@ describe('refresh runner', () => {
 
   it('reads the pane list once per poll and polls busy workers again after ten seconds', async () => {
     const lab = await make({ events: { alpha: 'PreToolUse' } });
-    const poll = value(await pollOnce(lab.deps, lab.request));
+    const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
     expect(poll.workers.map(({ id, ready }) => ({ id, ready }))).toEqual([{ id: 'alpha', ready: false }]);
     expect(lists(lab)).toHaveLength(1);
     lab.onSleep(async (ms) => {
@@ -180,10 +184,36 @@ describe('refresh runner', () => {
     expect(lab.deps.sleeps[0]).toBe(10_000);
   });
 
+  it('does not poll or stop a skipped worker even after it gets an owned session id', async () => {
+    const skipped = {
+      role: 'worker', id: 'beta', status: 'skipped', warning: 'The worker beta has no owned session id.', remedy: 'Check its pane.',
+    } as const;
+    const lab = await make({ events: { alpha: 'PreToolUse', beta: 'PreToolUse' }, skipped: [skipped] });
+    await hook(lab.deps, NEXT, 'other', 'PreToolUse');
+    value(await writeWorkerSession(lab.deps, HOME, 'beta', NEXT));
+    const reads: string[] = [];
+    const fs = { ...lab.deps.fs, readTextLimited: (...args: Parameters<FakeDeps['fs']['readTextLimited']>) => {
+      reads.push(args[0]);
+      return lab.deps.fs.readTextLimited(...args);
+    } };
+    lab.onSleep(async (ms) => {
+      if (ms !== refreshWait.intervalMs) return;
+      await hook(lab.deps, ALPHA, 'alpha', 'Stop');
+      await hook(lab.deps, BETA, 'beta', 'Stop');
+      value(await writeWorkerSession(lab.deps, HOME, 'beta', BETA));
+    });
+    const record = value(await runRefresh({ ...lab.deps, fs }, lab.request));
+    expect(lab.deps.terminated).toEqual([WORKER_PID, COORDINATOR_PID]);
+    expect(reads).toContain(join(FILES.heartbeatDir, ALPHA));
+    expect(reads).not.toContain(join(FILES.heartbeatDir, NEXT));
+    expect(reads).not.toContain(join(FILES.heartbeatDir, BETA));
+    expect(record.outcomes).toContainEqual(skipped);
+  });
+
   it('leaves a worker pending if it turns busy just before the idle-only stop', async () => {
     const lab = await make();
     value(await claimed(lab));
-    const poll = value(await pollOnce(lab.deps, lab.request));
+    const poll = value(await pollOnce(lab.deps, lab.request, ['alpha']));
     lab.onRun(async ({ command, args }) => {
       if (command === 'ps' && args[1] === 'etime=') await hook(lab.deps, ALPHA, 'alpha', 'PreToolUse');
       return undefined;
@@ -292,7 +322,7 @@ describe('refresh runner', () => {
   it('rechecks the session owner after the poll', async () => {
     const lab = await make();
     value(await claimed(lab));
-    const { panes } = value(await pollOnce(lab.deps, lab.request));
+    const { panes } = value(await pollOnce(lab.deps, lab.request, ['alpha']));
     lab.log.sessions().set(NODE, '/test/other');
     const outcome = value(await actWorker(lab.deps, lab.request, 'alpha', panes));
     expect(outcome).toMatchObject({ warning: expect.stringContaining('belongs to another'), remedy: expect.stringContaining('factory shutdown') });
