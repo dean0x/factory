@@ -784,12 +784,12 @@ factory restart alpha
 factory reboot
 ```
 
-These commands stop only the panes that factory made for this factory folder. A tmux session of another factory, a session of the same name that belongs to another folder, and a `claude` program outside these panes keep running. Each command reads the list of the panes once. Before the first stop, it checks every worker that it stops or starts again, so a failed check leaves everything as it was:
+These three commands stop only the panes that factory made for this factory folder. A tmux session of another factory, a session of the same name that belongs to another folder, and a `claude` program outside these panes keep running. Each command reads the list of the panes once. Before the first stop, it checks every worker that it stops or starts again, so a failed check leaves everything as it was:
 
 - Each worker needs a session id that passed the ownership check of `worker resume`, and a known state of its session. Else the command exits with code 3 and stops nothing.
 - A worker that starts again needs a work copy with settings files that pass the check of `worker new`. `restart` and `reboot` also run the root checks of `start`. A failed check exits with code 4.
 - `restart` and `reboot` ask the proxy of each launch that comes after the stop, once for the run. A proxy that does not answer, when the config does not let the session go direct, exits with code 1.
-- The command never ends the pane that runs it: that is exit code 2.
+- A stop of the caller pane is exit code 2. `refresh` can restart that pane after the caller exits.
 
 After these checks, a stop can still fail: a process that does not end gives exit code 1, and a pane that the launch did not make gives exit code 4. The message then names the workers that stopped before the fault.
 
@@ -804,6 +804,22 @@ If the pane matches a folder trust question, `restart` gives the same remedy as 
 Then it ends the session as `shutdown` does and starts it again with the recovery of `start`. It prints the command that attaches. Inside the session, `reboot` stops and starts only the workers. The session and the coordinator pane stay. One run asks each proxy once.
 
 `reboot` warns for each worker that did not start again. If a pane matches a folder trust question, its warning gives the same remedy as `start`, even if another worker fails for a different reason. The exit code is 1 if any worker did not start again. If every such worker matches the question, the exit code is 3 instead.
+
+`factory refresh` applies an update to a factory that runs. It restarts the live workers first, then the coordinator in its own pane. It keeps the tmux session and each conversation. It does not start workers that have no live pane.
+
+Before each restart, `refresh` waits for the session to return to its prompt. It checks every 10 seconds. The worker phase and the coordinator phase each have a 60-minute cap. The total idle wait is at most 2 hours. Stop and start checks take extra time.
+
+Run `factory refresh` outside the factory session to wait for the result in the same terminal. From a pane of the session, it starts a separate runner window and reports that the run is scheduled. From the coordinator pane, the runner waits for that turn to end before it restarts the coordinator.
+
+```sh
+factory refresh --dry-run
+factory refresh --result
+factory refresh --cancel
+```
+
+`--dry-run` shows the sessions, their state, the order, the caller mode, the wait limits and any warnings. It changes nothing. `--result` shows the latest run and reports any faults with their remedies. Only one run can be active for each factory. `--cancel` stops the run from starting more restarts. A worker restart in progress can finish. You cannot cancel after the coordinator restart starts.
+
+A folder question at a session start holds that resume. `refresh` never answers the question. If a worker waits at a folder question, the coordinator does not restart. The background tasks, crons and watches of each restarted session end.
 
 ### Summon a worker
 
@@ -862,7 +878,7 @@ The sessions of one factory talk with the cross-session messages of Claude Code 
 - **`worker reset ID --clear` or `--compact`.** It types `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and checks that it happened. It exits with code 2 for neither or both flags and for a caller that is not the coordinator pane, with code 3 when no session runs or the coordinator pane is missing, and with code 4 for a start command that does not match. It refuses before it types any key, in these cases: the worker has no live pane (3, `factory worker resume ID`) or two (2); the pane is in the slot of the window `view` (3); the hook settings of the work copy lack an event (3, `factory upgrade`, then `factory restart ID`); the settings file is newer than the pane process (3, `factory restart ID`); the role text that the session gets at its next start fails a check (4 for a link, a wrong owner or mode, or a setup file that you did not accept, else 1; see "The role text of a worker"); the work is not pushed (1); `.factory/workers/ID/inbox/resume.md` is missing (3), is a link (4) or is empty or over 1 MiB (3); the state is `busy` or `waits` (1); the last-seen line is older than the pane process (3); the bottom of the pane shows a numbered option list (3). Then it types `C-u`, the command and `Enter` in one tmux run, and checks up to 10 times, one second apart. After `--clear` the pointer must name a new session with `SessionStart`. After `--compact` the line must show `PreCompact` or `SessionStart`. No confirmation is exit code 3 (look at the pane, then run it again), and a pane that ends during the check is exit code 1. The output has a verdict line, the age of the resume file and the next step: send the next task with `SendMessage`, or `factory restart ID` first when the worker has no name after a clear. `--json` prints `factory.worker-reset/v1`. The files `assignment.md` and `resume.md` stay in the assignment folder.
 - **`self reset`.** It queues a `/compact` for the coordinator itself, from the coordinator pane only. Write the resume notes to `.factory/resume/NODE_ID.md` first. The notes can hold the section `Standing routines` (see "Upgrade a factory"). The command exits with code 3 and names the file when it is missing, with code 4 for a link, and with code 3 when the coordinator settings lack one of the 6 hook events (`factory upgrade`, then `factory reboot`) or when a dialog waits in the coordinator pane. It then prints `QUEUED: the compact runs after the current turn` and exits with code 0. `--json` prints `factory.self-reset/v1`.
 
-A changed `session.idle_compaction` value takes effect only after the settings write and a new session start. Run `factory upgrade` first to write the value into existing session files. For a worker, run `factory restart ID`. For the coordinator, run `factory reboot` outside the factory session. A clear or compact alone does not apply the change.
+A changed `session.idle_compaction` value takes effect only after the settings write and a new session start. Run `factory upgrade` first to write the value into existing session files. For one worker, run `factory restart ID`. For the live workers and the coordinator, run `factory refresh`. You can also run `factory reboot` outside the factory session. A clear or compact alone does not apply the change.
 
 After a compact, Claude Code loads the project instructions and memory again. It also reads again up to five recent files. Each shows as a `Read` line, and a large file shows as `Referenced file`. These lines are not reads by the session.
 
