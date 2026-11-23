@@ -1,4 +1,4 @@
-import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { codedFailure, failure, notReady, paneNotFound, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
@@ -89,12 +89,9 @@ export const requireBoundPane = async (
   const args = paneBindArgs(paneId, workerId);
   if (!args.ok) return failure(args.error);
   const read = await tmuxStep(deps, args.value);
-  if (!read.ok || paneAbsent(read.value)) {
-    return failure(
-      `cannot read the pane ${paneId}: ${read.ok ? 'tmux has no such pane' : read.error.message}`,
-      `The pane may have ended. Run "${commandText(again)}" again.`,
-    );
-  }
+  const readRemedy = `The pane may have ended. Run "${commandText(again)}" again.`;
+  if (!read.ok) return failure(`cannot read the pane ${paneId}: ${read.error.message}`, readRemedy);
+  if (paneAbsent(read.value)) return codedFailure(paneNotFound, `cannot read the pane ${paneId}: tmux has no such pane`, readRemedy);
   const remedy =
     `Look at the pane in tmux. When it is not a pane of the ${roles.worker} ${workerId}, run "${clearMarkText(paneId, tmuxNames.optionWorker)}" ` +
     `to clear its mark. Then run "${commandText(again)}" again.`;

@@ -30,6 +30,8 @@ const COORDINATOR = '00000000-0000-4000-8000-000000000003';
 const NEXT = '00000000-0000-4000-8000-000000000004';
 const COPY = `${HOME}/work-copies/web/alpha`;
 const CONFIG = sampleConfig();
+const WORKER_RECOVERY = 'Check the worker pane. If its process ended, run "factory worker resume alpha".';
+const COORDINATOR_RETRY = 'Check the coordinator pane. If its process ended, run "factory start".';
 const COORDINATOR_RECOVERY = 'Inspect the coordinator pane in the view window. If it still runs, leave the session open. ' +
   'If the coordinator pane is dead, save work and make the workers safe first. Session removal ends the workers too. ' +
   'Use a terminal outside this session. Go to the factory folder. ' +
@@ -55,6 +57,7 @@ interface Setup {
   readonly skipped?: RefreshWorkerPlan['skipped'];
   readonly workerHook?: HookEvent | null;
   readonly coordinatorHook?: HookEvent | null;
+  readonly respawned?: 'dead' | 'same pid';
   readonly termStays?: boolean;
   readonly newProcess?: number;
   readonly timing?: 'normal' | 'frozen';
@@ -102,7 +105,11 @@ const make = async (setup: Setup = {}) => {
       }
       const reply = handler(call);
       if (reply.ok && reply.value.exitCode === 0 && args[0] === 'display-message' && args[3]?.includes(':view.{left}')) {
-        if (respawnWords !== null) return exited(0, `${coordinator.id}|9999|0|1|${startCommandText(respawnWords)}\n`);
+        if (respawnWords !== null) {
+          const pid = setup.respawned === 'same pid' ? coordinator.pid : 9999;
+          const dead = setup.respawned === 'dead' ? 1 : 0;
+          return exited(0, `${coordinator.id}|${pid}|${dead}|1|${startCommandText(respawnWords)}\n`);
+        }
         if (base.terminated.includes(coordinator.pid)) {
           trace.push('dead read');
           return exited(0, `${coordinator.id}|${coordinator.pid}|1|1|${startCommandText(coordinator.command)}\n`);
@@ -164,14 +171,30 @@ const resumes = ({ calls }: Lab) => calls.filter(({ args }) => args[0] === 'spli
 const lists = ({ log }: Lab) => log.commands().filter((text) => text.startsWith('list-panes '));
 const found = (call: RunCall, command: string) => call.command === 'tmux' && call.args[0] === command;
 
-const reportAfterMarker = (lab: Lab, session: string, marker: string, event: HookEvent, source?: 'startup' | 'compact') => {
+const afterMarker = (lab: Lab, effect: () => Promise<void>) => {
   const { fs } = lab.deps;
   return { ...lab.deps, fs: { ...fs, rename: async (from: string, to: string) => {
     const result = await fs.rename(from, to);
-    if (to === join(HOME, refreshRunPath)) await hook(lab.deps, session, marker, event, source);
+    if (to === join(HOME, refreshRunPath)) await effect();
     return result;
   } } };
 };
+
+const reportAfterMarker = (lab: Lab, session: string, marker: string, event: HookEvent, source?: 'startup' | 'compact') =>
+  afterMarker(lab, async () => { await hook(lab.deps, session, marker, event, source); });
+
+const pollWorker = async (lab: Lab) => {
+  value(await claimed(lab));
+  const { panes, workers } = value(await pollOnce(lab.deps, lab.request, ['alpha']));
+  expect(workers).toEqual([{ id: 'alpha', ready: true }]);
+  const pane = panes.find(({ worker, dead }) => worker === 'alpha' && !dead);
+  if (pane === undefined) throw new Error('fixture has no live worker pane');
+  return { panes, paneId: pane.paneId };
+};
+
+const workerBind = (call: RunCall, paneId: string) => found(call, 'display-message') && call.args[3] === paneId;
+const bindWithProcess = (lab: Lab, call: RunCall, pid: number, dead: 0 | 1) =>
+  exited(0, lab.tmux(call.args).stdout.replace(`|${WORKER_PID}|0|`, `|${pid}|${dead}|`));
 
 const expectFault = (result: Awaited<ReturnType<typeof finish>>, id: string, warning: string, remedy: string) => {
   expect(result.outcomes).toContainEqual(expect.objectContaining({
@@ -485,6 +508,85 @@ describe('refresh runner', () => {
     expect(lab.deps.terminated).toEqual([]);
   });
 
+  it('refuses a planned worker stop if no live pane remains after the action marker', async () => {
+    const lab = await make();
+    const { panes, paneId } = await pollWorker(lab);
+    const deps = afterMarker(lab, async () => {
+      expect(lab.tmux(['kill-pane', '-t', paneId]).exitCode).toBe(0);
+    });
+
+    expect(value(await actWorker(deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault', warning: 'worker alpha: the worker pane process changed before the stop',
+      remedy: 'Check the pane. Run "factory refresh" again.',
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it.each([
+    { change: 'a dead pane', pid: WORKER_PID, dead: 1 },
+    { change: 'a different pid', pid: WORKER_PID + 1, dead: 0 },
+  ] as const)('refuses a worker stop if the final bind shows $change', async ({ pid, dead }) => {
+    const lab = await make();
+    const { panes, paneId } = await pollWorker(lab);
+    let marked = false;
+    let binds = 0;
+    const deps = afterMarker(lab, async () => { marked = true; });
+    lab.onRun(async (call) => {
+      if (!marked || !workerBind(call, paneId)) return undefined;
+      binds += 1;
+      return binds === 2 ? bindWithProcess(lab, call, pid, dead) : undefined;
+    });
+
+    expect(value(await actWorker(deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault', warning: 'worker alpha: the worker pane process changed before the stop',
+      remedy: 'Check the pane. Run "factory refresh" again.',
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('gives the worker resume remedy if the pane disappears after the poll', async () => {
+    const lab = await make();
+    const { panes, paneId } = await pollWorker(lab);
+    expect(lab.tmux(['kill-pane', '-t', paneId]).exitCode).toBe(0);
+
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault',
+      warning: `worker alpha: cannot read the pane ${paneId}: tmux has no such pane`, remedy: WORKER_RECOVERY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('gives the worker resume remedy if the bind read shows a dead pane after the poll', async () => {
+    const lab = await make();
+    const { panes, paneId } = await pollWorker(lab);
+    lab.onRun(async (call) => workerBind(call, paneId) ? bindWithProcess(lab, call, WORKER_PID, 1) : undefined);
+
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault',
+      warning: 'worker alpha: the worker pane ended before the stop', remedy: WORKER_RECOVERY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('asks for a pane check if the process start read fails after the poll', async () => {
+    const lab = await make();
+    const { panes } = await pollWorker(lab);
+    lab.onRun(async ({ command, args }) =>
+      command === 'ps' && args[1] === 'lstart=' && args[3] === String(WORKER_PID) ? exited(1) : undefined);
+
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault',
+      warning: 'worker alpha: cannot read when the process of the pane started',
+      remedy: 'Look at the pane in tmux. Run "factory refresh" again.',
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
   it.each([false, true])('checks the original launch if the dead pane has no pid (changed: %s)', async (changed) => {
     const lab = await make({ events: {} });
     const { coordinator: pane } = lab;
@@ -575,6 +677,53 @@ describe('refresh runner', () => {
     expect(value(await cancelRefreshRun(lab.deps, HOME)).state).toBe('cancelled');
   });
 
+  it('refuses a coordinator stop if a worker pointer already names its session id', async () => {
+    const lab = await make();
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    value(await writeWorkerSession(lab.deps, HOME, 'alpha', COORDINATOR));
+
+    expect(value(await actCoordinator(lab.deps, lab.request))).toEqual({
+      role: 'coordinator', id: NODE, status: 'fault',
+      warning: `coordinator ${NODE}: no owned coordinator session id: the pointer of the worker alpha names the same session`,
+      remedy: COORDINATOR_RETRY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('refuses a coordinator stop if the pane pid changes after the action marker', async () => {
+    const lab = await make();
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    const { coordinator } = lab;
+    const deps = afterMarker(lab, async () => {
+      lab.onRun(async (call) => found(call, 'display-message') && call.args[3]?.includes(':view.{left}')
+        ? exited(0, `${coordinator.id}|${coordinator.pid + 1}|0|1|${startCommandText(coordinator.command)}\n`) : undefined);
+    });
+
+    expect(value(await actCoordinator(deps, lab.request))).toEqual({
+      role: 'coordinator', id: NODE, status: 'fault',
+      warning: `coordinator ${NODE}: the coordinator pane changed before the stop`, remedy: COORDINATOR_RETRY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
+  it('refuses a coordinator stop if a worker pointer names its session id after the action marker', async () => {
+    const lab = await make();
+    value(await claimed(lab));
+    value(await updateRefreshRun(lab.deps, HOME, lab.request.token, { kind: 'wait-coordinator' }));
+    const deps = afterMarker(lab, async () => { value(await writeWorkerSession(lab.deps, HOME, 'alpha', COORDINATOR)); });
+
+    expect(value(await actCoordinator(deps, lab.request))).toEqual({
+      role: 'coordinator', id: NODE, status: 'fault',
+      warning: `coordinator ${NODE}: the coordinator session id changed before the stop`, remedy: COORDINATOR_RETRY,
+    });
+    expect(lab.deps.terminated).toEqual([]);
+    expect(resumes(lab)).toEqual([]);
+  });
+
   it('does not resume a coordinator id shared with a worker after TERM', async () => {
     const lab = await make();
     lab.onSleep(async () => {
@@ -593,6 +742,28 @@ describe('refresh runner', () => {
     });
     expectFault(await finish(lab), 'alpha', 'live pane', 'factory worker resume alpha');
     expect(resumes(lab).map(({ args }) => args[0])).toEqual(['respawn-pane']);
+  });
+
+  it('does not split if the worker session pointer changes during the launch checks', async () => {
+    const lab = await make();
+    const { panes } = await pollWorker(lab);
+    await hook(lab.deps, NEXT, 'alpha', 'Stop');
+    let changed = false;
+    lab.onRun(async (call) => {
+      if (!changed && found(call, 'list-panes') && call.args.at(-1) === paneListArgs(NODE).at(-1) &&
+        lab.deps.terminated.includes(WORKER_PID)) {
+        value(await writeWorkerSession(lab.deps, HOME, 'alpha', NEXT));
+        changed = true;
+      }
+      return undefined;
+    });
+
+    expect(value(await actWorker(lab.deps, lab.request, 'alpha', panes))).toEqual({
+      role: 'worker', id: 'alpha', status: 'fault',
+      warning: 'worker alpha: the worker no longer owns the session id for its restart', remedy: WORKER_RECOVERY,
+    });
+    expect(lab.deps.terminated).toEqual([WORKER_PID]);
+    expect(resumes(lab)).toEqual([]);
   });
 
   it('does not split if a live worker appears during the launch checks', async () => {
@@ -658,6 +829,20 @@ describe('refresh runner', () => {
 
     expectFault(record, NODE, 'cannot respawn pane', COORDINATOR_RECOVERY);
     expect(lab.calls.some((call) => found(call, 'kill-session'))).toBe(false);
+  });
+
+  it.each(['dead', 'same pid'] as const)('saves a fault when the respawned coordinator shows %s', async (respawned) => {
+    const lab = await make({ events: {}, respawned });
+
+    const record = await finish(lab);
+
+    expect(lab.trace).toContain('respawn');
+    expect(lab.deps.terminated).toEqual([COORDINATOR_PID]);
+    expect(record.outcomes).toEqual([{
+      role: 'coordinator', id: NODE, status: 'fault',
+      warning: `coordinator ${NODE}: the coordinator pane did not start again`, remedy: COORDINATOR_RECOVERY,
+    }]);
+    expect(value(await readRefreshRun(lab.deps, HOME))).toEqual(record);
   });
 
   it('fails the run if the tmux session ends during the idle wait', async () => {

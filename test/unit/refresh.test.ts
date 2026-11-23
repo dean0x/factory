@@ -329,13 +329,30 @@ describe.each(FOLDER_ORIGINS)('refresh in %s', (_name, origin) => {
     await refuse(lab, 4, 'belongs to another factory folder', 'refresh');
   });
 
-  it.each(['absent', 'invalid', 'not owned', 'shared'])('refuses a coordinator id that is %s', async (problem) => {
+  it.each([
+    { problem: 'absent', reason: 'the pointer is absent' },
+    { problem: 'invalid', reason: 'the pointer does not hold a session id' },
+    { problem: 'not owned', reason: 'the last-seen line belongs to the session of other' },
+    { problem: 'shared', reason: 'the pointer of the worker alpha names the same session' },
+  ])('refuses a coordinator id that is $problem', async ({ problem, reason }) => {
     const lab = await make(origin);
     if (problem === 'absent') lab.deps.files.delete(FILES.coordinatorLastSessionFile);
     if (problem === 'invalid') lab.deps.seed(FILES.coordinatorLastSessionFile, 'bad id\n');
-    if (problem === 'not owned') lab.deps.seed(FILES.coordinatorLastSessionFile, `${ALPHA}\n`);
+    if (problem === 'not owned') {
+      const foreign = '00000000-0000-4000-8000-000000000003';
+      value(await writeLastSeen(lab.deps, HOME, foreign, { kind: 'event', event: 'Stop' }, 'other'));
+      value(await writeCoordinatorSession(lab.deps, HOME, foreign));
+    }
     if (problem === 'shared') lab.deps.seed(ALPHA_FILES.lastSessionFile, `${COORDINATOR}\n`);
-    await refuse(lab, 3, 'no owned coordinator session id', 'refresh');
+    const before = [...lab.deps.files];
+
+    const result = await lab.run();
+
+    expect(result.code, result.err).toBe(3);
+    expect(result.err).toBe(`error: no owned coordinator session id: ${reason}\n` +
+      'Check the coordinator pane. Wait for its next hook event. Run "factory refresh" again.\n');
+    expect([...lab.deps.files]).toEqual(before);
+    expectNoAct(lab);
   });
 
   it('refuses a dead coordinator pane', async () => {

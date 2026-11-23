@@ -1,4 +1,4 @@
-import { codedNotReady, failure, hasCode, notReady, stopCaseRefused, trustQuestionWait, type CliError, type CliResult } from '../cli/errors.js';
+import { codedNotReady, failure, hasCode, notReady, paneNotFound, stopCaseRefused, trustQuestionWait, type CliError, type CliResult } from '../cli/errors.js';
 import { displayLine } from '../cli/output.js';
 import { coordinatorLaunchWords } from '../commands/start.js';
 import type { FactoryConfig } from '../config/schema.js';
@@ -137,7 +137,11 @@ export const actWorker = async (
   const own = await readOwnRefreshRun(deps, home, token);
   if (!own.ok) return own;
   const { quiet, notices } = collectNotices(deps);
-  const fault = (error: CliError) => ok(withNotices(sessionFault(roles.worker, id, error, resumeRemedy(id)), [...notices]));
+  const fault = (error: CliError) => {
+    const remedy = resumeRemedy(id);
+    const cause = hasCode(error, paneNotFound) ? { ...error, hint: remedy } : error;
+    return ok(withNotices(sessionFault(roles.worker, id, cause, remedy), [...notices]));
+  };
   const ownedSession = await requireSession(quiet, session, home, REFRESH);
   if (!ownedSession.ok) return fault(ownedSession.error);
   const record = await requireRecord(quiet, home, id, commandText(resumeLine(id)));
