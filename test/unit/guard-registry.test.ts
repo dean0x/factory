@@ -358,18 +358,17 @@ describe('the guards of a recipe', () => {
   it('lists a guard read for each configurable code row and explains each other site', () => {
     const codeRows = software.rows.filter((row) =>
       row.kind === guardKinds.code && !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && !guard.fixed));
-    const paths = [...new Set(codeRows.flatMap((row) => row.sites.map((site) => site.path)))];
-    const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
     expect(codeRows.length).toBeGreaterThan(0);
-    const sitesByRow = codeRows.map((row) => {
-      const texts = sourceScan.declarationTextsOf(sources, row.sites);
-      const guardName = idNameOf(row.guard);
-      const unread = row.sites.filter((_site, index) => texts[index]?.includes(guardName) !== true);
-      return { row, unread };
-    });
-    const rowsWithoutRead = sitesByRow.filter(({ row, unread }) => unread.length === row.sites.length).map(({ row }) => row.id);
-    expect(rowsWithoutRead).toEqual([]);
-    const unread = sitesByRow.flatMap(({ row, unread }) => unread.map((site) => `${row.id} ${site.path} ${site.symbol}`));
+    const rowSites = codeRows.flatMap((row) => row.sites.map((site) => ({ row, site })));
+    const paths = [...new Set(rowSites.map(({ site }) => site.path))];
+    const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
+    const texts = sourceScan.declarationTextsOf(sources, rowSites.map(({ site }) => site));
+    const sites = rowSites.map(({ row, site }, index) => ({
+      row, site, readsGuard: texts[index]?.includes(idNameOf(row.guard)) === true,
+    }));
+    const rowsWithRead = new Set(sites.filter(({ readsGuard }) => readsGuard).map(({ row }) => row));
+    expect(codeRows.filter((row) => !rowsWithRead.has(row)).map(({ id }) => id)).toEqual([]);
+    const unread = sites.filter(({ readsGuard }) => !readsGuard).map(({ row, site }) => `${row.id} ${site.path} ${site.symbol}`);
     const excepted = unreadSiteExceptions.map((site) => `${site.row} ${site.path} ${site.symbol}`);
     expect(duplicatesOf(excepted)).toEqual([]);
     expect(unreadSiteExceptions.filter((site) => site.reason.trim() === '')).toEqual([]);
