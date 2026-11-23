@@ -1,7 +1,11 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { recipeHostFor } from '../../src/cli/recipe-host.js';
 import { runCli } from '../../src/cli/run.js';
+import { ok } from '../../src/core/result.js';
 import { approvalLinkLabels, boardKeys, env, files } from '../../src/names.js';
+import { recipes } from '../../src/recipes/index.js';
+import { checkCommandFor } from '../../src/recipes/software/check.js';
 import { softwareGuardIds } from '../../src/recipes/software/guard-parts.js';
 import type { ReadinessPr } from '../../src/recipes/software/merge-ready.js';
 import { layoutOf } from '../../src/state/layout.js';
@@ -13,6 +17,7 @@ import { exited, type RunHandler } from '../helpers/fake-deps.js';
 import { GUARDED_HOME, guardedNode } from '../helpers/guarded-node.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
+import { fakeWorkHost } from '../helpers/work-host.js';
 
 const { head, item, ref } = APPROVAL_LINK;
 const target = itemRecord(item, { lane: 'alpha' });
@@ -37,7 +42,10 @@ interface Setup {
 const setup = ({ view, compare = () => exited(0, '{"behind_by":0}'), items = workItems, off = [] }: Setup = {}) => {
   const deps = guardedNode({
     env: { [env.home]: GUARDED_HOME, [env.session]: 'worker-alpha', [env.tmuxPane]: '%1' },
-    run: (call) => call.args[0] === 'pr' ? exited(0, JSON.stringify({ ...goodPr, ...view })) : compare(call),
+    run: (call) => {
+      if (call.command === 'git' && call.args.includes('refs/remotes/origin/HEAD')) return exited(1);
+      return call.args[0] === 'pr' ? exited(0, JSON.stringify({ ...goodPr, ...view })) : compare(call);
+    },
   }, { config: sampleConfigWithBoard(), off });
   const seed = (name: string, value: string) => deps.seed(join(layout.stateDir, name), value);
   const waiting = (...rows: readonly unknown[]) => seed(files.waiting, JSON.stringify({ intro: '', groups: [], items: rows }));
@@ -77,6 +85,25 @@ describe('check', () => {
       code: 4, out: 'UNREADABLE\ncould not read the node or its project\nCheck the node and project with factory doctor. Run check again.\n', err: '',
     });
     expect(ghCalls()).toEqual([]);
+  });
+
+  it('reports an unreadable result when neither the project nor the clone names a default branch', async () => {
+    const { deps } = setup();
+    const project = { id: 'web', path: 'web', url: 'https://github.com/acme/web.git' };
+    const { work } = fakeWorkHost({
+      project: () => ok(project),
+      find: async () => ok({ kind: 'found', item: { id: item, title: 'Work', status: 'open', track: null, stage: null, record: {} } }),
+      facts: async () => ok({ project, cloneDir: join(GUARDED_HOME, project.path), mode: 'owner',
+        openRequests: [], headConflict: null, branches: [goodPr.headRefName] }),
+    });
+    const command = checkCommandFor({ ...recipeHostFor(recipes), openWork: async () => ok(work) });
+    const result = await command.run({ positionals: () => [ref], afterTerminator: () => [],
+      bool: () => false, string: () => undefined, strings: () => [] }, deps);
+    expect(result).toMatchObject({ ok: true, value: { exitCode: 1, lines: [
+      { text: 'UNREADABLE' },
+      { text: 'the project has no default branch' },
+      { text: 'Check the node and project with factory doctor. Run check again.' },
+    ] } });
   });
 
   it('blocks on an open linked request and accepts the work after an answer', async () => {

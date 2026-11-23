@@ -68,13 +68,15 @@ describe('readinessOf', () => {
 interface Answer {
   readonly view?: Record<string, unknown>;
   readonly compare?: RunHandler;
+  readonly originHead?: RunHandler;
   readonly host?: Partial<WorkHost>;
   readonly target?: Parameters<typeof readinessFor>[2];
 }
 
-const runWith = ({ view = GOOD, compare = () => exited(0, '{"behind_by":0}'), host, target = TARGET }: Answer = {}) => {
+const runWith = ({ view = GOOD, compare = () => exited(0, '{"behind_by":0}'), originHead = () => exited(1), host, target = TARGET }: Answer = {}) => {
   const order: string[] = [];
   const deps = createFakeDeps({ run: (call) => {
+    if (call.command === 'git') return originHead(call);
     order.push(call.args[0] ?? 'no argument');
     return call.args[0] === 'pr' ? exited(0, JSON.stringify(view)) : compare(call);
   } });
@@ -190,6 +192,20 @@ describe('readinessFor', () => {
     expect(deps.calls[1]).toMatchObject({ command: 'gh', args: [
       'api', '--hostname', 'github.com', '--method', 'GET', `repos/example/project/compare/release%2Fnext...${HEAD}?per_page=1`, '--jq', '{behind_by}',
     ], timeoutMs: ghTimeoutMs });
+  });
+
+  it.each([
+    { name: 'origin HEAD names the PR base', originHead: () => exited(0, 'origin/main\n'), verdict: { kind: 'ready' } },
+    { name: 'the clone has no origin HEAD', originHead: () => exited(1), verdict: {
+      kind: 'unreadable', cause: 'the project has no default branch', safety: false,
+    } },
+  ])('uses the clone default with no configured branch when $name', async ({ originHead, verdict }) => {
+    const { default_branch: _defaultBranch, ...project } = PROJECT;
+    const { result, deps } = runWith({ originHead, target: { ...TARGET, project }, host: withFacts({ project }) });
+    expect(await result).toMatchObject(verdict);
+    expect(deps.calls.filter(({ command }) => command === 'git').map(({ args }) => args)).toEqual([
+      ['-C', WORK.cloneDir, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
+    ]);
   });
 
   it('accepts another base branch only with pr-rules off', async () => {
