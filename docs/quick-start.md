@@ -160,7 +160,7 @@ If you set `ignore-scripts=true`, npm does not run the build. Then the package f
 
 ### The installed commit
 
-The installed program does not record its commit. See part 12. Keep the tag and the full commit SHA of your build.
+Line 2 of `factory version` shows the commit of the build. See part 12. Keep the tag and the full commit SHA of your build.
 
 ## 5. Make your factory
 
