@@ -41,9 +41,10 @@ const ghForMerge = (recordHead: string) => {
     calls.push(call);
     if (call.args[0] === 'api') return exited(0, '{"behind_by":0}');
     if (call.args[1] === 'merge') { merged = true; return exited(0); }
-    const state = { headRefOid: head, state: merged ? 'MERGED' : 'OPEN', mergedAt: merged ? '2030-01-02T03:04:05.678Z' : null };
-    if (call.args.includes('state,mergedAt,headRefOid')) return exited(0, JSON.stringify(state));
-    const facts = call.args.includes(mergeCheck.fieldList) ? { headRefOid: recordHead, mergeCommit: { oid: 'c'.repeat(40) } } : {
+    const state = { headRefOid: head, state: merged ? 'MERGED' : 'OPEN',
+      mergedAt: merged ? '2030-01-02T03:04:05.678Z' : null, mergeCommit: merged ? { oid: 'c'.repeat(40) } : null };
+    if (call.args.includes('state,mergedAt,headRefOid,mergeCommit')) return exited(0, JSON.stringify(state));
+    const facts = call.args.includes(mergeCheck.fieldList) ? { headRefOid: recordHead } : {
       isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED',
       statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }],
     };

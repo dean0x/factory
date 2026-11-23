@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { failure, notReady, safetyRefusal, usageError } from '../../src/cli/errors.js';
+import { exitCodeFor, failure, notReady, safetyRefusal, usageError } from '../../src/cli/errors.js';
 import type { Command, Given } from '../../src/cli/table.js';
 import { ok } from '../../src/core/result.js';
 import { guardIds } from '../../src/names.js';
 import type { BoardItem } from '../../src/board/contract.js';
-import type { CheckedRecord, RecipeHost, WorkHost } from '../../src/recipes/entry.js';
+import type { CheckedRecord, RecipeHost, WorkFacts, WorkHost } from '../../src/recipes/entry.js';
 import { recipes } from '../../src/recipes/index.js';
 import { checkCommandFor } from '../../src/recipes/software/check.js';
 import { proofNeedOf } from '../../src/recipes/software/pr-merge.js';
@@ -18,6 +18,7 @@ import { fakeWorkHost } from '../helpers/work-host.js';
 const { item, ref, head, point } = APPROVAL_LINK;
 const pr = Number(ref);
 const moved = 'b'.repeat(40);
+const mergeCommit = 'c'.repeat(40);
 const branch = 'work/alpha';
 const at = '2030-01-02T03:04:05.678Z';
 const privateText = 'PRIVATE_GITHUB_TEXT\nMERGED';
@@ -25,15 +26,17 @@ const project = { id: 'web', path: 'web', url: 'https://github.com/acme/web.git'
 const openPr: ReadinessPr = {
   number: pr, url: `https://github.com/acme/web/pull/${ref}`, state: 'OPEN', isDraft: false,
   headRefOid: head, headRefName: branch, baseRefName: 'main', isCrossRepository: false, mergeable: 'MERGEABLE',
-  mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', mergedAt: null,
+  mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', mergedAt: null, mergeCommit: null,
   statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }],
 };
-const mergedPr = { ...openPr, state: 'MERGED', mergedAt: at } as const;
-const confirmationOf = ({ state, mergedAt, headRefOid }: ReadinessPr) => exited(0, JSON.stringify({ state, mergedAt, headRefOid }));
+const mergedPr = { ...openPr, state: 'MERGED', mergedAt: at, mergeCommit: { oid: mergeCommit } } as const;
+const confirmationOf = ({ state, mergedAt, headRefOid, mergeCommit }: ReadinessPr) =>
+  exited(0, JSON.stringify({ state, mergedAt, headRefOid, mergeCommit }));
 const ownerProof = { kind: 'record', id: APPROVAL_ID, decider: 'owner' } as const;
 const relayedProof = { kind: 'relayed', id: APPROVAL_ID, decider: 'coordinator' } as const;
 const args = { head, home: '/factory', project: 'web' };
 const boardItem: BoardItem = { id: item, title: 'Private title', status: 'open', track: null, stage: null, record: {} };
+const workFacts: WorkFacts = { branches: [branch], project, cloneDir: '/factory/web', openRequests: [], headConflict: null, mode: 'owner' };
 const checked = { head, stage: 'merged', ref, summary: 'PR at the pin' } as CheckedRecord;
 const recordedWork = (changed: boolean) => ({ checked, recorded: { item: boardItem, changed }, offGuards: [] });
 const givenOf = (words: readonly string[], flags: Readonly<Record<string, string | boolean>>): Given => ({
@@ -61,7 +64,7 @@ const setup = (options: Setup = {}) => {
     caller: async () => mark('caller', ok(undefined)),
     project: () => mark('project', ok(project)),
     find: async () => mark('find', ok({ kind: 'found', item: boardItem })),
-    facts: async () => mark('facts', ok({ branches: [branch], project, cloneDir: '/factory/web', openRequests: [], headConflict: null, mode: options.mode ?? 'owner' })),
+    facts: async () => mark('facts', ok({ ...workFacts, mode: options.mode ?? workFacts.mode })),
     approval: async () => mark('proof', ok(ownerProof)),
     record: async () => mark('record', ok(recordedWork(true))),
     writeEvent: async () => mark('event', ok('written')),
@@ -76,7 +79,7 @@ const setup = (options: Setup = {}) => {
   const deps = createFakeDeps({ run: (call) => {
     if (call.args[0] === 'api') return mark('compare', exited(0, '{"behind_by":0}'));
     if (call.args[1] === 'merge') return mark('merge', options.merge?.(call) ?? exited(0));
-    if (call.args.includes('state,mergedAt,headRefOid')) return mark('confirm', options.confirm?.(call) ?? confirmationOf(mergedPr));
+    if (call.args.includes('state,mergedAt,headRefOid,mergeCommit')) return mark('confirm', options.confirm?.(call) ?? confirmationOf(mergedPr));
     return mark('view', options.read?.(call) ?? exited(0, JSON.stringify({ ...openPr, ...options.view })));
   } });
   const command: Command = prCommandFor(host);
@@ -94,6 +97,8 @@ const output = async (run: ReturnType<typeof setup>['run'], flags?: Readonly<Rec
 
 const beforeProof = ['open', 'caller', 'project', 'view', 'compare', 'find', 'facts'];
 const eventName = `merge-${ref}-${head}.json`;
+const ownerRecordLine = 'Proof: owner record. Decider: owner.';
+const prRulesOffLine = 'The guard pr-rules is off. The check did not test the base branch.';
 
 const proofRows = [
   { owner: true, pointOn: true, mode: 'owner', regular: 'go' },
@@ -131,6 +136,19 @@ describe('pr merge', () => {
     },
   );
 
+  it.each([
+    [['merge'], 'factory pr merge needs exactly one PR number'],
+    [['merge', ref, 'extra'], 'factory pr merge needs exactly one PR number'],
+    [['merge', '01'], 'PR number: must be a whole number of one to nine digits, with no leading zero'],
+  ] as const)('refuses invalid PR arguments before any work: %j', async (words, message) => {
+    const world = setup();
+    const result = await world.run(args, words);
+    expect(result).toEqual(usageError(message, 'Run "factory pr --help".'));
+    expect(result.ok ? result.value.exitCode : exitCodeFor(result.error)).toBe(2);
+    expect(world.log).toEqual([]);
+    expect(world.ghCalls).toEqual([]);
+  });
+
   it('opens work before the caller check and binds the item before the proof read', async () => {
     const world = setup();
     const result = await output(world.run);
@@ -140,6 +158,7 @@ describe('pr merge', () => {
     expect(world.calls).toContainEqual(['approval', { item, point, ref, head }]);
     expect(world.calls).toContainEqual(['record', { item, ref, head, project: project.id }]);
     expect(world.ghCalls[2]?.args).toEqual(['pr', 'merge', '--repo', 'github.com/acme/web', '--match-head-commit', head, '--rebase', '--', ref]);
+    expect(world.ghCalls).toHaveLength(4);
   });
 
   it.each([ownerProof, relayedProof])('names $kind proof and $decider in the text, JSON and event', async (proof) => {
@@ -149,9 +168,16 @@ describe('pr merge', () => {
     if (proof.kind === 'relayed') expect(result.text).toContain('no owner proof');
     expect(result.json).toMatchObject({ schema: 'factory.pr-merge/v1', result: 'merged', pr, head, proof: proof.kind, decider: proof.decider });
     expect(world.calls.at(-1)).toEqual(['writeEvent', { name: eventName, fields: {
-      schema: 'factory.merge-event/v1', kind: 'merge', item, pr, head, merge_commit: null,
+      schema: 'factory.merge-event/v1', kind: 'merge', item, pr, head, merge_commit: mergeCommit,
       proof: proof.kind, request: proof.id, decider: proof.decider, at,
     } }]);
+  });
+
+  it('writes a null merge commit when GitHub gives none', async () => {
+    const world = setup({ confirm: () => confirmationOf({ ...mergedPr, mergeCommit: null }), work: { guards: { 'pr-rules': 'off' } } });
+    expect(await output(world.run)).toMatchObject({ exitCode: 0 });
+    expect(world.calls.at(-1)).toMatchObject(['writeEvent', { name: eventName, fields: { head, merge_commit: null } }]);
+    expect(world.ghCalls).toHaveLength(4);
   });
 
   it.each([
@@ -176,6 +202,14 @@ describe('pr merge', () => {
     const world = setup({ work: { project: () => usageError('the project does not exist') } });
     expect(await world.run()).toMatchObject({ ok: false, error: { kind: 'usage', message: 'the project does not exist' } });
     expect(world.log).toEqual(['open', 'caller']);
+  });
+
+  it('refuses an invalid project merge method before the merge call', async () => {
+    const world = setup({ work: { facts: async () => ok({ ...workFacts, project: { ...project, merge_method: 'fast-forward' } }) } });
+    const result = await world.run();
+    expect(result).toEqual(failure('The project merge method is invalid.', 'Check the node and project with factory doctor. Run check again.'));
+    expect(result.ok ? result.value.exitCode : exitCodeFor(result.error)).toBe(1);
+    expect(world.ghCalls.map(({ args: call }) => call.slice(0, 2))).toEqual([['pr', 'view'], ['api', '--hostname']]);
   });
 
   it('treats missing gh on the first read as unreadable, without a probe', async () => {
@@ -254,18 +288,35 @@ describe('pr merge', () => {
     expect(world.calls).toContainEqual(['approval', APPROVAL_LINK]);
   });
 
+  it('names the untested base branch when only pr-rules is off', async () => {
+    const world = setup({ work: { guards: { 'pr-rules': 'off' } } });
+    const result = await output(world.run);
+    expect(result.exitCode).toBe(0);
+    expect(result.lines.map(({ text }) => text)).toEqual(['MERGED AND RECORDED', ownerRecordLine, prRulesOffLine]);
+    expect(result.json).toMatchObject({ offLines: [prRulesOffLine] });
+  });
+
   it.each([
-    ['timeout', () => failure('time limit'), () => confirmationOf(mergedPr), 'MERGED AND RECORDED', 0, 1],
-    ['no start', () => missingProgram('gh'), () => confirmationOf(openPr), 'NOT MERGED', 1, 3],
-    ['non-zero', () => exited(1, privateText), () => confirmationOf({ ...openPr, headRefOid: moved }), 'HEAD MOVED', 3, 1],
-    ['unreadable', () => exited(1), () => exited(0, privateText), 'UNKNOWN', 1, 3],
-    ['exit 0', () => exited(0), () => confirmationOf(openPr), 'NOT MERGED', 1, 3],
-  ] as const)('never repeats the merge call after %s', async (_case, merge, confirm, verdict, exitCode, reads) => {
-    const world = setup({ merge, confirm, work: { guards: { 'pr-rules': 'off' } } });
+    ['timeout', () => failure('time limit'), () => confirmationOf(mergedPr), 0, 1,
+      ['MERGED AND RECORDED', ownerRecordLine]],
+    ['no start', () => missingProgram('gh'), () => confirmationOf(openPr), 1, 3,
+      ['NOT MERGED', 'The merge call failed. Check the PR state before any new merge call.'], true],
+    ['non-zero', () => exited(1, privateText, privateText), () => confirmationOf(openPr), 1, 3,
+      ['NOT MERGED', 'The merge call failed. Check the PR state before any new merge call.'], true],
+    ['a head change', () => exited(1, privateText), () => confirmationOf({ ...openPr, headRefOid: moved }), 3, 1,
+      ['HEAD MOVED', 'the PR head does not match the pin', 'Check the new head. Run check again.']],
+    ['an unreadable view', () => exited(1), () => exited(0, privateText), 1, 3,
+      ['UNKNOWN', 'Check the PR state before any new merge call.']],
+    ['exit 0', () => exited(0), () => confirmationOf(openPr), 1, 3,
+      ['NOT MERGED', `If GitHub merges the PR, run "factory item record ${item} --ref ${ref}".`], false],
+  ] as const)('reports the confirmed state without a second merge call after %s', async (_case, merge, confirm, exitCode, reads, lines, callFailed?: boolean) => {
+    const world = setup({ merge, confirm });
     const result = await output(world.run);
     expect(result.exitCode).toBe(exitCode);
-    expect(result.text.split('\n')[0]).toBe(verdict);
-    expect(result.text).not.toContain(privateText);
+    expect(result.lines.map(({ text }) => text)).toEqual(lines);
+    if (callFailed !== undefined) expect(result.json).toMatchObject({ callFailed });
+    expect(result.text).not.toContain('PRIVATE_GITHUB_TEXT');
+    expect(JSON.stringify(result.json)).not.toContain('PRIVATE_GITHUB_TEXT');
     expect(world.log.filter((step) => step === 'merge')).toHaveLength(1);
     expect(world.log.filter((step) => step === 'confirm')).toHaveLength(reads);
     expect(world.log.includes('record')).toBe(exitCode === 0);
@@ -298,7 +349,10 @@ describe('pr merge', () => {
     const world = setup({ view: mergedPr, work: { approval: async () => ok(relayedProof) } });
     expect(await output(world.run)).toMatchObject({ exitCode: 0, text: expect.stringContaining('relayed by the coordinator') });
     expect(world.log).toEqual(['open', 'caller', 'project', 'view', 'find', 'facts', 'record', 'event']);
-    expect(world.calls.at(-1)).toMatchObject(['writeEvent', { name: eventName, fields: { proof: 'relayed', decider: 'coordinator' } }]);
+    expect(world.calls.at(-1)).toMatchObject(['writeEvent', { name: eventName, fields: {
+      head, merge_commit: mergeCommit, proof: 'relayed', decider: 'coordinator',
+    } }]);
+    expect(world.ghCalls.map(({ args: call }) => call[1])).toEqual(['view']);
   });
 
   it('writes the first event only after a rerun repairs the failed record', async () => {
@@ -344,6 +398,15 @@ describe('pr merge', () => {
     expect(await world.check()).toMatchObject({ ok: true, value: { exitCode: 4, lines: lines.map((text) => ({ text })) } });
     expect(await output(world.run)).toMatchObject({ exitCode: 4, text: `${lines.join('\n')}\n` });
     expect(world.ghCalls.map(({ args: call }) => call[0])).toEqual(['pr', 'api', 'pr', 'api']);
+  });
+
+  it('reports a fixed unreadable result when check cannot open the node', async () => {
+    const world = setup({ open: async () => failure(privateText, privateText) });
+    expect(await world.check()).toMatchObject({ ok: true, value: { exitCode: 1, lines: [
+      { text: 'UNREADABLE' }, { text: 'could not read the node or its project' },
+      { text: 'Check the node and project with factory doctor. Run check again.' },
+    ] } });
+    expect(world.ghCalls).toEqual([]);
   });
 
   it.each([

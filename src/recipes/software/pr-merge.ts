@@ -34,6 +34,10 @@ interface ProofPolicy {
 type MergeReadiness = Extract<Readiness, { kind: typeof readinessKinds.ready | typeof readinessKinds.mergedAtPin }>;
 type MergeReadinessRefusal = Exclude<Readiness, MergeReadiness>;
 
+interface ConfirmedMerge extends MergeTarget {
+  readonly mergeCommit: string | null;
+}
+
 type EventOutcome =
   | { readonly kind: 'done' | 'warning' }
   | { readonly kind: 'no-proof'; readonly stop: boolean }
@@ -44,7 +48,8 @@ interface RecordedMerge {
 }
 export type MergeOutcome =
   | ({ readonly kind: 'merged' | 'already-recorded' } & RecordedMerge)
-  | Exclude<MergeConfirmation, { kind: 'merged' }>
+  | Exclude<MergeConfirmation, { kind: 'merged' | 'not-merged' }>
+  | { readonly kind: 'not-merged'; readonly callFailed: boolean }
   | { readonly kind: 'merged-not-recorded'; readonly stop: boolean };
 
 interface MergeArgs {
@@ -114,16 +119,15 @@ const proofFieldsOf = (proof: SettledProof | null) => ({
   proof: proof?.kind ?? decideProof.none, request: proof?.id ?? null, decider: proof?.decider ?? null,
 });
 
-/** The confirmation does not read a merge commit. The event does not substitute the PR head for it. */
-const eventOf = (target: MergeTarget, link: RequestLink, proof: SettledProof | null, at: string): EventFileInput => ({
+const eventOf = (target: ConfirmedMerge, link: RequestLink, proof: SettledProof | null, at: string): EventFileInput => ({
   name: `${prCommands.merge}-${target.number}-${target.head}${eventFile.suffix}`,
   fields: {
     schema: mergeEventSchemaId, kind: prCommands.merge, item: link.item, pr: target.number, head: target.head,
-    merge_commit: null, ...proofFieldsOf(proof), at,
+    merge_commit: target.mergeCommit, ...proofFieldsOf(proof), at,
   },
 });
 
-const writeMergeEvent = async (deps: Deps, work: WorkHost, target: MergeTarget, link: RequestLink, proof: CliResult<SettledProof | null>): Promise<EventOutcome> => {
+const writeMergeEvent = async (deps: Deps, work: WorkHost, target: ConfirmedMerge, link: RequestLink, proof: CliResult<SettledProof | null>): Promise<EventOutcome> => {
   if (!proof.ok) return { kind: 'no-proof', stop: proof.error.kind === 'safety' };
   const event = await work.writeEvent(eventOf(target, link, proof.value, deps.now().toISOString()));
   if (event.ok && event.value !== 'skipped') return { kind: 'done' };
@@ -134,7 +138,7 @@ const writeMergeEvent = async (deps: Deps, work: WorkHost, target: MergeTarget, 
 };
 
 const recordMerge = async (
-  deps: Deps, work: WorkHost, target: MergeTarget, link: RequestLink, project: string, proof: CliResult<SettledProof | null>,
+  deps: Deps, work: WorkHost, target: ConfirmedMerge, link: RequestLink, project: string, proof: CliResult<SettledProof | null>,
 ): Promise<MergeOutcome> => {
   const recorded = await work.record({ item: link.item, ref: link.ref, head: link.head, project });
   if (!recorded.ok) {
@@ -182,10 +186,13 @@ const outputOf = (args: MergeArgs, item: string, outcome: MergeOutcome, offLines
     case 'head-moved':
       return mergeOutput(args, outcome.kind, exitCodeOf['not-ready'], [verdict, checkReasons.headMoved, checkRemedies.head, ...offLines],
         { currentHead: outcome.head, offLines });
-    case 'not-merged':
-      return mergeOutput(args, outcome.kind, exitCodeOf.failure, [
-        verdict, `If GitHub merges the PR, run "${commandText(commandLines.itemRecord)} ${item} ${flagText(flags.ref)} ${args.number}".`, ...offLines,
-      ], { item, offLines });
+    case 'not-merged': {
+      const { callFailed } = outcome;
+      const remedy = callFailed
+        ? 'The merge call failed. Check the PR state before any new merge call.'
+        : `If GitHub merges the PR, run "${commandText(commandLines.itemRecord)} ${item} ${flagText(flags.ref)} ${args.number}".`;
+      return mergeOutput(args, outcome.kind, exitCodeOf.failure, [verdict, remedy, ...offLines], { item, callFailed, offLines });
+    }
     case 'unknown':
       return mergeOutput(args, outcome.kind, exitCodeOf.failure, [verdict, 'Check the PR state before any new merge call.', ...offLines], { offLines });
     default: return outcome satisfies never;
@@ -206,17 +213,24 @@ const finishMerge = async (deps: Deps, work: WorkHost, args: MergeArgs, read: Me
   const policy = proofNeedOf(work.guards, facts.mode, args.admin);
   const offLines = [...callerLines, ...policy.offLines];
   const proof = await mergeProofOf(work, link, facts.mode, { ...policy, offLines });
+  let mergeCommit: string | null;
   if (read.kind === readinessKinds.ready) {
     if (!proof.ok) return proof;
     const method = mergeMethods.find((value) => value === facts.project[softwareProjectKeys.mergeMethod]);
     if (method === undefined) return failure('The project merge method is invalid.', checkRemedies.node);
     // A call that fails can still have merged the PR. Only a read at the pin decides.
-    const wrote = await runMerge(deps, { ...target, method, admin: args.admin });
-    if (!wrote.ok && wrote.error.kind === 'usage') return wrote;
+    const called = await runMerge(deps, { ...target, method, admin: args.admin });
+    if (!called.ok && called.error.kind === 'usage') return called;
     const confirmed = await confirmMerged(deps, target);
+    if (confirmed.kind === 'not-merged') {
+      return ok(outputOf(args, item.id, { ...confirmed, callFailed: !called.ok }, offLines));
+    }
     if (confirmed.kind !== 'merged') return ok(outputOf(args, item.id, confirmed, offLines));
+    mergeCommit = confirmed.mergeCommit;
+  } else {
+    mergeCommit = pr.mergeCommit?.oid ?? null;
   }
-  const outcome = await recordMerge(deps, work, target, link, facts.project.id, proof);
+  const outcome = await recordMerge(deps, work, { ...target, mergeCommit }, link, facts.project.id, proof);
   return ok(outputOf(args, item.id, outcome, offLines));
 };
 

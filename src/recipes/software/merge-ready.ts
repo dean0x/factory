@@ -29,6 +29,7 @@ export const readinessPrSchema = z.strictObject({
   mergeStateStatus: z.enum(['CLEAN', 'HAS_HOOKS', 'DIRTY', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'DRAFT', 'UNKNOWN']),
   reviewDecision: z.enum(['', 'APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']),
   mergedAt: z.iso.datetime().nullable(),
+  mergeCommit: z.object({ oid: z.string().regex(mergeCheck.shaPattern) }).nullable(),
   statusCheckRollup: z.array(checkSchema).max(checkRollupLimit).nullable(),
 });
 

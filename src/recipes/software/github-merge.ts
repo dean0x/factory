@@ -23,7 +23,7 @@ export interface MergeRequest extends MergeTarget {
 }
 
 export type MergeConfirmation =
-  | { readonly kind: 'merged' }
+  | { readonly kind: 'merged'; readonly mergeCommit: string | null }
   | { readonly kind: 'not-merged' }
   | { readonly kind: 'head-moved'; readonly head: string }
   | { readonly kind: 'unknown' };
@@ -87,7 +87,7 @@ export const runMerge = async (deps: Pick<Deps, 'run'>, request: MergeRequest): 
     );
 };
 
-const confirmationSchema = readinessPrSchema.pick({ state: true, mergedAt: true, headRefOid: true });
+const confirmationSchema = readinessPrSchema.pick({ state: true, mergedAt: true, headRefOid: true, mergeCommit: true });
 const confirmationView = { ...readinessView, fields: Object.keys(confirmationSchema.shape).join(',') };
 
 /** The last read decides unless a merge or a head change ends the reads early. */
@@ -101,9 +101,9 @@ export const confirmMerged = async (deps: Deps, target: MergeTarget): Promise<Me
     const parsed = view.kind === 'parsed' ? confirmationSchema.safeParse(view.value) : null;
     last = { kind: 'unknown' };
     if (parsed?.success !== true) continue;
-    const { state, headRefOid, mergedAt } = parsed.data;
+    const { state, headRefOid, mergedAt, mergeCommit } = parsed.data;
     if (headRefOid !== target.head) return { kind: 'head-moved', head: headRefOid };
-    if (state === mergeCheck.mergedState && mergedAt !== null) return { kind: 'merged' };
+    if (state === mergeCheck.mergedState && mergedAt !== null) return { kind: 'merged', mergeCommit: mergeCommit?.oid ?? null };
     if (state === 'OPEN') last = { kind: 'not-merged' };
   }
   return last;

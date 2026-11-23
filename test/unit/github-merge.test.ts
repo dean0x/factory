@@ -14,9 +14,11 @@ const NEXT_HEAD = 'b'.repeat(40);
 const TARGET = { repo: 'example/project', number: 12, head: HEAD };
 const REQUEST = { ...TARGET, method: 'squash', admin: false } as const;
 const MERGE_PREFIX = ['pr', 'merge', '--repo', 'github.com/example/project', '--match-head-commit', HEAD];
-const VIEW_ARGS = ['pr', 'view', '--repo', 'github.com/example/project', '--json', 'state,mergedAt,headRefOid', '--', '12'];
-const OPEN = { state: 'OPEN', mergedAt: null, headRefOid: HEAD };
-const MERGED = { ...OPEN, state: 'MERGED', mergedAt: '2026-11-23T00:18:48Z' };
+const VIEW_ARGS = ['pr', 'view', '--repo', 'github.com/example/project', '--json', 'state,mergedAt,headRefOid,mergeCommit', '--', '12'];
+const OPEN = { state: 'OPEN', mergedAt: null, headRefOid: HEAD, mergeCommit: null };
+const MERGE_COMMIT = 'c'.repeat(40);
+const MERGED = { ...OPEN, state: 'MERGED', mergedAt: '2026-11-23T00:18:48Z', mergeCommit: { oid: MERGE_COMMIT } };
+const CONFIRMED = { kind: 'merged', mergeCommit: MERGE_COMMIT };
 const reply = (value: unknown) => exited(0, JSON.stringify(value));
 const sequence = (...answers: ReturnType<RunHandler>[]) => {
   let next = 0;
@@ -88,14 +90,14 @@ describe('confirmMerged', () => {
   it('reads again if gh exits zero and the PR is open', async () => {
     const deps = sequence(exited(0), reply(OPEN), reply(MERGED));
     await runMerge(deps, REQUEST);
-    expect(await confirmMerged(deps, TARGET)).toEqual({ kind: 'merged' });
+    expect(await confirmMerged(deps, TARGET)).toEqual(CONFIRMED);
     expect(deps.calls.slice(1)).toMatchObject([1, 2].map(() => ({ command: 'gh', args: VIEW_ARGS, timeoutMs: ghTimeoutMs, cwd: undefined })));
     expect(deps.sleeps).toEqual([5_000]);
   });
 
   it('confirms a merge on the first read with no wait', async () => {
     const deps = sequence(reply(MERGED));
-    expect(await confirmMerged(deps, TARGET)).toEqual({ kind: 'merged' });
+    expect(await confirmMerged(deps, TARGET)).toEqual(CONFIRMED);
     expect(deps.calls).toHaveLength(1);
     expect(deps.sleeps).toEqual([]);
   });
@@ -119,6 +121,7 @@ describe('confirmMerged', () => {
     ['a merged state without a merge time', reply({ ...MERGED, mergedAt: null })],
     ['an invalid merge time', reply({ ...MERGED, mergedAt: 'not a time' })],
     ['an invalid head', reply({ ...MERGED, headRefOid: HEAD.slice(1) })],
+    ['an invalid merge commit', reply({ ...MERGED, mergeCommit: { oid: MERGE_COMMIT.slice(1) } })],
     ['a closed PR at the pin', reply({ ...OPEN, state: 'CLOSED' })],
   ])('returns unknown if the third read gives %s', async (_name, answer) => {
     const deps = sequence(exited(0, 'not JSON'), reply(OPEN), answer, reply(MERGED));
@@ -130,7 +133,7 @@ describe('confirmMerged', () => {
   it('can confirm a merge after a failed call and an unreadable view', async () => {
     const deps = sequence(failure('time limit'), missingProgram('gh'), reply(MERGED));
     await runMerge(deps, REQUEST);
-    expect(await confirmMerged(deps, TARGET)).toEqual({ kind: 'merged' });
+    expect(await confirmMerged(deps, TARGET)).toEqual(CONFIRMED);
     expect(deps.calls.map(({ args }) => args[1])).toEqual(['merge', 'view', 'view']);
     expect(deps.sleeps).toEqual([5_000]);
   });

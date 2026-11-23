@@ -1094,7 +1094,11 @@ The first line gives the result. Fixed reasons, a remedy and any guard off line 
 
 With `session-checks` on, run the command in the coordinator pane or in an owner terminal. The caller rule does not prove identity. With `owner-go` and `approval-merge` on, an owner-mode merge needs a settled owner decision or a relayed go. In delegated mode it needs an owner store decision. The proof must match the PR and head. An assignee, label, review, comment or chat text is not proof. With `admin-merge` on, `--admin` needs an owner store decision at that same PR and head, even if the other proof guards are off. See [Guards](#guards) for what changes when a guard is off.
 
-Factory checks that its tracker permits the board write before it contacts GitHub. It makes at most one merge call. The confirmation and the board record must both match the given head. After it records the merge, the command can write one event file in `.factory/outbox/` beside `report.json`. A repeat at an already merged head does not merge again. If the result is `MERGED NOT RECORDED`, run `factory item record ID --ref PR` instead. If GitHub puts the PR in a merge queue, the result is `NOT MERGED` while it stays open. After GitHub merges it, use `factory item record`.
+Factory checks that its tracker permits the board write before it contacts GitHub. It makes at most one merge call. The confirmation and the board record must both match the given head. A repeat at an already merged head does not merge again. If the result is `MERGED NOT RECORDED`, run `factory item record ID --ref PR` instead.
+
+If GitHub puts the PR in a merge queue, the result is `NOT MERGED` while it stays open. After GitHub merges it, use `factory item record`. If the merge call fails and the PR stays open, check the PR state before a new merge call.
+
+After it records the merge, the command can write one merge event file in `.factory/outbox/` beside `report.json`. The fields are `schema`, `kind`, `item`, `pr`, `head`, `merge_commit`, `proof`, `request`, `decider`, and `at`. The `merge_commit` field is null only when GitHub gives no merge commit.
 
 A request link takes priority over a branch match. If the link and branch name different items, the command refuses. For an open PR, only open items can match by branch. For a PR already merged at the given head, a closed item can also match. Its current or former worker branch must match the PR branch, and its recorded head must equal the given head. Without a link, the branch must identify exactly one item.
 

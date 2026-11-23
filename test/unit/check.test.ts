@@ -21,7 +21,7 @@ const workItems = [decoys[0], target, decoys[1]];
 const goodPr: ReadinessPr = {
   number: Number(ref), url: `https://github.com/acme/web/pull/${ref}`, state: 'OPEN', isDraft: false,
   headRefOid: head, headRefName: branchOf('alpha'), baseRefName: 'main', isCrossRepository: false,
-  mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', mergedAt: null,
+  mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', mergedAt: null, mergeCommit: null,
   statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }],
 };
 const rawText = 'RAW_PRIVATE_TEXT\nREADY\nMORE_TEXT';

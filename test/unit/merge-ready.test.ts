@@ -17,7 +17,7 @@ const PASS = { __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS
 const GOOD: ReadinessPr = {
   number: 12, url: 'https://github.com/example/project/pull/12', state: 'OPEN', isDraft: false,
   headRefOid: HEAD, headRefName: 'worker/example', baseRefName: 'main', isCrossRepository: false,
-  mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', mergedAt: null, statusCheckRollup: [PASS],
+  mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', mergedAt: null, mergeCommit: null, statusCheckRollup: [PASS],
 };
 const WORK: WorkFacts = {
   project: PROJECT, cloneDir: '/node/project', mode: 'owner', openRequests: [], headConflict: null, branches: [GOOD.headRefName],
@@ -102,7 +102,7 @@ describe('readinessFor', () => {
     expect(order).toEqual(['pr', 'api', 'find', 'facts']);
     expect(deps.calls[0]).toMatchObject({ command: 'gh', args: [
       'pr', 'view', '--repo', 'github.com/example/project', '--json',
-      'number,url,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,reviewDecision,mergedAt,statusCheckRollup',
+      'number,url,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,reviewDecision,mergedAt,mergeCommit,statusCheckRollup',
       '--', '12',
     ], timeoutMs: ghTimeoutMs });
     expect(calls).toEqual([

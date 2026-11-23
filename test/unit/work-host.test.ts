@@ -223,11 +223,12 @@ const mergeFixture = async ({ view, ...options }: MergeFixture = {}) => {
   const work = await setup({ ...options, runGh: (call) => {
     if (call.args[0] === 'api') return exited(0, '{"behind_by":0}');
     if (call.args[1] === 'merge') { merged = true; return exited(0); }
-    const state = { state: merged ? 'MERGED' : 'OPEN', mergedAt: merged ? at : null, headRefOid: head } as const;
-    if (call.args.includes('state,mergedAt,headRefOid')) return exited(0, JSON.stringify(state));
+    const state = { state: merged ? 'MERGED' : 'OPEN', mergedAt: merged ? at : null, headRefOid: head,
+      mergeCommit: merged ? { oid: 'c'.repeat(40) } : null } as const;
+    if (call.args.includes('state,mergedAt,headRefOid,mergeCommit')) return exited(0, JSON.stringify(state));
     const identity = { number: Number(ref), url: `https://github.com/acme/web/pull/${ref}`, headRefName: query.branch,
       baseRefName: 'main', isCrossRepository: false };
-    const fields = call.args.includes(mergeCheck.fieldList) ? { mergeCommit: { oid: 'c'.repeat(40) } } : {
+    const fields = call.args.includes(mergeCheck.fieldList) ? {} : {
       isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED',
       statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }], ...view,
     };
@@ -292,7 +293,7 @@ describe('pr merge through the local work host', () => {
     expect(await readdir(outbox)).toEqual([mergeEventName]);
     const text = await readFile(event, 'utf8');
     expect(JSON.parse(text)).toEqual({ schema: 'factory.merge-event/v1', kind: 'merge', item, pr: Number(ref), head,
-      merge_commit: null, proof: 'record', request: APPROVAL_ID, decider: 'owner', at: expect.stringMatching(/Z$/) });
+      merge_commit: 'c'.repeat(40), proof: 'record', request: APPROVAL_ID, decider: 'owner', at: expect.stringMatching(/Z$/) });
     expect(Buffer.byteLength(text)).toBeLessThanOrEqual(eventFile.maxBytes);
     expect((await stat(event)).mode & 0o777).toBe(0o600);
     expect((await stat(outbox)).mode & 0o777).toBe(0o700);
