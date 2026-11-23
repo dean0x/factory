@@ -40,6 +40,7 @@ const text = z
   .string()
   .min(1)
   .max(ownerRecords.maxTextChars)
+  // oxlint-disable-next-line no-control-regex -- Reject control characters in store text.
   .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), 'must not hold a control character');
 
 const delegationSchema = z.strictObject({
@@ -135,13 +136,16 @@ export const requireOwnerChannel = (deps: Deps): CliResult<void> => {
  * window, the output window. Like `requireOwnerChannel`, the guard stops a session and its tools. It cannot prove that the
  * owner acts.
  */
-export const requireDecideChannel = (deps: Deps): CliResult<void> => {
-  const remedy = `Run "${commandText(commands.decide)}" in your own terminal window, outside Claude Code and outside a ${places.session}.`;
-  if (inFactorySession(deps)) return safetyRefusal(`a ${places.session} cannot record a decision`, remedy);
+export const requireDecideChannel = (deps: Deps, again: string = commands.decide): CliResult<void> => {
+  const command = `"${commandText(again)}"`;
+  const remedy = `Run ${command} in your own terminal window, outside Claude Code and outside a ${places.session}.`;
+  const action = again === commands.decide ? 'record a decision' : `run ${command}`;
+  if (inFactorySession(deps)) return safetyRefusal(`a ${places.session} cannot ${action}`, remedy);
   const claudeCode = deps.env[env.claudeCode];
-  if (claudeCode !== undefined && claudeCode !== '') return safetyRefusal('a Claude Code session cannot record a decision', remedy);
-  if (!deps.stdinIsTTY) return safetyRefusal('a decision needs a terminal window for input', remedy);
-  if (!deps.stdoutIsTTY) return safetyRefusal('a decision needs a terminal window for output', remedy);
+  if (claudeCode !== undefined && claudeCode !== '') return safetyRefusal(`a Claude Code session cannot ${action}`, remedy);
+  const subject = again === commands.decide ? 'a decision' : command;
+  if (!deps.stdinIsTTY) return safetyRefusal(`${subject} needs a terminal window for input`, remedy);
+  if (!deps.stdoutIsTTY) return safetyRefusal(`${subject} needs a terminal window for output`, remedy);
   return ok(undefined);
 };
 

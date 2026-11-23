@@ -1,6 +1,7 @@
 import type { DecisionAskInput, DecisionLogInput, LocalBoard } from '../board/contract.js';
 import { readWaiting, type WaitingDoc } from '../board/files.js';
 import { createLocalBoard } from '../board/local.js';
+import type { RequestLinkRules } from '../board/requests.js';
 import type { CliResult } from '../cli/errors.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
@@ -20,13 +21,22 @@ export interface OpenBoard {
   readonly connector: LocalBoard;
 }
 
+/** The recipe rules for reads of stored links. */
+export const requestLinkRulesOf = (config: FactoryConfig): RequestLinkRules | undefined => {
+  const check = config.entry.recordCheck;
+  return check === undefined ? undefined : {
+    points: config.entry.approvalPoints.map((point) => point.id),
+    parseRef: check.parseRef,
+    parseHead: check.parseHead,
+  };
+};
+
 /**
  * The connector of the board of the node at `home`, for a config that is loaded. `command` is the command that a stop of the
  * connector tells the person to run again. The tracker kind of the config decides whether a write is allowed: only the kind `local`
  * writes.
  */
 export const localBoardOf = (deps: Deps, home: string, config: FactoryConfig, command: CommandName): LocalBoard => {
-  const check = config.entry.recordCheck;
   return createLocalBoard(deps, layoutOf(home), {
     queueKey: queueKeyOf(config.entry),
     recipe: config.entry.board,
@@ -34,11 +44,7 @@ export const localBoardOf = (deps: Deps, home: string, config: FactoryConfig, co
     command,
     tracker: config.core.tracker.kind,
     node: config.core.node.id,
-    requestLinkRules: check === undefined ? undefined : {
-      points: config.entry.approvalPoints.map((point) => point.id),
-      parseRef: check.parseRef,
-      parseHead: check.parseHead,
-    },
+    requestLinkRules: requestLinkRulesOf(config),
   });
 };
 

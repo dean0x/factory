@@ -1,6 +1,8 @@
 import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import { inFactorySession } from '../core/factory-session.js';
+import { requireDecideChannel } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
 import { guardOn } from '../guards/effective.js';
@@ -231,6 +233,13 @@ export const requireCoordinatorCaller = async (
   deps: Deps, home: string, config: FactoryConfig, again: string,
 ): Promise<CliResult<CoordinatorPane | null>> =>
   (await guardOn(deps, guardIds.sessionChecks, home)) ? checkCoordinatorCaller(deps, home, config, again) : ok(null);
+
+/** Require the coordinator pane in a session, or an owner terminal outside it. This is a mistake guard, not proof of identity. */
+export const requireNodeCaller = async (deps: Deps, home: string, config: FactoryConfig, again: string): Promise<CliResult<void>> => {
+  if (!inFactorySession(deps)) return requireDecideChannel(deps, again);
+  const caller = await checkCoordinatorCaller(deps, home, config, again);
+  return caller.ok ? ok(undefined) : caller;
+};
 
 /**
  * Ends a pane by its id. A pane id is never used again by the same tmux server, so the id names this pane and no other. The value

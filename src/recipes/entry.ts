@@ -1,4 +1,7 @@
 import type { z } from 'zod';
+import type { RequestLink } from '../board/contract.js';
+import type { SettledProof } from '../board/decide.js';
+import type { RecordedWork, WorkItemLookup } from '../board/record-flow.js';
 import type { CliResult } from '../cli/errors.js';
 import type { Command } from '../cli/table.js';
 import type { Deps } from '../core/deps.js';
@@ -157,14 +160,34 @@ export interface RecordCheck {
   readonly check: (deps: Deps, input: RecordCheckInput) => Promise<CliResult<CheckedRecord>>;
 }
 
+export interface WorkFacts {
+  readonly openRequests: readonly string[];
+  readonly headConflict: string | null;
+  readonly mode: ApprovalMode;
+  readonly project: RecipeProject;
+  readonly cloneDir: string;
+  readonly branches: readonly string[] | undefined;
+}
+
+/** The local reads and record step of a work flow. The recipe decides which policy checks to call. */
+export interface WorkHost {
+  readonly guards: GuardValues;
+  readonly caller: () => Promise<CliResult<void>>;
+  readonly find: (query: { readonly point: string; readonly ref: string; readonly branch: string }) => Promise<CliResult<WorkItemLookup>>;
+  readonly facts: (target: RequestLink & { readonly project?: string }) => Promise<CliResult<WorkFacts>>;
+  readonly approval: (target: RequestLink & { readonly need: 'go' | 'owner-record' }) => Promise<CliResult<SettledProof>>;
+  readonly record: (target: { readonly item: string; readonly ref: string; readonly project?: string }) => Promise<CliResult<RecordedWork>>;
+}
+
 /**
  * What the core gives to the `commands` hook of a recipe. A recipe imports no loader and no command file, so the core carries what
- * a command of the recipe needs from them. In both calls, `command` is the command name that the remedy of a failure tells the
+ * a command of the recipe needs from them. In each call, `command` is the command name that the remedy of a failure tells the
  * person to run again.
  * - `registry` is the registry that the command table is built from.
  * - `locateNode` gives the folder of the node: the folder of the home flag, else the one that the current folder is in.
  * - `loadProject` reads the config of the node in `home` and gives one project. The id names it. Without an id, the node must list
  *   exactly one project. Any other case is a usage error (exit 2) that lists the projects.
+ * - `openWork` finds the node, loads its config and reads its guard values. It does not run a caller check or a recipe check.
  */
 export interface RecipeHost {
   readonly registry: RecipeRegistry;
@@ -175,6 +198,7 @@ export interface RecipeHost {
     projectId: string | undefined,
     command: CommandName,
   ) => Promise<CliResult<RecipeProject>>;
+  readonly openWork: (deps: Deps, home: string | undefined, command: CommandName) => Promise<CliResult<WorkHost>>;
 }
 
 /**
