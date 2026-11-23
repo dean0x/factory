@@ -66,6 +66,10 @@ export const softwareGlossary: readonly GlossaryEntry[] = [
     text: 'A merge record shows that the pull request of a work item is merged. `{{program}} item record` writes it after a check on GitHub.',
   },
   {
+    term: 'merge event file',
+    text: 'A merge event file describes one pull request merge. Its name is `merge-<pr>-<head>.json`.',
+  },
+  {
     term: 'release',
     text: 'A release is a version of a project that you publish. The approval point `release` guards it.',
   },

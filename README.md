@@ -1098,7 +1098,7 @@ Factory checks that its tracker permits the board write before it contacts GitHu
 
 If GitHub puts the PR in a merge queue, the result is `NOT MERGED` while it stays open. After GitHub merges it, use `factory item record`. If the merge call fails and the PR stays open, check the PR state before a new merge call.
 
-After it records the merge, the command can write one merge event file in `.factory/outbox/` beside `report.json`. The fields are `schema`, `kind`, `item`, `pr`, `head`, `merge_commit`, `proof`, `request`, `decider`, and `at`. The `merge_commit` field is null only when GitHub gives no merge commit.
+After it records the merge, the command can write one merge event file named `merge-<pr>-<head>.json`. The file is beside the report file `.factory/outbox/report.json`. The fields are `schema`, `kind`, `item`, `pr`, `head`, `merge_commit`, `proof`, `request`, `decider`, and `at`. The `merge_commit` field is null only when GitHub gives no merge commit.
 
 A request link takes priority over a branch match. If the link and branch name different items, the command refuses. If several items match the branch, the command refuses even if a link names only one of them. For an open PR, only open items can match by branch. For a PR already merged at the given head, a closed item can also match. Its current or former worker branch must match the PR branch, and its recorded head must equal the given head. Without a link, the branch must identify exactly one item.
 
