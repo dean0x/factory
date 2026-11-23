@@ -1258,7 +1258,10 @@ describe('the session pointer of the coordinator', () => {
       const pointer = workerPathsOf(HOME, 'alpha').lastSessionFile;
       const linked: Deps = { ...deps, fs: { ...deps.fs, lstat: async (path) => path === pointer ? { ok: true, value: 'link' } : deps.fs.lstat(path) } };
       expect(await readOwnCoordinatorResume(linked, HOME, NODE_ID)).toMatchObject({
-        ok: false, error: { message: expect.stringContaining('cannot check the session pointer: the pointer is a link'), hint: 'Check the worker pointer. Then try again.' },
+        ok: false, error: {
+          message: expect.stringContaining('cannot check the session pointer: the pointer is a link'),
+          hint: expect.stringContaining('"factory worker list"'),
+        },
       });
     });
 

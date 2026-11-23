@@ -6,7 +6,7 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, watchPoll, type HookEvent, type HookState } from '../names.js';
+import { commandLines, commandText, eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, watchPoll, type HookEvent, type HookState } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
 import { listWorkerRecords, readCheckedFile, readWorkerFile, type WorkerFileRead } from './registry.js';
@@ -364,7 +364,10 @@ const readPointer = async (deps: Deps, home: string, owner: PointerOwner, requir
   const pointer = await readPointerFile(deps, home, owner);
   if (!pointer.ok) return pointer;
   if (requireReadable && pointer.value.state === 'invalid') {
-    return failure(`cannot check the session pointer: ${pointer.value.reason}`, `Check the ${roles.worker} pointer. Then try again.`);
+    return failure(
+      `cannot check the session pointer: ${pointer.value.reason}`,
+      `Run "${commandText(commandLines.workerList)}" to check the ${roles.worker} records. Fix the pointer before you retry.`,
+    );
   }
   if (pointer.value.state !== 'text') return ok(pointer.value);
   const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;
