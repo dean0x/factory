@@ -47,6 +47,13 @@ const invalidLink = (id: string | null): CliResult<never> => failure(
 
 const linkLabels: ReadonlySet<unknown> = new Set(Object.values(approvalLinkLabels));
 
+/** A reserved link field cannot name work without an item. Ordinary fields do not name work. */
+const workLinkOfFields = (fields: unknown, rules: RequestLinkRules, id: string | null): CliResult<RequestLink | null> => {
+  const link = linkOfFields(fields, rules);
+  if (!link.ok || link.value !== null || !Array.isArray(fields)) return link;
+  return fields.some((field: unknown) => isRecord(field) && linkLabels.has(field[requestFieldKeys.label])) ? invalidLink(id) : link;
+};
+
 /** An item name without any other link field blocks work on that item. It gives no reference or approval proof. */
 const itemMentionOf = (fields: unknown): string | null => {
   if (!Array.isArray(fields) || fields.length > boardTextLimits.maxRequestFields) return null;
@@ -65,7 +72,7 @@ const waitingTargetOf = ({ id, record }: WaitingItem, rules: RequestLinkRules): 
   readonly item: string; readonly point?: string; readonly ref?: string;
 } | null> => {
   const fields = record[decisionKeys.fields];
-  const link = linkOfFields(fields, rules);
+  const link = workLinkOfFields(fields, rules, id);
   if (link.ok) return link;
   const item = itemMentionOf(fields);
   return item === null ? invalidLink(id) : ok({ item });
@@ -81,7 +88,7 @@ const settledLinkOf = ({ id, record }: DecisionRow, rules: RequestLinkRules): Cl
   if (typeof text !== 'string') return invalidLink(id);
   const request = answeredRequestOf(text);
   if (!request.ok) return invalidLink(id);
-  const link = linkOfFields(request.value[decisionKeys.fields], rules);
+  const link = workLinkOfFields(request.value[decisionKeys.fields], rules, id);
   if (!link.ok || (link.value !== null && (id === null || request.value[waitingKeys.id] !== id))) return invalidLink(id);
   return link;
 };
@@ -169,6 +176,8 @@ export interface RecordedWork {
 export interface RecordWorkInput {
   readonly id: string;
   readonly ref: string;
+  /** When supplied, the record must match the head that the caller confirmed. */
+  readonly head?: string | undefined;
   readonly project: string | undefined;
 }
 
@@ -308,6 +317,9 @@ export const recordWork = async (
   if (!approved.ok) return approved;
   const checked = await hook.check(deps, { ...input.value, guards });
   if (!checked.ok) return checked;
+  if (action.head !== undefined && checked.value.head !== action.head) {
+    return failure('the head of the record does not match the confirmed head', 'Check the reference and its current head.');
+  }
   const recorded = await connector.recordChecked(action.id, checked.value, worker.value, approval);
   if (!recorded.ok) return recorded;
   const offGuards: string[] = [];

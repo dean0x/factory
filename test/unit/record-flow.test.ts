@@ -6,7 +6,7 @@ import type { CliResult } from '../../src/cli/errors.js';
 import { localBoardOf } from '../../src/commands/board-open.js';
 import { guardReadOf } from '../../src/core/guard-source.js';
 import { ok } from '../../src/core/result.js';
-import { boardKeys, commands, guardIds } from '../../src/names.js';
+import { approvalLinkLabels, boardKeys, commands, guardIds } from '../../src/names.js';
 import type { CheckedRecord } from '../../src/recipes/entry.js';
 import { softwareRecipe } from '../../src/recipes/software/entry.js';
 import { softwareGuardIds } from '../../src/recipes/software/guard-parts.js';
@@ -129,6 +129,13 @@ describe('open requests for work', () => {
       .toEqual(ok(['D-2', 'D-3']));
   });
 
+  it('does not treat a link without its item as an unrelated request', () => {
+    const request = approvalRequest('D-2');
+    const incomplete = { ...request, fields: request.fields.filter(({ label }) => label !== approvalLinkLabels.item) };
+    expect(find([decoys[0], target, decoys[1]], [incomplete])).toMatchObject(linkFault('D-2'));
+    expect(find([decoys[0], target, decoys[1]], [], [approvalAnswer(incomplete).row])).toMatchObject(linkFault('D-2'));
+  });
+
   it('refuses an invalid link even after a valid request matches', () => {
     const broken = approvalRequest('D-2', { ...APPROVAL_LINK, head: 'not-a-head' });
     expect(openRequestsOf(waitingOf(approvalRequest(), broken), rules, { item, ref })).toMatchObject(linkFault('D-2'));
@@ -161,6 +168,10 @@ it.each([{ off: [] }, { off: [softwareGuardIds.prRules, guardIds.ownerGo] }])('r
   const board = { home: HOME, config, connector: localBoardOf(deps, HOME, config, commands.item) };
   const record = () => recordWork(deps, board, { id: item, ref, project: 'web' });
 
+  expect(await recordWork(deps, board, { id: item, ref, project: 'web', head: 'b'.repeat(40) })).toMatchObject({
+    ok: false, error: { message: 'the head of the record does not match the confirmed head', hint: 'Check the reference and its current head.' },
+  });
+  expect(repo.commits).toHaveLength(0);
   expect(await record()).toMatchObject({ ok: true, value: { checked, recorded: { changed: true, item: { id: item } }, offGuards: off } });
   expect(await record()).toMatchObject({ ok: true, value: { checked, recorded: { changed: false }, offGuards: off } });
   expect(repo.commits).toHaveLength(1);

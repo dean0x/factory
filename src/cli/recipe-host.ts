@@ -1,5 +1,6 @@
-import { headConflictIn, shown } from '../board/edit.js';
+import { checkClose, headConflictIn, shown } from '../board/edit.js';
 import { readDecisionLog, readWaiting } from '../board/files.js';
+import { requireLocalKind } from '../board/local.js';
 import { branchesOf, checkInputOf, findWorkItem, openRequestsOf, recordWork, workerOf } from '../board/record-flow.js';
 import type { RequestLinkRules } from '../board/requests.js';
 import { localBoardOf, requestLinkRulesOf, type OpenBoard } from '../commands/board-open.js';
@@ -102,7 +103,7 @@ const workHostOf = (deps: Deps, board: OpenBoard, rules: RequestLinkRules, guard
     }
     return proof;
   },
-  record: ({ item, ref, project }) => recordWork(deps, board, { id: item, ref, project }),
+  record: ({ item, ref, head, project }) => recordWork(deps, board, { id: item, ref, head, project }),
   writeEvent: (event) => writeEventFile(deps, board.home, event),
 });
 
@@ -119,7 +120,7 @@ export const recipeHostFor = (registry: RecipeRegistry): RecipeHost => {
       const config = await loadConfig(deps, home, registry);
       return config.ok ? projectOf(config.value.recipe.projects, projectId, command) : config;
     },
-    openWork: async (deps, homeFlag, command) => {
+    openWork: async (deps, homeFlag, command, access = 'read') => {
       const located = await locateNode(deps, homeFlag, command);
       if (!located.ok) return located;
       const home = located.value;
@@ -129,6 +130,12 @@ export const recipeHostFor = (registry: RecipeRegistry): RecipeHost => {
       const rules = requestLinkRulesOf(config);
       if (rules === undefined) return usageError(`the ${roles.recipe} ${config.entry.id} has no work check`);
       const read = await guardReadOf(deps, home, config, 'when-off');
+      if (access === 'record') {
+        const local = requireLocalKind(config.core.tracker.kind, command, read.state.values);
+        if (!local.ok) return local;
+        const closed = checkClose({ recipe: config.entry.board, config: config.core.board });
+        if (!closed.ok) return closed;
+      }
       const board = { home, config, connector: localBoardOf(read.deps, home, config, command) };
       return ok(workHostOf(read.deps, board, rules, read.state.values, command));
     },

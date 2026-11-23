@@ -177,7 +177,7 @@ export interface WorkHost {
   readonly find: (query: { readonly point: string; readonly ref: string; readonly branch: string }) => Promise<CliResult<WorkItemLookup>>;
   readonly facts: (target: RequestLink & { readonly project?: string }) => Promise<CliResult<WorkFacts>>;
   readonly approval: (target: RequestLink & { readonly need: 'go' | 'owner-record' }) => Promise<CliResult<SettledProof>>;
-  readonly record: (target: { readonly item: string; readonly ref: string; readonly project?: string }) => Promise<CliResult<RecordedWork>>;
+  readonly record: (target: { readonly item: string; readonly ref: string; readonly head?: string; readonly project?: string }) => Promise<CliResult<RecordedWork>>;
   readonly writeEvent: (event: EventFileInput) => Promise<CliResult<EventWrite>>;
 }
 
@@ -189,7 +189,8 @@ export interface WorkHost {
  * - `locateNode` gives the folder of the node: the folder of the home flag, else the one that the current folder is in.
  * - `loadProject` reads the config of the node in `home` and gives one project. The id names it. Without an id, the node must list
  *   exactly one project. Any other case is a usage error (exit 2) that lists the projects.
- * - `openWork` finds the node, loads its config and reads its guard values. It does not run a caller check or a recipe check.
+ * - `openWork` finds the node, loads its config and reads its guard values. Record access also checks the tracker and closed state.
+ *   It does not run a caller check or a recipe check.
  */
 export interface RecipeHost {
   readonly registry: RecipeRegistry;
@@ -200,7 +201,7 @@ export interface RecipeHost {
     projectId: string | undefined,
     command: CommandName,
   ) => Promise<CliResult<RecipeProject>>;
-  readonly openWork: (deps: Deps, home: string | undefined, command: CommandName) => Promise<CliResult<WorkHost>>;
+  readonly openWork: (deps: Deps, home: string | undefined, command: CommandName, access?: 'read' | 'record') => Promise<CliResult<WorkHost>>;
 }
 
 /**

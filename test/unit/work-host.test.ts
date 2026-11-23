@@ -189,7 +189,7 @@ describe('the work host on a local board', () => {
   it('refuses a record with no proof before any external call or board change', async () => {
     const world = await setup();
     const work = await world.open();
-    expectRefusal(await work.record({ item, ref, project: 'web' }), 1, 'no linked approval request', 'factory request add');
+    expectRefusal(await work.record({ item, ref, head, project: 'web' }), 1, 'no linked approval request', 'factory request add');
     expect(world.calls).toEqual([]);
     expect(await readFile(join(layoutOf(world.home).stateDir, files.board), 'utf8')).toBe(world.board);
   });
@@ -273,6 +273,13 @@ describe('pr merge through the local work host', () => {
     expect(world.gh().slice(5).map(({ args }) => args[1])).toEqual(['view', 'view']);
     expect(await readdir(outbox)).toEqual([mergeEventName]);
     expect(await readFile(event, 'utf8')).toBe(text);
+  });
+
+  it('recognizes a completed merge on a repeat without a linked request', async () => {
+    const world = await mergeFixture({ realGit: true, off: [guardIds.ownerGo] });
+    await world.commitBase();
+    expect(await world.run()).toMatchObject({ code: 0, out: expect.stringMatching(/^MERGED AND RECORDED\n/) });
+    expect(await world.run()).toMatchObject({ code: 0, out: expect.stringMatching(/^MERGED AND ALREADY RECORDED\n/) });
   });
 
   it('refuses an absent proof before any merge, board commit or event', async () => {

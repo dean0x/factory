@@ -29,9 +29,12 @@ interface Setup {
   readonly proof?: 'owner' | 'relay';
   readonly caller?: Readonly<Record<string, string>>;
   readonly delegated?: boolean;
+  readonly recordHead?: string;
+  readonly hosted?: boolean;
+  readonly noClosedState?: boolean;
 }
 
-const ghForMerge = () => {
+const ghForMerge = (recordHead: string) => {
   const calls: RunCall[] = [];
   let merged = false;
   const run = (call: RunCall) => {
@@ -40,7 +43,7 @@ const ghForMerge = () => {
     if (call.args[1] === 'merge') { merged = true; return exited(0); }
     const state = { headRefOid: head, state: merged ? 'MERGED' : 'OPEN', mergedAt: merged ? '2030-01-02T03:04:05.678Z' : null };
     if (call.args.includes('state,mergedAt,headRefOid')) return exited(0, JSON.stringify(state));
-    const facts = call.args.includes(mergeCheck.fieldList) ? { mergeCommit: { oid: 'c'.repeat(40) } } : {
+    const facts = call.args.includes(mergeCheck.fieldList) ? { headRefOid: recordHead, mergeCommit: { oid: 'c'.repeat(40) } } : {
       isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED',
       statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }],
     };
@@ -50,10 +53,12 @@ const ghForMerge = () => {
   return { run, calls, merges: () => calls.filter(({ args }) => args[1] === 'merge') };
 };
 
-const setup = async ({ off = [], proof, caller, delegated = false }: Setup = {}) => {
-  const base = sampleConfigWithBoard();
+const setup = async ({ off = [], proof, caller, delegated = false, recordHead = head, hosted = false, noClosedState = false }: Setup = {}) => {
+  const sample = sampleConfigWithBoard();
+  const base = noClosedState ? { ...sample, core: { ...sample.core, board: { ...sample.core.board, closed: undefined } } } : sample;
   const approval = delegated ? { ...base.core.approval, [point]: 'delegated' as const } : base.core.approval;
-  const config = withGuardsOff({ ...base, core: { ...base.core, approval } }, off);
+  const tracker = hosted ? { kind: 'github', items: 'acme/items', decisions: 'acme/decisions', watch_interval: '5m' } as const : base.core.tracker;
+  const config = withGuardsOff({ ...base, core: { ...base.core, approval, tracker } }, off);
   const { row, record } = approvalAnswer();
   const proofRows = { owner: [row], relay: [approvalRelay()] };
   const rows = proof === undefined ? [] : proofRows[proof];
@@ -67,7 +72,7 @@ const setup = async ({ off = [], proof, caller, delegated = false }: Setup = {})
     projects: [], effort: 'high', model: 'default', proxyBaseUrl: null, path: '/bin', agent: 'claude' });
   if (!launch.ok) throw new Error(launch.error);
   const tmux = tmuxHandler({ sessions: { [node]: HOME }, coordinatorCommands: { [node]: launch.value } });
-  const gh = ghForMerge();
+  const gh = ghForMerge(recordHead);
   const deps = {
     ...repo.deps, env: { ...repo.deps.env, ...caller }, stdinIsTTY: true, stdoutIsTTY: true,
     run: async (name, args, options) => {
@@ -82,7 +87,7 @@ const setup = async ({ off = [], proof, caller, delegated = false }: Setup = {})
     const code = await runCli([...command, ...flags], deps, sink);
     return { code, out: sink.out.join(''), err: sink.errors.join('') };
   };
-  return { run, gh };
+  return { run, gh, commits: repo.commits, files: repo.deps.files };
 };
 
 const ownerGo = guardIds.ownerGo;
@@ -95,6 +100,33 @@ const coordinator = { FACTORY_SESSION: node, TMUX_PANE: coordinatorPane };
 const workerInNode = { ...coordinator, TMUX_PANE: workerPane };
 
 describe('pr merge guard values', () => {
+  it('checks the tracker before any external read even when proof is not required', async () => {
+    const world = await setup({ off: [ownerGo], hosted: true });
+    const result = await world.run();
+    expect(result.code).toBe(4);
+    expect(result.err).toContain('The github board is not in this version');
+    expect(result.err).toContain('Set the tracker kind to local');
+    expect(world.gh.calls).toEqual([]);
+  });
+
+  it('requires a closed state before any external read', async () => {
+    const world = await setup({ noClosedState: true, proof: 'owner' });
+    const result = await world.run();
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('the setup names no closed state');
+    expect(result.err).toContain('see the sample setup');
+    expect(world.gh.calls).toEqual([]);
+  });
+
+  it('records nothing if the final read no longer matches the pin', async () => {
+    const world = await setup({ off: [ownerGo], recordHead: 'c'.repeat(40) });
+    const result = await world.run();
+    expect(result).toMatchObject({ code: 1, out: expect.stringContaining(`MERGED NOT RECORDED\nRun "factory item record ${item} --ref ${ref}".`) });
+    expect(world.gh.merges()).toHaveLength(1);
+    expect(world.commits).toHaveLength(0);
+    expect([...world.files.keys()].filter((file) => file.endsWith(`merge-${ref}-${head}.json`))).toEqual([]);
+  });
+
   it('checks for proof when owner go and merge approval are on', async () => {
     const world = await setup();
     const result = await world.run();

@@ -138,7 +138,7 @@ describe('pr merge', () => {
     expect(result.text).toMatch(/^MERGED AND RECORDED\b/);
     expect(world.log).toEqual([...beforeProof, 'proof:go', 'merge', 'confirm', 'record', 'event']);
     expect(world.calls).toContainEqual(['approval', { item, point, ref, head, need: 'go' }]);
-    expect(world.calls).toContainEqual(['record', { item, ref, project: project.id }]);
+    expect(world.calls).toContainEqual(['record', { item, ref, head, project: project.id }]);
     expect(world.ghCalls[2]?.args).toEqual(['pr', 'merge', '--repo', 'github.com/acme/web', '--match-head-commit', head, '--rebase', '--', ref]);
   });
 

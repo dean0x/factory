@@ -130,7 +130,7 @@ const writeMergeEvent = async (deps: Deps, work: WorkHost, target: MergeTarget, 
 const recordMerge = async (
   deps: Deps, work: WorkHost, target: MergeTarget, link: RequestLink, project: string, proof: CliResult<SettledProof | null>,
 ): Promise<MergeOutcome> => {
-  const recorded = await work.record({ item: link.item, ref: link.ref, project });
+  const recorded = await work.record({ item: link.item, ref: link.ref, head: link.head, project });
   if (!recorded.ok) return { kind: 'merged-not-recorded' };
   const event = await writeMergeEvent(deps, work, target, link, proof);
   return { kind: recorded.value.recorded.changed ? 'merged' : 'already-recorded', event, proof: proof.ok ? proof.value : null };
@@ -215,7 +215,7 @@ export const runPrMerge = async (host: RecipeHost, deps: Deps, words: readonly s
   const parsed = parseMerge(words, given);
   if (!parsed.ok) return parsed;
   const args = parsed.value;
-  const opened = await host.openWork(deps, args.home, COMMAND);
+  const opened = await host.openWork(deps, args.home, COMMAND, 'record');
   if (!opened.ok) return opened;
   const work = opened.value;
   const caller = await requireMergeCaller(work, deps);

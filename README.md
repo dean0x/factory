@@ -1082,7 +1082,7 @@ Each program has 5 seconds. A program that does not run, that takes too long or 
 
 ### Check a pull request
 
-`factory check PR [--head SHA] [--project ID] [--home DIR]` reads GitHub and the local board once. It writes nothing and gives no approval. With no `--head`, it checks the current head. If the config lists more than one project, give `--project`.
+`factory check PR [--head SHA] [--project ID] [--home DIR]` uses the PR view, a base comparison and the local board. It writes nothing and gives no approval. With no `--head`, it checks the current head. If the config lists more than one project, give `--project`.
 
 `READY` means the pull request is open, is not a draft, and has at least one check. All checks must pass, and the check list must be complete. The head must be up to date with the base and have no merge conflict. GitHub must report an acceptable merge state and no request for review or changes. An empty review decision also passes. Factory must find one matching board item with no open ask, open request or head conflict. With `pr-rules` on, the base must be the project default branch.
 
@@ -1094,7 +1094,7 @@ The first line gives the result. Fixed reasons, a remedy and any guard off line 
 
 With `session-checks` on, run the command in the coordinator pane or in an owner terminal. The caller rule does not prove identity. With `owner-go` and `approval-merge` on, an owner-mode merge needs a settled owner decision or a relayed go. In delegated mode it needs an owner store decision. The proof must match the PR and head. An assignee, label, review, comment or chat text is not proof. With `admin-merge` on, `--admin` needs an owner store decision at that same PR and head, even if the other proof guards are off. See [Guards](#guards) for what changes when a guard is off.
 
-Factory makes at most one merge call. It checks whether GitHub merged the PR at the given head before it records the merge. After it records the merge, the command can write one event file in `.factory/outbox/` beside `report.json`. A repeat at an already merged head does not merge again. If the result is `MERGED NOT RECORDED`, run `factory item record ID --ref PR` instead. If GitHub puts the PR in a merge queue, the result is `NOT MERGED` while it stays open. After GitHub merges it, use `factory item record`.
+Factory checks that its tracker permits the board write before it contacts GitHub. It makes at most one merge call. The confirmation and the board record must both match the given head. After it records the merge, the command can write one event file in `.factory/outbox/` beside `report.json`. A repeat at an already merged head does not merge again. If the result is `MERGED NOT RECORDED`, run `factory item record ID --ref PR` instead. If GitHub puts the PR in a merge queue, the result is `NOT MERGED` while it stays open. After GitHub merges it, use `factory item record`.
 
 ### Watch a pull request
 
