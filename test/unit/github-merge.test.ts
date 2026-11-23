@@ -34,7 +34,8 @@ describe('mergeArgv', () => {
 
   it.each(['a'.repeat(39), 'A'.repeat(40), `${HEAD.slice(1)}g`])('refuses a head that is not a full lowercase SHA: %s', (head) => {
     expect(mergeArgv({ ...REQUEST, head })).toEqual({ ok: false, error: {
-      kind: 'usage', message: 'The head must be a full commit id of 40 lowercase hex digits.', hint: 'Give the full PR head.',
+      kind: 'usage', message: 'The head must be a full commit id of 40 lowercase hex digits.',
+      hint: 'Give the full PR head. Run "factory pr merge --help" to see the options.',
     } });
   });
 
@@ -46,7 +47,8 @@ describe('mergeArgv', () => {
 
   it('refuses a repo with an extra path component', () => {
     expect(mergeArgv({ ...REQUEST, repo: 'example/project/other' })).toEqual({ ok: false, error: {
-      kind: 'usage', message: 'The repo name is not valid for GitHub.', hint: 'Check the project URL.',
+      kind: 'usage', message: 'The repo name is not valid for GitHub.',
+      hint: 'Check the project URL. Run "factory doctor" to check the config.',
     } });
   });
 });
@@ -68,7 +70,8 @@ describe('runMerge', () => {
   ])('does not repeat a call after %s or return gh text', async (_name, answer) => {
     const deps = sequence(answer);
     expect(await runMerge(deps, REQUEST)).toEqual({ ok: false, error: {
-      kind: 'failure', message: 'gh could not complete the merge call.', hint: 'Check the PR state before any new merge call.',
+      kind: 'failure', message: 'gh could not complete the merge call.',
+      hint: 'Run "factory check 12" to check the PR state before a new merge call.',
     } });
     expect(deps.calls).toHaveLength(1);
     expect(deps.sleeps).toEqual([]);

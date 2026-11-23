@@ -210,7 +210,10 @@ export const workerOf = (item: BoardItem, field: string | undefined): CliResult<
   const stored = item.record[field];
   return typeof stored === 'string'
     ? ok(stored)
-    : failure(`the ${roles.worker} field of ${displayLine(item.id)} does not hold text`, `Check the item in ${files.board}.`);
+    : failure(
+      `the ${roles.worker} field of ${displayLine(item.id)} does not hold text`,
+      `Correct the field in ${files.board}. Run "${commandText(commandLines.itemList)}" to check the board.`,
+    );
 };
 
 /**
@@ -269,7 +272,10 @@ export const checkInputOf = async (
   }
   const project = config.recipe.projects.find((candidate) => candidate.id === projectId);
   if (project === undefined) {
-    return usageError(`the project ${shown(projectId)} is not in the config of this ${roles.node}`, `Check the projects in ${files.config}.`);
+    return usageError(
+      `the project ${shown(projectId)} is not in the config of this ${roles.node}`,
+      `Check the project ID in ${files.config}. Run "${commandText(commands.doctor)}" to check the config.`,
+    );
   }
   return ok({ ref, project, cloneDir: resolve(home, project.path), branches });
 };
@@ -320,7 +326,10 @@ export const recordWork = async (
   const checked = await hook.check(deps, { ...input.value, guards });
   if (!checked.ok) return checked;
   if (action.head !== undefined && checked.value.head !== action.head) {
-    return failure('the head of the record does not match the confirmed head', 'Check the reference and its current head.');
+    return failure(
+      'the head of the record does not match the confirmed head',
+      `Check the reference and its current head. Run "${commandText(commandLines.itemRecord)} ${flagText(flags.help)}" to see the options.`,
+    );
   }
   const recorded = await connector.recordChecked(action.id, checked.value, worker.value, approval);
   if (!recorded.ok) return recorded;

@@ -169,7 +169,10 @@ it.each([{ off: [] }, { off: [softwareGuardIds.prRules, guardIds.ownerGo] }])('r
   const record = () => recordWork(deps, board, { id: item, ref, project: 'web' });
 
   expect(await recordWork(deps, board, { id: item, ref, project: 'web', head: 'b'.repeat(40) })).toMatchObject({
-    ok: false, error: { message: 'the head of the record does not match the confirmed head', hint: 'Check the reference and its current head.' },
+    ok: false, error: {
+      message: 'the head of the record does not match the confirmed head',
+      hint: 'Check the reference and its current head. Run "factory item record --help" to see the options.',
+    },
   });
   expect(repo.commits).toHaveLength(0);
   expect(await record()).toMatchObject({ ok: true, value: { checked, recorded: { changed: true, item: { id: item } }, offGuards: off } });

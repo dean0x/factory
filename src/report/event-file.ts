@@ -3,7 +3,7 @@ import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { createInFolder } from '../core/safe-write.js';
-import { eventFile, files, privateFile } from '../names.js';
+import { commands, commandText, eventFile, files, privateFile } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { tightenEventFolder } from './outbox.js';
 
@@ -16,8 +16,15 @@ export interface EventFileInput {
   readonly fields: EventFields;
 }
 
-const invalidFields = () => failure('invalid event fields', 'Use only text, finite numbers, true, false or null as field values.');
-const overLimit = () => failure(`the event file exceeds ${eventFile.maxBytes} bytes`, 'Use fewer bytes for the event fields.');
+const reportRemedy = `Run "${commandText(commands.version)}" before you report this error.`;
+const invalidFields = () => failure(
+  'invalid event fields',
+  `Use only text, finite numbers, true, false or null as field values. ${reportRemedy}`,
+);
+const overLimit = () => failure(
+  `the event file exceeds ${eventFile.maxBytes} bytes`,
+  `Use fewer bytes for the event fields. ${reportRemedy}`,
+);
 
 /** Encode only own data fields. Count the JSON syntax and the last line break in the byte cap. */
 const eventTextOf = (fields: unknown): CliResult<string> => {
@@ -48,7 +55,7 @@ const eventTextOf = (fields: unknown): CliResult<string> => {
 /** Create one private event file. Never replace a file or make a missing state folder. */
 export const writeEventFile = async (deps: Deps, home: string, { name, fields }: EventFileInput): Promise<CliResult<EventWrite>> => {
   if (typeof name !== 'string' || !eventFile.namePattern.test(name) || name === files.report) {
-    return failure('invalid event file name', eventFile.nameRemedy);
+    return failure('invalid event file name', `${eventFile.nameRemedy} ${reportRemedy}`);
   }
   const text = eventTextOf(fields);
   if (!text.ok) return text;

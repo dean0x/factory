@@ -3,9 +3,10 @@ import type { Deps } from '../../core/deps.js';
 import { parseGithubRepo } from '../../core/git.js';
 import { ok } from '../../core/result.js';
 import { toolNames } from '../../core/tools.js';
+import { commands, commandText, flags, flagText } from '../../names.js';
 import { mergeCheck, parsePrNumber, runPrView } from './github-pr.js';
 import { readinessPrSchema, readinessView } from './merge-ready.js';
-import { mergeMethod, prMergeLimits, type mergeMethods } from './words.js';
+import { mergeMethod, prMergeCommand, prMergeLimits, type mergeMethods } from './words.js';
 
 const GH_MERGE = 'pr merge'.split(' ');
 
@@ -30,18 +31,27 @@ export type MergeConfirmation =
 const targetNumber = ({ repo, number, head }: MergeTarget): CliResult<string> => {
   // Add the Git suffix so that a repo name that ends in .git also makes the round trip.
   if (parseGithubRepo(`https://${mergeCheck.host}/${repo}.git`) !== repo) {
-    return usageError('The repo name is not valid for GitHub.', 'Check the project URL.');
+    return usageError(
+      'The repo name is not valid for GitHub.',
+      `Check the project URL. Run "${commandText(commands.doctor)}" to check the config.`,
+    );
   }
   const text = String(number);
   const parsed = parsePrNumber(text, 'PR number');
   if (!parsed.ok) return parsed;
   if (!mergeCheck.shaPattern.test(head)) {
-    return usageError('The head must be a full commit id of 40 lowercase hex digits.', 'Give the full PR head.');
+    return usageError(
+      'The head must be a full commit id of 40 lowercase hex digits.',
+      `Give the full PR head. Run "${prMergeCommand} ${flagText(flags.help)}" to see the options.`,
+    );
   }
   return ok(text);
 };
 
-const invalidMethod = (_method: never): CliResult<never> => usageError('The merge method is invalid.', 'Check the project merge method.');
+const invalidMethod = (_method: never): CliResult<never> => usageError(
+  'The merge method is invalid.',
+  `Check the project merge method. Run "${commandText(commands.doctor)}" to check the config.`,
+);
 
 const methodFlagOf = (method: MergeRequest['method']): CliResult<string> => {
   switch (method) {
@@ -71,7 +81,10 @@ export const runMerge = async (deps: Pick<Deps, 'run'>, request: MergeRequest): 
   if (!argv.ok) return argv;
   const run = await deps.run(toolNames.gh, argv.value, { timeoutMs: prMergeLimits.mergeTimeoutMs });
   return run.ok && run.value.exitCode === 0 ? ok(undefined)
-    : failure('gh could not complete the merge call.', 'Check the PR state before any new merge call.');
+    : failure(
+      'gh could not complete the merge call.',
+      `Run "${commandText(commands.check)} ${request.number}" to check the PR state before a new merge call.`,
+    );
 };
 
 const confirmationSchema = readinessPrSchema.pick({ state: true, mergedAt: true, headRefOid: true });

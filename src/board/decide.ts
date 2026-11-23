@@ -515,16 +515,13 @@ export const approvalProof = ({ docs, linked, stored, rules, ref, head }: Omit<A
   const records = new Map(stored.value.map((record) => [record.id, record]));
   const record = records.get(id) ?? null;
   const proof = proofOf(id, ok(docs), ok({ record }), rules);
-  const refuse = (message: string, hint: string): Err<ApprovalProofError> =>
-    proof.kind === decideProof.mismatch
-      ? err({ kind: 'failure', reason: 'hash-mismatch', message, hint })
-      : failure(message, hint);
+  const mismatch = (message: string, hint: string): Err<ApprovalHashMismatch> =>
+    err({ kind: 'failure', reason: 'hash-mismatch', message, hint });
   const stop = ownerStopOf(linked.settled.value, link, records, docs, rules, proof);
   if (stop !== null) {
-    return refuse(
-      `the ${roles.owner} answered ${approvalOptions.stop} on ${requestWords.request} ${shown(stop)}`,
-      `Add a new linked approval ${requestWords.request} for the same reference and head. The ${roles.owner} must use "${commandText(commands.decide)}" to save an ${approvalOptions.go} answer in the ${roles.owner} store.`,
-    );
+    const message = `the ${roles.owner} answered ${approvalOptions.stop} on ${requestWords.request} ${shown(stop)}`;
+    const remedy = `Add a new linked approval ${requestWords.request} for the same reference and head. The ${roles.owner} must use "${commandText(commands.decide)}" to save an ${approvalOptions.go} answer in the ${roles.owner} store.`;
+    return proof.kind === decideProof.mismatch ? mismatch(message, remedy) : failure(message, remedy);
   }
   if (proof.kind === decideProof.relayed && record !== null) {
     return failure(
@@ -535,7 +532,8 @@ export const approvalProof = ({ docs, linked, stored, rules, ref, head }: Omit<A
   const go = (proof.kind === decideProof.record && proof.option === approvalOptions.go) ||
     (proof.kind === decideProof.relayed && proof.settled && proof.decision === approvalOptions.go);
   if (!go || !sameApprovalLink(proof.link, link)) {
-    return refuse(`${name} has no settled approval`, ADD_APPROVAL);
+    const message = `${name} has no settled approval`;
+    return proof.kind === decideProof.mismatch ? mismatch(message, ADD_APPROVAL) : failure(message, ADD_APPROVAL);
   }
   if (head !== null && (link.ref !== ref || link.head !== head)) {
     return failure(
