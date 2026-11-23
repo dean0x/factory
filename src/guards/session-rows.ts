@@ -359,7 +359,7 @@ const ownerGoRows: readonly GuardRow[] = [
     applies: commandLines.itemRecord,
     harm: true,
     sites: [
-      ...at('src/commands/item.ts', 'recordChecked'),
+      ...at('src/board/record-flow.ts', 'recordWork'),
       ...at('src/board/local.ts', 'createLocalBoard', 'recordNeedsApproval'),
       ...at('src/board/decide.ts', 'linkedApprovalsOf', 'approvalVerdict'),
     ],

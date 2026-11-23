@@ -55,7 +55,7 @@ import { softwareBoard } from '../../src/recipes/software/board.js';
 import { softwareRecordCheck } from '../../src/recipes/software/record.js';
 import { layoutOf, stateRel } from '../../src/state/layout.js';
 import { describeBoardContract } from '../contract/board-contract.js';
-import { APPROVAL_ID, APPROVAL_LINK, approvalRelay, approvalRequest } from '../helpers/approval-go.js';
+import { APPROVAL_ID, APPROVAL_LINK, approvalAnswer, approvalRelay, approvalRequest } from '../helpers/approval-go.js';
 import { boardRepo, type BoardRepo } from '../helpers/board-repo.js';
 import { createFakeDeps, exited, withFailingWrites, withFsWatch } from '../helpers/fake-deps.js';
 import { HOOK, linkAt } from '../helpers/guard-fixture.js';
@@ -837,7 +837,7 @@ describe('the local connector: the text of the board file', () => {
     const after = repo.textOf(fileNames.board) ?? '';
     expect(after).toContain('"title": "Caf\\u00e9 \\u65e5\\u672c\\u8a9e \\ud83d\\ude00"');
     expect(after).toContain('"emoji": "\\ud83d\\ude00"');
-    expect(/[^\x00-\x7f]/.test(after)).toBe(false);
+    expect(/\P{ASCII}/u.test(after)).toBe(false);
     expect(valueOf(parseBoard(after, QUEUE)).items.find((entry) => entry.id === 'B-4')?.title).toBe(title);
   });
 
@@ -2803,6 +2803,58 @@ describe('the local connector: item notes give no approval', () => {
       kind: 'failure', message: 'there is no linked approval request', hint: expect.stringContaining('factory request add'),
     } });
     expect(await connector.checkApproval(id, OWNER_CHECK, ref)).toEqual(before);
+  });
+});
+
+describe('the local connector: read approval proof', () => {
+  const { item: id, point, ref, head } = RECORD_LINK;
+  const board = boardWith([workItem()]);
+  const { row, record } = approvalAnswer(approvalRequest(APPROVAL_ID, RECORD_LINK));
+  const proofBoard = async (rows: readonly Record<string, unknown>[], records: readonly typeof record[]) => {
+    const repo = await boardRepo({ board, decisionLog: logOf(...rows), env: PERSON_ENV });
+    repo.deps.seed(DECISIONS_PATH, jsonOf({ schema: 1, records }));
+    const guards = guardSourceOf({ home: HOME, values: { [guardIds.ownerGo]: guardValues.off }, state: null });
+    return { repo, connector: connectorOf({ ...repo, deps: { ...repo.deps, guards } }, { requestLinkRules: RECORD_RULES }) };
+  };
+  const localRecord = { ...record, root: HOME };
+  const otherRecord = { ...localRecord, root: '/other/node' };
+
+  it('reads the scoped owner store even when the record check can skip approval', async () => {
+    const { repo, connector } = await proofBoard([row], [localRecord, { ...otherRecord, hash: '0'.repeat(64) }]);
+    expect(await connector.proveApproval(id, point, ref, head)).toEqual({
+      ok: true, value: { kind: 'record', id: APPROVAL_ID, decider: 'owner' },
+    });
+    expectUntouched(repo, board);
+  });
+
+  it('does not take the guard skip when proof is absent', async () => {
+    const { connector } = await proofBoard([row], [otherRecord]);
+    expect(await connector.checkApproval(id, OWNER_CHECK, ref)).toEqual({ ok: true, value: undefined });
+    expect(await connector.proveApproval(id, point, ref, head)).toMatchObject({ ok: false, error: {
+      kind: 'failure', message: `request "${APPROVAL_ID}" has no settled approval`, hint: expect.stringContaining('Add a linked request'),
+    } });
+  });
+
+  it('gives the coordinator as decider of a relayed go', async () => {
+    const { connector } = await proofBoard([RECORD_RELAY], []);
+    expect(await connector.proveApproval(id, point, ref, head)).toEqual({
+      ok: true, value: { kind: 'relayed', id: APPROVAL_ID, decider: 'coordinator' },
+    });
+  });
+
+  it('keeps the mismatch variant on a proof read', async () => {
+    const { connector } = await proofBoard([row], [{ ...localRecord, hash: '0'.repeat(64) }]);
+    expect(await connector.proveApproval(id, point, ref, head)).toMatchObject({
+      ok: false, error: { reason: 'hash-mismatch', hint: expect.stringContaining('Add a linked request') },
+    });
+  });
+
+  it.each([{ ref: '13' }, { head: 'b'.repeat(40) }])('refuses a proof for a different reference or head: %j', async (change) => {
+    const { connector } = await proofBoard([row], [localRecord]);
+    const target = { ...RECORD_LINK, ...change };
+    expect(await connector.proveApproval(id, point, target.ref, target.head)).toMatchObject({ ok: false, error: {
+      kind: 'failure', message: `request "${APPROVAL_ID}" does not match the reference and head`, hint: expect.stringContaining('for the new head'),
+    } });
   });
 });
 

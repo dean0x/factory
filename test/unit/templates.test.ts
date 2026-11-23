@@ -35,7 +35,7 @@ import {
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { softwareStages } from '../../src/recipes/software/board.js';
 import { WORKER_LINES } from '../../src/recipes/software/roles/worker.js';
-import { prCommands, prFlags, standingRoutines } from '../../src/recipes/software/words.js';
+import { checkWords, prCommands, prFlags, prMergeCommand, prMergeWords, standingRoutines } from '../../src/recipes/software/words.js';
 import {
   blockInputOf,
   blockTemplatesFor,
@@ -220,6 +220,14 @@ describe.each(values.approvalModes)('approval text with mode %s', (mode) => {
   });
 });
 
+it.each([
+  ['delegated mode', { modes: { merge: delegated, release: owner } }],
+  ['the merge approval guard off', { guards: { 'approval-merge': guardValues.off } }],
+] as const)('requires the factory merge command with %s', (_case, overrides) => {
+  const body = blockTemplatesFor(blockInput(1, overrides)).find((block) => block.name === 'coordinator')?.body ?? '';
+  expect(body).toContain(`- Use \`${prMergeCommand}\` for each merge. Never run \`gh pr merge\` directly.`);
+});
+
 it('with the merge approval guard off, the coordinator text keeps the head SHA, green CI and review rule, because the merge quality guard stays on', () => {
   const blocks = blockTemplatesFor(withGuards(1, { 'approval-merge': guardValues.off }));
   const body = blocks.find((block) => block.name === 'coordinator')?.body ?? '';
@@ -242,16 +250,16 @@ it.each([1, 2])('removes the resume and routine instructions from layer %i when 
 // The coordinator and safety hashes follow the merge and release modes.
 it.each([
   [owner, owner,
-    '6b1d39aeb48f5aa0f09f5282779be6f1b97503709bcf0f4936ac518a3ad9d611',
+    '58e8e83fcff1cc6e71c09d828c988cd1ee9fff85aa3a49a2b2710053dd58100f',
     '03ca8b1bcb9385e74a322ed9f3f4c456f60c489b13dc2d2c5c247f4a50b59a41'],
   [delegated, owner,
-    '81aa7a7d14c48541d774aaa0c7a840ac415f2f6dcf05bafbef4de42e45dd831c',
+    '4b6a0cde15ab96240d4e1d44e7102d5557b682d588f5d34948e083c1e8b9d223',
     'e9ac704b9a1d2d27a1383df7510d755705ca7910d1fab2518a1ed5c7ed53973c'],
   [owner, delegated,
-    '8660a2400fcc809a53a5ce8224d79f6266f1760d93fbcbbbb708f896a8430711',
+    '28394927d4a44453596d8074fe4a833c22e77d4e08586559132f8eb2c1b38b9f',
     '43142523d806d9c7634e6a482661f055ae420e4406312fe93924ed4de187c59d'],
   [delegated, delegated,
-    'dfe164733b900bea638bff5e661908d63d2868d6bb721f1e62aa035c2cdeb36f',
+    '3504a074bee3989ea6c0de661f938deffa2d3bd5e39acb69ff750113cfb22eca',
     '951bcfac48d42deb37a270018c26164a233b8fa7eeb7314238336f4db18dad59'],
 ] as const)('keeps the base text and block versions with merge %s and release %s when every guard is on',
   (merge, release, coordinatorHash, safetyHash) => {
@@ -396,7 +404,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 148],
+    ['coordinator', 40, 150],
     ['manager', 20, 51],
     ['safety', 12, 25],
     ['work-rules', 15, 30],
@@ -1245,10 +1253,12 @@ describe('the coordinator text: the board records', () => {
     'If the owner uses `factory decide`, use only a settled `approve` whose request hash matches.',
     'After a relay, get owner proof only with a new request and `factory decide`.',
     'Before the merge, check that the settled approval matches the PR number and full head SHA.',
-    'Merge with `gh pr merge --match-head-commit HEAD N`, with the head from the approval row.',
+    `Run \`${commandText(commands.check)} N\`.`,
+    `If the result is not \`${checkWords.ready}\`, stop and show the owner the result.`,
+    `Run \`${prMergeCommand} N ${flagText(prFlags.head)} SHA\` with the full SHA from the approval row.`,
     'If the head changes, check the new head and ask for a new approval on a linked request.',
+    `If the result is \`${prMergeWords['merged-not-recorded']}\`, run \`${templateValues.itemRecordCommand}\` instead of another merge.`,
     'If the merge fails for another reason, stop and show the owner the failure.',
-    'After the merge succeeds, run `factory item record <id> --ref N`.',
     'In owner mode, an open linked request blocks the record.',
     'The last settled linked row in log order needs a relayed `approve` or a store `approve` whose request hash matches.',
     'The reference and head must match the values from GitHub.',
@@ -1267,6 +1277,14 @@ describe('the coordinator text: the board records', () => {
   const decideOnly = (point: string): string =>
     `For ${point}, use only \`${commandText(commands.decide)} <id> <option>\`, run by the owner.`;
   const delegatedCoordinator = delegatedBlocks.find((template) => template.name === 'coordinator')?.body ?? '';
+
+  it('names the direct merge command only in the rule that forbids it and omits the admin flag', () => {
+    const rule = `- Use \`${prMergeCommand}\` for each merge. Never run \`gh pr merge\` directly.`;
+    for (const [, body] of texts) {
+      expect(body.replace(rule, '')).not.toContain('gh pr merge');
+      expect(body).not.toContain(flagText(prFlags.admin));
+    }
+  });
 
   it('keeps a delegated merge on decide only and omits the owner-mode steps', () => {
     expect(delegatedCoordinator).toContain(decideOnly('a delegated merge'));

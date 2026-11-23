@@ -44,11 +44,12 @@ describe('parseBudgetRows', () => {
 
 describe('the token budget of the built jobs', () => {
   /**
-   * The jobs that are built: the status round, the restart of all workers, the worker creation, the session reset, the CI
-   * watch, the worker watch, the resource check and the self reset. The typed owner input is built later (FAC-M5) and the
-   * move of an outside session later still (FAC-M7).
+   * The jobs that are built: the merge check and merge, the status round, the restart of all workers, the worker creation,
+   * the session reset, the CI watch, the worker watch, the resource check and the self reset. The table has no measure
+   * for typed owner input or for the move of an outside session.
    */
   const BUILT_JOBS = [
+    [1, 'factory check'],
     [2, 'factory status'],
     [3, 'factory reboot'],
     [4, 'factory worker new'],

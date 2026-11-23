@@ -1,32 +1,37 @@
 import type { DecisionAskInput, DecisionLogInput, LocalBoard } from '../board/contract.js';
 import { readWaiting, type WaitingDoc } from '../board/files.js';
 import { createLocalBoard } from '../board/local.js';
+import type { RequestLinkRules } from '../board/requests.js';
 import type { CliResult } from '../cli/errors.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { guardReadOf } from '../core/guard-source.js';
 import { locateHomeFolder } from '../core/home.js';
-import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
-import { commands, guardValues, values, type CommandName } from '../names.js';
-import { queueKeyOf, type ApprovalMode, type RecipeRegistry } from '../recipes/index.js';
+import { commands, type CommandName } from '../names.js';
+import { queueKeyOf, type RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 
-/** The board of one node: its folder, its config and its connector. */
-export interface OpenBoard {
+export { recordApprovalMode } from '../board/record-flow.js';
+
+interface OpenNodeConfig {
   readonly home: string;
   readonly config: FactoryConfig;
+}
+
+/** The board of one node: its folder, its config and its connector. */
+export interface OpenBoard extends OpenNodeConfig {
   readonly connector: LocalBoard;
 }
 
-/** An off guard gives the record point the same rules as delegated mode. The delegation check acts on the same guard read. */
-export const recordApprovalMode = async (deps: Deps, { home, config }: OpenBoard, point: string): Promise<ApprovalMode | undefined> => {
-  const guard = config.entry.approvalPoints.find((entry) => entry.id === point)?.guard;
-  const read = await guardReadOf(deps, home, config, 'when-off');
-  if (guard !== undefined && read.state.values[guard] === guardValues.off) return values.approvalModes[1];
-  const modes = await effectiveModes(read.deps, home, config);
-  return modes[point];
+/** The recipe rules for reads of stored links. */
+export const requestLinkRulesOf = (config: FactoryConfig): RequestLinkRules | undefined => {
+  const check = config.entry.recordCheck;
+  return check === undefined ? undefined : {
+    points: config.entry.approvalPoints.map((point) => point.id),
+    parseRef: check.parseRef,
+    parseHead: check.parseHead,
+  };
 };
 
 /**
@@ -35,7 +40,6 @@ export const recordApprovalMode = async (deps: Deps, { home, config }: OpenBoard
  * writes.
  */
 export const localBoardOf = (deps: Deps, home: string, config: FactoryConfig, command: CommandName): LocalBoard => {
-  const check = config.entry.recordCheck;
   return createLocalBoard(deps, layoutOf(home), {
     queueKey: queueKeyOf(config.entry),
     recipe: config.entry.board,
@@ -43,24 +47,17 @@ export const localBoardOf = (deps: Deps, home: string, config: FactoryConfig, co
     command,
     tracker: config.core.tracker.kind,
     node: config.core.node.id,
-    requestLinkRules: check === undefined ? undefined : {
-      points: config.entry.approvalPoints.map((point) => point.id),
-      parseRef: check.parseRef,
-      parseHead: check.parseHead,
-    },
+    requestLinkRules: requestLinkRulesOf(config),
   });
 };
 
-/**
- * Find the node folder, load its config and build the board connector for it. Every command that reads or changes the board opens
- * it here.
- */
-export const openBoard = async (
+/** Find the node folder and load its config. */
+export const openNodeConfig = async (
   deps: Deps,
   homeFlag: string | undefined,
   registry: RecipeRegistry,
   command: CommandName,
-): Promise<CliResult<OpenBoard>> => {
+): Promise<CliResult<OpenNodeConfig>> => {
   const located = await locateHomeFolder(
     deps,
     homeFlag,
@@ -71,7 +68,19 @@ export const openBoard = async (
   const home = located.value.home;
   const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return loaded;
-  const config = loaded.value;
+  return ok({ home, config: loaded.value });
+};
+
+/** Open the node and build its board connector. */
+export const openBoard = async (
+  deps: Deps,
+  homeFlag: string | undefined,
+  registry: RecipeRegistry,
+  command: CommandName,
+): Promise<CliResult<OpenBoard>> => {
+  const opened = await openNodeConfig(deps, homeFlag, registry, command);
+  if (!opened.ok) return opened;
+  const { home, config } = opened.value;
   return ok({ home, config, connector: localBoardOf(deps, home, config, command) });
 };
 

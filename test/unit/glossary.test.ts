@@ -271,7 +271,7 @@ describe('docs/glossary.md', () => {
       'terminal window',
       'last seen',
       'worker window',
-      'event file',
+      'report file',
       'proxy',
       'relayed answer',
     ];
@@ -280,8 +280,16 @@ describe('docs/glossary.md', () => {
 
   it('teaches the words of the software recipe in the second part', () => {
     const recipe = partEntries(RECIPE_HEADING).map((entry) => entry.term);
-    const words = ['release check', 'release scope', 'merge check', 'merge record', 'pull request'];
+    const words = ['release check', 'release scope', 'merge check', 'merge record', 'merge event file', 'pull request'];
     expect(words.filter((word) => !recipe.includes(word))).toEqual([]);
+  });
+
+  it.each([
+    ['report file', '`.factory/outbox/report.json`'],
+    ['merge event file', '`merge-<pr>-<head>.json`'],
+  ])('names the path of the %s', (term, path) => {
+    const text = docEntries().find((entry) => entry.term === term)?.text ?? '';
+    expect(text).toContain(path);
   });
 
   it('says that a relayed answer is an answer of the owner that the coordinator passes on, and never a proof', () => {

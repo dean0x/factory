@@ -36,7 +36,7 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
   },
   { term: 'heartbeat', plain: 'last seen', scan: 'scanned', note: 'the file name stays' },
   { term: 'bench window', plain: 'worker window', scan: 'scanned', note: 'the tmux window name becomes `workers`' },
-  { term: 'outbox', plain: 'event file', scan: 'scanned', note: '' },
+  { term: 'outbox', plain: 'report file', scan: 'scanned', note: 'the folder name stays' },
   { term: 'adapter', plain: 'board connector', scan: 'scanned', note: '' },
   { term: 'home index', plain: 'factory list', scan: 'scanned', note: 'the per-user list of registered factories' },
   {

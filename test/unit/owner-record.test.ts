@@ -29,8 +29,9 @@ import { startSteps } from '../../src/launch/tmux.js';
 import { commands, env, ownerDecisions, ownerRecords, values } from '../../src/names.js';
 import type { ApprovalMode } from '../../src/recipes/index.js';
 import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
-import { readGuardStore } from '../../src/core/guard-records.js';
+import { readGuardState, readGuardStore } from '../../src/core/guard-records.js';
 import { gitHandler } from '../helpers/git-fake.js';
+import { GUARDED_HOME, OFF_GUARD, guardedNode, withGuardsOff } from '../helpers/guarded-node.js';
 import { runInit } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { stripComments } from '../helpers/source-scan.js';
@@ -100,8 +101,16 @@ describe('approval records: who may write', () => {
     }
     const guards = await readGuardStore(deps, `${FOLDER}/guard-records.json`);
     expect(guards.ok && guards.value.map(({ node }) => node)).toEqual(nodes);
-    expect(guards.ok && guards.value.every((record) => Object.keys(record.values).length === 29)).toBe(true);
+    expect(guards.ok && guards.value.every((record) => Object.keys(record.values).length === 30)).toBe(true);
     expect(storedRecords(deps).map(({ node }) => node)).toEqual(nodes);
+  });
+
+  it('loads a guard record from a release without admin-merge', async () => {
+    const deps = guardedNode();
+    const config = withGuardsOff(sampleConfig(), [OFF_GUARD]);
+    expect(await readGuardState(deps, GUARDED_HOME, config, 'always')).toMatchObject({
+      record: true, fault: null, values: { [OFF_GUARD]: 'off', 'admin-merge': 'on' },
+    });
   });
 
   it('writes a delegation for a person in a terminal window outside a factory session', async () => {

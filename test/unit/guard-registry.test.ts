@@ -139,6 +139,7 @@ const closedProofReason = 'dismissClosed reads the value and does not call it wh
  * enforces a check that stays on.
  */
 const unreadSiteExceptions: readonly { readonly row: string; readonly path: string; readonly symbol: string; readonly reason: string }[] = [
+  { row: 'admin-merge-proof', path: 'src/recipes/software/pr-merge.ts', symbol: 'mergeProofOf', reason: 'Applies the proof rule from proofNeedOf, which reads the guard value.' },
   { row: 'delegation-record', path: 'src/config/schema.ts', symbol: 'mergeConfig', reason: 'Merges the mode of the local file; delegationReport reads the value and gives the mode that counts.' },
   { row: 'delegation-store-fallback', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
   { row: 'delegation-move', path: 'src/core/owner-record.ts', symbol: 'newestModes', reason: 'A pure helper of the store read; delegationReport reads the value before it reads the store.' },
@@ -263,7 +264,6 @@ const unreadSiteExceptions: readonly { readonly row: string; readonly path: stri
   { row: 'coordinator-caller', path: 'src/commands/request.ts', symbol: 'execute', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'freeUnproved', reason: coordinatorCallerReason },
   { row: 'coordinator-caller', path: 'src/commands/dismiss.ts', symbol: 'dismissAskOwner', reason: coordinatorCallerReason },
-  { row: 'item-record-approval', path: 'src/commands/item.ts', symbol: 'recordChecked', reason: 'Calls checkApproval and recordChecked of the board, whose approval check calls recordNeedsApproval, which reads the value.' },
   { row: 'item-record-approval', path: 'src/board/local.ts', symbol: 'createLocalBoard', reason: 'Its approval check of a record calls recordNeedsApproval, which reads the value.' },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'linkedApprovalsOf', reason: recordApprovalReason },
   { row: 'item-record-approval', path: 'src/board/decide.ts', symbol: 'approvalVerdict', reason: recordApprovalReason },
@@ -312,12 +312,12 @@ const probeAt = (raw: unknown, path: readonly (string | number)[]): unknown => {
 };
 
 describe('the guards of a recipe', () => {
-  it('lists the 28 core guards and the 4 guards of the software recipe, each once', () => {
+  it('lists the 28 core guards and the 5 guards of the software recipe, each once', () => {
     const ids = idsOf(software.guards);
-    expect(ids).toHaveLength(32);
+    expect(ids).toHaveLength(33);
     expect(duplicatesOf(ids)).toEqual([]);
     expect(ids.slice(0, 28)).toEqual(Object.values(guardIds));
-    expect(ids.slice(28).sort()).toEqual(['approval-merge', 'approval-release', 'merge-quality', 'pr-rules']);
+    expect(ids.slice(28).sort()).toEqual(['admin-merge', 'approval-merge', 'approval-release', 'merge-quality', 'pr-rules']);
   });
 
   it('lists only the core guards for a recipe that names no guard', () => {
@@ -359,18 +359,17 @@ describe('the guards of a recipe', () => {
   it('lists a guard read for each configurable code row and explains each other site', () => {
     const codeRows = software.rows.filter((row) =>
       row.kind === guardKinds.code && !row.alwaysOn && software.guards.some((guard) => guard.id === row.guard && !guard.fixed));
-    const paths = [...new Set(codeRows.flatMap((row) => row.sites.map((site) => site.path)))];
-    const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
     expect(codeRows.length).toBeGreaterThan(0);
-    const sitesByRow = codeRows.map((row) => {
-      const texts = sourceScan.declarationTextsOf(sources, row.sites);
-      const guardName = idNameOf(row.guard);
-      const unread = row.sites.filter((_site, index) => texts[index]?.includes(guardName) !== true);
-      return { row, unread };
-    });
-    const rowsWithoutRead = sitesByRow.filter(({ row, unread }) => unread.length === row.sites.length).map(({ row }) => row.id);
-    expect(rowsWithoutRead).toEqual([]);
-    const unread = sitesByRow.flatMap(({ row, unread }) => unread.map((site) => `${row.id} ${site.path} ${site.symbol}`));
+    const rowSites = codeRows.flatMap((row) => row.sites.map((site) => ({ row, site })));
+    const paths = [...new Set(rowSites.map(({ site }) => site.path))];
+    const sources = Object.fromEntries(paths.map((path) => [path, readFileSync(join(REPO, path), 'utf8')]));
+    const texts = sourceScan.declarationTextsOf(sources, rowSites.map(({ site }) => site));
+    const sites = rowSites.map(({ row, site }, index) => ({
+      row, site, readsGuard: texts[index]?.includes(idNameOf(row.guard)) === true,
+    }));
+    const rowsWithRead = new Set(sites.filter(({ readsGuard }) => readsGuard).map(({ row }) => row));
+    expect(codeRows.filter((row) => !rowsWithRead.has(row)).map(({ id }) => id)).toEqual([]);
+    const unread = sites.filter(({ readsGuard }) => !readsGuard).map(({ row, site }) => `${row.id} ${site.path} ${site.symbol}`);
     const excepted = unreadSiteExceptions.map((site) => `${site.row} ${site.path} ${site.symbol}`);
     expect(duplicatesOf(excepted)).toEqual([]);
     expect(unreadSiteExceptions.filter((site) => site.reason.trim() === '')).toEqual([]);
@@ -429,6 +428,7 @@ describe('the guards of a recipe', () => {
       spend: true,
       'work-conduct': true,
       'install-rules': true,
+      'admin-merge': true,
       'approval-merge': true,
       'approval-release': true,
       'merge-quality': true,
@@ -608,7 +608,8 @@ describe('the rows of the registry', () => {
         'delegation-wait-text',
         'delegation-session-text',
       ],
-      'approval-merge': ['merge-point-text'],
+      'admin-merge': ['admin-merge-proof'],
+      'approval-merge': ['merge-point-text', 'merge-approval-point'],
       'approval-release': ['release-point-text'],
       'merge-quality': ['merge-head-text'],
       'board-edits': [
@@ -805,6 +806,7 @@ describe('the rows of the registry', () => {
         'dismiss-idle-pick-list',
         'coordinator-caller',
         'coordinator-decision-caller', 'coordinator-target-pane',
+        'merge-caller',
         'decide-channel-text',
         'yes-in-session-text',
       ],
@@ -825,6 +827,7 @@ describe('the rows of the registry', () => {
         'profile-no-invented-decision-text',
         'glossary-owner-approves-text',
         'stage-not-approval-glossary-text',
+        'merge-owner-proof',
         'owner-prefix-only-text',
         'prefix-relay-only-text',
         'outside-text-no-authority-text',
@@ -997,7 +1000,19 @@ describe('the rows of the registry', () => {
 
   it('pins the split between core rows and recipe rows', () => {
     expect(guardRowsFor(publishRecipe)).toHaveLength(240);
-    expect(softwareRecipe.guardRows).toHaveLength(104);
+    expect(softwareRecipe.guardRows).toHaveLength(108);
+  });
+
+  it.each([
+    ['merge-caller', 'session-checks', ['requireMergeCaller']],
+    ['merge-owner-proof', 'owner-go', ['proofNeedOf', 'mergeProofOf']],
+    ['merge-approval-point', 'approval-merge', ['proofNeedOf', 'mergeProofOf']],
+    ['admin-merge-proof', 'admin-merge', ['proofNeedOf', 'mergeProofOf']],
+  ] as const)('lists %s as a settable merge check with the harm mark', (id, guard, symbols) => {
+    expect(softwareRecipe.guardRows.find((row) => row.id === id)).toMatchObject({
+      guard, kind: 'code', harm: true, alwaysOn: false,
+      sites: symbols.map((symbol) => ({ path: 'src/recipes/software/pr-merge.ts', symbol })),
+    });
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
@@ -1127,6 +1142,10 @@ describe('the rows of the registry', () => {
     {
       id: 'item-record-approval', applies: commandLines.itemRecord,
       site: { path: 'src/board/decide.ts', symbol: 'approvalVerdict' },
+    },
+    {
+      id: 'item-record-approval', applies: commandLines.itemRecord,
+      site: { path: 'src/board/record-flow.ts', symbol: 'recordWork' },
     },
   ])('lists $id as an owner go code check with a harm mark', ({ id, applies, site }) => {
     const row = software.rows.find((candidate) => candidate.id === id);

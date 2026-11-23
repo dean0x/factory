@@ -1321,9 +1321,9 @@ describe('the command seam of a recipe', () => {
     expect(namesOf(commandTableFor(publishRegistry))).toEqual(namesOf(commandTableFor(registryWith(() => []))));
   });
 
-  it('has a name for each row of the core and each row of a recipe of the package, and the pr row comes from the software recipe only', () => {
+  it('names every command and takes the pr and check rows from the software recipe only', () => {
     const recipeRows = recipes.flatMap((entry) => entry.commands?.(recipeHostFor(recipes)) ?? []);
-    expect(namesOf(recipeRows)).toEqual([commands.pr]);
+    expect(namesOf(recipeRows)).toEqual([commands.pr, commands.check]);
     expect(recipes.filter((entry) => entry.commands !== undefined).map((entry) => entry.id)).toEqual(['software']);
     expect([...coreNames, ...namesOf(recipeRows)].sort()).toEqual(Object.values(commands).filter((name) => name !== commands.help).sort());
   });

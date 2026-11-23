@@ -60,6 +60,7 @@ export const commands = {
   queue: 'queue',
   lock: 'lock',
   pr: 'pr',
+  check: 'check',
   self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
@@ -79,6 +80,7 @@ export const helpTopics = { words: 'words' } as const;
 /**
  * The words that have a plain description in `src/glossary.ts` and in `docs/glossary.md`.
  * A test fails for a term with no entry, and for a term that has another text in the two places.
+ * The term `check` applies to every recipe. Each recipe defines what its check reads.
  */
 export const terms = [
   'node',
@@ -1020,6 +1022,15 @@ export const workerFieldGuard = {
 /** The time limit of one run of `gh`, in milliseconds. */
 export const ghTimeoutMs = 10_000;
 
+/** The fixed causes for a work item lookup that does not find one item. */
+export const workLookupReasons = {
+  severalLinks: 'several items link to the reference',
+  severalBranches: 'several items match the head branch',
+  differentItems: 'the linked item and the head branch match different items',
+  closedHead: 'the closed item does not record the pinned head',
+  noItem: 'no item matches the reference or head branch',
+} as const;
+
 /**
  * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to `maxTokenChars` letters, digits,
  * dots, underscores or hyphens, and the first character is a letter or a digit. The cap is the length of the longest worker id (a
@@ -1641,6 +1652,14 @@ export const statusWords = {
  * less than 256,000 bytes, and the report byte cap of 262,144 bytes holds them.
  */
 const maxWorkers = 256;
+
+/** The name form and UTF-8 byte cap of one event file. */
+export const eventFile = {
+  suffix: '.json',
+  namePattern: /^[a-z0-9-]{1,96}\.json$/,
+  maxBytes: 1_024,
+  nameRemedy: `Use a new event file name with 1 to 96 lower-case letters, digits or hyphens and a .json suffix. Do not use ${files.report}.`,
+} as const;
 
 /**
  * The limits of the report of a node (design 5.4). `schemaVersion` is the number that a report holds in its version key: a reader

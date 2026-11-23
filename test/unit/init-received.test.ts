@@ -868,7 +868,7 @@ describe('init: the setup acceptance of a received root', () => {
       expect(linesOf(result)).toContain('factory init');
       expect(linesOf(result)).toContain('terminal window');
       expect.soft(linesOf(result)).toContain(
-        'Guards: 28 off; 27 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
+        'Guards: 29 off; 28 with H (see "factory guard list"). Run "factory guard set <id> on" to turn one on.',
       );
       expect.soft(await loadConfig(deps, ROOT)).toMatchObject({ ok: true, value: { core: { guards: { 'setup-text': 'on' }, shared_guards: {} } } });
       const store = await readGuardStore(deps, '/state/factory/guard-records.json');

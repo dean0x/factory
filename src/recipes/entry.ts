@@ -1,10 +1,14 @@
 import type { z } from 'zod';
+import type { RequestLink } from '../board/contract.js';
+import type { SettledProof } from '../board/decide.js';
+import type { RecordedWork, WorkItemLookup, WorkItemQuery } from '../board/record-flow.js';
 import type { CliResult } from '../cli/errors.js';
 import type { Command } from '../cli/table.js';
 import type { Deps } from '../core/deps.js';
 import { allOn } from '../guards/effective.js';
 import type { GuardDefinition, GuardRow, GuardValues } from '../guards/types.js';
-import { boardKeys, guardValues, keys, values, type CommandName } from '../names.js';
+import { boardKeys, guardValues, keys, values, type CommandName, type flags } from '../names.js';
+import type { EventFileInput, EventWrite } from '../report/event-file.js';
 import type { TextPart } from '../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
@@ -157,14 +161,38 @@ export interface RecordCheck {
   readonly check: (deps: Deps, input: RecordCheckInput) => Promise<CliResult<CheckedRecord>>;
 }
 
+export interface WorkFacts {
+  readonly openRequests: readonly string[];
+  readonly headConflict: string | null;
+  readonly mode: ApprovalMode;
+  readonly project: RecipeProject;
+  readonly cloneDir: string;
+  readonly branches: readonly string[] | undefined;
+}
+
+/** The local reads and writes of a work flow. The recipe decides which policy checks to call. */
+export interface WorkHost {
+  readonly guards: GuardValues;
+  readonly caller: () => Promise<CliResult<void>>;
+  /** Select a project from the open config. Without an id, require exactly one project. */
+  readonly project: (id: string | undefined) => CliResult<RecipeProject>;
+  readonly find: (query: Pick<WorkItemQuery, 'point' | typeof flags.ref | 'branch' | 'recordedHead'>) => Promise<CliResult<WorkItemLookup>>;
+  readonly facts: (target: RequestLink & { readonly project?: string }) => Promise<CliResult<WorkFacts>>;
+  readonly approval: (target: RequestLink) => Promise<CliResult<SettledProof>>;
+  readonly record: (target: { readonly item: string; readonly ref: string; readonly head?: string; readonly project?: string }) => Promise<CliResult<RecordedWork>>;
+  readonly writeEvent: (event: EventFileInput) => Promise<CliResult<EventWrite>>;
+}
+
 /**
  * What the core gives to the `commands` hook of a recipe. A recipe imports no loader and no command file, so the core carries what
- * a command of the recipe needs from them. In both calls, `command` is the command name that the remedy of a failure tells the
+ * a command of the recipe needs from them. In each call, `command` is the command name that the remedy of a failure tells the
  * person to run again.
  * - `registry` is the registry that the command table is built from.
  * - `locateNode` gives the folder of the node: the folder of the home flag, else the one that the current folder is in.
  * - `loadProject` reads the config of the node in `home` and gives one project. The id names it. Without an id, the node must list
  *   exactly one project. Any other case is a usage error (exit 2) that lists the projects.
+ * - `openWork` finds the node, loads its config and reads its guard values. Record access also checks the tracker and closed state.
+ *   It does not run a caller check or a recipe check.
  */
 export interface RecipeHost {
   readonly registry: RecipeRegistry;
@@ -175,6 +203,7 @@ export interface RecipeHost {
     projectId: string | undefined,
     command: CommandName,
   ) => Promise<CliResult<RecipeProject>>;
+  readonly openWork: (deps: Deps, home: string | undefined, command: CommandName, access?: 'read' | 'record') => Promise<CliResult<WorkHost>>;
 }
 
 /**

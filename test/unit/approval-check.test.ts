@@ -32,9 +32,9 @@ const textsOf = (items: readonly Row[], rows: readonly Row[]) => ({
 });
 
 type Store = Result<{ readonly record: Readonly<DecisionRecord> | null }, string>;
-const verdictOf = (items: readonly Row[], rows: readonly Row[], stored: Store = noStore, target: {
+const checkOf = (items: readonly Row[], rows: readonly Row[], stored: Store = noStore, target: {
   readonly mode?: ApprovalMode; readonly ref?: string; readonly head?: string | null;
-} = {}) => {
+} = {}): decide.ApprovalCheck => {
   const texts = textsOf(items, rows);
   const waiting = parseWaiting(texts.waiting);
   const log = parseDecisionLog(texts.decisionLog);
@@ -42,8 +42,10 @@ const verdictOf = (items: readonly Row[], rows: readonly Row[], stored: Store = 
   const docs = { waiting: waiting.value, log: log.value };
   const linked = decide.linkedApprovalsOf(docs.waiting, docs.log, item, point, rules);
   const records = stored.ok ? ok(stored.value.record === null ? [] : [stored.value.record]) : stored;
-  return decide.approvalVerdict({ docs, linked, rules, stored: records, mode: 'owner', ref, head, ...target });
+  return { docs, linked, rules, stored: records, mode: 'owner', ref, head, ...target };
 };
+
+const verdictOf = (...args: Parameters<typeof checkOf>) => decide.approvalVerdict(checkOf(...args));
 
 const refusal = (id: string) => ({ ok: false, error: { kind: 'failure', message: expect.stringContaining(id) } });
 
@@ -68,13 +70,36 @@ const proofCases = [
 ] as const;
 
 describe('approval check: static checks of the source', () => {
-  it.each(['board/decide.ts', 'board/local.ts', 'commands/item.ts'])('%s imports no decision command module', (path) => {
+  it.each(['board/decide.ts', 'board/local.ts', 'board/record-flow.ts', 'commands/item.ts'])('%s has no command import outside its layer', (path) => {
     const file = join(__dirname, '..', '..', 'src', path);
     const source = readFileSync(file, 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const imported = [...code.matchAll(/\b(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g)]
       .map((match) => resolve(dirname(file), match[1] ?? ''));
-    expect(imported.filter((name) => /[/\\](?:decide-read|commands[/\\]decide)(?:\.[cm]?[jt]s)?$/.test(name))).toEqual([]);
+    const forbidden = path === 'board/record-flow.ts'
+      ? /[/\\]commands[/\\]/
+      : /[/\\](?:decide-read|commands[/\\]decide)(?:\.[cm]?[jt]s)?$/;
+    expect(imported.filter((name) => forbidden.test(name))).toEqual([]);
+  });
+});
+
+describe('settled approval proof', () => {
+  it.each([
+    { rows: [answer], stored: ok({ record }), kind: 'record', decider: 'owner' },
+    { rows: [relay], stored: noStore, kind: 'relayed', decider: 'coordinator' },
+  ])('names the request and decider of a $kind go', ({ rows, stored, kind, decider }) => {
+    expect(decide.approvalProof(checkOf([], rows, stored))).toEqual({ ok: true, value: { kind, id: APPROVAL_ID, decider } });
+  });
+
+  it.each([approvalOptions.go, approvalOptions.stop])('marks a request hash mismatch for a stored %s', (option) => {
+    const check = checkOf([], [answer], ok({ record: { ...record, option, hash: '0'.repeat(64) } }));
+    expect(decide.approvalProof(check)).toMatchObject({ ok: false, error: { reason: 'hash-mismatch' } });
+  });
+
+  it('does not mark a missing store record as a hash mismatch', () => {
+    const proof = decide.approvalProof(checkOf([], [answer]));
+    expect(proof).toMatchObject(refusal(APPROVAL_ID));
+    expect(proof).not.toHaveProperty('error.reason');
   });
 });
 

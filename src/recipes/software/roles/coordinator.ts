@@ -4,7 +4,7 @@ import { commands, commandText, flagText, guardIds, requestWords } from '../../.
 import { linesFor, type TextPart } from '../../../templates/fill.js';
 import { mergedStage, softwareBoard, softwareStages } from '../board.js';
 import { softwareGuardIds } from '../guard-parts.js';
-import { prFlags, prWatchCommand, standingRoutines } from '../words.js';
+import { checkWords, prFlags, prMergeWords, prWatchCommand, standingRoutines } from '../words.js';
 
 const inCode = (words: readonly string[]): string[] => words.map((word) => `\`${word}\``);
 
@@ -188,7 +188,12 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
       '- Merge only at the full head SHA that you checked, with CI green at that SHA. Before a merge, check on the primary source that the review is posted and the change is releasable at merge.',
     ],
   },
-  { guards: [softwareGuardIds.prRules], lines: ['- Tell the {{owner}} the result of each merge and each release.'] },
+  {
+    segments: [
+      '- Use `{{prMergeCommand}}` for each merge. Never run `gh pr merge` directly.',
+      { guards: [softwareGuardIds.prRules], text: ' Tell the {{owner}} the result of each merge and each release.' },
+    ],
+  },
   '',
   ...workerSectionParts,
   '',
@@ -306,10 +311,12 @@ export const coordinatorLines = (approval: readonly string[], guards: GuardValue
     `- If the {{owner}} uses \`{{decideCommand}}\`, use only a settled \`{{approvalGoOption}}\` whose ${requestWords.request} hash matches.`,
     `- After a relay, get {{owner}} proof only with a new ${requestWords.request} and \`{{decideCommand}}\`.`,
     '- Before the merge, check that the settled approval matches the PR number and full head SHA.',
-    '- Merge with `gh pr merge --match-head-commit HEAD N`, with the head from the approval row.',
+    '- Run `{{checkCommand}} N`.',
+    `- If the result is not \`${checkWords.ready}\`, stop and show the {{owner}} the result.`,
+    `- Run \`{{prMergeCommand}} N ${flagText(prFlags.head)} SHA\` with the full SHA from the approval row.`,
     `- If the head changes, check the new head and ask for a new approval on a linked ${requestWords.request}.`,
+    `- If the result is \`${prMergeWords['merged-not-recorded']}\`, run \`{{itemRecordCommand}}\` instead of another merge.`,
     '- If the merge fails for another reason, stop and show the {{owner}} the failure.',
-    '- After the merge succeeds, run `{{itemRecordCommand}}`.',
     { guards: [guardIds.ownerGo], lines: [
       `- In {{owner}} mode, an open linked ${requestWords.request} blocks the record.`,
       `- The last settled linked row in log order needs a relayed \`{{approvalGoOption}}\` or a store \`{{approvalGoOption}}\` whose ${requestWords.request} hash matches.`,

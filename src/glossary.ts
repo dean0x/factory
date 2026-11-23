@@ -34,8 +34,7 @@ const SENTENCES: Readonly<Record<(typeof terms)[number], string>> = {
   'session reset':
     'A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state.',
   queue: 'A queue is the order of the finished work that waits for an approval point, first item first.',
-  check:
-    'A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.',
+  check: 'A check looks at one piece of finished work. It says READY or NOT READY, with the reasons.',
   guard: 'A guard is a group of code checks and rule texts that keep one thing safe. The guard list shows each guard.',
   track: 'A track is a named stream of work with its own roadmap. A {{worker}} is not a track.',
   stage: 'A stage is where a work item is on the board. It is not a step of the work cycle. It is never an approval.',

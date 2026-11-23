@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { launchArgv, workerLaunchArgv } from '../../src/launch/argv.js';
 import { layoutOf } from '../../src/state/layout.js';
-import { readCoordinatorPane, requireCoordinatorCaller } from '../../src/workers/panes.js';
+import { readCoordinatorPane, requireCoordinatorCaller, requireNodeCaller } from '../../src/workers/panes.js';
 import { createFakeDeps, exited, type RunHandler } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
@@ -203,6 +203,23 @@ describe('the pane part of the caller rule', () => {
   it('the checks of the coordinator pane come before the check of the caller pane: a start command that does not bind is exit 4 for a caller in another pane', async () => {
     const { check } = setup({ env: { TMUX_PANE: SLOT_PANE }, fixture: { coordinatorCommands: { [NODE]: ['sleep', '3000'] } } });
     expect(codeOf(await check())).toBe(4);
+  });
+});
+
+describe('the node caller in a factory session', () => {
+  it('accepts the coordinator pane without an output terminal', async () => {
+    const { deps } = setup({ env: { CLAUDECODE: '1' } });
+    expect(await requireNodeCaller({ ...deps, stdoutIsTTY: false }, HOME, sampleConfig(), AGAIN)).toEqual({ ok: true, value: undefined });
+  });
+
+  it.each([
+    [{ TMUX_PANE: SLOT_PANE }, 'the caller is in the pane'],
+    [{ FACTORY_SESSION: 'alpha' }, 'the caller is not the coordinator'],
+  ])('refuses a worker caller', async (env, message) => {
+    const { deps } = setup({ env });
+    const result = await requireNodeCaller(deps, HOME, sampleConfig(), AGAIN);
+    expect(codeOf(result)).toBe(2);
+    expect(errorOf(result)).toMatchObject({ message: expect.stringContaining(message), hint: expect.stringContaining(`factory ${AGAIN}`) });
   });
 });
 

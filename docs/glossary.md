@@ -20,7 +20,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **assignment** (was: work order): An assignment is a written task for a worker or a child node. A worker gets it as a file in its assignment folder.
 - **session reset** (was: changeover): A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state.
 - **queue** (was: staging): A queue is the order of the finished work that waits for an approval point, first item first.
-- **check** (was: inspect): A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.
+- **check** (was: inspect): A check looks at one piece of finished work. It says READY or NOT READY, with the reasons.
 - **guard**: A guard is a group of code checks and rule texts that keep one thing safe. The guard list shows each guard.
 - **work item**: A work item is one unit of work on the board.
 - **track**: A track is a named stream of work with its own roadmap. A worker is not a track.
@@ -54,7 +54,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **last seen** (was: heartbeat): Last seen is a file for each session. It shows the last activity, the session id and the context percent.
 - **idle**: A worker is idle when its session waits at its prompt for longer than `limits.idle_after`. A short wait is not idle.
 - **worker window** (was: bench window): The worker window is the screen window that holds the worker sessions. Its name is `workers`.
-- **event file** (was: outbox): The event file is the digest of a node, in `.factory/outbox/`. A script writes it, and a reader follows it.
+- **report file** (was: outbox): The report file holds the digest of a node. Its path is `.factory/outbox/report.json`.
 - **inbox**: The inbox is the assignment folder of a worker. It holds the assignment files and the resume notes of that worker. A dismiss deletes it.
 - **reviews folder**: The reviews folder is `.factory/reviews/`. The coordinator keeps the review results of the workers there. A dismiss never deletes it.
 - **digest**: A digest is a short summary of a node: its workers, their work items and the requests that wait for the owner.
@@ -66,8 +66,9 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **pull request**: A pull request is a proposed change to a project that waits for a review. The merge check reads it.
 - **merge**: To merge is to add the change of a pull request to the main line of the project. The approval point `merge` guards it.
 - **merge order**: In the software recipe, the merge order is the queue of the pull requests that are READY, first item first.
-- **merge check**: The merge check reads a pull request and says READY or NOT READY, with reasons. It is `factory check <pr>`. Not built yet.
+- **merge check**: The merge check reads a pull request and its board item at one head. It gives a readiness verdict, not approval. Run `factory check <pr>`.
 - **merge record**: A merge record shows that the pull request of a work item is merged. `factory item record` writes it after a check on GitHub.
+- **merge event file**: A merge event file describes one pull request merge. Its name is `merge-<pr>-<head>.json`.
 - **release**: A release is a version of a project that you publish. The approval point `release` guards it.
 - **release check** (was: ship): The release check tests that a release is ready and works after it is out. It never publishes. Not built yet.
 - **release scope**: A release scope lists the items and the version that the owner approved for a release. A delegated release check needs one.
@@ -83,7 +84,7 @@ Text that a user reads uses the plain word of this table. Code identifiers, conf
 | variant | setup | by hand | the key `variant` stays until FAC-M6, when the setup folder replaces the variant; so both name one thing |
 | heartbeat | last seen | scanned | the file name stays |
 | bench window | worker window | scanned | the tmux window name becomes `workers` |
-| outbox | event file | scanned |  |
+| outbox | report file | scanned | the folder name stays |
 | adapter | board connector | scanned |  |
 | home index | factory list | scanned | the per-user list of registered factories |
 | home, root (of a factory) | factory folder | by hand | `--home` and `FACTORY_HOME` stay |

@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { usageError, type CliResult } from '../../cli/errors.js';
-import { foundHomeOption } from '../../cli/home-option.js';
 import type { CommandOutput, LineLevel, OutLine } from '../../cli/output.js';
-import type { Command, Given } from '../../cli/table.js';
+import type { Given } from '../../cli/table.js';
 import type { Deps } from '../../core/deps.js';
 import { ok } from '../../core/result.js';
 import { onPath, toolNames } from '../../core/tools.js';
 import { commands, commandText, flags, flagText } from '../../names.js';
 import type { RecipeHost } from '../entry.js';
+import { checkSchema, countsOf, totalOf, type Counts } from './check-runs.js';
 import { githubRepoOf, mergeCheck, parsePrNumber, runPrView, type PrReader } from './github-pr.js';
 import {
   prCommands,
@@ -26,26 +26,7 @@ import {
  * head. It is no proof that the PR may merge.
  */
 
-/**
- * The answer of `gh pr view --json` for the four fields of the watch. The objects strip every key that the watch does not read, so
- * no name, link or login of a check is kept. An unknown value of an enum fails the parse. A check run has an empty conclusion while
- * it runs; gh can also give null, and both mean no conclusion yet. A PR with no checks can give null for the list.
- */
-const checkRunSchema = z.object({
-  __typename: z.literal('CheckRun'),
-  status: z.enum(['QUEUED', 'IN_PROGRESS', 'COMPLETED', 'WAITING', 'PENDING', 'REQUESTED']),
-  conclusion: z
-    .enum(['', 'SUCCESS', 'NEUTRAL', 'SKIPPED', 'FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'])
-    .nullable(),
-});
-
-const statusContextSchema = z.object({
-  __typename: z.literal('StatusContext'),
-  state: z.enum(['EXPECTED', 'PENDING', 'SUCCESS', 'FAILURE', 'ERROR']),
-});
-
-const checkSchema = z.discriminatedUnion('__typename', [checkRunSchema, statusContextSchema]);
-
+/** The four fields of `gh pr view --json` for the watch. A PR with no checks can give null for the list. */
 const snapshotSchema = z.object({
   headRefOid: z.string().regex(mergeCheck.shaPattern),
   state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
@@ -53,46 +34,10 @@ const snapshotSchema = z.object({
   reviewDecision: z.enum(['', 'APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']),
 });
 
-type Check = z.infer<typeof checkSchema>;
 type Snapshot = z.infer<typeof snapshotSchema>;
 
 /** The `--json` field list of `gh pr view`: the keys of the schema, in its order. */
 const SNAPSHOT_FIELDS = Object.keys(snapshotSchema.shape).join(',');
-
-const PASSED_VALUES: ReadonlySet<string> = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
-const FAILED_VALUES: ReadonlySet<string> = new Set(['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE', 'ERROR']);
-
-type CheckClass = 'passed' | 'failed' | 'pending';
-
-interface Counts {
-  readonly passed: number;
-  readonly failed: number;
-  readonly pending: number;
-}
-
-/** A passed value is SUCCESS, NEUTRAL or SKIPPED, as GitHub counts them for a required check. A failed value is listed. Any other value is pending. */
-const classOfValue = (value: string | null): CheckClass => {
-  if (value !== null && PASSED_VALUES.has(value)) return 'passed';
-  if (value !== null && FAILED_VALUES.has(value)) return 'failed';
-  return 'pending';
-};
-
-/** A check run counts by its conclusion once it is completed. Before that it is pending. */
-const classOf = (check: Check): CheckClass => {
-  if (check.__typename === 'StatusContext') return classOfValue(check.state);
-  return check.status === 'COMPLETED' ? classOfValue(check.conclusion) : 'pending';
-};
-
-const countsOf = (checks: readonly Check[]): Counts =>
-  checks.reduce<Counts>(
-    (counts, check) => {
-      const kind = classOf(check);
-      return { ...counts, [kind]: counts[kind] + 1 };
-    },
-    { passed: 0, failed: 0, pending: 0 },
-  );
-
-const totalOf = (counts: Counts): number => counts.passed + counts.failed + counts.pending;
 
 /** One read: the answer of gh as a snapshot, or null for a read failure. A read failure is never a pass. */
 const readSnapshot = async (deps: Deps, repo: string, number: number): Promise<Snapshot | null> => {
@@ -308,8 +253,6 @@ const outputOf = (outcome: Outcome, number: number): CommandOutput => {
   };
 };
 
-const SUBCOMMANDS = Object.values(prCommands).join(', ');
-
 /** The words of a refusal for a project that is not on GitHub. */
 const READER: PrReader = { name: prWatchCommand, command: commands.pr, usage: `${prCommands.watch} PR` };
 
@@ -323,15 +266,8 @@ interface WatchArgs {
   readonly home: string | undefined;
 }
 
-/** The words of the command line, all checked before any other step: the subcommand, one PR number, and the head. A fault is a usage error (exit 2). */
-const parseWatchArgs = (given: Given): CliResult<WatchArgs> => {
-  const [subcommand, ...words] = given.positionals();
-  if (subcommand === undefined) {
-    return usageError(`${commandText(commands.pr)} needs a subcommand: ${SUBCOMMANDS}`, `Run "${WATCH_LINE}" with the number of a PR.`);
-  }
-  if (subcommand !== prCommands.watch) {
-    return usageError(`unknown subcommand ${JSON.stringify(subcommand)}. The subcommand is: ${SUBCOMMANDS}`, `Run "${WATCH_LINE}" with the number of a PR.`);
-  }
+/** Check the PR number and head before any other step. A fault is a usage error (exit 2). */
+const parseWatchArgs = (words: readonly string[], given: Given): CliResult<WatchArgs> => {
   const [text, ...extra] = words;
   if (text === undefined || extra.length > 0) {
     return usageError(`${commandText(commands.pr)} ${prCommands.watch} needs exactly one PR number`, `Run "${WATCH_LINE}" again.`);
@@ -351,8 +287,8 @@ const parseWatchArgs = (given: Given): CliResult<WatchArgs> => {
  * for a project that is not named, not listed or missing, exit 1 for a config that cannot be read). The repo of the project: a project
  * with no GitHub URL is a usage error (exit 2). Then gh on PATH (UNREADABLE, exit 1), then the watch. No gh call comes before the last step.
  */
-const runWatch = async (host: RecipeHost, deps: Deps, given: Given): Promise<CliResult<CommandOutput>> => {
-  const args = parseWatchArgs(given);
+export const runWatch = async (host: RecipeHost, deps: Deps, words: readonly string[], given: Given): Promise<CliResult<CommandOutput>> => {
+  const args = parseWatchArgs(words, given);
   if (!args.ok) return args;
   const { number, head } = args.value;
   const home = await host.locateNode(deps, args.value.home, commands.pr);
@@ -364,27 +300,3 @@ const runWatch = async (host: RecipeHost, deps: Deps, given: Given): Promise<Cli
   if (!(await onPath(deps, toolNames.gh))) return ok(outputOf({ result: 'unreadable', head, counts: null, reads: 0 }, number));
   return ok(outputOf(await watchPr(deps, { repo: repo.value, number, head }), number));
 };
-
-/** The `pr` row of the command table. The host object carries the node lookup and the config loader, so this file imports neither. */
-export const prCommandFor = (host: RecipeHost): Command => ({
-  name: commands.pr,
-  summary:
-    `Watch the checks of one pull request at one head: up to ${prWatchPoll.reads} reads, ${prWatchPoll.intervalMs / 1000} seconds apart. ` +
-    `Exit ${EXIT_PASSED} means every check passed. It is no approval.`,
-  usage: `${WATCH_LINE} [${flagText(prFlags.head)} SHA] [${flagText(flags.project)} ID] [${flagText(flags.home)} DIR]`,
-  positionals: true,
-  options: {
-    [flags.home]: foundHomeOption,
-    [prFlags.head]: {
-      type: 'string',
-      placeholder: 'SHA',
-      description: 'With watch: the full commit id of the head to watch, 40 lowercase hex digits. Default: the head of the first read.',
-    },
-    [flags.project]: {
-      type: 'string',
-      placeholder: 'ID',
-      description: 'With watch: the id of the project that the PR belongs to. It is needed when the config lists more than one project.',
-    },
-  },
-  run: (given, deps) => runWatch(host, deps, given),
-});

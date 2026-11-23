@@ -50,8 +50,8 @@ import type {
   RecordApproval,
 } from './contract.js';
 import {
-  addNewRemedy, approvalVerdict, decideLogRow, linkedApprovalsOf, proofOf, recheckRequest, requestStateOf,
-  requireLogRoom, requireOpen, strictRequestOf, type RequestState,
+  addNewRemedy, approvalProof, approvalVerdict, decideLogRow, linkedApprovalsOf, proofOf, recheckRequest, requestStateOf,
+  requireLogRoom, requireOpen, strictRequestOf, type ApprovalCheck, type RequestState,
 } from './decide.js';
 import { buildDecisionRecord, decisionRecordPath } from './decision-record.js';
 import {
@@ -328,14 +328,9 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   const approvalPlaceOf = async (approval: RecordApproval): Promise<CliResult<DecisionPlace | null>> =>
     approval.mode === roles.owner ? decisionPlaceOf(deps, layout.home, options.node) : ok(null);
 
-  /**
-   * The approval check of a record: an open linked request blocks it, and in owner mode the last settled linked request needs a go
-   * for the same reference and head. It follows the owner-go guard of the node: while that guard is off, a record needs neither.
-   */
-  const approvalOf = async (
+  const approvalCheckOf = async (
     texts: BoardTexts, id: string, approval: RecordApproval, place: DecisionPlace | null, ref: string, head: string | null,
-  ): Promise<CliResult<void>> => {
-    if (!recordNeedsApproval(await nodeGuards())) return ok(undefined);
+  ): Promise<CliResult<ApprovalCheck>> => {
     const docs = approvalDocsOf(texts);
     if (!docs.ok) {
       return failure(
@@ -345,11 +340,22 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     }
     const rules = options.requestLinkRules;
     const linked = linkedApprovalsOf(docs.value.waiting, docs.value.log, id, approval.point, rules);
-    const verdict = (stored: Awaited<ReturnType<typeof readScopedDecisions>>): CliResult<void> =>
-      approvalVerdict({ docs: docs.value, linked, stored, rules, mode: approval.mode, ref, head });
-    if (approval.mode !== roles.owner || !linked.settled.ok || linked.settled.value.length === 0) return verdict(ok([]));
-    if (place === null || place.path === null) return verdict(err(`the ${roles.owner} store has no path`));
-    return verdict(await readScopedDecisions(deps, place));
+    let stored: ApprovalCheck['stored'] = ok([]);
+    if (approval.mode === roles.owner && linked.settled.ok && linked.settled.value.length > 0) {
+      stored = place === null || place.path === null
+        ? err(`the ${roles.owner} store has no path`)
+        : await readScopedDecisions(deps, place);
+    }
+    return ok({ docs: docs.value, linked, stored, rules, mode: approval.mode, ref, head });
+  };
+
+  /** The record check follows the owner-go guard. The proof read does not use this check. */
+  const approvalOf = async (
+    texts: BoardTexts, id: string, approval: RecordApproval, place: DecisionPlace | null, ref: string, head: string | null,
+  ): Promise<CliResult<void>> => {
+    if (!recordNeedsApproval(await nodeGuards())) return ok(undefined);
+    const check = await approvalCheckOf(texts, id, approval, place, ref, head);
+    return check.ok ? approvalVerdict(check.value) : check;
   };
 
   const noPlace = (): Err<CliError> =>
@@ -590,6 +596,19 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!place.ok) return place;
       const texts = await readBoardFiles(deps, layout, approvalFiles);
       return texts.ok ? approvalOf(texts.value, id, approval, place.value, ref, null) : texts;
+    },
+
+    async proveApproval(id, point, ref, head) {
+      const local = await requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkItemId(id);
+      if (!valid.ok) return valid;
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      const texts = await readBoardFiles(deps, layout, approvalFiles);
+      if (!texts.ok) return texts;
+      const check = await approvalCheckOf(texts.value, id, { point, mode: roles.owner }, place.value, ref, head);
+      return check.ok ? approvalProof(check.value) : check;
     },
 
     async recordChecked(id, checked, worker, approval) {

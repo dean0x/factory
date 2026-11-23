@@ -1121,6 +1121,20 @@ describe('item record: linked approval', () => {
     expect(world.repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
   });
 
+  it('exits 1 when the request hash does not match the store', async () => {
+    const { row, record } = approvalAnswer(approvalRequest(APPROVAL_ID, MERGE_LINK));
+    const world = await mergeWorld({ decisionLog: logOf(row) });
+    world.repo.deps.seed(STORE_PATH, JSON.stringify({ schema: 1, records: [{ ...record, hash: '0'.repeat(64) }] }));
+
+    const sink = captureSink();
+    const code = await runCli(['item', 'record', MERGE_LINK.item, '--ref', MERGE_LINK.ref, '--home', HOME], world.gh.deps, sink);
+    expect(code).toBe(1);
+    expect(sink.errors.join('')).toContain(`request "${APPROVAL_ID}" has no settled approval`);
+    expect(sink.errors.join('')).toContain('Add a linked request');
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, MERGE_BOARD);
+  });
+
   const ownerStop = approvalAnswer(approvalRequest('D-2', MERGE_LINK), approvalOptions.stop);
   const relayAfterStop = approvalRelay('D-3', approvalOptions.go, MERGE_LINK);
   const stopRefusal = {

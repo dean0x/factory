@@ -6,9 +6,10 @@ import { ok } from '../../core/result.js';
 import { toolNames } from '../../core/tools.js';
 import { allOn, isGuardOn } from '../../guards/effective.js';
 import type { GuardValues } from '../../guards/types.js';
-import { commandLines, commandText, flags, flagText, ghTimeoutMs, type CommandText } from '../../names.js';
+import { commandLines, commandText, flags, flagText, ghTimeoutMs, keys, type CommandText } from '../../names.js';
 import { parseJsonText } from '../../state/load.js';
 import { softwareGuardIds } from './guard-parts.js';
+import { checkReasons } from './words.js';
 
 /*
  * The merge check is a guard against a mistake, not a proof. The session that runs it controls PATH and the environment, so it
@@ -154,15 +155,44 @@ export type PrViewRead =
  */
 export const runPrView = async (deps: Deps, request: PrViewRequest): Promise<PrViewRead> => {
   const words = mergeCheck.words;
-  const run = await deps.run(
-    toolNames.gh,
-    [...words.command.split(' '), words.repoFlag, `${mergeCheck.host}/${request.repo}`, words.jsonFlag, request.fields, words.endOfFlags, request.number],
-    { timeoutMs: ghTimeoutMs },
-  );
+  return readGhJson(deps, [
+    ...words.command.split(' '), words.repoFlag, `${mergeCheck.host}/${request.repo}`, words.jsonFlag, request.fields, words.endOfFlags, request.number,
+  ], request.maxOutputChars);
+};
+
+const readGhJson = async (deps: Deps, argv: readonly string[], maxOutputChars: number): Promise<PrViewRead> => {
+  const run = await deps.run(toolNames.gh, argv, { timeoutMs: ghTimeoutMs });
   if (!run.ok || run.value.exitCode !== 0) return { kind: 'unreadable' };
-  if (run.value.stdout.length > request.maxOutputChars) return { kind: 'too-long' };
+  if (run.value.stdout.length > maxOutputChars) return { kind: 'too-long' };
   const json = parseJsonText(run.value.stdout);
   return json.ok ? { kind: 'parsed', value: json.value } : { kind: 'not-json' };
+};
+
+/** Read a plain ref before it becomes part of a compare path. */
+export const compareBaseSchema = z.string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/)
+  .refine((ref) => !ref.includes('..') && ref.split('/').every(
+    (part) => part !== '' && !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'),
+  ))
+  .brand<'CompareBase'>();
+
+const compareSchema = z.strictObject({ behind_by: z.int().nonnegative() });
+const MAX_COMPARE_CHARS = 1024;
+
+export interface CompareRequest {
+  /** `owner/name` from the parsed project URL. */
+  readonly repo: string;
+  readonly base: z.infer<typeof compareBaseSchema>;
+  /** Full SHA from the parsed PR view, not a mutable branch name. */
+  readonly head: string;
+}
+
+/** Read the behind count at one head. Do not paginate or use text from gh in the result. */
+export const runCompare = async (deps: Deps, { repo, base, head }: CompareRequest): Promise<CliResult<number>> => {
+  const path = `repos/${repo}/compare/${encodeURIComponent(base)}...${head}?per_page=1`;
+  const read = await readGhJson(deps, ['api', '--hostname', mergeCheck.host, '--method', 'GET', path, '--jq', '{behind_by}'], MAX_COMPARE_CHARS);
+  const parsed = read.kind === 'parsed' ? compareSchema.safeParse(read.value) : null;
+  return parsed?.success === true ? ok(parsed.data.behind_by) : failure(checkReasons.compareUnreadable);
 };
 
 const isSha = (text: string): boolean => mergeCheck.shaPattern.test(text);
@@ -171,11 +201,14 @@ const isSha = (text: string): boolean => mergeCheck.shaPattern.test(text);
  * The reason that the PR is not the PR of the record, or null: another number, a url of another repo, or a PR from another repo.
  * These checks run with every guard value, because another PR or a fork PR would close the item.
  */
-export const otherPrReason = (pr: z.infer<typeof prSchema>, input: MergeReadInput): string | null => {
+export const otherPrReason = (
+  pr: Pick<z.infer<typeof prSchema>, 'number' | typeof keys.project.url | 'isCrossRepository'>,
+  input: Pick<MergeReadInput, typeof keys.project.repo | 'number'>,
+): string | null => {
   const expectedUrl = `https://${mergeCheck.host}/${input.repo}/pull/${input.number}`;
-  if (pr.number !== input.number) return 'gh gave another PR';
-  if (pr.url.toLowerCase() !== expectedUrl.toLowerCase()) return 'the PR is not in this repo';
-  return pr.isCrossRepository ? 'the PR comes from another repo' : null;
+  if (pr.number !== input.number) return checkReasons.otherNumber;
+  if (pr.url.toLowerCase() !== expectedUrl.toLowerCase()) return checkReasons.otherRepo;
+  return pr.isCrossRepository ? checkReasons.fork : null;
 };
 
 /**
@@ -183,7 +216,7 @@ export const otherPrReason = (pr: z.infer<typeof prSchema>, input: MergeReadInpu
  * check runs with every guard value, because the PR of another branch would close the item.
  */
 export const headBranchReason = (headRefName: string, heads: readonly string[] | undefined): string | null =>
-  heads !== undefined && !heads.includes(headRefName) ? 'the PR comes from another head branch' : null;
+  heads !== undefined && !heads.includes(headRefName) ? checkReasons.otherBranch : null;
 
 /**
  * Read the PR with `gh pr view` and check that it is the merged PR that the caller expects. Each of these is a failure (exit 1)

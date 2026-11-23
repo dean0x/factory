@@ -16,7 +16,7 @@ export type ReportWrite = 'written' | 'skipped';
  * An event folder that exists gets the folder mode too: the write sets that mode only for a folder that it makes. A link is never
  * followed here, so a link at the factory folder or at the event folder is left to the write, which refuses it.
  */
-const tightenEventFolder = async (deps: Deps, stateKind: LinkKind | null, folder: string): Promise<CliResult<void>> => {
+export const tightenEventFolder = async (deps: Deps, stateKind: LinkKind | null, folder: string): Promise<CliResult<void>> => {
   if (stateKind !== 'dir') return ok(undefined);
   const kind = await deps.fs.lstat(folder);
   if (!kind.ok) return kind;

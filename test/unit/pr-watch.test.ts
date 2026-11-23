@@ -151,6 +151,14 @@ describe('pr watch: the input check before any gh call', () => {
     expect(result.gh).toEqual([]);
   });
 
+  it('refuses --admin with exit 2 and calls no gh', async () => {
+    const result = await watch(['12', '--admin'], () => good());
+    expect(result.code).toBe(2);
+    expect(result.err).toContain("Unknown option '--admin'");
+    expect(result.err).toContain('Run "factory pr --help".');
+    expect(result.gh).toEqual([]);
+  });
+
   it('exits 2 with no number and with a second number', async () => {
     for (const args of [[], ['12', '13']]) {
       const result = await watch(args, () => good());
@@ -230,9 +238,9 @@ describe('pr watch: each read is one gh call', () => {
     }
   });
 
-  it('has no admin, auto or rebase flag and no merge subcommand as a literal in the files that build a gh argument list', () => {
+  it('keeps write flags and merge commands out of the read modules', () => {
     const forbidden = new Set(['--admin', '--auto', '--rebase', 'merge', 'pr merge']);
-    for (const file of ['pr-watch.ts', 'github-pr.ts']) {
+    for (const file of ['pr-watch.ts', 'github-pr.ts', 'check-runs.ts']) {
       const literals = literalsOf(readFileSync(join(SRC, 'recipes', 'software', file), 'utf8'));
       expect(literals.filter((literal) => forbidden.has(literal)), file).toEqual([]);
     }
@@ -685,7 +693,7 @@ describe('pr watch: the command in the command line', () => {
   });
 
   it('exits 2 for a pr command with no subcommand and for an unknown subcommand', async () => {
-    for (const argv of [['pr'], ['pr', 'merge', '12']]) {
+    for (const argv of [['pr'], ['pr', 'unknown', '12']]) {
       const sink = captureSink();
       const code = await runCli(argv, createFakeDeps(), sink);
       expect(code).toBe(2);

@@ -47,6 +47,23 @@ const change = async (name: string, edit: (text: string) => string, folder: stri
 /** The checks that failed, by number. */
 const failedChecks = (out: string): string[] => [...out.matchAll(/^FAIL (\d+)/gm)].map((match) => match[1] ?? '');
 
+it('does not mark check or pr merge as unbuilt in the README or design', () => {
+  const unbuiltCommand =
+    /(?:`(?:factory )?(?:check|pr merge)`|\b(?:factory check|pr merge)\b|^\s*(?:[-*] +)?(?:the command +)?check\b)(?: +(?:is|are) +| *[:|–—-] *)not (?:yet )?built\b/i;
+  for (const name of ['README.md', 'docs/design.md']) {
+    const lines = readFileSync(join(ROOT, name), 'utf8').split('\n');
+    expect(lines.filter((line) => unbuiltCommand.test(line)), name).toEqual([]);
+  }
+});
+
+it('marks the approval and assignment proofs as partly covered', () => {
+  const rows = readFileSync(join(ROOT, 'docs', 'intent-trace.md'), 'utf8').split('\n');
+  const row = rows.find((line) => line.startsWith('| What counts as approval and assignment |'));
+  expect(row).toMatch(/\| partly covered \|$/);
+  expect(row).toMatch(/proof checks on.*delegated mode refuses a merge without a matching owner store decision/i);
+  expect(row).toMatch(/assignment and approved-plan proofs are separate work/i);
+});
+
 describe('scripts/check-intent-docs.sh', () => {
   it('passes on the docs of the repo', () => {
     const result = check(join(ROOT, 'docs'));
