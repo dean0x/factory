@@ -198,8 +198,8 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(after.map(({ name, version }) => [name, version])).toEqual(before.map(({ name, version }) => [name, version]));
     expect(await box.read(role)).not.toContain('Never let two workers share a work copy.');
     expect(await box.read(role)).toContain('names a trust question');
-    expect(started.stderr.trim()).toBe('warning: Rendered the role blocks again after a guard change or a package change: 29 guards off.');
-    expect(started.stdout.match(/Guards: 29 off; \d+ with H/g)).toHaveLength(1);
+    expect(started.stderr.trim()).toBe('warning: Rendered the role blocks again after a guard change or a package change: 30 guards off.');
+    expect(started.stdout.match(/Guards: 30 off; \d+ with H/g)).toHaveLength(1);
     expectShortOutput(`${started.stderr}${started.stdout}`);
   }, scaled(60_000));
 

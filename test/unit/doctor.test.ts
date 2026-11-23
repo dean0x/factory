@@ -195,7 +195,7 @@ describe('doctor: shared guard state', () => {
     }] }));
     const found = await guardCheck(deps);
     expect(found).toMatchObject({ level: 'warn' });
-    expect(found?.text).toContain('29 off values do not take effect. Run "factory guard set --all off" to turn the guards off.');
+    expect(found?.text).toContain('30 off values do not take effect. Run "factory guard set --all off" to turn the guards off.');
     expect(found?.text.match(/factory guard set --all off/g) ?? []).toHaveLength(1);
     expect(found?.text).not.toMatch(/unmatched [a-z]+-/);
     expect(found?.text).toContain('0 off; 0 with H');
@@ -322,7 +322,7 @@ describe('doctor: shared guard state', () => {
     const found = await guardCheck(deps);
     expect(found?.level).toBe('fail');
     expect(found?.text).toContain(STORE);
-    expect(found?.text).toContain('29 off values do not take effect.');
+    expect(found?.text).toContain('30 off values do not take effect.');
     expect(found?.text).not.toContain('factory guard set --all off');
     expect(found?.text).toContain('move the file away');
     expect(found?.text).toContain('every guard on');
