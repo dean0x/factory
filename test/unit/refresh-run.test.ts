@@ -12,7 +12,7 @@ import {
 import { actCoordinator, actWorker, pollOnce, refreshExitCode, runRefresh } from '../../src/workers/refresh-run.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
-import { seedOwnHooks, seedUnacceptedSetup, settingsFileOf, STATE_ENV } from '../helpers/role-delivery.js';
+import { ownSettingsWithRules, seedOwnHooks, seedUnacceptedSetup, settingsFileOf, STATE_ENV } from '../helpers/role-delivery.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { startCommandText, tmuxHandler, type PaneFixture, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { coordinatorWordsOf, launchWordsOf } from '../helpers/worker-launch-words.js';
@@ -316,6 +316,17 @@ describe('refresh runner', () => {
     } as const;
     const [warning, remedy] = text[check];
     expectFault(record, 'alpha', warning, remedy);
+    expect(lab.deps.terminated).toEqual([COORDINATOR_PID]);
+  });
+
+  it('requires the busy hook even when the setup text guard is off', async () => {
+    const lab = await make();
+    const settings = ownSettingsWithRules(HOME, COPY);
+    const { UserPromptSubmit: _, ...hooks } = settings.hooks;
+    lab.deps.seed(settingsFileOf(COPY), JSON.stringify({ ...settings, hooks }));
+    const guards = guardSourceOf({ home: HOME, state: null, values: { [guardIds.setupText]: guardValues.off } });
+    const record = value(await runRefresh({ ...lab.deps, guards }, lab.request));
+    expectFault(record, 'alpha', 'lack the events: UserPromptSubmit', 'factory upgrade');
     expect(lab.deps.terminated).toEqual([COORDINATOR_PID]);
   });
 

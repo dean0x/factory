@@ -128,6 +128,9 @@ export const actWorker = async (
   const guards = await guardValuesFor(quiet, home);
   const checked = await checkTargets(quiet, { home, config, session, guards, again: AGAIN, panes: workerPanes, launches: [record.value] });
   if (!checked.ok) return fault(checked.error);
+  // Refresh needs every state event, even if another launch can omit some hooks.
+  const hooks = await requireOwnHooks(quiet, { home, folder: record.value.workCopy, then: AGAIN });
+  if (!hooks.ok) return fault(hooks.error);
   const proxyAnswers = newProxyAnswers();
   const proxy = await requireProxies(quiet, config, [workerProxyWish(config, id, AGAIN)], proxyAnswers, guards);
   if (!proxy.ok) return fault(proxy.error);
