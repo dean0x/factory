@@ -23,7 +23,15 @@ export const softwareWordList = [
 
 /** The key that the recipe adds to each project, and the values it takes. The first value is the default. */
 export const softwareProjectKeys = { mergeMethod: 'merge_method' } as const;
-export const mergeMethods = ['squash', 'merge', 'rebase'] as const;
+export const mergeMethod = { squash: 'squash', merge: 'merge', rebase: 'rebase' } as const;
+export const mergeMethods = [mergeMethod.squash, mergeMethod.merge, mergeMethod.rebase] as const;
+
+/** The merge call has its own time limit. Only the confirmation reads can repeat. */
+export const prMergeLimits = {
+  mergeTimeoutMs: 60_000,
+  mergeRereads: 3,
+  mergeRereadMs: 5_000,
+} as const;
 
 /** The key of the queue in `board.json`: the merge word, because the queue holds the merge order. */
 export const softwareQueueKey = 'merge';
