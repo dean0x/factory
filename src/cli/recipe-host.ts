@@ -12,6 +12,7 @@ import { ok } from '../core/result.js';
 import type { GuardValues } from '../guards/types.js';
 import { commands, commandText, decideProof, files, flags, flagText, requestWords, roles, type CommandName } from '../names.js';
 import type { RecipeHost, RecipeProject, RecipeRegistry, WorkHost } from '../recipes/index.js';
+import { writeEventFile } from '../report/event-file.js';
 import { layoutOf } from '../state/layout.js';
 import { requireNodeCaller } from '../workers/panes.js';
 import { failure, safetyRefusal, usageError, type CliResult } from './errors.js';
@@ -102,6 +103,7 @@ const workHostOf = (deps: Deps, board: OpenBoard, rules: RequestLinkRules, guard
     return proof;
   },
   record: ({ item, ref, project }) => recordWork(deps, board, { id: item, ref, project }),
+  writeEvent: (event) => writeEventFile(deps, board.home, event),
 });
 
 /** Give the recipe the node, config and board operations it needs without imports from the command layer. */

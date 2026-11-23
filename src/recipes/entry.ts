@@ -8,6 +8,7 @@ import type { Deps } from '../core/deps.js';
 import { allOn } from '../guards/effective.js';
 import type { GuardDefinition, GuardRow, GuardValues } from '../guards/types.js';
 import { boardKeys, guardValues, keys, values, type CommandName } from '../names.js';
+import type { EventFileInput, EventWrite } from '../report/event-file.js';
 import type { TextPart } from '../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
@@ -169,7 +170,7 @@ export interface WorkFacts {
   readonly branches: readonly string[] | undefined;
 }
 
-/** The local reads and record step of a work flow. The recipe decides which policy checks to call. */
+/** The local reads and writes of a work flow. The recipe decides which policy checks to call. */
 export interface WorkHost {
   readonly guards: GuardValues;
   readonly caller: () => Promise<CliResult<void>>;
@@ -177,6 +178,7 @@ export interface WorkHost {
   readonly facts: (target: RequestLink & { readonly project?: string }) => Promise<CliResult<WorkFacts>>;
   readonly approval: (target: RequestLink & { readonly need: 'go' | 'owner-record' }) => Promise<CliResult<SettledProof>>;
   readonly record: (target: { readonly item: string; readonly ref: string; readonly project?: string }) => Promise<CliResult<RecordedWork>>;
+  readonly writeEvent: (event: EventFileInput) => Promise<CliResult<EventWrite>>;
 }
 
 /**

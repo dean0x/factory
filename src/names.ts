@@ -1599,6 +1599,13 @@ export const statusWords = {
  */
 const maxWorkers = 256;
 
+/** The name form and UTF-8 byte cap of one event file. */
+export const eventFile = {
+  namePattern: /^[a-z0-9-]{1,96}\.json$/,
+  maxBytes: 1_024,
+  nameRemedy: `Use a new event file name with 1 to 96 lower-case letters, digits or hyphens and a .json suffix. Do not use ${files.report}.`,
+} as const;
+
 /**
  * The limits of the report of a node (design 5.4). `schemaVersion` is the number that a report holds in its version key: a reader
  * that finds a higher number reads no more of the file. A report file has at most `maxBytes` bytes. One build of the report reads at

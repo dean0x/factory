@@ -120,19 +120,29 @@ export const writeInFolder = async (deps: Deps, target: FolderTarget, text: stri
  * Create a new file in the folder with the text, and give the real path of the file. The folder is checked as for
  * `writeInFolder`: it is never a link, and its real path is inside the real path of the parent. The call makes the folder when
  * it does not exist, but never a folder above it: a parent that is not there is a failure (exit 1), also when it went away
- * after the caller looked. The file must not exist: a file, a folder or a link at that path is never replaced and never followed,
- * and the call is a failure (exit 1). A refusal of a link or of a folder outside the parent is a security stop (exit 4). A failed
- * write leaves no part of the file.
+ * after the caller looked. The call never replaces a path. By default, a path that exists is a failure. With `accept-file`,
+ * a regular file at that path gives null, a link is a security stop (exit 4), and any other path is a failure. A failed write
+ * leaves no part of the file.
  */
-export const createInFolder = async (deps: Deps, target: FolderTarget, text: string): Promise<CliResult<string>> => {
+export function createInFolder(deps: Deps, target: FolderTarget, text: string): Promise<CliResult<string>>;
+export function createInFolder(deps: Deps, target: FolderTarget, text: string, onExists: 'accept-file'): Promise<CliResult<string | null>>;
+export async function createInFolder(
+  deps: Deps, target: FolderTarget, text: string, onExists?: 'accept-file',
+): Promise<CliResult<string | null>> {
   if (!isPlainName(target.name)) return notPlainName(target);
   const folder = await realFolderOf(deps, target, 'folderOnly');
   if (!folder.ok) return folder;
   const file = join(folder.value, target.name);
   const created = await deps.fs.writeTextExclusive(file, text, target.mode);
   if (!created.ok) return created;
-  return created.value ? ok(file) : failure(`cannot write ${file}: it exists already`);
-};
+  if (created.value) return ok(file);
+  if (onExists === undefined) return failure(`cannot write ${file}: it exists already`);
+  const found = await deps.fs.lstat(file);
+  if (!found.ok) return found;
+  if (found.value === 'link') return safetyRefusal(`cannot write ${file}: it is a link`, LINK_REMEDY);
+  if (found.value !== 'file') return failure(`cannot write ${file}: it is not a file`);
+  return ok(null);
+}
 
 /** The bounds of a lock beside a file, and the end of its name: the lock file is the name of the file and the suffix. */
 export interface FolderLock extends LockPolicy {

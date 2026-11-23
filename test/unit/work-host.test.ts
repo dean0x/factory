@@ -26,6 +26,7 @@ const worker = 'alpha';
 const query = { point, ref, branch: branchOf(worker) };
 const target = { item, point, ref, head };
 const approval = { ...target, need: 'go' } as const;
+const event = { name: 'work-42.json', fields: { kind: 'done', count: 42 } };
 const host = recipeHostFor(recipes);
 const valueOf = <T>(result: CliResult<T>): T => {
   if (!result.ok) throw new Error(result.error.message);
@@ -94,6 +95,15 @@ const setup = async ({ off = [], delegated = false, outputTTY = true }: Setup = 
 };
 
 describe('the work host on a local board', () => {
+  it('writes an event in the outbox of the open node', async () => {
+    const world = await setup();
+    const work = await world.open();
+    expect(work.writeEvent).toBeTypeOf('function');
+    expect(valueOf(await work.writeEvent(event))).toBe('written');
+    const text = await readFile(join(layoutOf(world.home).outboxDir, event.name), 'utf8');
+    expect(JSON.parse(text)).toEqual(event.fields);
+  });
+
   it('refuses absent proof when the owner go guard is off', async () => {
     const world = await setup({ off: [guardIds.ownerGo] });
     const work = await world.open();
@@ -174,10 +184,15 @@ describe('the work host on a local board', () => {
 describe('the fake work host', () => {
   it('lists calls in order and returns the result that the test gives it', async () => {
     const proof = { kind: 'record', id: APPROVAL_ID, decider: 'owner' } as const;
-    const { work, calls } = fakeWorkHost({ approval: async () => ({ ok: true, value: proof }) });
+    const { work, calls } = fakeWorkHost({
+      approval: async () => ({ ok: true, value: proof }),
+      writeEvent: async () => ({ ok: true, value: 'exists' }),
+    });
     await work.caller();
     await work.find(query);
     expect(valueOf(await work.approval(approval))).toEqual(proof);
-    expect(calls).toEqual([['caller'], ['find', query], ['approval', approval]]);
+    expect(work.writeEvent).toBeTypeOf('function');
+    expect(valueOf(await work.writeEvent(event))).toBe('exists');
+    expect(calls).toEqual([['caller'], ['find', query], ['approval', approval], ['writeEvent', event]]);
   });
 });

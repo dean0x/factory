@@ -38,6 +38,10 @@ export const fakeWorkHost = (overrides: Partial<WorkHost> = {}): FakeWorkHost =>
         calls.push(['record', target]);
         return overrides.record?.(target) ?? failure('the test gives no record result');
       },
+      writeEvent: async (event) => {
+        calls.push(['writeEvent', event]);
+        return overrides.writeEvent?.(event) ?? failure('the test gives no event write result');
+      },
     },
   };
 };
