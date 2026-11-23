@@ -1011,6 +1011,16 @@ export const workerFieldGuard = {
 /** The time limit of one run of `gh`, in milliseconds. */
 export const ghTimeoutMs = 10_000;
 
+/** The verdict keys of the PR readiness read. */
+export const readinessKinds = {
+  ready: 'ready',
+  notReady: 'not-ready',
+  headMoved: 'head-moved',
+  mergedAtPin: 'merged-at-pin',
+  unreadable: 'unreadable',
+  lookup: 'lookup',
+} as const;
+
 /**
  * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to `maxTokenChars` letters, digits,
  * dots, underscores or hyphens, and the first character is a letter or a digit. The cap is the length of the longest worker id (a
