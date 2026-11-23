@@ -8,7 +8,8 @@ import { processStartOf } from '../core/process-start.js';
 import { ok } from '../core/result.js';
 import { LINK_REMEDY, withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
 import {
-  commandText, commands, files, flags, maxFileBytes, privateFile, processStart, refreshRunPath, refreshWait, schemaIds, workerRecord,
+  commandText, commands, files, flags, flagText, maxFileBytes, privateFile, processStart,
+  refreshOutcomeKey, refreshRunPath, refreshWait, refreshWords, roles, schemaIds, workerRecord,
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
@@ -19,14 +20,14 @@ const RUN_ID_BYTES = 8;
 const FAULT_TEXT_LIMIT = 1024;
 const hexOf = (bytes: number) => z.string().length(bytes * 2).regex(/^[0-9a-f]+$/);
 const time = z.int().nonnegative();
-const role = z.enum(['worker', 'coordinator']);
+const roleSchema = z.enum([roles.worker, roles.coordinator]);
 const faultFields = { warning: z.string().min(1).max(FAULT_TEXT_LIMIT), remedy: z.string().min(1).max(FAULT_TEXT_LIMIT) };
 const faultSchema = z.strictObject(faultFields).readonly();
-const outcomeFields = { role, id: slug };
-const skippedWorkerSchema = z.strictObject({ role: z.literal('worker'), id: slug, status: z.literal('skipped'), ...faultFields });
-const outcomeSchema = z.discriminatedUnion('status', [
-  z.strictObject({ ...outcomeFields, status: z.literal('resumed') }),
-  z.strictObject({ ...outcomeFields, status: z.enum(['fault', 'trust-wait']), ...faultFields }),
+const outcomeFields = { role: roleSchema, id: slug };
+const skippedWorkerSchema = z.strictObject({ role: z.literal(roles.worker), id: slug, [refreshOutcomeKey]: z.literal('skipped'), ...faultFields });
+const outcomeSchema = z.discriminatedUnion(refreshOutcomeKey, [
+  z.strictObject({ ...outcomeFields, [refreshOutcomeKey]: z.literal('resumed') }),
+  z.strictObject({ ...outcomeFields, [refreshOutcomeKey]: z.enum(['fault', 'trust-wait']), ...faultFields }),
   skippedWorkerSchema,
 ]).readonly();
 
@@ -41,7 +42,7 @@ const recordSchema = z.strictObject({
   runner: z.strictObject({ pid: z.int().positive(), startMs: time }).readonly().nullable(),
   deadlines: z.strictObject({ claimMs: time, workerMs: time.nullable(), coordinatorMs: time.nullable() }).readonly(),
   acting: slug.nullable(),
-  actingRole: role.nullable(),
+  actingRole: roleSchema.nullable(),
   workerIds: z.array(slug).max(workerRecord.maxEntries).readonly(),
   outcomes: z.array(outcomeSchema).max(workerRecord.maxEntries + 1).readonly(),
   fault: faultSchema.nullable(),
@@ -61,12 +62,13 @@ const recordSchema = z.strictObject({
   }
   if (planned.size > workerRecord.maxEntries) return false;
   if (state === 'scheduled') return runner === null && acting === null;
-  if (state === 'waiting') return runner !== null && actingRole !== 'coordinator';
-  if (state === 'acting-coordinator') return runner !== null && deadlines.coordinatorMs !== null && actingRole !== 'worker';
+  if (state === 'waiting') return runner !== null && actingRole !== roles.coordinator;
+  if (state === 'acting-coordinator') return runner !== null && deadlines.coordinatorMs !== null && actingRole !== roles.worker;
   return true;
 }).readonly();
 
 export type RefreshRunRecord = z.infer<typeof recordSchema>;
+export type RefreshRole = z.infer<typeof roleSchema>;
 export type RefreshOutcome = z.infer<typeof outcomeSchema>;
 export type RefreshFault = z.infer<typeof faultSchema>;
 
@@ -82,21 +84,21 @@ export interface RefreshWorkerPlan {
 
 export type RefreshRunChange =
   | { readonly kind: 'wait-coordinator' }
-  | { readonly kind: 'acting'; readonly role: RefreshOutcome['role']; readonly id: string }
+  | { readonly kind: 'acting'; readonly role: RefreshRole; readonly id: string }
   | { readonly kind: 'clear-acting' }
   | { readonly kind: 'outcome'; readonly outcome: RefreshOutcome }
   | { readonly kind: 'done' }
   | { readonly kind: 'failed'; readonly fault: RefreshFault };
 
-export const refreshResultCommand = commandText(`${commands.refresh} --${flags.result}`);
-const CANCEL_COMMAND = commandText(`${commands.refresh} --${flags.cancel}`);
+export const refreshResultCommand = commandText(`${commands.refresh} ${flagText(flags.result)}`);
+const CANCEL_COMMAND = commandText(`${commands.refresh} ${flagText(flags.cancel)}`);
 const RECORD_REMEDY = `Check ${files.refreshRun}. Replace or remove it only when no refresh runner is active.`;
 const RESULT_REMEDY = `Run "${refreshResultCommand}" to see the last refresh run.`;
 
 /** The same remedy applies to the result and status if an action has no outcome yet. */
 export const refreshActingRemedy = ({ acting, actingRole }: RefreshRunRecord): string => {
   if (acting === null) return RESULT_REMEDY;
-  const retry = actingRole === 'worker' ? resumeLine(acting) : commands.start;
+  const retry = actingRole === roles.worker ? resumeLine(acting) : commands.start;
   return `If the session stopped, run "${commandText(retry)}".`;
 };
 
@@ -125,7 +127,7 @@ const checkFolders = async (deps: Deps, { parent, folder }: FolderTarget): Promi
     if (info.value.kind !== 'dir') return failure(`the refresh record folder ${path} is not a folder`, RECORD_REMEDY);
     const { mode, uid } = info.value;
     if (deps.uid !== null && (uid !== deps.uid || (mode & privateFile.groupOtherWrite) !== 0)) {
-      return safetyRefusal(`the refresh record folder ${path} is not writable by its owner alone`, RECORD_REMEDY);
+      return safetyRefusal(`the refresh record folder ${path} ${refreshWords.folderOwnerOnly}`, RECORD_REMEDY);
     }
     if (deps.uid !== null && path === folder && mode !== privateFile.folderMode) {
       return safetyRefusal(`the refresh run-time folder ${path} does not have mode 700`, RECORD_REMEDY);
@@ -271,9 +273,9 @@ const applyChange = (current: RefreshRunRecord, change: RefreshRunChange, now: n
       return ok({ ...current, deadlines: { ...current.deadlines, coordinatorMs: now + refreshWait.idleCapMs } });
     case 'acting': {
       if (current.state !== 'waiting' || current.acting !== null) return invalidChange();
-      const phase = current.deadlines.coordinatorMs === null ? 'worker' : 'coordinator';
+      const phase = current.deadlines.coordinatorMs === null ? roles.worker : roles.coordinator;
       if (change.role !== phase || current.outcomes.some(({ id, role }) => id === change.id && role === change.role)) return invalidChange();
-      return ok({ ...current, acting: change.id, actingRole: change.role, state: phase === 'worker' ? 'waiting' : 'acting-coordinator' });
+      return ok({ ...current, acting: change.id, actingRole: change.role, state: phase === roles.worker ? 'waiting' : 'acting-coordinator' });
     }
     case 'clear-acting':
       if (current.acting === null) return ok(current);
@@ -300,6 +302,6 @@ export const updateRefreshRun = async (
 export const cancelRefreshRun = async (deps: Deps, home: string): Promise<CliResult<RefreshRunRecord>> =>
   changeRecord(deps, home, async (current) => {
     if (current?.state === 'scheduled' || current?.state === 'waiting') return ok({ ...current, state: 'cancelled' });
-    if (current?.state === 'acting-coordinator') return failure('cannot cancel refresh after the coordinator act has started', RESULT_REMEDY);
+    if (current?.state === 'acting-coordinator') return failure(`cannot cancel refresh after the ${roles.coordinator} act has started`, RESULT_REMEDY);
     return failure('there is no unfinished refresh run to cancel', RESULT_REMEDY);
   });

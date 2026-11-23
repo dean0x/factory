@@ -364,7 +364,7 @@ const readPointer = async (deps: Deps, home: string, owner: PointerOwner, requir
   const pointer = await readPointerFile(deps, home, owner);
   if (!pointer.ok) return pointer;
   if (requireReadable && pointer.value.state === 'invalid') {
-    return failure(`cannot check the session pointer: ${pointer.value.reason}`, 'Check the worker pointer. Then try again.');
+    return failure(`cannot check the session pointer: ${pointer.value.reason}`, `Check the ${roles.worker} pointer. Then try again.`);
   }
   if (pointer.value.state !== 'text') return ok(pointer.value);
   const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;

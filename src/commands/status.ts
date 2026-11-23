@@ -3,7 +3,7 @@ import { displayLine, tableLines, type CommandOutput, type OutLine } from '../cl
 import { fileTransport } from '../comms/transport.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, roles, schemaIds, statusWords } from '../names.js';
+import { commands, refreshWords, roles, schemaIds, statusWords } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { readNodeFacts, reportDocOf, type NodeFacts } from '../report/build.js';
 import { writeReportFile } from '../report/outbox.js';
@@ -63,7 +63,7 @@ const refreshWarning = async (deps: Deps, home: string): Promise<string | null> 
   if (!unfinished && state !== 'failed' && !hasFaults && acting === null) return null;
   const status = unfinished ? `unfinished (${state})` : state;
   const faults = hasFaults ? ' with faults' : '';
-  const action = acting === null ? '' : ` Last action: ${actingRole ?? 'session'} ${acting}. ${refreshActingRemedy(run)}`;
+  const action = acting === null ? '' : ` Last action: ${actingRole ?? refreshWords.session} ${acting}. ${refreshActingRemedy(run)}`;
   return `refresh run ${runId}: ${status}${faults}.${action} Run "${refreshResultCommand}" to see the result.`;
 };
 

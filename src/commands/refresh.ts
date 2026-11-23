@@ -10,7 +10,8 @@ import { ADD_DIR_FLAG } from '../launch/argv.js';
 import { runnerWindowArgs, runnerWindowExitArgs, type PaneRow } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
 import {
-  commandLines, commands, commandText, env, flags, flagText, hookSessions, refreshText, refreshWait, schemaIds, workerRecord,
+  commandLines, commands, commandText, env, flags, flagText, hookSessions, program,
+  refreshText, refreshWait, refreshWords, roles, schemaIds, workerRecord,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { hasOwnerPrefix } from '../safety/owner-prefix.js';
@@ -20,7 +21,7 @@ import { runsInside, workersWithPanes } from '../workers/lifecycle.js';
 import { readPanes, requireCoordinatorPane } from '../workers/panes.js';
 import {
   cancelRefreshRun, failUnclaimedRefreshRun, readRefreshRun, refreshActingRemedy, refreshResultCommand, refreshRunIsLive, scheduleRefreshRun,
-  type RefreshCaller, type RefreshFault, type RefreshRunRecord, type RefreshWorkerPlan,
+  type RefreshCaller, type RefreshFault, type RefreshRole, type RefreshRunRecord, type RefreshWorkerPlan,
 } from '../workers/refresh-record.js';
 import { refreshExitCode, runRefresh, type RefreshTarget } from '../workers/refresh-run.js';
 import { readWorkerRecord } from '../workers/registry.js';
@@ -35,7 +36,7 @@ const CANCEL = commandText(`${commands.refresh} ${flagText(flags.cancel)}`);
 const SHOW_RESULT = `Run "${refreshResultCommand}" to see the last refresh run.`;
 const RETRY = `Run "${REFRESH}" again.`;
 const SKIP_REMEDY = `Check its pane. ${RETRY}`;
-const UPGRADE = `Run "${commandText(commands.upgrade)}" to check the coordinator hook settings. Then run "${REFRESH}" again.`;
+const UPGRADE = `Run "${commandText(commands.upgrade)}" to check the ${roles.coordinator} hook settings. Then run "${REFRESH}" again.`;
 const END_WARNING = 'The background tasks, crons and watches of each restarted session end.';
 const CLAIM_FAULT = 'the refresh runner did not claim its token in time';
 
@@ -47,11 +48,13 @@ export interface RefreshOptions {
   readonly runner: string | undefined;
 }
 
+type PlanState = typeof refreshWords.idle | 'busy' | 'waits' | 'unknown';
+
 interface PlanRow {
   readonly id: string;
-  readonly role: 'worker' | 'coordinator';
+  readonly role: RefreshRole;
   readonly pane: string;
-  readonly state: 'idle' | 'busy' | 'waits' | 'unknown';
+  readonly state: PlanState;
   readonly resume: 'owned' | 'not owned' | 'missing';
   readonly skip?: RefreshFault;
 }
@@ -65,7 +68,7 @@ const workerPlanOf = (rows: readonly PlanRow[]): RefreshWorkerPlan => {
   const workerIds: string[] = [];
   const skipped: RefreshWorkerPlan['skipped'][number][] = [];
   for (const { id, role, skip } of rows) {
-    if (role !== 'worker') continue;
+    if (role !== roles.worker) continue;
     if (skip === undefined) workerIds.push(id);
     else skipped.push({ role, id, status: 'skipped', ...skip });
   }
@@ -79,13 +82,13 @@ const output = (lines: readonly OutLine[], fields: Readonly<Record<string, unkno
 
 const checkContinue = ({ core: { owner } }: FactoryConfig): CliResult<void> =>
   hasOwnerPrefix(refreshText.continue, owner.prefix, owner.display)
-    ? safetyRefusal('the refresh continue text contains the owner prefix',
-      `Set a distinct owner prefix. Run "${commandText(commandLines.guardConfirm)}", then "${REFRESH}".`)
+    ? safetyRefusal(`the refresh continue text contains the ${roles.owner} prefix`,
+      `Set a distinct ${roles.owner} prefix. Run "${commandText(commandLines.guardConfirm)}", then "${REFRESH}".`)
     : ok(undefined);
 
-const stateOf = (line: LastSeen): PlanRow['state'] => {
+const stateOf = (line: LastSeen): PlanState => {
   const state = promptStateOf(line);
-  return state === 'prompt' ? 'idle' : state ?? 'unknown';
+  return state === 'prompt' ? refreshWords.idle : state ?? 'unknown';
 };
 
 const checkWorker = async (
@@ -97,15 +100,15 @@ const checkWorker = async (
   }
   const live = requireOneLivePane(id, bound.value.live, commands.refresh);
   if (!live.ok || live.value === null) return live.ok ? ok(null) : live;
-  const row = { id, role: 'worker', pane: live.value.paneId } as const;
+  const row = { id, role: roles.worker, pane: live.value.paneId } as const;
   const record = await readWorkerRecord(deps, home, id);
   if (!record.ok) return record;
   if (record.value.state === 'absent') {
-    return ok({ ...row, state: 'unknown', resume: 'missing', skip: { warning: `The worker ${id} has no record.`, remedy: SKIP_REMEDY } });
+    return ok({ ...row, state: 'unknown', resume: 'missing', skip: { warning: `The ${roles.worker} ${id} has no record.`, remedy: SKIP_REMEDY } });
   }
   if (record.value.state === 'invalid') {
-    const message = `the record of the worker ${id} is not valid: ${record.value.reason}`;
-    const remedy = `Check the worker record. ${RETRY}`;
+    const message = `the record of the ${roles.worker} ${id} is not valid: ${record.value.reason}`;
+    const remedy = `Check the ${roles.worker} record. ${RETRY}`;
     return record.value.mismatch === true ? safetyRefusal(message, remedy) : usageError(message, remedy);
   }
   const seen = await readOwnLastSeen(deps, home, id);
@@ -116,7 +119,7 @@ const checkWorker = async (
   return ok({
     ...row, state: reported.value.state === 'valid' ? stateOf(reported.value.line) : 'unknown',
     resume: seen.value.why === 'not-owned' ? 'not owned' : 'missing',
-    skip: { warning: `The worker ${id} has no owned session id: ${seen.value.reason}.`, remedy: SKIP_REMEDY },
+    skip: { warning: `The ${roles.worker} ${id} has no owned session id: ${seen.value.reason}.`, remedy: SKIP_REMEDY },
   });
 };
 
@@ -132,7 +135,7 @@ const checkHookWrite = async (deps: Deps, { home, config }: RefreshTarget): Prom
   });
   if (!planned.ok) return planned;
   return planned.value.kind === 'would-write'
-    ? usageError('the coordinator hook settings need a write, but no terminal can ask', `Run "${REFRESH}" in a terminal window and answer the question.`)
+    ? usageError(`the ${roles.coordinator} hook settings need a write, but no terminal can ask`, `Run "${REFRESH}" in a terminal window and answer the question.`)
     : ok(undefined);
 };
 
@@ -145,7 +148,7 @@ const checkSession = async (deps: Deps, target: RefreshTarget): Promise<CliResul
   if (listed.value === null) return ok(null);
   const panes = listed.value;
   const ids = workersWithPanes(panes.filter(({ dead }) => !dead));
-  if (ids.length > workerRecord.maxEntries) return usageError('too many live workers in this tmux session', RETRY);
+  if (ids.length > workerRecord.maxEntries) return usageError(`too many live ${roles.worker}s in this tmux session`, RETRY);
   const rows: PlanRow[] = [];
   for (const id of ids) {
     const checked = await checkWorker(deps, target, panes, id);
@@ -156,7 +159,7 @@ const checkSession = async (deps: Deps, target: RefreshTarget): Promise<CliResul
   if (!seen.ok) return seen;
   if (seen.value.state !== 'valid') {
     const reason = seen.value.state === 'absent' ? 'the pointer is absent' : seen.value.reason;
-    return notReady(`no owned coordinator session id: ${reason}`, `Check the coordinator pane. Wait for its next hook event. ${RETRY}`);
+    return notReady(`no owned ${roles.coordinator} session id: ${reason}`, `Check the ${roles.coordinator} pane. Wait for its next hook event. ${RETRY}`);
   }
   const pane = await requireCoordinatorPane(deps, home, config, commands.refresh);
   if (!pane.ok) return safetyRefusal(pane.error.message, pane.error.hint ?? RETRY);
@@ -176,7 +179,7 @@ const checkSession = async (deps: Deps, target: RefreshTarget): Promise<CliResul
   const caller = runsInside(deps, panes) ? 'pane' : 'terminal';
   const coordinatorPane = caller === 'pane' && deps.env[env.tmuxPane] === pane.value.paneId;
   if (caller === 'pane' && deps.programArgv.length !== 2) {
-    return failure('factory cannot find its program for the refresh runner window', `Run "${REFRESH}" from outside the tmux session.`);
+    return failure(`${program} cannot find its program for the refresh runner window`, `Run "${REFRESH}" from outside the tmux session.`);
   }
   const launch = await coordinatorLaunchWords(deps, {
     home, config, proxyBaseUrl: null, resumeId: seen.value.sessionId, prompt: refreshText.continue,
@@ -185,7 +188,7 @@ const checkSession = async (deps: Deps, target: RefreshTarget): Promise<CliResul
   // Each launch can ask about its cwd. The coordinator can also ask about each of its project folders.
   const folderQuestions = 1 + launch.value.filter((word) => word === ADD_DIR_FLAG).length +
     2 * rows.filter(({ skip }) => skip === undefined).length;
-  rows.push({ role: 'coordinator', id: node, pane: pane.value.paneId, state: stateOf(seen.value.line), resume: 'owned' });
+  rows.push({ role: roles.coordinator, id: node, pane: pane.value.paneId, state: stateOf(seen.value.line), resume: 'owned' });
   return ok({ caller, coordinatorPane, rows, folderQuestions });
 };
 
@@ -208,7 +211,7 @@ const dryOutput = (plan: RefreshPlan, warnings: readonly string[]): CommandOutpu
   let order = 0;
   return output([
     text('Dry run: no file changes and no session restarts.'),
-    text(`Caller: ${caller}${coordinatorPane ? ' (coordinator)' : ''}`),
+    text(`Caller: ${caller}${coordinatorPane ? ` (${roles.coordinator})` : ''}`),
     text(`Idle wait: ${refreshWait.idleCapMs / 60_000} min per phase; check every ${refreshWait.intervalMs / 1000} s.`),
     text(`Runner claim wait: ${refreshWait.claimChecks * refreshWait.claimIntervalMs / 1000} s.`),
     text(`Folder questions: up to ${folderQuestions}.`),
@@ -285,7 +288,7 @@ const runDetached = async (deps: Deps, home: string, token: string, registry: Re
 
 export const runRefreshCommand = async (base: Deps, options: RefreshOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const modes = [options.dryRun, options.result, options.cancel, options.runner !== undefined];
-  if (modes.filter(Boolean).length > 1) return usageError('refresh takes only one form at a time', `Run "${REFRESH} --help".`);
+  if (modes.filter(Boolean).length > 1) return usageError('refresh takes only one form at a time', `Run "${REFRESH} ${flagText(flags.help)}".`);
   const located = await locateHomeFolder(base, options.home, (deps, home) => readNodeIdentity(deps, home, registry), commands.refresh);
   if (!located.ok) return located;
   const { home } = located.value;

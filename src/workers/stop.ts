@@ -235,7 +235,7 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const single = requireOneLivePane(workerId, live, again);
   if (!single.ok) return single;
   const target = single.value;
-  const changed = () => failure('the worker pane process changed before the stop', `Check the pane. Run "${commandText(request.again ?? again)}" again.`);
+  const changed = () => failure(`the ${roles.worker} pane process changed before the stop`, `Check the pane. Run "${commandText(request.again ?? again)}" again.`);
   if (target === null) return request.process === undefined ? closeEnded(deps, session, dead.map((row) => row.paneId), guards) : changed();
   const other = requireOtherCallerPane(deps, workerId, target.paneId, guards);
   if (!other.ok) return other;

@@ -12,6 +12,7 @@ import {
   flagText,
   lastSeen,
   launchConfirm,
+  program,
   resetConfirm,
   resetKinds,
   roles,
@@ -137,7 +138,7 @@ const waitsOnTrust = (request: LaunchConfirmRequest, reason: string): CliResult<
   return codedNotReady(
     trustQuestionWait,
     `resume not confirmed: the pane ${paneId} of the ${roles.worker} ${workerId} waits on a folder trust question, ` +
-      (request.prompt === undefined ? `so its session wrote no ${launchConfirm.event} line within ${SECONDS} seconds (${reason})` : 'so factory cannot confirm its continue line'),
+      (request.prompt === undefined ? `so its session wrote no ${launchConfirm.event} line within ${SECONDS} seconds (${reason})` : `so ${program} cannot confirm its continue line`),
     `The ${roles.owner} answers each folder trust question in the pane ${paneId}. ` +
       `Then run "${commandText(commandLines.workerWatch)} ${flagText(flags.ready)} ${workerId}". ` +
       `If the ${roles.owner} sees no question in the pane and the earlier conversation did not load, ${recoverySteps(request)}`,

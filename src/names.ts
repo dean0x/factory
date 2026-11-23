@@ -1430,6 +1430,16 @@ export const refreshWait = {
   tokenBytes: 16,
 } as const;
 
+/** The words of the refresh plan, the status summary and the record check. */
+export const refreshWords = {
+  idle: 'idle',
+  session: 'session',
+  folderOwnerOnly: 'is not writable by its owner alone',
+} as const;
+
+/** The discriminator of an outcome in the refresh run record. */
+export const refreshOutcomeKey = 'status';
+
 /** The single launch prompt that refresh gives to each session. */
 export const refreshText = {
   continue: `${program}: this session was restarted by ${program} ${commands.refresh} to apply an update. ` +

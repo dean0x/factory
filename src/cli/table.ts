@@ -304,7 +304,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
       [flags.home]: foundHomeOption,
       [flags.dryRun]: { type: 'boolean', description: 'Show the restart plan. Change nothing.' },
       [flags.result]: { type: 'boolean', description: 'Show the result of the last refresh run.' },
-      [flags.cancel]: { type: 'boolean', description: 'Cancel the run before the coordinator act.' },
+      [flags.cancel]: { type: 'boolean', description: `Cancel the run before the ${roles.coordinator} act.` },
       [flags.runner]: { type: 'string', placeholder: 'TOKEN', description: 'Internal form. Claim the one-use token.' },
     },
     run: (given, deps) => runRefreshCommand(deps, {
