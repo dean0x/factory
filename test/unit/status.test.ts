@@ -10,10 +10,11 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import { allOn } from '../../src/guards/effective.js';
 import type { PaneRow } from '../../src/launch/tmux.js';
-import { files, maxDisplayWidth, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
+import { files, maxDisplayWidth, refreshRunPath, schemaIds, watchPoll, workerRowKeys, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession, type LastSeen } from '../../src/workers/last-seen.js';
+import { cancelRefreshRun, claimRefreshRun, scheduleRefreshRun, updateRefreshRun } from '../../src/workers/refresh-record.js';
 import { writeWorkerRecord, type WorkerRecord } from '../../src/workers/registry.js';
 import { boardRowOf, buildStatus, type LineRead, type StatusInput } from '../../src/workers/status.js';
 import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
@@ -860,6 +861,77 @@ describe('status: a record that is not valid', () => {
     expect(output.warnings).toHaveLength(1);
     expect(output.warnings[0]).toContain('broken');
     expect(jsonOf(output).invalid).toEqual([{ name: 'broken', reason: expect.stringContaining('not valid JSON') }]);
+  });
+});
+
+describe('status: the refresh run record', () => {
+  const schedule = async (deps: FakeDeps) => {
+    const result = await scheduleRefreshRun(deps, HOME, { caller: 'pane', coordinatorPane: true });
+    if (!result.ok) throw new Error(result.error.message);
+    return result.value;
+  };
+
+  const claim = async (made: Made) => {
+    const record = await schedule(made.deps);
+    const deps = { ...made.deps, run: async () => ok({ exitCode: 0, stdout: 'Sun Nov 22 12:00:00 2026', stderr: '' }) };
+    expect((await claimRefreshRun(deps, HOME, record.token)).ok).toBe(true);
+    return { deps, ...record };
+  };
+
+  it('warns once about an unfinished run and leaves the status JSON unchanged', async () => {
+    const made = await make();
+    const before = await statusOf(made);
+    await schedule(made.deps);
+    const output = await statusOf(made);
+    expect(output.warnings).toEqual([expect.stringMatching(/refresh run .*unfinished.*"factory refresh --result"/)]);
+    expect(output.json).toEqual(before.json);
+  });
+
+  it('warns once about a run that failed', async () => {
+    const made = await make();
+    const { deps, token } = await claim(made);
+    expect((await updateRefreshRun(deps, HOME, token, {
+      kind: 'failed', fault: { warning: 'the session ended', remedy: 'Run "factory start".' },
+    })).ok).toBe(true);
+    const output = await statusOf(made);
+    expect(output.warnings).toEqual([expect.stringMatching(/refresh run .*failed.*"factory refresh --result"/)]);
+    expect(output.warnings.join('')).not.toContain(token);
+  });
+
+  it('warns once about a completed run with a session fault', async () => {
+    const made = await make();
+    const { deps, token } = await claim(made);
+    expect((await updateRefreshRun(deps, HOME, token, {
+      kind: 'outcome', outcome: { role: 'worker', id: 'alpha', status: 'fault', warning: 'the session did not stop', remedy: 'Check the pane.' },
+    })).ok).toBe(true);
+    expect((await updateRefreshRun(deps, HOME, token, { kind: 'done' })).ok).toBe(true);
+    expect((await statusOf(made)).warnings).toEqual([expect.stringMatching(/refresh run .*faults.*"factory refresh --result"/)]);
+  });
+
+  it('names the acting worker and its resume command even after cancellation', async () => {
+    const made = await make();
+    const { deps, token } = await claim(made);
+    expect((await updateRefreshRun(deps, HOME, token, { kind: 'acting', role: 'worker', id: 'alpha' })).ok).toBe(true);
+    expect((await cancelRefreshRun(deps, HOME)).ok).toBe(true);
+    expect((await statusOf(made)).warnings).toEqual([expect.stringMatching(/worker alpha.*"factory worker resume alpha"/)]);
+  });
+
+  it('does not warn about a completed run with no faults', async () => {
+    const made = await make();
+    const { deps, token } = await claim(made);
+    expect((await updateRefreshRun(deps, HOME, token, { kind: 'done' })).ok).toBe(true);
+    expect((await statusOf(made)).warnings).toEqual([]);
+  });
+
+  it('warns about a broken record without changing the exit code or the table', async () => {
+    const made = await make();
+    const record = await schedule(made.deps);
+    made.deps.seed(join(HOME, refreshRunPath), JSON.stringify(record).slice(0, -2));
+    const sink = captureSink();
+    expect(await runCli(['status', '--home', HOME], made.deps, sink)).toBe(0);
+    expect(sink.out.join('')).toContain('No workers yet.');
+    expect(sink.errors).toEqual([expect.stringMatching(/^warning: .*refresh run record.*not valid JSON[^\n]*\n$/)]);
+    expect(sink.errors.join('')).not.toContain(record.token);
   });
 });
 
