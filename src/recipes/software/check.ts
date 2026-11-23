@@ -36,7 +36,7 @@ const unreadable = (reason: string, remedy: string): CheckOutcome => ({
 });
 
 /** Do not pass local record text, raw responses or their errors to the output. */
-const outcomeOf = (read: Readiness): CheckOutcome => {
+export const checkOutcomeOf = (read: Readiness): CheckOutcome => {
   switch (read.kind) {
     case readinessKinds.ready:
       return { result: read.kind, exitCode: 0, reasons: [], remedy: null, head: read.pr.headRefOid };
@@ -95,7 +95,7 @@ const run = async (host: RecipeHost, given: Given, deps: Deps): Promise<CliResul
   const project = await host.loadProject(deps, home.value, given.string(flags.project), commands.check);
   if (!project.ok) return project.error.kind === 'usage' ? project : nodeFault(prRulesOff);
   const read = await readinessFor(deps, work.value, { pr: number.value, head, project: project.value });
-  return ok(outputOf(outcomeOf(read), number.value, prRulesOff));
+  return ok(outputOf(checkOutcomeOf(read), number.value, prRulesOff));
 };
 
 /** The top-level check row of the software recipe. */

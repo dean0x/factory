@@ -4,6 +4,7 @@
  */
 
 export const softwareGuardIds = {
+  adminMerge: 'admin-merge',
   approvalMerge: 'approval-merge',
   approvalRelease: 'approval-release',
   mergeQuality: 'merge-quality',

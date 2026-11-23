@@ -693,7 +693,7 @@ describe('pr watch: the command in the command line', () => {
   });
 
   it('exits 2 for a pr command with no subcommand and for an unknown subcommand', async () => {
-    for (const argv of [['pr'], ['pr', 'merge', '12']]) {
+    for (const argv of [['pr'], ['pr', 'unknown', '12']]) {
       const sink = captureSink();
       const code = await runCli(argv, createFakeDeps(), sink);
       expect(code).toBe(2);
