@@ -14,10 +14,13 @@ import { layoutOf } from '../state/layout.js';
 
 export { recordApprovalMode } from '../board/record-flow.js';
 
-/** The board of one node: its folder, its config and its connector. */
-export interface OpenBoard {
+interface OpenNodeConfig {
   readonly home: string;
   readonly config: FactoryConfig;
+}
+
+/** The board of one node: its folder, its config and its connector. */
+export interface OpenBoard extends OpenNodeConfig {
   readonly connector: LocalBoard;
 }
 
@@ -54,7 +57,7 @@ export const openNodeConfig = async (
   homeFlag: string | undefined,
   registry: RecipeRegistry,
   command: CommandName,
-): Promise<CliResult<Pick<OpenBoard, 'home' | 'config'>>> => {
+): Promise<CliResult<OpenNodeConfig>> => {
   const located = await locateHomeFolder(
     deps,
     homeFlag,

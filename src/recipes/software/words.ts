@@ -1,4 +1,4 @@
-import { commands, commandText, flags, guardIds, lockWords, program, requestWords, roles, workerCommands } from '../../names.js';
+import { commands, commandText, eventFile, flags, guardIds, lockWords, program, requestWords, roles, workerCommands } from '../../names.js';
 import { softwareGuardIds } from './guard-parts.js';
 import type { TextPart } from '../../templates/fill.js';
 import type { GlossaryEntry } from '../entry.js';
@@ -67,7 +67,7 @@ export const softwareGlossary: readonly GlossaryEntry[] = [
   },
   {
     term: 'merge event file',
-    text: 'A merge event file describes one pull request merge. Its name is `merge-<pr>-<head>.json`.',
+    text: `A merge event file describes one pull request merge. Its name is \`merge-<pr>-<head>${eventFile.suffix}\`.`,
   },
   {
     term: 'release',
