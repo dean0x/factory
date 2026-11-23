@@ -125,7 +125,7 @@ const checkFolders = async (deps: Deps, { parent, folder }: FolderTarget): Promi
     if (deps.uid !== null && (uid !== deps.uid || (mode & privateFile.groupOtherWrite) !== 0)) {
       return safetyRefusal(
         `the refresh record folder ${path} ${refreshWords.folderOwnerOnly}`,
-        `Correct the folder owner and permissions. Then run "${refreshResultCommand}".`,
+        `Make sure ${path} belongs to your user. Set its mode to 700. Then run "${refreshResultCommand}".`,
       );
     }
     if (deps.uid !== null && path === folder && mode !== privateFile.folderMode) {
