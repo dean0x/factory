@@ -246,17 +246,18 @@ export const coordinatorReadArgs = (id: string): TmuxArgs =>
     [PANE_ID_FORMAT, '#{pane_pid}', '#{pane_dead}', optionIs(tmuxNames.optionNode, id), '#{pane_start_command}'].join(FIELD_SEPARATOR),
   );
 
-/** What the read of `coordinatorReadArgs` finds. */
-export interface CoordinatorPane {
+interface CoordinatorPaneInfo {
   readonly paneId: string;
-  /** The pid that tmux gave in this read. */
-  readonly pid: number;
-  readonly dead: boolean;
   /** True when the pane carries the node mark of the session: it is the pane that `start` made for the coordinator. */
   readonly node: boolean;
   /** The command that made the pane, as tmux shows it. Empty for a pane that runs the shell. */
   readonly startCommand: string;
 }
+
+export type LiveCoordinatorPane = CoordinatorPaneInfo & { readonly dead: false; readonly pid: number };
+
+/** tmux can omit the pid after the process ends. */
+export type CoordinatorPane = LiveCoordinatorPane | (CoordinatorPaneInfo & { readonly dead: true; readonly pid: number | null });
 
 /** The count of fields before the start command in the read of the coordinator pane: the id, the pid, the end flag and the node flag. */
 const COORDINATOR_FIELDS_BEFORE_START = 4;
@@ -266,37 +267,32 @@ const COORDINATOR_FIELDS_BEFORE_START = 4;
  * after the fourth separator. The start command is the rest of the line, as in `parsePaneBind`. The error names no text of the output.
  */
 export const parseCoordinatorPane = (text: string): Result<CoordinatorPane, string> => {
+  const malformed = err('the read gives text that is not the line of one pane');
   const line = text.endsWith('\n') ? text.slice(0, -1) : text;
   const fields = line.split(FIELD_SEPARATOR);
   const [paneId = '', pid = ''] = fields;
   const flags = flagsOf(fields.slice(2, COORDINATOR_FIELDS_BEFORE_START));
-  if (
-    line.includes('\n') ||
-    fields.length <= COORDINATOR_FIELDS_BEFORE_START ||
-    !isPaneId(paneId) ||
-    !PID_PATTERN.test(pid) ||
-    flags === null
-  ) {
-    return err('the read gives text that is not the line of one pane');
+  if (line.includes('\n') || fields.length <= COORDINATOR_FIELDS_BEFORE_START || !isPaneId(paneId) || flags === null) {
+    return malformed;
   }
   const [dead = false, node = false] = flags;
-  return ok({
-    paneId,
-    pid: Number(pid),
-    dead,
-    node,
-    startCommand: fields.slice(COORDINATOR_FIELDS_BEFORE_START).join(FIELD_SEPARATOR),
-  });
+  const info = { paneId, node, startCommand: fields.slice(COORDINATOR_FIELDS_BEFORE_START).join(FIELD_SEPARATOR) };
+  if (dead && pid === '') return ok({ ...info, dead: true, pid: null });
+  if (!PID_PATTERN.test(pid)) return malformed;
+  return ok({ ...info, dead, pid: Number(pid) });
 };
 
-export interface PaneRow {
+interface PaneRowInfo {
   readonly paneId: string;
-  /** The process id of the program of the pane. For a pane that has ended, it is the id that the program had. */
-  readonly pid: number;
-  readonly dead: boolean;
   /** The value of the worker option, or null for a pane with no worker, such as the coordinator and the slot. */
   readonly worker: string | null;
 }
+
+/** A pane list row. tmux can omit the pid after the program in the pane ends. */
+export type PaneRow = PaneRowInfo & (
+  | { readonly dead: false; readonly pid: number }
+  | { readonly dead: true; readonly pid: number | null }
+);
 
 const PANE_FIELDS = 4;
 /** A process id is a number from 1, with no leading zero and at most 10 digits. A pid of 0 would name a process group. */
@@ -311,14 +307,16 @@ const parsePaneLine = (line: string, badMark: BadMark): PaneRow | null => {
   const fields = line.split(FIELD_SEPARATOR);
   if (fields.length < PANE_FIELDS || (badMark === 'refuse' && fields.length > PANE_FIELDS)) return null;
   const [paneId = '', pid = '', dead = ''] = fields;
-  if (!isPaneId(paneId) || !PID_PATTERN.test(pid)) return null;
-  if (dead !== '0' && dead !== '1') return null;
+  if (!isPaneId(paneId) || (dead !== '0' && dead !== '1')) return null;
   // The mark is the last field, and a program can set it to any text, also text with the separator. A reader that ignores
   // a bad mark takes the rest of the line as the mark, so that a bad mark never moves the id, the pid or the dead flag.
   const worker = fields.slice(PANE_FIELDS - 1).join(FIELD_SEPARATOR);
   const valid = worker === '' || WORKER_PATTERN.test(worker);
   if (!valid && badMark === 'refuse') return null;
-  return { paneId, pid: Number(pid), dead: dead === '1', worker: valid && worker !== '' ? worker : null };
+  const info = { paneId, worker: valid && worker !== '' ? worker : null };
+  if (dead === '1' && pid === '') return { ...info, dead: true, pid: null };
+  if (!PID_PATTERN.test(pid)) return null;
+  return { ...info, dead: dead === '1', pid: Number(pid) };
 };
 
 const parsePaneLines = (text: string, badMark: BadMark): Result<readonly PaneRow[], string> => {
@@ -340,15 +338,25 @@ const parsePaneLines = (text: string, badMark: BadMark): Result<readonly PaneRow
 export const parsePaneList = (text: string): Result<readonly PaneRow[], string> => parsePaneLines(text, 'refuse');
 
 /**
- * Reads the same list as `parsePaneList`, with one change: a worker mark that is not a worker id makes the pane a pane with
- * no worker, and the list stays whole. The id, the pid and the dead flag stay strict. A command that only looks at the
- * panes, such as a launch, a list or a stop, uses this reader, so that a pane with a strange mark can not block it.
+ * Reads the same list as `parsePaneList`, with one change: an invalid worker mark counts as no worker.
+ * The same rules apply to the pane id, pid and dead flag.
  */
 export const parsePaneListSoft = (text: string): Result<readonly PaneRow[], string> => parsePaneLines(text, 'ignore');
 
 export const killPaneArgs = (pane: string): Result<TmuxArgs, string> => {
   const target = paneTarget(pane);
   return target.ok ? ok(call('kill-pane', '-t', target.value)) : target;
+};
+
+/** tmux passes a single command word to a shell. Two or more words go directly to the program. */
+const directCommand = (words: readonly string[]): boolean => words.length >= 2 && words[0] !== '';
+
+/** Restarts a dead pane in place. If the pane is still active, tmux refuses the call. */
+export const respawnPaneArgs = (paneId: string, cwd: string, words: readonly string[]): Result<TmuxArgs, string> => {
+  const target = paneTarget(paneId);
+  if (!target.ok) return target;
+  if (!directCommand(words)) return refuse('a respawn without a program and at least one argument');
+  return ok(call('respawn-pane', '-t', target.value, '-c', cwd, '--', ...words));
 };
 
 /**
@@ -542,6 +550,28 @@ export const runShellBackgroundArgs = (text: string): Result<TmuxArgs, string> =
 /** Makes a window in the background, in the folder. The empty window in the target makes it a window of the session. */
 export const newWindowArgs = (id: string, name: string, cwd: string): TmuxArgs =>
   call('new-window', '-d', '-t', windowTarget(id, ''), '-n', name, '-c', cwd);
+
+/** Starts the detached refresh runner and prints its pane id. The caller then uses `runnerWindowExitArgs`. */
+export const runnerWindowArgs = (input: {
+  readonly id: string;
+  readonly cwd: string;
+  readonly path: string;
+  readonly command: readonly string[];
+}): Result<TmuxArgs, string> => {
+  const { id, cwd, path, command } = input;
+  if (!directCommand(command)) return refuse('a runner window without a program and at least one argument');
+  if (/\p{Cc}/u.test(path)) return refuse('a runner PATH with a control character');
+  return ok(call(
+    'new-window', '-d', '-P', '-F', PANE_ID_FORMAT, '-t', windowTarget(id, ''), '-n', tmuxNames.windowRefresh,
+    '-c', cwd, '-e', `${env.path}=${path}`, '--', ...command,
+  ));
+};
+
+/** Use the pane id from `runnerWindowArgs`. The window name is not unique and the active window does not change. */
+export const runnerWindowExitArgs = (paneId: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(paneId);
+  return target.ok ? ok(call('set-option', '-w', '-t', target.value, 'remain-on-exit', 'off')) : target;
+};
 
 /**
  * The tmux calls that start the session of a node, in order. Each call is an argument list for a program that runs with no shell.

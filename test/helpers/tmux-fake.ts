@@ -74,6 +74,8 @@ export interface TmuxFixture {
    * prints `1` for the format `pane_in_mode`, and every other pane prints `0`. Default: none.
    */
   readonly panesInMode?: readonly string[];
+  /** Panes that have ended and print an empty `pane_pid`, by pane id. */
+  readonly deadPanesWithoutPid?: readonly string[];
 }
 
 /** The state of one pane, as the log shows it. */
@@ -452,6 +454,12 @@ export const tmuxHandler = (
     if (!panes.some((pane) => pane.id === id)) throw new Error(`the pane fixture puts the pane ${id} in a mode, but it has no such pane`);
     modeScreens.set(id, 'copy mode');
   }
+  const deadPanesWithoutPid = new Set(fixture.deadPanesWithoutPid);
+  for (const id of deadPanesWithoutPid) {
+    const pane = panes.find((candidate) => candidate.id === id);
+    if (pane === undefined) throw new Error(`the pane fixture marks the pane ${id} as dead, but it has no such pane`);
+    pane.dead = true;
+  }
 
   const targetOf = (command: readonly string[]): string => after(command, '-t');
 
@@ -487,7 +495,7 @@ export const tmuxHandler = (
       case 'pane_id':
         return pane.id;
       case 'pane_pid':
-        return String(pane.pid);
+        return pane.dead && deadPanesWithoutPid.has(pane.id) ? '' : String(pane.pid);
       case 'pane_dead':
         return pane.dead ? '1' : '0';
       case 'pane_active':
@@ -513,7 +521,7 @@ export const tmuxHandler = (
   const expand = (format: string, pane: FakePane): string => expandFormat(format, (key) => valueOf(key, pane));
 
   const printed = (command: readonly string[], pane: FakePane) =>
-    command.includes('-P') ? exited(0, `${expand(after(command, '-F') || DEFAULT_LIST_FORMAT, pane)}\n`) : exited(0);
+    hasFlag(command, '-P') ? exited(0, `${expand(after(command, '-F') || DEFAULT_LIST_FORMAT, pane)}\n`) : exited(0);
 
   const cantFindPane = (target: string) => exited(1, '', `can't find pane: ${target}\n`);
 
@@ -542,11 +550,10 @@ export const tmuxHandler = (
           const pane = resolvePane(targetOf(command));
           return exited(0, `${pane === undefined ? expandFormat(command.at(-1) ?? '', () => '') : expand(command.at(-1) ?? '', pane)}\n`);
         }
-        // A position in a window (the left pane of the view window) prints the format of the pane that holds it. A format of the
-        // one key that asks if the coordinator ended keeps the answer of the fixture.
+        // A position in a window prints the format of the pane at that position.
         const format = command.at(-1) ?? '';
         const held = resolvePane(targetOf(command));
-        if (held !== undefined && format !== '#{pane_dead}') return exited(0, `${expand(format, held)}\n`);
+        if (held !== undefined) return exited(0, `${expand(format, held)}\n`);
         return exited(0, `${endedCoordinators.has(targetSession(command)) ? 1 : 0}\n`);
       }
       case 'new-session': {

@@ -17,6 +17,7 @@ import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runQueue } from '../commands/queue.js';
+import { runRefreshCommand } from '../commands/refresh.js';
 import { runReport } from '../commands/report.js';
 import { runRequest } from '../commands/request.js';
 import { runSelf } from '../commands/self.js';
@@ -73,7 +74,7 @@ import {
 } from '../names.js';
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_BUILD, FACTORY_VERSION } from '../version.js';
-import { usageError, type CliResult } from './errors.js';
+import { safetyRefusal, usageError, type CliResult } from './errors.js';
 import { foundHomeOption } from './home-option.js';
 import type { CommandOutput } from './output.js';
 import { recipeHostFor } from './recipe-host.js';
@@ -291,6 +292,25 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
     usage: `${commandText(commands.reboot)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
     run: (given, deps) => runReboot(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.refresh,
+    summary: `Restart the live ${roles.worker}s, then the ${roles.coordinator}, at their idle prompts.`,
+    usage: [
+      `${commandText(commands.refresh)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)} | ${flagText(flags.result)} | ${flagText(flags.cancel)}]`,
+      `${commandText(commands.refresh)} ${flagText(flags.runner)} TOKEN ${flagText(flags.home)} DIR`,
+    ].join('\n       '),
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.dryRun]: { type: 'boolean', description: 'Show the restart plan. Change nothing.' },
+      [flags.result]: { type: 'boolean', description: 'Show the result of the last refresh run.' },
+      [flags.cancel]: { type: 'boolean', description: `Cancel the run before the ${roles.coordinator} act.` },
+      [flags.runner]: { type: 'string', placeholder: 'TOKEN', description: 'Internal form. Claim the one-use token.' },
+    },
+    run: (given, deps) => runRefreshCommand(deps, {
+      home: given.string(flags.home), dryRun: given.bool(flags.dryRun),
+      result: given.bool(flags.result), cancel: given.bool(flags.cancel), runner: given.string(flags.runner),
+    }, registry),
   },
   {
     name: commands.status,
@@ -1046,6 +1066,12 @@ export const parseFlags = (
   const descriptors = Object.fromEntries(
     Object.entries(options).map(([name, option]) => [name, toDescriptor(option)]),
   );
+  const runnerFlag = flagText(flags.runner);
+  const runnerForm = Object.hasOwn(options, flags.runner) && args.some((arg) => arg === runnerFlag || arg.startsWith(`${runnerFlag}=`));
+  const refuseRunner = () => safetyRefusal(
+    `the refresh runner takes only ${runnerFlag} TOKEN and ${flagText(flags.home)} DIR. Run "${commandText(`${commands.refresh} ${flagText(flags.result)}`)}" for the result.`,
+    `Run "${commandText(commands.refresh)} ${flagText(flags.help)}".`,
+  );
   try {
     const parsed = parseArgs({
       args: [...args],
@@ -1054,6 +1080,8 @@ export const parseFlags = (
       allowPositionals: allowPositionals || terminator !== undefined,
       tokens: true,
     });
+    if (runnerForm && (parsed.tokens.length !== 2 ||
+      typeof parsed.values[flags.runner] !== 'string' || typeof parsed.values[flags.home] !== 'string')) return refuseRunner();
     if (terminator === undefined) return ok(toGiven(parsed.values, parsed.positionals));
 
     const stop = parsed.tokens.find((token) => token.kind === 'option-terminator');
@@ -1068,7 +1096,7 @@ export const parseFlags = (
     }
     return ok(toGiven(parsed.values, words, childWords));
   } catch (cause) {
-    return usageError(cause instanceof Error ? cause.message : 'cannot read the flags');
+    return runnerForm ? refuseRunner() : usageError(cause instanceof Error ? cause.message : 'cannot read the flags');
   }
 };
 

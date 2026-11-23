@@ -1,4 +1,4 @@
-import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { codedFailure, failure, notReady, paneNotFound, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
@@ -18,6 +18,7 @@ import {
   parsePaneBind,
   parsePaneListSoft,
   type CoordinatorPane,
+  type LiveCoordinatorPane,
   type PaneRow,
 } from '../launch/tmux.js';
 import { requireOwnSession, requireSession, sessionExists, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
@@ -83,17 +84,16 @@ export interface BindRequest {
  * in the pane can change, shows the launch of this worker (`startsWorker`). A pane that fails a check is a security stop (exit 4),
  * and the command sends nothing to it. The pid of the value is the pid of this read.
  */
-export const requireBoundPane = async (deps: Deps, request: BindRequest): Promise<CliResult<BoundPane>> => {
+export const requireBoundPane = async (
+  deps: Deps, request: BindRequest,
+): Promise<CliResult<BoundPane & { readonly startCommand: string }>> => {
   const { home, paneId, workerId, again } = request;
   const args = paneBindArgs(paneId, workerId);
   if (!args.ok) return failure(args.error);
   const read = await tmuxStep(deps, args.value);
-  if (!read.ok || paneAbsent(read.value)) {
-    return failure(
-      `cannot read the pane ${paneId}: ${read.ok ? 'tmux has no such pane' : read.error.message}`,
-      `The pane may have ended. Run "${commandText(again)}" again.`,
-    );
-  }
+  const readRemedy = `The pane may have ended. Run "${commandText(again)}" again.`;
+  if (!read.ok) return failure(`cannot read the pane ${paneId}: ${read.error.message}`, readRemedy);
+  if (paneAbsent(read.value)) return codedFailure(paneNotFound, `cannot read the pane ${paneId}: tmux has no such pane`, readRemedy);
   const remedy =
     `Look at the pane in tmux. When it is not a pane of the ${roles.worker} ${workerId}, run "${clearMarkText(paneId, tmuxNames.optionWorker)}" ` +
     `to clear its mark. Then run "${commandText(again)}" again.`;
@@ -110,7 +110,7 @@ export const requireBoundPane = async (deps: Deps, request: BindRequest): Promis
   if (!startsWorker(bind.value.startCommand, home, workerId)) {
     return refuse(`${program} did not start it for that ${roles.worker}: its start command does not hold the launch of the ${roles.worker}`);
   }
-  return ok({ paneId, pid: bind.value.pid, dead: bind.value.dead, inView: bind.value.view });
+  return ok({ paneId, pid: bind.value.pid, dead: bind.value.dead, inView: bind.value.view, startCommand: bind.value.startCommand });
 };
 
 /**
@@ -170,7 +170,7 @@ export const requireCoordinatorPane = async (
   home: string,
   config: FactoryConfig,
   again: string,
-): Promise<CliResult<CoordinatorPane>> => {
+): Promise<CliResult<LiveCoordinatorPane>> => {
   const nodeId = config.core.node.id;
   const session = await requireSession(deps, nodeId, home, commandText(again));
   if (!session.ok) return session;
@@ -204,7 +204,7 @@ export const checkCoordinatorCaller = async (
   home: string,
   config: FactoryConfig,
   again: string,
-): Promise<CliResult<CoordinatorPane>> => {
+): Promise<CliResult<LiveCoordinatorPane>> => {
   const nodeId = config.core.node.id;
   const callerPane = deps.env[env.tmuxPane];
   const coordinatorPlace = `the pane of the ${roles.coordinator}`;

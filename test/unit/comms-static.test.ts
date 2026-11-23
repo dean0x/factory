@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { summonTimerArgs } from '../../src/launch/tmux.js';
-import { allSourceFiles, literalsOf } from '../helpers/source-scan.js';
+import { allSourceFiles, callsOf, literalsOf } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const TYPING = 'comms/typing.ts';
@@ -293,6 +293,20 @@ describe('the input commands in the source', () => {
     expect(sources.flatMap(({ file, source }) => refusedHits(source, file))).toEqual([]);
     const inTyping = sources.flatMap(({ file, source }) => (file === TYPING ? hitsIn(source, file) : []));
     expect(inTyping.map((hit) => hit.word)).toEqual(['send-keys']);
+  });
+
+  it('allows only the respawn builder to name the command and gives it no force or environment flags', () => {
+    const forms = new Set(formsOf('respawn-pane'));
+    const hits = sources.flatMap(({ file, source }) =>
+      literalsOf(source)
+        .filter((literal) => literal.split(/[\s;"']+/).some((word) => forms.has(word)))
+        .map((literal) => ({ file, literal })),
+    );
+    expect(hits).toEqual([{ file: 'launch/tmux.ts', literal: 'respawn-pane' }]);
+    const source = sources.find(({ file }) => file === 'launch/tmux.ts')?.source ?? '';
+    const respawns = callsOf(source, 'call').filter(([verb = '']) => literalsOf(verb).includes('respawn-pane'));
+    expect(respawns).toHaveLength(1);
+    expect(respawns[0]?.flatMap(literalsOf).filter((word) => word.startsWith('-'))).toEqual(['-t', '-c', '--']);
   });
 
   it('keeps no entry in the list of literals that are no tmux words once the literal is gone', () => {

@@ -102,8 +102,10 @@ const make = (setup: Setup = {}): Made => {
 
 interface Seed {
   readonly event?: HookEvent | null;
+  readonly eventAt?: string;
   /** The session marker of the line. Null: the line has none. Default: alpha. */
   readonly marker?: string | null;
+  readonly startSource?: 'startup' | 'compact';
   /** False: the worker has no pointer. */
   readonly pointer?: boolean;
   /** The text of the line file, in place of the line that the other fields make. Null: the session has no line file. */
@@ -127,10 +129,11 @@ const seed = async (deps: FakeDeps, change: Seed = {}): Promise<void> => {
     schema: schemaIds.lastSeen,
     session_id: SESSION,
     event,
-    event_at: event === null ? null : AT,
+    event_at: event === null ? null : (change.eventAt ?? AT),
     context_pct: event === null ? 40 : null,
     pct_at: event === null ? AT : null,
     ...(marker === null ? {} : { session_marker: marker }),
+    ...(change.startSource === undefined ? {} : { start_source: change.startSource }),
   };
   if (change.text !== null) deps.seed(`${layoutOf(HOME).heartbeatDir}/${SESSION}`, change.text ?? `${JSON.stringify(line)}\n`);
 };
@@ -302,10 +305,12 @@ describe('worker stop: a session at the prompt', () => {
     expect(made.deps.terminated).toEqual([PID]);
   });
 
-  it.each(['SessionStart', 'Stop'] as const)('names the case idle for the last event %s', async (event) => {
+  it.each([
+    ['SessionStart', 'startup', 'idle'], ['SessionStart', 'compact', 'busy'], ['SessionStart', undefined, 'idle'], ['Stop', undefined, 'idle'],
+  ] as const)('reports %s with source %s as %s', async (event, startSource, state) => {
     const made = make();
-    await seed(made.deps, { event });
-    expect(await succeeded(made)).toMatchObject({ state: 'idle' });
+    await seed(made.deps, { event, ...(startSource === undefined ? {} : { startSource }) });
+    expect(await run(made)).toMatchObject({ ok: true, value: { state } });
   });
 
   it('sends no signal but TERM, and starts no program but tmux', async () => {
@@ -371,53 +376,69 @@ describe('worker stop: a state that is not known', () => {
 });
 
 describe('worker stop: only the cases that the caller allows', () => {
-  const runOnly = (made: Made, allowed: readonly StopCase[]) =>
-    stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', allowed, again: 'dismiss alpha' });
+  const runOnly = (deps: FakeDeps, allowed: readonly StopCase[]) =>
+    stopWorker(deps, { home: HOME, session: NODE, workerId: 'alpha', allowed, again: 'dismiss alpha' });
 
-  it.each(['UserPromptSubmit', 'PreCompact'] as const)(
-    'refuses a busy session when only the idle case is allowed (the last event is %s): exit 1, the command to run again, and nothing is sent or closed',
-    async (event) => {
-      const made = make();
-      await seed(made.deps, { event });
-      const result = await runOnly(made, ['idle']);
-      if (result.ok) throw new Error(`the stop should have failed, it gave ${JSON.stringify(result.value)}`);
-      expect(exitCodeOf[result.error.kind]).toBe(1);
-      expect(result.error.message).toContain('busy');
-      expect(result.error.hint).toContain('dismiss alpha');
-      expect(made.deps.terminated).toEqual([]);
-      expect(killed(made)).toEqual([]);
-    },
-  );
-
-  it('refuses a session that waits at a dialog when only the idle case is allowed: exit 1, and nothing is sent or closed', async () => {
-    const made = make();
-    await seed(made.deps, { event: 'Notification' });
-    const result = await runOnly(made, ['idle']);
-    if (result.ok) throw new Error(`the stop should have failed, it gave ${JSON.stringify(result.value)}`);
-    expect(exitCodeOf[result.error.kind]).toBe(1);
-    expect(result.error.message).toContain('busy');
-    expect(made.deps.terminated).toEqual([]);
-    expect(killed(made)).toEqual([]);
+  describe.each([guardValues.on, guardValues.off])('with pane safety %s', (value) => {
+    it.each(['UserPromptSubmit', 'PreCompact', 'Notification'] as const)(
+      'refuses %s with the stop case code and sends no signal',
+      async (event) => {
+        const made = make();
+        const guards = guardSourceOf({ home: HOME, values: { [guardIds.paneSafety]: value }, state: null });
+        await seed(made.deps, { event });
+        const result = await runOnly({ ...made.deps, guards }, ['idle']);
+        if (result.ok) throw new Error(`the stop should have failed, it gave ${JSON.stringify(result.value)}`);
+        expect(exitCodeOf[result.error.kind]).toBe(1);
+        expect(result.error).toEqual({
+          kind: 'failure',
+          message: 'the worker alpha is busy: its session works now',
+          hint: 'Wait until it waits at its prompt. Run "factory dismiss alpha" again.',
+          code: 'stop-case-refused',
+        });
+        expect(made.deps.terminated).toEqual([]);
+        expect(killed(made)).toEqual([]);
+      },
+    );
   });
 
   it('stops an idle session when only the idle case is allowed', async () => {
     const made = make();
     await seed(made.deps);
-    const result = await runOnly(made, ['idle']);
+    const result = await runOnly(made.deps, ['idle']);
     expect(result).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'idle' } });
     expect(made.deps.terminated).toEqual([PID]);
+  });
+
+  it('uses an idle report exactly at the reported start second', async () => {
+    const made = make();
+    const start = '2030-01-02T03:04:05.000Z';
+    await seed(made.deps, { eventAt: start });
+    const result = await stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', allowed: ['idle'],
+      process: { pid: PID, startMs: Date.parse(start) }, again: 'refresh' });
+    expect(result).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'idle' } });
+    expect(made.deps.terminated).toEqual([PID]);
+  });
+
+  it('does not use an idle report from the second before the planned process start', async () => {
+    const made = make();
+    await seed(made.deps);
+    const result = await stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', allowed: ['idle'],
+      process: { pid: PID, startMs: Date.parse('2030-01-02T03:04:06.000Z') }, again: 'refresh' });
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('not later than the start'), hint: expect.stringContaining('factory refresh') } });
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
   });
 
   it('stops a busy session when the busy case is allowed', async () => {
     const made = make();
     await seed(made.deps, { event: 'UserPromptSubmit' });
-    expect(await runOnly(made, ['idle', 'busy'])).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'busy' } });
+    expect(await runOnly(made.deps, ['idle', 'busy'])).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'busy' } });
   });
 
   it('keeps exit 3 for a state that is not known, whatever the caller allows, and sends nothing', async () => {
     const made = make();
     await seed(made.deps, { event: null });
-    const result = await runOnly(made, ['idle']);
+    const result = await runOnly(made.deps, ['idle']);
     if (result.ok) throw new Error('the stop should have failed');
     expect(exitCodeOf[result.error.kind]).toBe(3);
     expect(made.deps.terminated).toEqual([]);

@@ -245,7 +245,7 @@ const requireSamePane = async (
  * The last-seen line of the worker, read after the bind. The line must belong to the worker and hold an event. The session must wait
  * at its prompt: a session that works or waits at a dialog is exit 1. The line must be later than the start of the pane process, so a
  * line of an earlier process of a pid that tmux used again never passes. The value is the id of the session of the line. `checked`
- * is false while pane safety is off: then the line must still belong to the worker, and the state and time checks do not run.
+ * is false while pane safety is off: then the line must still belong to the worker and must not report a dialog.
  */
 const requireIdleSession = async (
   deps: Deps,
@@ -263,11 +263,13 @@ const requireIdleSession = async (
     return notReady(`cannot use the last-seen line of the ${roles.worker} ${workerId}: ${seen.value.reason}`, wait);
   }
   const { line } = seen.value;
-  if (!checked) return ok(line[lastSeen.keys.sessionId]);
   const state = promptStateOf(line);
+  if (!checked && state !== 'waits') return ok(line[lastSeen.keys.sessionId]);
   switch (state) {
-    case null:
-      return notReady(`the last-seen line of the ${roles.worker} ${workerId} holds no event`, wait);
+    case null: {
+      const reason = line[lastSeen.keys.event] === null ? 'holds no event' : 'has a session start with no known source';
+      return notReady(`the last-seen line of the ${roles.worker} ${workerId} ${reason}`, wait);
+    }
     case 'busy':
       return failure(
         `the ${roles.worker} ${workerId} is busy: its session works now`,
@@ -299,7 +301,7 @@ interface Checked {
 
 /**
  * The checks from the record of the worker to the line of its session. Nothing is typed. While pane safety is off, the view check,
- * the push check, the resume notes and the state of the session do not stop the reset.
+ * the push check and the resume notes do not stop the reset. The session can be busy, but a dialog still stops the reset.
  */
 const checkWorker = async (deps: Deps, request: ResetRequest, again: string, guards: GuardValues): Promise<CliResult<Checked>> => {
   const { home, config, workerId, kind } = request;

@@ -6,7 +6,10 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, watchPoll, type HookEvent, type HookState } from '../names.js';
+import {
+  commandLines, commandText, eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, sessionStartState,
+  watchPoll, type HookEvent, type HookStartSource, type HookState,
+} from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
 import { listWorkerRecords, readCheckedFile, readWorkerFile, type WorkerFileRead } from './registry.js';
@@ -37,6 +40,7 @@ const lastSeenSchema = z
     [keys.sessionId]: z.string().regex(lastSeen.sessionIdPattern, 'must be a UUID with lower case letters'),
     [keys.event]: z.enum(hookNames.events).nullable(),
     [keys.eventAt]: time.nullable(),
+    [keys.startSource]: z.enum(hookNames.startSources).optional(),
     [keys.finishedAt]: time.optional(),
     [keys.contextPct]: z.number().min(lastSeen.minPercent).max(lastSeen.maxPercent).nullable(),
     [keys.pctAt]: time.nullable(),
@@ -45,6 +49,9 @@ const lastSeenSchema = z
   .superRefine((line, ctx) => {
     if ((line[keys.event] === null) !== (line[keys.eventAt] === null)) {
       ctx.addIssue({ code: 'custom', path: [keys.eventAt], message: 'must be set when the event is set, and only then' });
+    }
+    if (line[keys.startSource] !== undefined && line[keys.event] !== 'SessionStart') {
+      ctx.addIssue({ code: 'custom', path: [keys.startSource], message: 'must only be set for SessionStart' });
     }
     if (line[keys.finishedAt] !== undefined && line[keys.eventAt] === null) {
       ctx.addIssue({ code: 'custom', path: [keys.finishedAt], message: 'must have an event time' });
@@ -69,7 +76,7 @@ export type LastSeenRead =
 
 /** What a write sets: the hook event with the time now, or the context percent (null for no percent) with the time now. */
 export type LastSeenChange =
-  | { readonly kind: 'event'; readonly event: HookEvent }
+  | { readonly kind: 'event'; readonly event: HookEvent; readonly startSource?: HookStartSource }
   | { readonly kind: 'percent'; readonly percent: number | null };
 
 /**
@@ -153,11 +160,13 @@ const lineWith = (
   percent: number | null,
   percentAt: string | null,
   marker: string | undefined,
+  startSource: HookStartSource | undefined,
 ): LastSeen => ({
   [keys.schema]: schemaIds.lastSeen,
   [keys.sessionId]: sessionId,
   [keys.event]: event,
   [keys.eventAt]: eventAt,
+  ...(startSource === undefined ? {} : { [keys.startSource]: startSource }),
   ...(finishedAt === null ? {} : { [keys.finishedAt]: finishedAt }),
   [keys.contextPct]: percent,
   [keys.pctAt]: percentAt,
@@ -187,6 +196,7 @@ const changedLine = (
       stored?.[keys.contextPct] ?? null,
       stored?.[keys.pctAt] ?? null,
       marker,
+      change.startSource,
     );
   }
   return lineWith(
@@ -197,6 +207,7 @@ const changedLine = (
     change.percent,
     change.percent === null ? null : at,
     marker,
+    stored?.[keys.startSource],
   );
 };
 
@@ -360,9 +371,15 @@ const readPointerFile = (deps: Deps, home: string, owner: PointerOwner): Promise
   );
 };
 
-const readPointer = async (deps: Deps, home: string, owner: PointerOwner): Promise<CliResult<PointerRead>> => {
+const readPointer = async (deps: Deps, home: string, owner: PointerOwner, requireReadable = false): Promise<CliResult<PointerRead>> => {
   const pointer = await readPointerFile(deps, home, owner);
   if (!pointer.ok) return pointer;
+  if (requireReadable && pointer.value.state === 'invalid') {
+    return failure(
+      `cannot check the session pointer: ${pointer.value.reason}`,
+      `Run "${commandText(commandLines.workerList)}" to check the ${roles.worker} records. Fix the pointer before you retry.`,
+    );
+  }
   if (pointer.value.state !== 'text') return ok(pointer.value);
   const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;
   return isSessionId(sessionId)
@@ -386,18 +403,23 @@ const unknown = (why: 'no-line' | 'not-owned', reason: string): CliResult<OwnSes
 const foreignMarkerReason = (marker: string | undefined): string =>
   marker === undefined ? 'the last-seen line records no session marker' : `the last-seen line belongs to the session of ${marker}`;
 
-/** The id of another worker whose pointer names the session, or null when no other pointer names it. */
-const otherHolderOf = async (deps: Deps, home: string, workerId: string, sessionId: string): Promise<CliResult<string | null>> => {
+/** The id of a worker whose pointer names the session. Skip only the worker whose id the caller gives, if any. */
+const otherHolderOf = async (deps: Deps, home: string, skipId: string | null, sessionId: string): Promise<CliResult<string | null>> => {
   const listed = await listWorkerRecords(deps, home);
   if (!listed.ok) return listed;
-  for (const record of listed.value.workers) {
-    if (record.id === workerId) continue;
-    const pointer = await readPointer(deps, home, workerPointer(record.id));
+  const ids = listed.value.workers.map(({ id }) => id);
+  // A worker folder can retain its session pointer even if it has no usable record.
+  if (skipId === null) ids.push(...listed.value.invalid.map(({ name }) => name).filter(isSlug));
+  for (const id of ids) {
+    if (id === skipId) continue;
+    const pointer = await readPointer(deps, home, workerPointer(id), skipId === null);
     if (!pointer.ok) return pointer;
-    if (pointer.value.state === 'found' && pointer.value.sessionId === sessionId) return ok(record.id);
+    if (pointer.value.state === 'found' && pointer.value.sessionId === sessionId) return ok(id);
   }
   return ok(null);
 };
+
+const otherHolderReason = (id: string): string => `the pointer of the ${roles.worker} ${id} names the same session`;
 
 /**
  * The last-seen line of the newest session of a worker, for a command that acts on that session (stop, resume). A program in a
@@ -420,7 +442,7 @@ export const readOwnLastSeen = async (deps: Deps, home: string, workerId: string
   if (!holder.ok) return holder;
   return holder.value === null
     ? ok({ state: 'valid', line })
-    : unknown('not-owned', `the pointer of the ${roles.worker} ${holder.value} names the same session`);
+    : unknown('not-owned', otherHolderReason(holder.value));
 };
 
 /** What a command may use of the newest session of the coordinator: its id and line, or the reason that there is none it may use. */
@@ -430,7 +452,7 @@ export type CoordinatorSessionRead =
   | { readonly state: 'absent' }
   /** The pointer, or the line that it names, can not be used: not valid, a link, or a pointer to a session with no line. */
   | { readonly state: 'invalid'; readonly reason: string }
-  /** There is a valid line, and it does not belong to the coordinator of this node. */
+  /** The line has no matching marker, or a worker pointer also names the session. */
   | { readonly state: 'not-owned'; readonly reason: string };
 
 /**
@@ -460,12 +482,29 @@ export const readOwnCoordinatorSession = async (
     : ok({ state: 'not-owned', reason: foreignMarkerReason(marker) });
 };
 
+/** Read the owned coordinator session for refresh. No worker folder may have a pointer to the same session. */
+export const readOwnCoordinatorResume = async (
+  deps: Deps,
+  home: string,
+  nodeId: string,
+): Promise<CliResult<CoordinatorSessionRead>> => {
+  const read = await readOwnCoordinatorSession(deps, home, nodeId);
+  if (!read.ok || read.value.state !== 'valid') return read;
+  const holder = await otherHolderOf(deps, home, null, read.value.sessionId);
+  if (!holder.ok) return holder;
+  return holder.value === null ? read : ok({ state: 'not-owned', reason: otherHolderReason(holder.value) });
+};
+
 /**
  * What the last event of a line says: the session waits at the prompt (`prompt`), it works (`busy`), or a dialog waits for an
- * answer (`waits`). A line with no event, which holds only a percent, says nothing (null). The rule is the table `eventState` of
- * names.ts.
+ * answer (`waits`). No event gives no state. Refresh also requires the source of a session start.
  */
-export const promptStateOf = (line: LastSeen): HookState | null => {
+export const promptStateOf = (line: LastSeen, startSource?: 'required'): HookState | null => {
   const event = line[keys.event];
+  if (event === 'SessionStart') {
+    const source = line[keys.startSource];
+    if (source !== undefined) return sessionStartState[source];
+    if (startSource === 'required') return null;
+  }
   return event === null ? null : eventState[event];
 };

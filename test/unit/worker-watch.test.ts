@@ -140,7 +140,9 @@ const writesPointer = async (deps: FakeDeps, id: string): Promise<string> => {
 /** The hook of the session of a worker writes a line: the event at the time of the fake clock, with the marker of the worker or another. */
 const writesEvent = async (deps: FakeDeps, id: string, event: HookEvent, marker: string = id): Promise<void> => {
   const sessionId = await writesPointer(deps, id);
-  const line = await writeLastSeen(deps, HOME, sessionId, { kind: 'event', event }, marker);
+  const line = await writeLastSeen(deps, HOME, sessionId, {
+    kind: 'event', event, ...(event === 'SessionStart' ? { startSource: 'startup' } : {}),
+  }, marker);
   if (!line.ok) throw new Error(line.error.message);
 };
 
@@ -358,6 +360,15 @@ describe('the checks of the watch', () => {
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'stalled' }]);
     // 30 checks of 30 s make exactly 15 minutes, which is not more than 15 minutes.
     expect(outcome.checks).toBe((15 * MINUTE) / watchPoll.intervalMs + 1);
+  });
+
+  it('reports a stalled worker if no event or percent follows its compact start', async () => {
+    const world = await make();
+    const session = SESSION_OF[ALPHA] ?? '';
+    const change = { kind: 'event', event: 'SessionStart', startSource: 'compact' } as const;
+    valueOf(await writeLastSeen(world.deps, HOME, session, change, ALPHA));
+    const outcome = changedOf(valueOf(await world.watch()));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'stalled' }]);
   });
 
   it('a context percent that is newer than the event keeps a working session from being stalled until 15 minutes after the percent', async () => {

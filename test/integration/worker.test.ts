@@ -60,7 +60,7 @@ const fakeClaude = (dir: string): string =>
     '  exit 1',
     'fi',
     'if [ -n "$resume" ]; then',
-    `  printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$resume" | '${process.execPath}' '${DIST}' hook SessionStart`,
+    `  printf '{"session_id":"%s","hook_event_name":"SessionStart","source":"resume"}' "$resume" | '${process.execPath}' '${DIST}' hook SessionStart`,
     'fi',
     'echo launched >> "$dir/launches"',
     'exec sleep 300',
@@ -483,7 +483,7 @@ const sessionStarted = (): Promise<RunResult> =>
   box.run(['hook', 'SessionStart'], {
     cwd: box.node,
     env: { FACTORY_HOME: box.node, FACTORY_SESSION: 'alpha' },
-    input: JSON.stringify({ session_id: SESSION, hook_event_name: 'SessionStart' }),
+    input: JSON.stringify({ session_id: SESSION, hook_event_name: 'SessionStart', source: 'startup' }),
   });
 
 /** The pane id and the process id of the live pane that carries the mark of a worker. */

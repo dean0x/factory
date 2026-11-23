@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { launchArgv, stripScript, workerLaunchArgv, workerLaunchMarks, type LaunchInput, type WorkerLaunchInput } from '../../src/launch/argv.js';
 import { startSteps } from '../../src/launch/tmux.js';
-import { env } from '../../src/names.js';
+import { env, refreshText } from '../../src/names.js';
 import { chainOf } from '../helpers/tmux-fake.js';
 
 /** The variables that a parent Claude Code session sets. The names are written out here, so a test pins them. */
@@ -290,6 +290,43 @@ describe('the resume id of the coordinator launch', () => {
     const result = launchArgv(input({ resumeId: 'secret-id-value' }));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).not.toContain('secret-id-value');
+  });
+});
+
+describe('the launch prompt', () => {
+  it('keeps the coordinator prompt as one word after the name and keeps every added folder', () => {
+    const argv = argvOf({ resumeId: SESSION_ID, prompt: refreshText.continue });
+    expect(argv.slice(argv.indexOf('--resume'))).toEqual([
+      '--resume', SESSION_ID, '--name', 'demo', refreshText.continue,
+      '--add-dir', '/w/demo-factory/.factory', '--add-dir', '/w/web',
+    ]);
+  });
+
+  it('keeps a worker prompt of 300 printable characters as one word after the name', () => {
+    const prompt = 'a ~'.repeat(100);
+    const argv = workerArgvOf({ resumeId: SESSION_ID, prompt });
+    expect(argv.slice(argv.indexOf('--resume'))).toEqual([
+      '--resume', SESSION_ID, '--name', 'demo_web-search', prompt,
+      '--add-dir', '/w/demo-factory/.factory/workers/web-search/inbox',
+    ]);
+  });
+
+  it.each([
+    ['an empty prompt', ''],
+    ['a leading dash', '-Continue the task.'],
+    ['a final newline', 'Continue the task.\n'],
+    ['a tab', 'Continue\tthe task.'],
+    ['a delete character', 'Continue\x7fthe task.'],
+    ['a non-ASCII character', 'Continue the café task.'],
+    ['more than 300 characters', 'x'.repeat(301)],
+  ])('refuses %s in both launches', (_name, prompt) => {
+    const resume = { resumeId: SESSION_ID, prompt };
+    const error = {
+      ok: false,
+      error: 'the launch refuses a prompt that is not 1 to 300 printable ASCII characters without a leading dash',
+    };
+    expect(launchArgv(input(resume))).toEqual(error);
+    expect(workerLaunchArgv(workerInput(resume))).toEqual(error);
   });
 });
 

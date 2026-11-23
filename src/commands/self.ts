@@ -18,6 +18,7 @@ import {
   flags,
   flagText,
   guardIds,
+  lastSeen,
   roles,
   schemaIds,
   selfCommands,
@@ -77,37 +78,30 @@ const requireCoordinatorHooks = (deps: Deps, home: string): Promise<CliResult<vo
 /**
  * The last-seen line of the coordinator: it is valid, it belongs to this node, and it holds an event. The state `busy` and the state
  * `prompt` pass. The state `waits` is a dialog that the keys could answer, so it is exit 3. A line that is absent, not valid, not owned
- * or without an event says nothing about a dialog, so it is exit 3 too.
+ * or without an event says nothing about a dialog, so it is exit 3 only while pane safety is on.
  */
-const requireLineWithoutDialog = async (deps: Deps, home: string, nodeId: string, paneId: string): Promise<CliResult<void>> => {
+const requireLineWithoutDialog = async (deps: Deps, home: string, nodeId: string, paneId: string, checked: boolean): Promise<CliResult<void>> => {
   const read = await readOwnCoordinatorSession(deps, home, nodeId);
   if (!read.ok) return read;
   const wait = `Wait until the session reports, or look at the pane ${paneId} in tmux. ${THEN_AGAIN}`;
   const found = read.value;
   switch (found.state) {
     case 'absent':
-      return notReady(`the ${roles.coordinator} has no last-seen line`, wait);
+      return checked ? notReady(`the ${roles.coordinator} has no last-seen line`, wait) : ok(undefined);
     case 'invalid':
     case 'not-owned':
-      return notReady(`cannot use the last-seen line of the ${roles.coordinator}: ${found.reason}`, wait);
+      return checked ? notReady(`cannot use the last-seen line of the ${roles.coordinator}: ${found.reason}`, wait) : ok(undefined);
     case 'valid': {
-      const state = promptStateOf(found.line);
-      switch (state) {
-        case null:
-          return notReady(`the last-seen line of the ${roles.coordinator} holds no event`, wait);
-        case 'waits':
-          return notReady(
-            `a dialog waits in the pane ${paneId} of the ${roles.coordinator}`,
-            `Answer the dialog in the pane ${paneId}. ${THEN_AGAIN}`,
-          );
-        case 'busy':
-        case 'prompt':
-          return ok(undefined);
-        default: {
-          const unreachable: never = state;
-          return unreachable;
-        }
+      if (checked && found.line[lastSeen.keys.event] === null) {
+        return notReady(`the last-seen line of the ${roles.coordinator} holds no event`, wait);
       }
+      if (promptStateOf(found.line) === 'waits') {
+        return notReady(
+          `a dialog waits in the pane ${paneId} of the ${roles.coordinator}`,
+          `Answer the dialog in the pane ${paneId}. ${THEN_AGAIN}`,
+        );
+      }
+      return ok(undefined);
     }
     default: {
       const unreachable: never = found;
@@ -162,13 +156,14 @@ export const selfReset = async (deps: Deps, request: SelfResetRequest): Promise<
   const caller = await requireTargetPane(deps, request);
   if (!caller.ok) return caller;
   const guards = await guardValuesFor(deps, home);
-  // While pane safety is off, the hooks, the last-seen line and the resume notes do not stop the reset. The read of the target pane,
-  // the bind again and the line checks of `typeLine` run with every value.
-  if (isGuardOn(guards, guardIds.paneSafety)) {
+  const checked = isGuardOn(guards, guardIds.paneSafety);
+  if (checked) {
     const hooks = await requireCoordinatorHooks(deps, home);
     if (!hooks.ok) return hooks;
-    const line = await requireLineWithoutDialog(deps, home, nodeId, caller.value.paneId);
-    if (!line.ok) return line;
+  }
+  const line = await requireLineWithoutDialog(deps, home, nodeId, caller.value.paneId, checked);
+  if (!line.ok) return line;
+  if (checked) {
     const notes = await requireResumeNotes(deps, home, nodeId);
     if (!notes.ok) return notes;
   }

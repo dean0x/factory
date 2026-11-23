@@ -97,6 +97,7 @@ describe('factory hook: the last-seen line of each captured payload', () => {
       session_id: SESSION,
       event,
       event_at: NOW,
+      ...(event === 'SessionStart' ? { start_source: 'startup' } : {}),
       ...(event === 'Stop' ? { finished_at: NOW } : {}),
       context_pct: null,
       pct_at: null,
@@ -144,7 +145,14 @@ describe('factory hook: the last-seen line of each captured payload', () => {
   it('writes the line of a SessionStart after a compact, with its extra fields', async () => {
     const deps = make({ stdin: payload('SessionStart', { source: 'compact', prompt_id: 'x', model: 'm' }) });
     expect((await runHook(deps, ['SessionStart'])).ok).toBe(true);
+    expect(lineOf(deps)).toMatchObject({ session_id: SESSION, event: 'SessionStart', start_source: 'compact' });
+  });
+
+  it.each(['future-source', 42])('records an ambiguous session start for an unrecognized source (%s)', async (source) => {
+    const deps = make({ stdin: payload('SessionStart', { source }) });
+    expect(await runHook(deps, ['SessionStart'])).toEqual(SILENT);
     expect(lineOf(deps)).toMatchObject({ session_id: SESSION, event: 'SessionStart' });
+    expect(lineOf(deps)).not.toHaveProperty('start_source');
   });
 });
 
@@ -850,6 +858,7 @@ describe('factory hook: the role text of a worker session', () => {
   it.each(['startup', 'resume', 'clear', 'compact'])('prints the same text at a session start with the source %s', async (source) => {
     const deps = await makeStart({ stdin: payload('SessionStart', { source }) });
     expect(await ranFor(deps)).toEqual({ code: 0, out: [outputOf(textOf(SETUP))], err: [] });
+    expect(lineOf(deps)).toMatchObject({ start_source: source });
   });
 
   it('prints the package worker rules alone when the setup file is absent and never accepted', async () => {

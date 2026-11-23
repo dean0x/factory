@@ -216,8 +216,10 @@ const buildSandbox = async (root: string): Promise<Sandbox> => {
     root,
     node: join(root, 'node'),
     env,
+    // Caller tests can set TMUX_PANE, but cannot select a different server.
     run: (args, options) =>
-      exec('node', [DIST, ...args], options?.cwd ?? root, withoutTmux({ ...env, ...options?.env }), options?.input),
+      exec('node', [DIST, ...args], options?.cwd ?? root,
+        withoutTmux({ ...env, ...options?.env, TMUX_TMPDIR: tmuxDirOf(root) }), options?.input),
     git: (cwd, args) => exec('git', args, cwd, env),
     makeProject: async (name, origin) => {
       const path = join(root, name);

@@ -2,7 +2,7 @@ import { delimiter, join } from 'node:path';
 import { flags, flagText } from '../names.js';
 import type { Deps } from './deps.js';
 
-/** The programs that factory starts. `ps` reads how long the process of a pane runs. */
+/** The programs that factory starts. */
 export const toolNames = { git: 'git', tmux: 'tmux', gh: 'gh', claude: 'claude', ps: 'ps' } as const;
 
 const MAX_PATH_ENTRIES = 256;

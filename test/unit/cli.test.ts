@@ -681,6 +681,19 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(since.out).toBe('');
   });
 
+  it('shows refresh and its forms in the command help', async () => {
+    const { deps } = made();
+    const list = await runOn(deps, ['--help']);
+    expect(list.out).toMatch(/^ {2}refresh {3}Restart/m);
+    const help = await runOn(deps, ['refresh', '--help']);
+    expect(help.code).toBe(0);
+    expect(help.out).toContain('factory refresh [--home DIR] [--dry-run | --result | --cancel]');
+    expect(help.out).toContain('factory refresh --runner TOKEN --home DIR');
+    for (const flag of ['--dry-run', '--result', '--cancel', '--runner TOKEN']) {
+      expect(help.out).toMatch(new RegExp(`${flag} +\\S`));
+    }
+  });
+
   it('shows one usage line for each subcommand of worker and of self', () => {
     const usageOf = (name: string): string => commandTable.find((command) => command.name === name)?.usage ?? '';
     for (const subcommand of Object.values(workerCommands)) {
