@@ -371,39 +371,35 @@ describe('worker stop: a state that is not known', () => {
 });
 
 describe('worker stop: only the cases that the caller allows', () => {
-  const runOnly = (made: Made, allowed: readonly StopCase[]) =>
-    stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', allowed, again: 'dismiss alpha' });
+  const runOnly = (deps: FakeDeps, allowed: readonly StopCase[]) =>
+    stopWorker(deps, { home: HOME, session: NODE, workerId: 'alpha', allowed, again: 'dismiss alpha' });
 
-  it.each(['UserPromptSubmit', 'PreCompact'] as const)(
-    'refuses a busy session when only the idle case is allowed (the last event is %s): exit 1, the command to run again, and nothing is sent or closed',
-    async (event) => {
-      const made = make();
-      await seed(made.deps, { event });
-      const result = await runOnly(made, ['idle']);
-      if (result.ok) throw new Error(`the stop should have failed, it gave ${JSON.stringify(result.value)}`);
-      expect(exitCodeOf[result.error.kind]).toBe(1);
-      expect(result.error.message).toContain('busy');
-      expect(result.error.hint).toContain('dismiss alpha');
-      expect(made.deps.terminated).toEqual([]);
-      expect(killed(made)).toEqual([]);
-    },
-  );
-
-  it('refuses a session that waits at a dialog when only the idle case is allowed: exit 1, and nothing is sent or closed', async () => {
-    const made = make();
-    await seed(made.deps, { event: 'Notification' });
-    const result = await runOnly(made, ['idle']);
-    if (result.ok) throw new Error(`the stop should have failed, it gave ${JSON.stringify(result.value)}`);
-    expect(exitCodeOf[result.error.kind]).toBe(1);
-    expect(result.error.message).toContain('busy');
-    expect(made.deps.terminated).toEqual([]);
-    expect(killed(made)).toEqual([]);
+  describe.each([guardValues.on, guardValues.off])('with pane safety %s', (value) => {
+    it.each(['UserPromptSubmit', 'PreCompact', 'Notification'] as const)(
+      'refuses %s with the stop case code and sends no signal',
+      async (event) => {
+        const made = make();
+        const guards = guardSourceOf({ home: HOME, values: { [guardIds.paneSafety]: value }, state: null });
+        await seed(made.deps, { event });
+        const result = await runOnly({ ...made.deps, guards }, ['idle']);
+        if (result.ok) throw new Error(`the stop should have failed, it gave ${JSON.stringify(result.value)}`);
+        expect(exitCodeOf[result.error.kind]).toBe(1);
+        expect(result.error).toEqual({
+          kind: 'failure',
+          message: 'the worker alpha is busy: its session works now',
+          hint: 'Wait until it waits at its prompt. Run "factory dismiss alpha" again.',
+          code: 'stop-case-refused',
+        });
+        expect(made.deps.terminated).toEqual([]);
+        expect(killed(made)).toEqual([]);
+      },
+    );
   });
 
   it('stops an idle session when only the idle case is allowed', async () => {
     const made = make();
     await seed(made.deps);
-    const result = await runOnly(made, ['idle']);
+    const result = await runOnly(made.deps, ['idle']);
     expect(result).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'idle' } });
     expect(made.deps.terminated).toEqual([PID]);
   });
@@ -411,13 +407,13 @@ describe('worker stop: only the cases that the caller allows', () => {
   it('stops a busy session when the busy case is allowed', async () => {
     const made = make();
     await seed(made.deps, { event: 'UserPromptSubmit' });
-    expect(await runOnly(made, ['idle', 'busy'])).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'busy' } });
+    expect(await runOnly(made.deps, ['idle', 'busy'])).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'busy' } });
   });
 
   it('keeps exit 3 for a state that is not known, whatever the caller allows, and sends nothing', async () => {
     const made = make();
     await seed(made.deps, { event: null });
-    const result = await runOnly(made, ['idle']);
+    const result = await runOnly(made.deps, ['idle']);
     if (result.ok) throw new Error('the stop should have failed');
     expect(exitCodeOf[result.error.kind]).toBe(3);
     expect(made.deps.terminated).toEqual([]);

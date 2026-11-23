@@ -1,4 +1,4 @@
-import { failure, notReady, usageError, type CliResult } from '../cli/errors.js';
+import { codedFailure, failure, notReady, stopCaseRefused, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { guardValuesFor, isGuardOn } from '../guards/effective.js';
@@ -133,7 +133,8 @@ const sessionWords: Readonly<Record<StopCase, { readonly now: string; readonly w
 const requireAllowedCase = (workerId: string, stopCase: StopCase, allowed: readonly StopCase[] | undefined, again: string): CliResult<void> =>
   allowed === undefined || allowed.includes(stopCase)
     ? ok(undefined)
-    : failure(
+    : codedFailure(
+        stopCaseRefused,
         `the ${roles.worker} ${workerId} ${sessionWords[stopCase].now}`,
         `Wait until it ${allowed.map((allowedCase) => sessionWords[allowedCase].wait).join(' or ')}. Run "${commandText(again)}" again.`,
       );
