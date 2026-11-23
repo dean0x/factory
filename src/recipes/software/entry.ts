@@ -4,7 +4,7 @@ import { softwareApprovalPoints } from './approval.js';
 import { softwareBoard } from './board.js';
 import { softwareRecipeSchema } from './config.js';
 import { softwareGuardRows, softwareGuards } from './guards.js';
-import { prCommandFor } from './pr-watch.js';
+import { prCommandFor } from './pr-command.js';
 import { softwareRecordCheck } from './record.js';
 import { softwareRoles } from './recipe.js';
 import {
