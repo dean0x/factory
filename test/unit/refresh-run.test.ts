@@ -531,6 +531,43 @@ describe('refresh runner', () => {
     expect(lab.deps.terminated).toEqual([WORKER_PID]);
   });
 
+  it('restarts every live session on the next run after a partial run', async () => {
+    const lab = await make({ events: { alpha: 'Stop', beta: 'PreToolUse' } });
+    let alphaStart = '';
+    lab.onRun(async (call) => {
+      if (found(call, 'split-window')) alphaStart = psStart(lab.deps.now());
+      return undefined;
+    });
+    lab.onSleep(async (ms) => {
+      if (ms === refreshWait.intervalMs) value(await cancelRefreshRun(lab.deps, HOME));
+    });
+    const partial = await finish(lab);
+    expect(partial).toMatchObject({ state: 'cancelled', outcomes: [{ role: 'worker', id: 'alpha', status: 'resumed' }] });
+    expect(lab.deps.terminated).toEqual([WORKER_PID]);
+
+    const alpha = lab.log.panes().find(({ options }) => options['@worker'] === 'alpha');
+    expect(alpha).toMatchObject({ dead: false, pid: expect.any(Number) });
+    expect(alpha?.pid).not.toBe(WORKER_PID);
+    lab.onRun(async ({ command, args }) =>
+      command === 'ps' && args[1] === 'lstart=' && args[3] === String(alpha?.pid) ? exited(0, alphaStart) : undefined);
+    lab.onSleep(async () => {});
+    await hook(lab.deps, ALPHA, 'alpha', 'Stop');
+    await hook(lab.deps, BETA, 'beta', 'Stop');
+    const next = value(await scheduleRefreshRun(lab.deps, HOME, { caller: 'terminal', coordinatorPane: false }, {
+      workerIds: ['alpha', 'beta'], skipped: [],
+    }));
+    expect(next.token).not.toBe(partial.token);
+    const record = value(await runRefresh(lab.deps, { ...lab.request, token: next.token }));
+
+    expect(record).toMatchObject({ state: 'done', workerIds: ['alpha', 'beta'], outcomes: [
+      { role: 'worker', id: 'alpha', status: 'resumed' },
+      { role: 'worker', id: 'beta', status: 'resumed' },
+      { role: 'coordinator', id: NODE, status: 'resumed' },
+    ] });
+    expect(lab.deps.terminated.slice(1)).toEqual([alpha?.pid, WORKER_PID + 1, COORDINATOR_PID]);
+    expect(resumes(lab).map(({ args }) => args[args.indexOf('--resume') + 1])).toEqual([ALPHA, ALPHA, BETA, COORDINATOR]);
+  });
+
   it('refuses cancel after the coordinator action marker and confirms the respawn', async () => {
     const lab = await make({ events: {} });
     value(await claimed(lab));
