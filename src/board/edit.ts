@@ -691,9 +691,16 @@ const queueWithout = (doc: BoardDoc, id: string): { readonly rows: readonly Stor
   return { rows, changed };
 };
 
-/** The id of an item other than `id` that records `head`, or undefined when no other item does. */
-const headHolderIn = (doc: BoardDoc, id: string, head: string): string | undefined =>
-  doc.items.find((other) => other.id !== id && other.record[boardKeys.mergedPrHead] === head)?.id;
+/** Give the reason for a head conflict, or null. If the item already has this head, do not check other items. */
+export const headConflictIn = (items: readonly Pick<BoardItem, 'id' | 'record'>[], id: string, head: string): string | null => {
+  const record = items.find((item) => item.id === id)?.record;
+  if (record !== undefined) {
+    if (record[boardKeys.mergedPrHead] === head) return null;
+    if (Object.hasOwn(record, boardKeys.mergedPrHead)) return `${id} records another head already`;
+  }
+  const holder = items.find((other) => other.id !== id && other.record[boardKeys.mergedPrHead] === head);
+  return holder === undefined ? null : `the item ${holder.id} records the head of this check already`;
+};
 
 /**
  * Record a passed check in the item and the queue, in one top object. The item gets the stage of the check (any listed stage, also
@@ -731,13 +738,11 @@ export const recordCheckedIn = (
       `Run "${commandText(commandLines.itemRecord)} ${id} ${flagText(flags.ref)} ${displayLine(checked.ref, maxEchoChars)}" again.`,
     );
   }
-  if (Object.hasOwn(record, boardKeys.mergedPrHead) && record[boardKeys.mergedPrHead] !== checked.head) {
-    return failure(`${id} records another head already`);
-  }
-  const holder = record[boardKeys.mergedPrHead] === checked.head ? undefined : headHolderIn(doc, id, checked.head);
-  if (holder !== undefined) {
+  const conflict = headConflictIn(doc.items, id, checked.head);
+  if (conflict !== null) {
+    if (Object.hasOwn(record, boardKeys.mergedPrHead)) return failure(conflict);
     return failure(
-      `the item ${holder} records the head of this check already`,
+      conflict,
       `Check the item and the reference, then run "${commandText(commandLines.itemRecord)} ${id} ${flagText(flags.ref)} ${displayLine(checked.ref, maxEchoChars)}" again.`,
     );
   }
