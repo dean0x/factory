@@ -5,7 +5,6 @@ import { canonicalRequestText, requestHashOf } from '../core/request-hash.js';
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { isRecord } from '../migrate/inspect.js';
 import {
-  approvalLinkLabels,
   approvalOptions,
   boardIds,
   boardLimits,
@@ -38,7 +37,7 @@ import type { RequestDecider, RequestField, RequestGroup, RequestKind, RequestLi
 import { docPathIssue, isDecider, shown } from './edit.js';
 import { jsonText, type DecisionRecordOption, type DecisionRecordRequest } from './decision-record.js';
 import type { DecisionLogDoc, WaitingDoc } from './files.js';
-import { answeredRequestOf, approvalLinkRemedy, linkOfFields, linkOfRow, type RequestLinkRules } from './requests.js';
+import { approvalLinkFault, linkOfFields, storedLinkOf, type RequestLinkRules } from './requests.js';
 import { storedTimeOf } from './stored-time.js';
 import { visibleLineIssue } from './text.js';
 
@@ -332,7 +331,7 @@ export const proofOf = (
   if (!parsed.ok) return fault;
   const state = parsed.value;
   const row = log.rows.find((entry) => entry.id === id)?.record ?? {};
-  const rowLink = linkOfRow(row, rules);
+  const rowLink = storedLinkOf('log', { id, record: row }, rules);
   if (!rowLink.ok) return fault;
   const rowTitle = textOrNull(row[decisionLogKeys.item])?.slice(id.length).replace(/^:?\s*/u, '') ?? null;
   const relayed = Object.hasOwn(row, decisionLogKeys.relayed);
@@ -343,7 +342,7 @@ export const proofOf = (
   if (state.kind === 'closed' || relayed || decider !== null) {
     return {
       ...emptyProofContext,
-      option: null, link: rowLink.value,
+      option: null, link: rowLink.value.link,
       at: textOrNull(row[decisionLogKeys.date]), title: rowTitle, decision: textOrNull(row[decisionLogKeys.decision]),
       ...(relayed ? {
         kind: decideProof.relayed, decider: roles.coordinator,
@@ -356,15 +355,14 @@ export const proofOf = (
   const open = state.kind === 'open' ? strictRequestOf(waiting, id) : ok(null);
   if (!open.ok) return fault;
   const requestText = open.value?.canonical ?? (state.kind === 'answered' ? state.request : null);
-  const answered = state.kind === 'answered' && requestText !== null ? answeredRequestOf(requestText) : ok(null);
-  if (!answered.ok || (answered.value !== null && answered.value[waitingKeys.id] !== id)) return fault;
-  const link = linkOfFields(open.value?.fields ?? answered.value?.[decisionKeys.fields], rules);
+  const answered = rowLink.value.request;
+  const link = open.value === null ? ok(rowLink.value.link) : linkOfFields(open.value.fields, rules);
   if (!link.ok) return fault;
   const context: ProofContext = {
     ...emptyProofContext,
     link: link.value,
-    title: open.value?.title ?? textOrNull(answered.value?.[decisionKeys.title]) ?? rowTitle,
-    question: open.value?.question ?? textOrNull(answered.value?.[decisionKeys.question]),
+    title: open.value?.title ?? textOrNull(answered?.[decisionKeys.title]) ?? rowTitle,
+    question: open.value?.question ?? textOrNull(answered?.[decisionKeys.question]),
     at: open.value?.openedAt ?? (state.kind === 'answered' ? state.date : null),
   };
   const record = stored.value.record;
@@ -383,39 +381,14 @@ interface LinkedApprovals {
   readonly settled: CliResult<readonly LinkedApproval[]>;
 }
 
-/** Check which item a field names even if the rest of its link is invalid. */
-const namesItem = (fields: unknown, item: string): boolean =>
-  Array.isArray(fields) && fields.some((field: unknown) =>
-    isRecord(field) && field[requestFieldKeys.label] === approvalLinkLabels.item && field[requestFieldKeys.text] === item,
-  );
-
-const approvalLinkFault = (id: string | null): Err<CliError> =>
-  failure(
-    id === null ? `a linked approval row has no ${requestWords.request} id` : `the link of ${requestWords.request} ${shown(id)} is invalid`,
-    approvalLinkRemedy,
-  );
-
 const openApprovalOf = (waiting: WaitingDoc, item: string, point: string, rules: RequestLinkRules | undefined): CliResult<string | null> => {
-  for (const { id, record } of waiting.items) {
-    const fields = record[decisionKeys.fields];
-    if (!namesItem(fields, item)) continue;
-    const link = linkOfFields(fields, rules);
-    if (!link.ok) return approvalLinkFault(id);
-    if (link.value?.point === point) return ok(id);
+  for (const row of waiting.items) {
+    const read = storedLinkOf('waiting', row, rules, item);
+    if (!read.ok) return read;
+    if (read.value.itemMention !== undefined) return approvalLinkFault(row.id);
+    if (read.value.link?.point === point) return ok(row.id);
   }
   return ok(null);
-};
-
-const settledLinkOf = (row: Stored, item: string, rules: RequestLinkRules | undefined): CliResult<RequestLink | null> => {
-  const rowNamesItem = row[decisionLogKeys.boardItem] === item;
-  if (!Object.hasOwn(row, decisionLogKeys.by)) return rowNamesItem ? linkOfRow(row, rules) : ok(null);
-
-  // An answer takes its link from the request text, not from the display keys of the row.
-  const text = textOrNull(row[decisionLogKeys.request]);
-  const request = text === null ? failure(`the answer has no ${requestWords.request} text`) : answeredRequestOf(text);
-  if (!request.ok) return rowNamesItem ? request : ok(null);
-  const fields = request.value[decisionKeys.fields];
-  return namesItem(fields, item) ? linkOfFields(fields, rules) : ok(null);
 };
 
 /** Select the open request or the settled rows in append order. The file size cap bounds both scans. */
@@ -426,12 +399,13 @@ export const linkedApprovalsOf = (
   if (!open.ok || open.value !== null) return { open, settled: ok([]) };
 
   const settled: LinkedApproval[] = [];
-  for (const { id, record } of log.rows) {
-    const link = settledLinkOf(record, item, rules);
-    if (!link.ok) return { open, settled: approvalLinkFault(id) };
-    if (link.value?.point !== point) continue;
-    if (id === null) return { open, settled: approvalLinkFault(id) };
-    settled.push({ id, link: link.value });
+  for (const row of log.rows) {
+    const read = storedLinkOf('log', row, rules, item);
+    if (!read.ok) return { open, settled: read };
+    const { link } = read.value;
+    if (link?.point !== point) continue;
+    if (row.id === null) return { open, settled: approvalLinkFault(row.id) };
+    settled.push({ id: row.id, link });
   }
   return { open, settled: ok(settled) };
 };

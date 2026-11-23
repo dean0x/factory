@@ -8,19 +8,17 @@ import { guardReadOf } from '../core/guard-source.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { guardValuesFor, isGuardOn } from '../guards/effective.js';
-import { isRecord } from '../migrate/inspect.js';
 import {
-  approvalLinkLabels, boardIds, boardKeys, boardTextLimits, commandLines, commands, commandText, decisionKeys,
-  decisionLogKeys, files, flags, flagText, guardIds, guardValues, itemCommands, requestFieldKeys, requestWords,
-  roles, values, waitingKeys, workLookupReasons,
+  boardKeys, commandLines, commands, commandText, files, flags, flagText, guardIds, guardValues,
+  itemCommands, requestWords, roles, values, workLookupReasons,
 } from '../names.js';
 import type { ApprovalMode, CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import { branchOf, readWorkerRecord, type WorkerRecord } from '../workers/registry.js';
-import type { BoardItem, ItemRecorded, LocalBoard, RequestLink } from './contract.js';
+import type { BoardItem, ItemRecorded, LocalBoard } from './contract.js';
 import { checkItemId, checkRecordSetup, formerWorkersOf, shown } from './edit.js';
-import type { DecisionLogDoc, DecisionRow, WaitingDoc, WaitingItem } from './files.js';
+import type { DecisionLogDoc, WaitingDoc } from './files.js';
 import { requireLocalKind } from './local.js';
-import { answeredRequestOf, approvalLinkRemedy, linkOfFields, linkOfRow, type RequestLinkRules } from './requests.js';
+import { approvalLinkRemedy, storedLinkOf, type RequestLinkRules } from './requests.js';
 
 export interface BranchRemedy {
   readonly command: string;
@@ -42,73 +40,22 @@ export type WorkItemLookup =
   | { readonly kind: 'found'; readonly item: BoardItem }
   | { readonly kind: 'lookup'; readonly cause: string };
 
-const invalidLink = (id: string | null): CliResult<never> => failure(
-  id === null ? `a linked row has no ${requestWords.request} id` : `the link of ${requestWords.request} ${shown(id)} is invalid`,
-  approvalLinkRemedy,
-);
-
-const linkLabels: ReadonlySet<unknown> = new Set(Object.values(approvalLinkLabels));
-
-/** A reserved link field cannot name work without an item. Ordinary fields do not name work. */
-const workLinkOfFields = (fields: unknown, rules: RequestLinkRules, id: string | null): CliResult<RequestLink | null> => {
-  const link = linkOfFields(fields, rules);
-  if (!link.ok || link.value !== null || !Array.isArray(fields)) return link;
-  return fields.some((field: unknown) => isRecord(field) && linkLabels.has(field[requestFieldKeys.label])) ? invalidLink(id) : link;
-};
-
-/** An item name without any other link field blocks work on that item. It gives no reference or approval proof. */
-const itemMentionOf = (fields: unknown): string | null => {
-  if (!Array.isArray(fields) || fields.length > boardTextLimits.maxRequestFields) return null;
-  const list: readonly unknown[] = fields;
-  let item: string | null = null;
-  for (const field of list) {
-    if (!isRecord(field) || !linkLabels.has(field[requestFieldKeys.label])) continue;
-    const text = field[requestFieldKeys.text];
-    if (item !== null || field[requestFieldKeys.label] !== approvalLinkLabels.item || typeof text !== 'string' || !boardIds.item.test(text)) return null;
-    item = text;
-  }
-  return item;
-};
-
-const waitingTargetOf = ({ id, record }: WaitingItem, rules: RequestLinkRules): CliResult<{
-  readonly item: string; readonly point?: string; readonly ref?: string;
-} | null> => {
-  const fields = record[decisionKeys.fields];
-  const link = workLinkOfFields(fields, rules, id);
-  if (link.ok) return link;
-  const item = itemMentionOf(fields);
-  return item === null ? invalidLink(id) : ok({ item });
-};
-
-/** Take the link of an answer from its request text, not from display fields. A link is no approval proof. */
-const settledLinkOf = ({ id, record }: DecisionRow, rules: RequestLinkRules): CliResult<RequestLink | null> => {
-  if (!Object.hasOwn(record, decisionLogKeys.by)) {
-    const link = linkOfRow(record, rules);
-    return !link.ok || (link.value !== null && id === null) ? invalidLink(id) : link;
-  }
-  const text = record[decisionLogKeys.request];
-  if (typeof text !== 'string') return invalidLink(id);
-  const request = answeredRequestOf(text);
-  if (!request.ok) return invalidLink(id);
-  const link = workLinkOfFields(request.value[decisionKeys.fields], rules, id);
-  if (!link.ok || (link.value !== null && (id === null || request.value[waitingKeys.id] !== id))) return invalidLink(id);
-  return link;
-};
-
 /** Read all waiting and settled links. The board file size limits bound the scans. */
 const linkedIdsOf = (
   waiting: WaitingDoc, log: DecisionLogDoc, rules: RequestLinkRules, point: string, ref: string,
 ): CliResult<ReadonlySet<string>> => {
   const ids = new Set<string>();
   for (const row of waiting.items) {
-    const link = waitingTargetOf(row, rules);
-    if (!link.ok) return link;
-    if (link.value?.point === point && link.value.ref === ref) ids.add(link.value.item);
+    const read = storedLinkOf('waiting', row, rules);
+    if (!read.ok) return read;
+    const { link } = read.value;
+    if (link?.point === point && link.ref === ref) ids.add(link.item);
   }
   for (const row of log.rows) {
-    const link = settledLinkOf(row, rules);
-    if (!link.ok) return link;
-    if (link.value?.point === point && link.value.ref === ref) ids.add(link.value.item);
+    const read = storedLinkOf('log', row, rules);
+    if (!read.ok) return read;
+    const { link } = read.value;
+    if (link?.point === point && link.ref === ref) ids.add(link.item);
   }
   return ok(ids);
 };
@@ -161,9 +108,10 @@ export const openRequestsOf = (
   if (!ref.ok) return ref;
   const ids: string[] = [];
   for (const row of waiting.items) {
-    const link = waitingTargetOf(row, rules);
-    if (!link.ok) return link;
-    if (link.value !== null && (link.value.item === target.item || link.value.ref === ref.value)) ids.push(row.id);
+    const read = storedLinkOf('waiting', row, rules);
+    if (!read.ok) return read;
+    const { link, itemMention } = read.value;
+    if (itemMention === target.item || link?.item === target.item || link?.ref === ref.value) ids.push(row.id);
   }
   return ok(ids);
 };

@@ -342,6 +342,10 @@ describe('pr merge through the local work host', () => {
       rows: [{ ...closedItem, [boardKeys.mergedPrHead]: 'b'.repeat(40) }], cause: 'no item matches the reference or head branch',
     },
     {
+      name: 'the closed item at the pin has another worker branch', state: 'MERGED',
+      rows: [{ ...closedItem, lane: 'beta' }], cause: 'no item matches the reference or head branch',
+    },
+    {
       name: 'two closed items match', state: 'MERGED',
       rows: [closedItem, { ...closedItem, id: 'B-4' }], cause: 'several items match the head branch',
     },

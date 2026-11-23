@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { approvalProof, linkedApprovalsOf } from '../../src/board/decide.js';
 import { headConflictIn } from '../../src/board/edit.js';
 import { parseBoard, parseDecisionLog, parseWaiting } from '../../src/board/files.js';
 import { branchesOf, findWorkItem, openRequestsOf, recordWork, type WorkItemQuery } from '../../src/board/record-flow.js';
@@ -32,8 +33,8 @@ const valueOf = <T>(result: CliResult<T>): T => {
 const itemsOf = (...rows: readonly Row[]) => valueOf(parseBoard(boardText(rows), softwareQueueKey)).items;
 const waitingOf = (...items: readonly Row[]) => valueOf(parseWaiting(JSON.stringify({ intro: '', groups: [], items })));
 const logText = (...rows: readonly Row[]) => JSON.stringify({ rows });
-const find = (rows: readonly Row[], waiting: readonly Row[] = [], log: readonly Row[] = []) =>
-  findWorkItem(itemsOf(...rows), waitingOf(...waiting), valueOf(parseDecisionLog(logText(...log))), rules, query);
+const find = (rows: readonly Row[], waiting: readonly Row[] = [], log: readonly Row[] = [], lookup = query) =>
+  findWorkItem(itemsOf(...rows), waitingOf(...waiting), valueOf(parseDecisionLog(logText(...log))), rules, lookup);
 
 const target = itemRecord(item, { lane: 'alpha' });
 const decoys = [itemRecord('B-2', { lane: 'beta' }), itemRecord('B-3', { lane: 'beta' })] as const;
@@ -54,6 +55,24 @@ describe('work item lookup', () => {
 
   it('reports several items if two open items match the branch', () => {
     expect(find([decoys[0], target, itemRecord('B-4', { lane: 'alpha' }), decoys[1]])).toEqual(refused('several items match the head branch'));
+  });
+
+  it('refuses a single link when two items match the branch at the pin', () => {
+    const closed = { ...target, status: 'done', [boardKeys.mergedPrHead]: head };
+    const open = itemRecord('B-4', { lane: 'beta' });
+    const linked = [approvalRelay()];
+    const rerun = { ...query, recordedHead: head };
+    expect(find([decoys[0], closed, open, decoys[1]], [], linked, rerun)).toMatchObject(found(item));
+    expect(find([decoys[0], closed, { ...open, lane: 'alpha' }, decoys[1]], [], linked, rerun))
+      .toEqual(refused('several items match the head branch'));
+  });
+
+  it('does not match a closed item at the pin on another worker branch', () => {
+    const closed = { ...target, status: 'done', [boardKeys.mergedPrHead]: head };
+    const rerun = { ...query, recordedHead: head };
+    expect(find([decoys[0], closed, decoys[1]], [], [], rerun)).toMatchObject(found(item));
+    expect(find([decoys[0], { ...closed, lane: 'beta' }, decoys[1]], [], [], rerun))
+      .toEqual(refused('no item matches the reference or head branch'));
   });
 
   it('finds an open item from the branch of a former worker', () => {
@@ -117,6 +136,50 @@ describe('work item lookup', () => {
     expect(branchesOf(row, null, query.remedy)).toMatchObject({
       ok: false, error: { kind: 'failure', message: expect.stringContaining('is not a list of text'), hint: `Check the item in board.json, then run "factory pr merge ${ref}" again.` },
     });
+  });
+});
+
+describe('stored links in work lookup and approval proof', () => {
+  const rows = [decoys[0], { ...target, lane: 'beta' }, decoys[1]];
+  const proof = (log: readonly Row[], waiting = waitingOf(), stored = [approvalAnswer().record]) => {
+    const docs = { waiting, log: valueOf(parseDecisionLog(logText(...log))) };
+    const linked = linkedApprovalsOf(docs.waiting, docs.log, item, point, rules);
+    return approvalProof({ docs, linked, stored: ok(stored), rules, ref, head });
+  };
+
+  it('uses the wrapped link even if an answer has only part of a display link', () => {
+    const answer = { ...approvalAnswer().row, board_item: 'B-2' };
+    expect(find(rows, [], [answer])).toMatchObject(found(item));
+    expect(proof([answer])).toEqual(ok({ kind: 'record', id: 'D-1', decider: 'owner' }));
+  });
+
+  it('refuses a wrapped request id that differs from the row id, even before a newer approval', () => {
+    const answer = approvalAnswer(approvalRequest('D-2'));
+    const relay = approvalRelay();
+    const stored = [answer.record];
+    expect(find(rows, [], [answer.row, relay])).toMatchObject(found(item));
+    expect(proof([answer.row, relay], waitingOf(), stored)).toEqual(ok({ kind: 'relayed', id: 'D-1', decider: 'coordinator' }));
+    const broken = { ...answer.row, item: 'D-3: Private title' };
+    expect(find(rows, [], [broken, relay])).toMatchObject(linkFault('D-3'));
+    expect(proof([broken, relay], waitingOf(), stored)).toMatchObject(linkFault('D-3'));
+  });
+
+  it('limits proof to the named item but reads all rows for work lookup', () => {
+    const relay = approvalRelay();
+    const other = approvalAnswer(approvalRequest('D-2', { ...APPROVAL_LINK, item: 'B-2', ref: '43' }));
+    expect(find(rows, [], [relay, other.row])).toMatchObject(found(item));
+    const broken = { ...other.row, item: 'D-3: Private title' };
+    expect(find(rows, [], [relay, broken])).toMatchObject(linkFault('D-3'));
+    expect(proof([relay, broken], waitingOf(), [])).toEqual(ok({ kind: 'relayed', id: 'D-1', decider: 'coordinator' }));
+  });
+
+  it('keeps an item-only waiting mention out of link lookup and blocks approval', () => {
+    const request = approvalRequest('D-2');
+    const mention = { ...request, fields: request.fields.filter(({ label }) => label === approvalLinkLabels.item) };
+    const waiting = waitingOf(mention);
+    expect(find(rows, [mention])).toEqual(refused('no item matches the reference or head branch'));
+    expect(openRequestsOf(waiting, rules, { item, ref })).toEqual(ok(['D-2']));
+    expect(proof([approvalRelay()], waiting)).toMatchObject(linkFault('D-2'));
   });
 });
 

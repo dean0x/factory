@@ -16,10 +16,11 @@ import {
   requestHash,
   requestKinds,
   requestWords,
+  waitingKeys,
 } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { BoardRequest, RequestGroup, RequestKind, RequestLink } from './contract.js';
-import type { WaitingDoc, WaitingItem } from './files.js';
+import type { DecisionRow, WaitingDoc, WaitingItem } from './files.js';
 import { storedTimeOf } from './stored-time.js';
 
 /**
@@ -149,4 +150,72 @@ export const answeredRequestOf = (requestText: string): CliResult<Readonly<Recor
   const request = wrapper[requestHash.keys.request];
   if (!isRecord(request)) return failure(`the hash wrapper has no ${requestWords.request} object`);
   return ok(request);
+};
+
+export const approvalLinkFault = (id: string | null) => failure(
+  id === null ? `a linked approval row has no ${requestWords.request} id` : `the link of ${requestWords.request} ${JSON.stringify(id)} is invalid`,
+  approvalLinkRemedy,
+);
+
+interface StoredLink {
+  readonly link: RequestLink | null;
+  readonly itemMention?: string;
+  readonly request?: Readonly<Record<string, unknown>>;
+}
+
+const unlinked = ok({ link: null });
+
+const namesItem = (fields: unknown, item: string): boolean =>
+  Array.isArray(fields) && fields.some((field: unknown) =>
+    isRecord(field) && field[requestFieldKeys.label] === approvalLinkLabels.item && field[requestFieldKeys.text] === item,
+  );
+
+const reservedField = (field: unknown): field is Readonly<Record<string, unknown>> => {
+  if (!isRecord(field)) return false;
+  const label = field[requestFieldKeys.label];
+  return typeof label === 'string' && LINK_LABELS.has(label);
+};
+
+const storedFieldsLink = (
+  fields: unknown, id: string | null, rules: RequestLinkRules | undefined, allowMention: boolean,
+): CliResult<StoredLink> => {
+  const link = linkOfFields(fields, rules);
+  if (link.ok && link.value !== null && id !== null) return ok({ link: link.value });
+  if (link.ok && link.value === null && (!Array.isArray(fields) || !fields.some(reservedField))) return unlinked;
+  if (allowMention && Array.isArray(fields) && fields.length <= boardTextLimits.maxRequestFields) {
+    const [first, ...rest] = fields.filter(reservedField);
+    const item = first?.[requestFieldKeys.text];
+    if (rest.length === 0 && first?.[requestFieldKeys.label] === approvalLinkLabels.item && typeof item === 'string' && boardIds.item.test(item)) {
+      return ok({ link: null, itemMention: item });
+    }
+  }
+  return approvalLinkFault(id);
+};
+
+/** Read one stored row. With an item scope, ignore rows that do not name that item. */
+export const storedLinkOf = (
+  source: 'waiting' | 'log', { id, record }: DecisionRow, rules: RequestLinkRules | undefined, item?: string,
+): CliResult<StoredLink> => {
+  if (source === 'waiting') {
+    const fields = record[decisionKeys.fields];
+    return item !== undefined && !namesItem(fields, item) ? unlinked : storedFieldsLink(fields, id, rules, true);
+  }
+
+  const inScope = item === undefined || record[decisionLogKeys.boardItem] === item;
+  if (!Object.hasOwn(record, decisionLogKeys.by)) {
+    if (!inScope) return unlinked;
+    const link = linkOfRow(record, rules);
+    return !link.ok || (link.value !== null && id === null) ? approvalLinkFault(id) : ok({ link: link.value });
+  }
+
+  // The display keys only identify the scope of an answer whose request cannot be read.
+  const text = record[decisionLogKeys.request];
+  if (typeof text !== 'string') return inScope ? approvalLinkFault(id) : unlinked;
+  const request = answeredRequestOf(text);
+  if (!request.ok) return inScope ? approvalLinkFault(id) : unlinked;
+  const fields = request.value[decisionKeys.fields];
+  if (item !== undefined && !namesItem(fields, item)) return unlinked;
+  if (id === null || request.value[waitingKeys.id] !== id) return approvalLinkFault(id);
+  const link = storedFieldsLink(fields, id, rules, false);
+  return link.ok ? ok({ link: link.value.link, request: request.value }) : link;
 };
