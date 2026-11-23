@@ -51,3 +51,11 @@ describe('runVersion', () => {
     expect(output.json).toMatchObject({ commit: null, modified: null });
   });
 });
+
+describe('runVersion with a commit and no known change state', () => {
+  it('notes that the changes are not known', () => {
+    const output = runVersion({ version: '1.2.3', commit: COMMIT, modified: null });
+    expect(textOf(output)).toEqual(['1.2.3', `commit ${COMMIT} (changes not known)`]);
+    expect(output.json).toMatchObject({ commit: COMMIT, modified: null });
+  });
+});

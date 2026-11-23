@@ -26,6 +26,6 @@ describe('factory version (built binary)', () => {
 
     const text = (await run(process.execPath, [DIST, 'version'])).stdout.split('\n');
     expect(text[0]).toBe(json.version);
-    expect(text[1]).toMatch(head === null ? /^commit unknown$/ : new RegExp(`^commit ${head}( \\(with changes that were not committed\\))?$`));
+    expect(text[1]).toMatch(head === null ? /^commit unknown$/ : new RegExp(`^commit ${head}( \\((with changes that were not committed|changes not known)\\))?$`));
   });
 });
