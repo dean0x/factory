@@ -1018,6 +1018,7 @@ export const workLookupReasons = {
   severalLinks: 'several items link to the reference',
   severalBranches: 'several items match the head branch',
   differentItems: 'the linked item and the head branch match different items',
+  closedHead: 'the closed item does not record the pinned head',
   noItem: 'no item matches the reference or head branch',
 } as const;
 

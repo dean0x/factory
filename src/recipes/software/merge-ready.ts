@@ -169,11 +169,9 @@ const prOf = (value: unknown): PrRead => {
 
 type BoundRead = { readonly kind: 'bound'; readonly value: BoundWork } | Unreadable | WorkLookup;
 
-const bindWork = async (work: ReadinessHost, target: ReadinessTarget, repo: string, pr: ReadinessPr, recordedHead?: string): Promise<BoundRead> => {
+const bindWork = async (work: ReadinessHost, target: ReadinessTarget, repo: string, pr: ReadinessPr): Promise<BoundRead> => {
   const ref = String(pr.number);
-  const found = await work.find({
-    point: MERGE_POINT, ref, branch: pr.headRefName, ...(recordedHead === undefined ? {} : { recordedHead }),
-  });
+  const found = await work.find({ point: MERGE_POINT, ref, branch: pr.headRefName, recordedHead: pr.headRefOid });
   if (!found.ok) return readFault(found.error, checkReasons.boardUnreadable);
   const lookup = found.value;
   switch (lookup.kind) {
@@ -233,7 +231,7 @@ export const readinessFor = async (deps: Deps, work: ReadinessHost, target: Read
     if (verdict.kind === readinessKinds.notReady) return verdict;
   }
 
-  const bound = await bindWork(work, target, repo, pr, merged ? target.head : undefined);
+  const bound = await bindWork(work, target, repo, pr);
   if (bound.kind !== 'bound') return bound;
   const verdict = await recordVerdict(deps, work, bound.value, merged);
   if (verdict.kind !== readinessKinds.ready) return verdict;

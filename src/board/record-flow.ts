@@ -29,7 +29,7 @@ export interface WorkItemQuery {
   readonly point: string;
   readonly ref: string;
   readonly branch: string;
-  /** Allow a closed branch match only at this confirmed head. */
+  /** The PR head to match against the head of a closed item. */
   readonly recordedHead?: string;
   readonly closed: string | undefined;
   readonly workerField: string | undefined;
@@ -60,17 +60,34 @@ const linkedIdsOf = (
   return ok(ids);
 };
 
-const branchItemsOf = (items: readonly BoardItem[], query: WorkItemQuery): CliResult<readonly BoardItem[]> => {
+const hasClosedHeadConflict = (item: BoardItem, query: WorkItemQuery): boolean =>
+  item.status === query.closed
+  && (query.recordedHead === undefined || item.record[boardKeys.mergedPrHead] !== query.recordedHead);
+
+const lookupBranchesOf = (item: BoardItem, query: WorkItemQuery): CliResult<readonly string[] | undefined> => {
+  const worker = workerOf(item, query.workerField);
+  return worker.ok ? branchesOf(item, worker.value, query.remedy) : worker;
+};
+
+const branchItemsOf = (items: readonly BoardItem[], query: WorkItemQuery): CliResult<{
+  readonly matches: readonly BoardItem[];
+  readonly blockedByClosedHead: boolean;
+}> => {
   const matches: BoardItem[] = [];
+  let blockedByClosedHead = false;
   for (const item of items) {
-    if (item.status === query.closed && (query.recordedHead === undefined || item.record[boardKeys.mergedPrHead] !== query.recordedHead)) continue;
-    const worker = workerOf(item, query.workerField);
-    if (!worker.ok) return worker;
-    const branches = branchesOf(item, worker.value, query.remedy);
-    if (!branches.ok) return branches;
-    if (branches.value?.includes(query.branch)) matches.push(item);
+    const blocked = hasClosedHeadConflict(item, query);
+    const branches = lookupBranchesOf(item, query);
+    if (!branches.ok) {
+      // A closed item at another head cannot take part in branch lookup.
+      if (blocked) continue;
+      return branches;
+    }
+    if (!branches.value?.includes(query.branch)) continue;
+    if (blocked) blockedByClosedHead = true;
+    else matches.push(item);
   }
-  return ok(matches);
+  return ok({ matches, blockedByClosedHead });
 };
 
 const lookupRefusal = (cause: string): CliResult<WorkItemLookup> => ok({ kind: 'lookup', cause });
@@ -90,14 +107,17 @@ export const findWorkItem = (
 
   const branches = branchItemsOf(items, query);
   if (!branches.ok) return branches;
-  if (branches.value.length > 1) return lookupRefusal(workLookupReasons.severalBranches);
+  const { matches, blockedByClosedHead } = branches.value;
+  if (matches.length > 1) return lookupRefusal(workLookupReasons.severalBranches);
   const fromLink = linked[0];
-  const fromBranch = branches.value[0];
+  const fromBranch = matches[0];
   if (fromLink !== undefined && fromBranch !== undefined && fromLink.id !== fromBranch.id) {
     return lookupRefusal(workLookupReasons.differentItems);
   }
   const item = fromLink ?? fromBranch;
-  return item === undefined ? lookupRefusal(workLookupReasons.noItem) : ok({ kind: 'found', item });
+  if (item === undefined) return lookupRefusal(blockedByClosedHead ? workLookupReasons.closedHead : workLookupReasons.noItem);
+  if (hasClosedHeadConflict(item, query)) return lookupRefusal(workLookupReasons.closedHead);
+  return ok({ kind: 'found', item });
 };
 
 /** List ids of open requests that name the item or link the reference. A link fault stops the read. */

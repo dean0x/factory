@@ -5,7 +5,7 @@ import type { Command, Given } from '../../cli/table.js';
 import type { Deps } from '../../core/deps.js';
 import { ok } from '../../core/result.js';
 import { isGuardOn } from '../../guards/effective.js';
-import { commands, commandText, flags, flagText, workLookupReasons } from '../../names.js';
+import { commandLines, commands, commandText, flags, flagText, workLookupReasons } from '../../names.js';
 import type { RecipeHost } from '../entry.js';
 import { mergeCheck, parsePrNumber } from './github-pr.js';
 import { softwareGuardIds } from './guard-parts.js';
@@ -17,6 +17,9 @@ const USAGE_HINT = `Run "${commandText(commands.check)} ${flagText(flags.help)}"
 const MAX_LINES = 20;
 const fixedReasons: ReadonlySet<string> = new Set([...Object.values(checkReasons), checkRollupReason]);
 const lookupReasons: ReadonlySet<string> = new Set(Object.values(workLookupReasons));
+const closedHeadRemedy = `To reopen the item, run "${commandText(commandLines.itemMove)} ID ${flagText(flags.state)} STATE" with an open state. `
+  + `If the PR is merged and the item has no head, run "${commandText(commandLines.itemRecord)} ID ${flagText(flags.ref)} PR". `
+  + 'If the item records another head, check the item and PR.';
 
 interface CheckOutcome {
   readonly result: keyof typeof checkWords;
@@ -47,6 +50,7 @@ export const checkOutcomeOf = (read: Readiness): CheckOutcome => {
       return notReady(reasons, checkRemedies.again);
     }
     case readinessKinds.lookup:
+      if (read.cause === workLookupReasons.closedHead) return notReady([read.cause], closedHeadRemedy);
       return notReady([lookupReasons.has(read.cause) ? read.cause : checkReasons.boardUnreadable], checkRemedies.board);
     case readinessKinds.headMoved:
       return { ...notReady([checkReasons.headMoved], checkRemedies.head, read.head), result: read.kind };

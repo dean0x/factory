@@ -198,12 +198,20 @@ describe('check', () => {
     expect(await run()).toEqual(refusal('the PR head conflicts with a board record', inspectBoard));
   });
 
-  it.each([
-    [[decoys[0], { ...target, status: 'done' }, decoys[1]], 'no item matches the reference or head branch'],
-    [[...workItems.slice(0, 2), itemRecord('B-4', { lane: 'alpha' }), decoys[1]], 'several items match the head branch'],
-  ] as const)('refuses an item lookup that does not give one item', async (items, reason) => {
-    const { run } = setup({ items });
-    expect(await run()).toEqual(refusal(reason, inspectBoard));
+  it('refuses a closed branch match with no recorded head', async () => {
+    const closed = { ...target, status: 'done' };
+    const { run, seed } = setup({ items: [decoys[0], { ...closed, [boardKeys.mergedPrHead]: head }, decoys[1]] });
+    expect(await run()).toEqual({ code: 0, out: 'READY\n', err: '' });
+    seed(files.board, boardText([decoys[0], closed, decoys[1]]));
+    expect(await run()).toEqual(refusal('the closed item does not record the pinned head',
+      'To reopen the item, run "factory item move ID --state STATE" with an open state. '
+      + 'If the PR is merged and the item has no head, run "factory item record ID --ref PR". '
+      + 'If the item records another head, check the item and PR.'));
+  });
+
+  it('refuses a lookup when several items match the branch', async () => {
+    const { run } = setup({ items: [...workItems.slice(0, 2), itemRecord('B-4', { lane: 'alpha' }), decoys[1]] });
+    expect(await run()).toEqual(refusal('several items match the head branch', inspectBoard));
   });
 
   it('keeps the verdict first and the text within 20 lines when several rules fail', async () => {

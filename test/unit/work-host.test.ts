@@ -336,28 +336,57 @@ describe('pr merge through the local work host', () => {
       .toMatchObject({ item, head, proof: 'none', request: null, decider: null });
   });
 
+  const closedHeadReason = 'the closed item does not record the pinned head';
+  const closedHeadRemedy = 'To reopen the item, run "factory item move ID --state STATE" with an open state. '
+    + 'If the PR is merged and the item has no head, run "factory item record ID --ref PR". '
+    + 'If the item records another head, check the item and PR.';
+
+  it('accepts a closed branch match at the pin for an open PR', async () => {
+    const world = await mergeFixture({ realGit: true, off: [guardIds.ownerGo] });
+    await world.writeState(files.board, boardText([decoys[0], closedItem, decoys[1]]));
+    await world.commitBase();
+    expect(await world.run()).toMatchObject({ code: 0, out: expect.stringMatching(/^MERGED AND ALREADY RECORDED\n/) });
+    expect(world.gh().filter(({ args }) => args[1] === 'merge')).toHaveLength(1);
+  });
+
+  it.each([
+    { name: 'has no recorded head for an open PR', state: 'OPEN', fields: {} },
+    { name: 'records another head on a rerun', state: 'MERGED', fields: { [boardKeys.mergedPrHead]: 'b'.repeat(40) } },
+  ] as const)('refuses a settled link when the closed item $name', async ({ state, fields }) => {
+    const { [boardKeys.mergedPrHead]: _head, ...withoutHead } = closedItem;
+    const world = await mergeFixture({ view: { state }, realGit: true });
+    const board = boardText([decoys[0], { ...withoutHead, ...fields }, decoys[1]]);
+    await world.writeState(files.board, board);
+    await world.saveAnswer();
+    await world.commitBase();
+    expect(await world.run()).toEqual({ code: 1, out: `NOT READY\n${closedHeadReason}\n${closedHeadRemedy}\n`, err: '' });
+    expect(world.gh().filter(({ args }) => args[1] === 'merge')).toEqual([]);
+    expect(await world.git('rev-list', '--count', 'HEAD')).toBe('1');
+    expect(await readFile(join(layoutOf(world.home).stateDir, files.board), 'utf8')).toBe(board);
+    await expect(stat(layoutOf(world.home).outboxDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.each([
     {
-      name: 'the closed item records another head', state: 'MERGED',
-      rows: [{ ...closedItem, [boardKeys.mergedPrHead]: 'b'.repeat(40) }], cause: 'no item matches the reference or head branch',
+      name: 'the closed item records another head',
+      rows: [{ ...closedItem, [boardKeys.mergedPrHead]: 'b'.repeat(40) }], cause: closedHeadReason, remedy: closedHeadRemedy,
     },
     {
-      name: 'the closed item at the pin has another worker branch', state: 'MERGED',
+      name: 'the closed item at the pin has another worker branch',
       rows: [{ ...closedItem, lane: 'beta' }], cause: 'no item matches the reference or head branch',
     },
     {
-      name: 'two closed items match', state: 'MERGED',
+      name: 'two closed items match',
       rows: [closedItem, { ...closedItem, id: 'B-4' }], cause: 'several items match the head branch',
     },
-    { name: 'the PR is open', state: 'OPEN', rows: [closedItem], cause: 'no item matches the reference or head branch' },
-  ] as const)('refuses a closed branch match when $name', async ({ state, rows, cause }) => {
-    const world = await mergeFixture({ view: { state }, off: [guardIds.ownerGo] });
+  ])('refuses a closed branch match when $name', async ({ rows, cause, remedy = 'Check the board and its request links. Run check again.' }) => {
+    const world = await mergeFixture({ view: { state: 'MERGED' }, off: [guardIds.ownerGo] });
     const board = boardText([decoys[0], ...rows, decoys[1]]);
     await world.writeState(files.board, board);
     expect(await world.run()).toMatchObject({
-      code: 1, out: expect.stringContaining(`${cause}\nCheck the board and its request links. Run check again.`),
+      code: 1, out: expect.stringContaining(`${cause}\n${remedy}`),
     });
-    expect(world.gh().map(({ args }) => args[0])).toEqual(state === 'MERGED' ? ['pr'] : ['pr', 'api']);
+    expect(world.gh().map(({ args }) => args[1])).toEqual(['view']);
     expect(await readFile(join(layoutOf(world.home).stateDir, files.board), 'utf8')).toBe(board);
     await expect(stat(layoutOf(world.home).outboxDir)).rejects.toMatchObject({ code: 'ENOENT' });
   });

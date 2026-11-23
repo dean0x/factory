@@ -1100,7 +1100,7 @@ If GitHub puts the PR in a merge queue, the result is `NOT MERGED` while it stay
 
 After it records the merge, the command can write one merge event file named `merge-<pr>-<head>.json`. The file is beside the report file `.factory/outbox/report.json`. The fields are `schema`, `kind`, `item`, `pr`, `head`, `merge_commit`, `proof`, `request`, `decider`, and `at`. The `merge_commit` field is null only when GitHub gives no merge commit.
 
-A request link takes priority over a branch match. If the link and branch name different items, the command refuses. If several items match the branch, the command refuses even if a link names only one of them. For an open PR, only open items can match by branch. For a PR already merged at the given head, a closed item can also match. Its current or former worker branch must match the PR branch, and its recorded head must equal the given head. Without a link, the branch must identify exactly one item.
+A request link takes priority over a branch match. If the link and branch name different items, the command refuses. If several items match the branch, the command refuses even if a link names only one of them. A branch match needs a current or former worker branch that matches the PR branch. A closed item can match only if its recorded head equals the pin. This rule applies to links and branches, for an open PR or a repeat at the merged head. Without a link, the branch must identify exactly one item.
 
 ### Watch a pull request
 

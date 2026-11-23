@@ -108,7 +108,7 @@ describe('readinessFor', () => {
       '--', '12',
     ], timeoutMs: ghTimeoutMs });
     expect(calls).toEqual([
-      ['find', { point: 'merge', ref: '12', branch: GOOD.headRefName }],
+      ['find', { point: 'merge', ref: '12', branch: GOOD.headRefName, recordedHead: HEAD }],
       ['facts', { item: ITEM.id, point: 'merge', ref: '12', head: HEAD, project: PROJECT.id }],
     ]);
   });

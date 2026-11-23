@@ -24,7 +24,7 @@ const { point, ref, head, item } = APPROVAL_LINK;
 const check = softwareRecipe.recordCheck;
 if (check === undefined) throw new Error('the recipe has no record check');
 const rules = { points: [point], parseRef: check.parseRef, parseHead: check.parseHead };
-const query: WorkItemQuery = { point, ref, branch: branchOf('alpha'), closed: 'done', workerField: 'lane', remedy: { command: 'pr merge', rest: ` ${ref}` } };
+const query: WorkItemQuery = { point, ref, branch: branchOf('alpha'), recordedHead: head, closed: 'done', workerField: 'lane', remedy: { command: 'pr merge', rest: ` ${ref}` } };
 
 const valueOf = <T>(result: CliResult<T>): T => {
   if (!result.ok) throw new Error(result.error.message);
@@ -33,8 +33,8 @@ const valueOf = <T>(result: CliResult<T>): T => {
 const itemsOf = (...rows: readonly Row[]) => valueOf(parseBoard(boardText(rows), softwareQueueKey)).items;
 const waitingOf = (...items: readonly Row[]) => valueOf(parseWaiting(JSON.stringify({ intro: '', groups: [], items })));
 const logText = (...rows: readonly Row[]) => JSON.stringify({ rows });
-const find = (rows: readonly Row[], waiting: readonly Row[] = [], log: readonly Row[] = [], lookup = query) =>
-  findWorkItem(itemsOf(...rows), waitingOf(...waiting), valueOf(parseDecisionLog(logText(...log))), rules, lookup);
+const find = (rows: readonly Row[], waiting: readonly Row[] = [], log: readonly Row[] = []) =>
+  findWorkItem(itemsOf(...rows), waitingOf(...waiting), valueOf(parseDecisionLog(logText(...log))), rules, query);
 
 const target = itemRecord(item, { lane: 'alpha' });
 const decoys = [itemRecord('B-2', { lane: 'beta' }), itemRecord('B-3', { lane: 'beta' })] as const;
@@ -49,8 +49,10 @@ describe('work item lookup', () => {
     expect(find([decoys[0], target, decoys[1]])).toMatchObject(found(item));
   });
 
-  it('reports no item if the only branch match is closed', () => {
-    expect(find([decoys[0], { ...target, status: 'done' }, decoys[1]])).toEqual(refused('no item matches the reference or head branch'));
+  it('requires the pinned head for a closed branch match', () => {
+    const closed = { ...target, status: 'done' };
+    expect(find([decoys[0], { ...closed, [boardKeys.mergedPrHead]: head }, decoys[1]])).toMatchObject(found(item));
+    expect(find([decoys[0], closed, decoys[1]])).toEqual(refused('the closed item does not record the pinned head'));
   });
 
   it('reports several items if two open items match the branch', () => {
@@ -61,17 +63,15 @@ describe('work item lookup', () => {
     const closed = { ...target, status: 'done', [boardKeys.mergedPrHead]: head };
     const open = itemRecord('B-4', { lane: 'beta' });
     const linked = [approvalRelay()];
-    const rerun = { ...query, recordedHead: head };
-    expect(find([decoys[0], closed, open, decoys[1]], [], linked, rerun)).toMatchObject(found(item));
-    expect(find([decoys[0], closed, { ...open, lane: 'alpha' }, decoys[1]], [], linked, rerun))
+    expect(find([decoys[0], closed, open, decoys[1]], [], linked)).toMatchObject(found(item));
+    expect(find([decoys[0], closed, { ...open, lane: 'alpha' }, decoys[1]], [], linked))
       .toEqual(refused('several items match the head branch'));
   });
 
   it('does not match a closed item at the pin on another worker branch', () => {
     const closed = { ...target, status: 'done', [boardKeys.mergedPrHead]: head };
-    const rerun = { ...query, recordedHead: head };
-    expect(find([decoys[0], closed, decoys[1]], [], [], rerun)).toMatchObject(found(item));
-    expect(find([decoys[0], { ...closed, lane: 'beta' }, decoys[1]], [], [], rerun))
+    expect(find([decoys[0], closed, decoys[1]])).toMatchObject(found(item));
+    expect(find([decoys[0], { ...closed, lane: 'beta' }, decoys[1]]))
       .toEqual(refused('no item matches the reference or head branch'));
   });
 
@@ -83,8 +83,10 @@ describe('work item lookup', () => {
     { name: 'open request', waiting: [approvalRequest()], log: [] },
     { name: 'settled close', waiting: [], log: [approvalRelay()] },
     { name: 'settled answer', waiting: [], log: [approvalAnswer().row] },
-  ])('finds a closed item from a link in a $name', ({ waiting, log }) => {
-    expect(find([decoys[0], { ...target, status: 'done' }, decoys[1]], waiting, log)).toMatchObject(found(item));
+  ])('requires the pinned head for a closed item from a link in a $name', ({ waiting, log }) => {
+    const closed = { ...target, status: 'done', lane: 'beta' };
+    expect(find([decoys[0], { ...closed, [boardKeys.mergedPrHead]: head }, decoys[1]], waiting, log)).toMatchObject(found(item));
+    expect(find([decoys[0], closed, decoys[1]], waiting, log)).toEqual(refused('the closed item does not record the pinned head'));
   });
 
   it('ignores the display link on an answer when its request has no link', () => {
@@ -126,7 +128,7 @@ describe('work item lookup', () => {
   it('compares references in the form that the recipe parser returns', () => {
     const normalized = { ...rules, parseRef: (text: string) => rules.parseRef(text.replace(/^ref:/u, '')) };
     const request = approvalRequest('D-1', { ...APPROVAL_LINK, ref: `ref:${ref}` });
-    expect(findWorkItem(itemsOf({ ...target, status: 'done' }), waitingOf(request), valueOf(parseDecisionLog(logText())), normalized, query))
+    expect(findWorkItem(itemsOf({ ...target, lane: 'beta' }), waitingOf(request), valueOf(parseDecisionLog(logText())), normalized, query))
       .toMatchObject(found(item));
   });
 
