@@ -24,7 +24,7 @@ Rules:
 | 9 | Issue audit and labels | `factory issues audit` | FAC-M5 | 1 call plus the new issues only (no figure) | 1000 | - |
 | 10 | Decision record and profile update | `factory decide <D-n> <option>` | FAC-M5 | 1 call, 1–2k | 2000 | - |
 | 11 | Work copy cleanup | `factory copies clean` | FAC-M5b | 1 call, 1k | 1000 | - |
-| 12 | Typed owner-authority input | `factory worker relay` | FAC-M5 | 1 call, <1k | 1000 | - |
+| 12 | Typed owner-authority input | `factory worker relay` | FAC-M5 | 1 call, <1k | 1000 | 29 |
 | 13 | CI watch | `factory pr watch` | FAC-M5 | 1 call, <1k | 1000 | 28 |
 | 14 | Stopped-worker watch and limit recovery | `factory worker watch`, `factory worker recover` | FAC-M4 (watch), FAC-M5 (recover) | <1k plus (no figure) | 1000 | 33 |
 | 15 | Move of an outside session into tmux | `factory worker adopt` | FAC-M7 | 1 call, <1k | 1000 | - |

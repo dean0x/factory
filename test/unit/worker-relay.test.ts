@@ -27,9 +27,11 @@ import { gitHandler } from '../helpers/git-fake.js';
 import { FOLDER_ORIGINS, GUARD_STORE } from '../helpers/guarded-node.js';
 import { runWorker } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
 import { COORDINATOR_PANE, HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture } from '../helpers/tmux-fake.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { atWait, endsPane, withProgram, type Program } from '../helpers/worker-program.js';
 
 const WORKER = 'alpha';
@@ -356,6 +358,15 @@ it('types one literal line for the confirmed decision and prints only its identi
   expect(output.lines[0]).toMatchObject({ level: 'ok', text: expect.stringMatching(/D-1.*go.*alpha.*%3/) });
   expect(output.json).toEqual({ schema: 'factory.worker-relay/v1', id: WORKER, decision: 'D-1', option: 'go', pane: PANE, confirmed: true });
   expect(JSON.stringify(output)).not.toMatch(/Private|Test Owner|\.factory/);
+});
+
+it('matches the measured size and stays within the budget for a relay', async () => {
+  const world = await validRelay();
+  const output = relayOutput(valueOf(await confirms(world)));
+  const tokens = tokensOf(plainText(output));
+  const row = budgetRow(12);
+  expect(row.measured).toBe(tokens);
+  expect(tokens).toBeLessThanOrEqual(row.budget);
 });
 
 it('uses the option key, not the display copy of the decision', async () => {
