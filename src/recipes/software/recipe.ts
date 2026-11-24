@@ -20,7 +20,7 @@ const [mergeApproval] = softwareApprovalPoints;
  */
 const workerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.worker,
-  version: 6,
+  version: 7,
   target: 'workerFile',
   body: fillTemplate(linesFor(workerPartsFor(input.guards), input.guards), workerValuesFor(input)),
 });

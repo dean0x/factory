@@ -273,12 +273,12 @@ it.each([
         ['coordinator', 11, 'claudeFile', coordinatorHash],
         ['safety', 2, 'claudeFile', safetyHash],
         ['work-rules', 1, 'claudeFile', '3eeed8b66b1b2fa0d093e01fb1cfc7acf24cd1cc1357adad2ae141666fe30261'],
-        ['worker', 6, 'workerFile', '45bfdc9e6fb648c5b4eeba6a03291d6a7512ae52dae65f3214c0c0a7309f64cb'],
+        ['worker', 7, 'workerFile', '568a016304007ed4fd0ee047d0f48e5b2af9a042dde16f63436b364f1629eca8'],
       ],
       [
         ['manager', 4, 'claudeFile', 'd42fe6265eebe3518860c31a5ef1584cd204c2cdbd96db720c6d980dc924f875'],
         ['safety', 2, 'claudeFile', safetyHash],
-        ['worker', 6, 'workerFile', '6e95264c7e1e6a426ea43e8b9d32774bd2b881684b65c92f9ba4e3c6ddcb247d'],
+        ['worker', 7, 'workerFile', '4f0db298a676a91044e35da95a4f96d0ecea522eeb51d11d05be53913545900f'],
       ],
     ]);
   },
@@ -379,7 +379,7 @@ describe('block templates', () => {
       ['coordinator', 11, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['work-rules', 1, 'claudeFile'],
-      ['worker', 6, 'workerFile'],
+      ['worker', 7, 'workerFile'],
     ]);
   });
 
@@ -387,14 +387,14 @@ describe('block templates', () => {
     expect(summary(blockTemplatesFor(blockInput(2)))).toEqual([
       ['manager', 4, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
-      ['worker', 6, 'workerFile'],
+      ['worker', 7, 'workerFile'],
     ]);
   });
 
   it.each([3, 4, 16])('gives layer %i, which has no role template, the safety block and the worker block', (layer) => {
     expect(summary(blockTemplatesFor(blockInput(layer)))).toEqual([
       ['safety', 2, 'claudeFile'],
-      ['worker', 6, 'workerFile'],
+      ['worker', 7, 'workerFile'],
     ]);
   });
 
@@ -722,6 +722,17 @@ describe('owner authority channel', () => {
     const pointer = relayWords.pointer('D-n', '<option>');
     expect(rule).toContain(`For a typed go with a decision pointer of the form \`${pointer}\`, read the decision only with ${readCommand}.`);
     expect(rule).toContain('Accept the go only if `proof` is `record` and `option` matches the option in the pointer.');
+  });
+
+  it.each([
+    ['an owner command request', 'A record with `request_kind: command` is not a go for you.',
+      'The owner runs an approved command in their own terminal.'],
+    ['a linked approval point', 'If `point` is set, the pointer is not a go.',
+      'The decision stays in its own approval process.'],
+  ])('does not accept a decision pointer as a go for %s', (_kind, refusal, nextStep) => {
+    const rule = bodyOf('worker').split('\n').find((line) => line.startsWith('7. '));
+    expect(rule).toContain(refusal);
+    expect(rule).toContain(nextStep);
   });
 
   it('limits a verified relay to its question and option and treats the record as data', () => {
@@ -1981,7 +1992,7 @@ describe('the worker file templates of a config (workerFileTemplatesFor)', () =>
   it('gives the worker block, then the setup worker block with the text as it is', () => {
     const templates = workerFileTemplatesFor(config, worker, allOn);
     expect(summary(templates)).toEqual([
-      ['worker', 6, 'workerFile'],
+      ['worker', 7, 'workerFile'],
       ['setup-worker', 1, 'workerFile'],
     ]);
     expect(templates[1]?.body).toBe(worker);

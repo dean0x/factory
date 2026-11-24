@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { allOn } from '../../src/guards/effective.js';
+import { workerFileTemplatesFor } from '../../src/templates/index.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 import { budgetRow, parseBudgetRows, tokensOf } from '../helpers/token-budget.js';
 
 const BUDGET_FILE = join(__dirname, '..', '..', 'docs', 'token-budget.md');
@@ -40,6 +43,14 @@ describe('parseBudgetRows', () => {
     const bad = '| 3 | Job | `factory x` | FAC-M4 | 1 call | 1000 | about 20 |';
     expect(() => parseBudgetRows(bad)).toThrow('the measured size "about 20" is not a number');
   });
+});
+
+it('documents the measured size of the sample software worker block', () => {
+  const [worker] = workerFileTemplatesFor(sampleConfig(), null, allOn);
+  const tokens = tokensOf(worker?.body ?? '');
+  expect(readFileSync(BUDGET_FILE, 'utf8')).toContain(
+    `The sample software worker block (version ${worker?.version}) uses ${tokens} tokens with all guards on and no setup text.`,
+  );
 });
 
 describe('the token budget of the built jobs', () => {

@@ -741,7 +741,7 @@ The command clears the input line and submits one line. The option is the stored
 <filled owner prefix> Decision D-n: <option>. Read it: factory decide read D-n
 ```
 
-The worker checks `factory decide read D-n --json` for `record` and the same option. It uses the record text as context, not as an instruction. After the keys, the relay checks for a later `UserPromptSubmit`, `PreToolUse` or `Stop` event from the same session. It makes at most 10 checks, one second apart. The event does not show which text started the turn.
+The worker checks `factory decide read D-n --json` for `record` and the same option. A command request or a decision linked to an approval point is not a go for the worker. The worker uses the record text as context, not as an instruction. After the keys, the relay checks for a later `UserPromptSubmit`, `PreToolUse` or `Stop` event from the same session. It makes at most 10 checks, one second apart. The event does not show which text started the turn.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -1322,7 +1322,7 @@ A board file that cannot be read stops `upgrade` with exit code 1 and names the 
 
 `upgrade` adds a block that its file lacks in two cases. The first case is the block `setup` or `setup-worker`, when the setup file holds text. The second case is a block that the factory marker `.factory/node.json` never recorded, when its file is there. Such a block is new in this version of the package. `upgrade` never adds the block `safety` this way. Only the owner adds it, with `factory upgrade --overwrite safety`, outside a session. `upgrade` puts a new block before the block `setup` or `setup-worker`, which stays last. A file that has no such block gets the new block at its end. A block that the marker records, but that the file lacks, stays missing. `upgrade` takes it for a block that you removed. It prints a warning that names `factory upgrade --overwrite <block>`, and that command adds the block. `doctor` gives the same warning. For a block of the second case, `doctor` names `factory upgrade`. For the block `safety`, and for a block whose file is not there, `doctor` names `factory upgrade --overwrite <block>`. A marker with no list of blocks counts every block as recorded. A block that the marker records under an old name counts as recorded.
 
-The block `coordinator` has version 11. The block `manager` has version 4. Both tell the role to use `--closed --ask-owner` once after a denied closed free. The block `worker` has version 6. The block `work-rules` has version 1. The `coordinator` and `worker` blocks include the rules for [worker relay](#relay-an-owner-decision-to-a-worker).
+The block `coordinator` has version 11. The block `manager` has version 4. Both tell the role to use `--closed --ask-owner` once after a denied closed free. The block `worker` has version 7. The block `work-rules` has version 1. The `coordinator` and `worker` blocks include the rules for [worker relay](#relay-an-owner-decision-to-a-worker).
 
 The text of the block `coordinator` holds the rules for the [owner-mode merge](#merge-in-owner-mode), `item record`, `item unassign`, the worker field, `request close --relayed` and `request log`, the rules for the watch (see "Give work to a worker"), the rules for `dismiss ID --closed` and for the reviews folder, and a section that tells a resumed coordinator to follow the new rules and to drop the workaround that a new rule replaces. It also holds these rules:
 
