@@ -494,9 +494,9 @@ export const checkQueueRow = (setup: BoardSetup, input: QueueRowInput): CliResul
 
 // The edits of a file that was read under the lock.
 
-const itemAt = (doc: BoardDoc, id: string, remedy?: string): CliResult<BoardItem> => {
+const itemAt = (doc: BoardDoc, id: string): CliResult<BoardItem> => {
   const found = doc.items.find((candidate) => candidate.id === id);
-  return found === undefined ? usageError(`${files.board} has no item ${shown(id)}`, remedy) : ok(found);
+  return found === undefined ? usageError(`${files.board} has no item ${shown(id)}`) : ok(found);
 };
 
 /** A track id of the board, else a usage error (exit 2) that lists the track ids. */
@@ -624,11 +624,12 @@ const RANK_LIST_REMEDY = `Run "${commandText(commands.board)} ${flagText(flags.j
 
 /** An open item of the board, else a usage error (exit 2). A setup with no closed state has no closed item. */
 const openItemAt = (doc: BoardDoc, id: string, closed: string | undefined): CliResult<BoardItem> => {
-  const found = itemAt(doc, id, RANK_LIST_REMEDY);
-  if (!found.ok || closed === undefined || found.value.status !== closed) return found;
+  const found = doc.items.find((candidate) => candidate.id === id);
+  if (found === undefined) return usageError(`${files.board} has no item ${shown(id)}`, RANK_LIST_REMEDY);
+  if (closed === undefined || found.status !== closed) return ok(found);
   return usageError(
     `the item ${shown(id)} is closed, and a rank takes only open items`,
-    `Run "${commandText(commandLines.itemMove)} ${found.value.id} ${flagText(flags.state)} STATE" to open the item first.`,
+    `Run "${commandText(commandLines.itemMove)} ${found.id} ${flagText(flags.state)} STATE" to open the item first.`,
   );
 };
 
