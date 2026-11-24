@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { typeLine, type TypedLine } from '../../src/comms/typing.js';
+import { relayLineOf, typeLine, typeRelayLine, type TypedLine } from '../../src/comms/typing.js';
 import { guardIds, guardValues, typing } from '../../src/names.js';
 import { createFakeDeps, exited, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
@@ -125,6 +125,89 @@ describe('the typing builder makes one tmux run', () => {
     expect((await typeLine(deps, PANE, line, AGAIN)).ok).toBe(true);
     expect(log.typed()).toEqual([KEY_CLEAR, text(line), KEY_ENTER]);
     expect(sent()[0]?.args).toContain(line);
+  });
+});
+
+describe('the relay types the recorded option', () => {
+  const parts = {
+    template: '[{owner} at {node} on {date}]', display: 'Ada', node: 'demo',
+    at: '2030-01-02T23:10:00-02:00', id: 'D-3', option: 'go.a-1',
+  };
+  const line = '[Ada at demo on 2030-01-03] Decision D-3: go.a-1. Read it: factory decide read D-3';
+  const off = { [guardIds.paneSafety]: guardValues.off };
+
+  it('builds the exact pointer line with the UTC date of the recorded time', () => {
+    expect(relayLineOf(parts)).toEqual({ ok: true, value: line });
+  });
+
+  it('types one literal line in one run after the mode and screen checks', async () => {
+    const { deps, log, sent } = setup();
+    expect((await typeRelayLine(deps, PANE, parts, AGAIN)).ok).toBe(true);
+    expect(log.typed()).toEqual([KEY_CLEAR, text(line), KEY_ENTER]);
+    expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message', 'capture-pane', 'send-keys']);
+    expect(sent()[0]?.args).toEqual([
+      'send-keys', '-t', PANE, 'C-u', ';',
+      'send-keys', '-t', PANE, '-l', '--', line, ';',
+      'send-keys', '-t', PANE, 'Enter',
+    ]);
+  });
+
+  it('accepts a printable relay line of exactly 300 signs', () => {
+    const padding = 'x'.repeat(typing.maxChars - line.length);
+    expect(relayLineOf({ ...parts, template: padding + parts.template }))
+      .toEqual({ ok: true, value: padding + line });
+  });
+
+  it.each([
+    [{ template: 'x'.repeat(typing.maxChars - line.length + 1) + parts.template }, 1, 'more than 300 signs', 'owner.prefix'],
+    [{ display: 'Adé' }, 1, 'not a printable ASCII sign', 'owner.display'],
+    [{ display: 'Ada\n' }, 1, 'not a printable ASCII sign', 'owner.display'],
+    [{ template: '!' + parts.template }, 4, 'must not start', 'owner.prefix'],
+    [{ template: '/' + parts.template }, 4, 'must not start', 'owner.prefix'],
+    [{ template: '@' + parts.template }, 4, 'must not start', 'owner.prefix'],
+    [{ display: 'A@da' }, 4, 'must not contain', 'owner.display'],
+    [{ id: 'd-3' }, 2, 'decision id', 'D-1'],
+    [{ id: 'D-03' }, 2, 'decision id', 'D-1'],
+    [{ option: 'go;' }, 4, 'option key', 'factory doctor'],
+    [{ at: '2030-02-30T00:00:00Z' }, 4, 'time', 'factory doctor'],
+  ] as const)('refuses relay parts %j with exit %i before any pane call', async (change, code, reason, remedy) => {
+    const { deps } = setup();
+    const error = errorOf(await typeRelayLine(deps, PANE, { ...parts, ...change }, AGAIN, off));
+    expect(exitCodeOf[error.kind]).toBe(code);
+    expect(error.message).toContain(reason);
+    expect(error.hint).toContain(remedy);
+    expect(deps.calls).toEqual([]);
+  });
+
+  it('refuses a target that is not a pane id before any tmux call', async () => {
+    const { deps } = setup();
+    const error = errorOf(await typeRelayLine(deps, 'demo', parts, AGAIN));
+    expect(error).toMatchObject({ kind: 'failure', message: 'the target of the typed line is not a pane id' });
+    expect(deps.calls).toEqual([]);
+  });
+
+  it('refuses the pane mode before it reads the screen while pane safety is on', async () => {
+    const { deps } = setup(undefined, undefined, true);
+    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN));
+    expect(error).toMatchObject({ kind: 'not-ready', message: expect.stringContaining('mode of tmux'), hint: expect.stringContaining(AGAIN) });
+    expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message']);
+  });
+
+  it('checks for a choice list even when pane safety lets the mode pass', async () => {
+    const { deps, sent } = setup('Do you want to proceed?\n❯ 1. Yes\n  2. No\n', undefined, true);
+    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN, off));
+    expect(error).toMatchObject({ kind: 'not-ready', message: expect.stringContaining('numbered list of choices'), hint: expect.stringContaining(AGAIN) });
+    expect(sent()).toEqual([]);
+  });
+
+  it('clears the input line once if the relay key run fails', async () => {
+    const { deps, log, sent } = setup(undefined, (handler) => (call) =>
+      call.args.includes(line) ? exited(1, '', 'no space\n') : handler(call),
+    );
+    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN));
+    expect(error).toMatchObject({ kind: 'failure', message: expect.stringContaining('send-keys') });
+    expect(sent()).toHaveLength(2);
+    expect(log.typed()).toEqual([KEY_CLEAR]);
   });
 });
 

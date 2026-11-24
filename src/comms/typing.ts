@@ -1,17 +1,17 @@
-import { failure, notReady, type CliResult } from '../cli/errors.js';
+import { z } from 'zod';
+import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { allOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { capturePaneArgs, chainedArgs, isPaneId, paneModeArgs, parsePaneMode, type TmuxArgs } from '../launch/tmux.js';
 import { tmuxCall, tmuxStep } from '../launch/tmux-run.js';
-import { guardIds, typing } from '../names.js';
+import { boardIds, boardLimits, commands, commandText, guardIds, keys, relayWords, typing } from '../names.js';
+import { fillOwnerPrefix, hasOwnerPrefix } from '../safety/owner-prefix.js';
 
 /**
- * The tmux input verb. This module is the one place in the source that holds an input verb, and a unit test keeps the verbs out
- * of every other module. A caller passes one of the lines `typing.lines`, and the module types no other text: a line that is not
- * one of them is refused before any tmux call. `lineProblem` is a second check on the line, so a change of the fixed lines can
- * never allow a line with a control sign, a new line or a final semicolon.
+ * Only this module holds the tmux input verb. It types fixed lines and lines built from parts of a recorded owner decision.
+ * Both entries check the line before any tmux call. No entry accepts an arbitrary line.
  */
 const SEND_KEYS = 'send-keys';
 
@@ -19,6 +19,30 @@ const SEND_KEYS = 'send-keys';
 export type TypedLine = (typeof typing.lines)[keyof typeof typing.lines];
 
 const FIXED_LINES: readonly string[] = Object.values(typing.lines);
+
+declare const relayLineBrand: unique symbol;
+type RelayLine = string & { readonly [relayLineBrand]: true };
+
+interface RelayParts {
+  readonly template: string;
+  readonly display: string;
+  readonly node: string;
+  readonly at: string;
+  readonly id: string;
+  readonly option: string;
+}
+
+const recordTime = z.iso.datetime({ offset: true });
+const checkRecord = `Run "${commandText(commands.doctor)}" to check the decision record.`;
+const checkPrefix = `Check ${keys.root.owner}.${keys.owner.display} and ${keys.root.owner}.${keys.owner.prefix} in the local config.`;
+
+const utcDateOf = (at: string): string | null => {
+  if (!recordTime.safeParse(at).success) return null;
+  const time = Date.parse(at);
+  if (!Number.isFinite(time)) return null;
+  const iso = new Date(time).toISOString();
+  return iso[10] === 'T' ? iso.slice(0, 10) : null;
+};
 
 /** The signs from space to tilde: the printable ASCII signs, with no control sign and no new line. */
 const PRINTABLE = /^[ -~]+$/;
@@ -34,6 +58,25 @@ const lineProblem = (line: string): string | null => {
   return null;
 };
 
+/** Build the relay line before any read of the pane. Only the stored option key goes in the pointer. */
+export const relayLineOf = ({ template, display, node, at, id, option }: RelayParts): CliResult<RelayLine> => {
+  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', 'Use an id of the form D-1.');
+  if (!boardLimits.tokenPattern.test(option)) return safetyRefusal('the recorded option key is invalid', checkRecord);
+  const date = utcDateOf(at);
+  if (date === null) return safetyRefusal('the recorded decision time is invalid', checkRecord);
+
+  const prefix = fillOwnerPrefix(template, { owner: display, node, date });
+  if (!hasOwnerPrefix(prefix, template, display)) return failure('the filled relay prefix does not match the template', checkPrefix);
+  const line = `${prefix} ${relayWords.pointer(id, option)}`;
+  const problem = lineProblem(line);
+  if (problem !== null) return failure(`the relay line is refused: it ${problem}`, checkPrefix);
+  if (line.startsWith('!') || line.startsWith('/') || line.startsWith('@')) {
+    return safetyRefusal('the relay line must not start with !, / or @', checkPrefix);
+  }
+  if (line.includes('@')) return safetyRefusal('the relay line must not contain @', checkPrefix);
+  return ok(line as RelayLine);
+};
+
 /** One call of the input verb for one pane. The target is the pane id, and the words are key names or the text. */
 const sendWords = (pane: string, ...words: readonly string[]): readonly string[] => [SEND_KEYS, '-t', pane, ...words];
 
@@ -41,7 +84,7 @@ const sendWords = (pane: string, ...words: readonly string[]): readonly string[]
 const clearArgs = (pane: string): TmuxArgs => chainedArgs([sendWords(pane, typing.keys.clearLine)]);
 
 /** Clear the input line, type the text as it is, end the line. One tmux run, so no other input comes between the three calls. */
-const typeArgs = (pane: string, line: string): TmuxArgs =>
+const typeArgs = (pane: string, line: TypedLine | RelayLine): TmuxArgs =>
   chainedArgs([
     sendWords(pane, typing.keys.clearLine),
     sendWords(pane, '-l', '--', line),
@@ -156,6 +199,28 @@ export const typeLine = async (
   if (!FIXED_LINES.includes(line)) return failure('the line to type is refused: it is not one of the fixed lines');
   const problem = lineProblem(line);
   if (problem !== null) return failure(`the line to type is refused: it ${problem}`);
+  return typeCheckedLine(deps, pane, line, thenAgain, guards);
+};
+
+/** Build and check the relay line again at the point of use. */
+export const typeRelayLine = async (
+  deps: Deps,
+  pane: string,
+  parts: RelayParts,
+  thenAgain: string,
+  guards: GuardValues = allOn,
+): Promise<CliResult<void>> => {
+  const line = relayLineOf(parts);
+  return line.ok ? typeCheckedLine(deps, pane, line.value, thenAgain, guards) : line;
+};
+
+const typeCheckedLine = async (
+  deps: Deps,
+  pane: string,
+  line: TypedLine | RelayLine,
+  thenAgain: string,
+  guards: GuardValues,
+): Promise<CliResult<void>> => {
   if (!isPaneId(pane)) return failure('the target of the typed line is not a pane id');
   const noMode = await requireNoMode(deps, pane, thenAgain, guards);
   if (!noMode.ok) return noMode;
