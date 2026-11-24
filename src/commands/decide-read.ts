@@ -22,9 +22,11 @@ const outputOf = (id: string, read: DecisionRead): CommandOutput => {
   const { proof, node, root } = read;
   const reason = decideProofReasons[proof.kind];
   const failed = proof.kind !== decideProof.record;
+  const { optionText, requestKind } = failed ? { optionText: null, requestKind: null } : proof;
   const lines: OutLine[] = [{ level: failed ? 'fail' : 'ok', text: `${displayLine(proof.kind)}: ${displayLine(reason)}` }];
   const fields = [
-    [labels.id, id], [labels.node, node], [labels.folder, root], [labels.option, proof.option], [labels.at, proof.at],
+    [labels.id, id], [labels.node, node], [labels.folder, root], [labels.option, proof.option],
+    [labels.optionText, optionText], [labels.requestKind, requestKind], [labels.at, proof.at],
     [labels.point, proof.link?.point], [labels.item, proof.link?.item], [labels.ref, proof.link?.ref], [labels.head, proof.link?.head],
     [labels.decider, proof.decider], [labels.title, proof.title], [labels.question, proof.question],
     [proof.kind === decideProof.relayed ? labels.relayedText : labels.decision, proof.decision],
@@ -41,6 +43,8 @@ const outputOf = (id: string, read: DecisionRead): CommandOutput => {
       node,
       root,
       option: proof.option,
+      option_text: escaped(optionText),
+      request_kind: requestKind,
       at: proof.at,
       point: proof.link?.point ?? null,
       board_item: proof.link?.item ?? null,

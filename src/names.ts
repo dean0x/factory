@@ -839,7 +839,12 @@ export const decideProofKinds = Object.freeze(Object.values(decideProof));
 export const decideReadLabels = {
   id: 'Id', node: 'Node', folder: 'Factory folder', option: 'Option', at: 'At', point: 'Point', item: 'Board item',
   ref: 'Reference', head: 'Head', decider: 'Decider', title: 'Title', question: 'Question', decision: 'Decision',
-  relayedText: 'Relayed text (not proof)',
+  relayedText: 'Relayed text (not proof)', optionText: 'Option text', requestKind: 'Request kind',
+} as const;
+
+export const relayWords = {
+  pointer: (id: string, option: string): string =>
+    `Decision ${id}: ${option}. Read it: ${commandText(`${commands.decide} ${decideWords.read}`)} ${id}`,
 } as const;
 
 /** Fixed verdict reasons. Request text cannot supply a verdict or claim owner proof. */
