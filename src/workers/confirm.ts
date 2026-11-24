@@ -311,7 +311,7 @@ const RELAY_ENDINGS: Readonly<Record<Exclude<PaneLife, 'running'>, string>> = {
   other: ENDINGS.other,
 };
 
-/** Confirm a later turn of the same session. The hook line does not prove which text started the turn. */
+/** After the keys, check for a later event from the same session. The event does not prove which text started the turn. */
 export const confirmRelay = async (deps: Deps, request: RelayConfirmRequest): Promise<CliResult<void>> => {
   const { home, paneId, workerId, id, typedAt, sessionBefore, again } = request;
   const expected: Expected = { events: RELAY_EVENTS, after: typedAt, afterWords: 'the typed line', sameSessionAs: sessionBefore };
@@ -332,7 +332,7 @@ export const confirmRelay = async (deps: Deps, request: RelayConfirmRequest): Pr
     reason = seen.error;
   }
   return notReady(
-    `decision ${id} typed, not confirmed: no later turn from the same session within ${RESET_SECONDS} seconds (${reason})`,
+    `decision ${id} typed, not confirmed: no later event from the same session within ${RESET_SECONDS} seconds (${reason})`,
     `${look} Do this before you run "${commandText(again)}" again. A second run types the ${roles.owner} line again.`,
   );
 };

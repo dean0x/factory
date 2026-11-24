@@ -27,7 +27,7 @@ import {
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { confirmReset } from './confirm.js';
 import { fetchClone, planDismiss, unpushedReasons } from './dismiss.js';
-import { promptStateOf, readOwnLastSeen } from './last-seen.js';
+import { promptStateOf, readOwnLastSeen, type LastSeen } from './last-seen.js';
 import { requireBoundPane, requireCoordinatorCaller, type BoundPane } from './panes.js';
 import { requireRecord, type WorkerRecord } from './registry.js';
 import {
@@ -247,8 +247,8 @@ export const requireSamePane = async (
 /**
  * The last-seen line of the worker, read after the bind. The line must belong to the worker and hold an event. The session must wait
  * at its prompt: a session that works or waits at a dialog is exit 1. The line must be later than the start of the pane process, so a
- * line of an earlier process of a pid that tmux used again never passes. The value is the id of the session of the line. `checked`
- * is false while pane safety is off: then the line must still belong to the worker and must not report a dialog.
+ * line of an earlier process of a pid that tmux used again never passes. Return the last-seen line. While pane safety is off,
+ * only the owner of the line and the absence of a dialog are required.
  */
 export const requireIdleSession = async (
   deps: Deps,
@@ -257,7 +257,7 @@ export const requireIdleSession = async (
   start: number,
   again: string,
   checked: boolean,
-): Promise<CliResult<string>> => {
+): Promise<CliResult<LastSeen>> => {
   const { home, workerId } = target;
   const seen = await readOwnLastSeen(deps, home, workerId);
   if (!seen.ok) return seen;
@@ -267,7 +267,7 @@ export const requireIdleSession = async (
   }
   const { line } = seen.value;
   const state = promptStateOf(line);
-  if (!checked && state !== 'waits') return ok(line[lastSeen.keys.sessionId]);
+  if (!checked && state !== 'waits') return ok(line);
   switch (state) {
     case null: {
       const reason = line[lastSeen.keys.event] === null ? 'holds no event' : 'has a session start with no known source';
@@ -285,7 +285,7 @@ export const requireIdleSession = async (
       );
     case 'prompt': {
       const later = requireLineAfterStart(line[lastSeen.keys.eventAt] ?? '', start, again);
-      return later.ok ? ok(line[lastSeen.keys.sessionId]) : later;
+      return later.ok ? ok(line) : later;
     }
     default: {
       const unreachable: never = state;
@@ -327,9 +327,9 @@ const checkWorker = async (deps: Deps, request: ResetRequest, again: string, gua
   if (!resumeAgeMs.ok) return resumeAgeMs;
   const pane = await requireSamePane(deps, request, live.value, again, checked);
   if (!pane.ok) return pane;
-  const sessionId = await requireIdleSession(deps, request, pane.value.paneId, start.value, again, checked);
-  if (!sessionId.ok) return sessionId;
-  return ok({ pane: pane.value, sessionId: sessionId.value, resumeAgeMs: resumeAgeMs.value, name: name.value });
+  const session = await requireIdleSession(deps, request, pane.value.paneId, start.value, again, checked);
+  if (!session.ok) return session;
+  return ok({ pane: pane.value, sessionId: session.value[lastSeen.keys.sessionId], resumeAgeMs: resumeAgeMs.value, name: name.value });
 };
 
 /**

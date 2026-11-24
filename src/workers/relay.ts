@@ -1,5 +1,5 @@
 import { sha256Hex } from '../blocks/managed.js';
-import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput } from '../cli/output.js';
 import { prefixStoreFault } from '../commands/launch-checks.js';
 import { relayLineOf, typeRelayLine } from '../comms/typing.js';
@@ -9,11 +9,12 @@ import { guardReadOf } from '../core/guard-source.js';
 import { ok } from '../core/result.js';
 import { guardValuesFor, isGuardOn } from '../guards/effective.js';
 import {
-  boardIds, commandLines, commandText, decideProof, decideProofReasons, flags, flagText, guardIds, relayWords,
+  boardIds, commandLines, commandText, decideProof, decideProofReasons, flags, flagText, guardIds, lastSeen, relayWords,
   requestKinds, roles, schemaIds,
 } from '../names.js';
 import { confirmRelay } from './confirm.js';
 import { deniedMatchOf, readDeniedList } from './denied.js';
+import { readOwnLastSeen, type LastSeen } from './last-seen.js';
 import { requireNodeCaller } from './panes.js';
 import { requireRecord, type WorkerRecord } from './registry.js';
 import {
@@ -32,8 +33,8 @@ import {
  *  8. Check the denied list (exit 4).
  *  9. Build and check the line before any worker pane read (exit 1 or 4).
  * 10. Check the live bound pane, view, fresh session and idle prompt (exit 1 to 4).
- * 11. Check the line, mode, choices and single-pane input. Bind the same pane, take the time and type the keys (exit 1, 3 or 4).
- * 12. Confirm a later turn from the same session (exit 1 or 3).
+ * 11. Check the line, mode, choices and single-pane input. Check the same pane and idle event. Take the time and type the keys (exit 1, 3 or 4).
+ * 12. After the keys, check for a later event from the same session (exit 1 or 3).
  */
 export interface RelayRequest extends WorkerTarget {
   readonly id: string;
@@ -119,7 +120,22 @@ const checkRelayPane = async (deps: Deps, target: WorkerTarget, record: WorkerRe
   const start = await requireFreshSession(deps, target, record, live.value, again);
   if (!start.ok) return start;
   const session = await requireIdleSession(deps, target, live.value.paneId, start.value, again, true);
-  return session.ok ? ok({ pane: live.value, sessionBefore: session.value }) : session;
+  return session.ok ? ok({ pane: live.value, idle: session.value }) : session;
+};
+
+const requireSameIdleEvent = async (
+  deps: Deps, { home, workerId }: WorkerTarget, paneId: string, idle: LastSeen, again: string,
+): Promise<CliResult<void>> => {
+  const seen = await readOwnLastSeen(deps, home, workerId);
+  if (!seen.ok) return seen;
+  const { sessionId, eventAt } = lastSeen.keys;
+  if (seen.value.state === 'valid' && seen.value.line[sessionId] === idle[sessionId] && seen.value.line[eventAt] === idle[eventAt]) {
+    return ok(undefined);
+  }
+  return notReady(
+    `the last-seen line of the ${roles.worker} ${workerId} changed while the checks ran`,
+    `Look at the pane ${paneId} in tmux. Wait until the session is idle. Then run "${commandText(again)}" again.`,
+  );
 };
 
 export const checkRelayIds = (workerId: string, id: string): CliResult<void> => {
@@ -153,11 +169,15 @@ export const relayWorker = async (deps: Deps, request: RelayRequest, readDecisio
   if (!line.ok) return line;
   const checked = await checkRelayPane(deps, request, worker.value, again);
   if (!checked.ok) return checked;
-  const { pane, sessionBefore } = checked.value;
+  const { pane, idle } = checked.value;
   const { paneId } = pane;
-  const rebind = () => requireSamePane(deps, request, pane, again, true);
+  const rebind = async () => {
+    const bound = await requireSamePane(deps, request, pane, again, true);
+    return bound.ok ? requireSameIdleEvent(deps, request, paneId, idle, again) : bound;
+  };
   const typed = await typeRelayLine(deps, paneId, parts, `Then run "${commandText(again)}" again.`, rebind, guards);
   if (!typed.ok) return typed;
+  const sessionBefore = idle[lastSeen.keys.sessionId];
   const confirmed = await confirmRelay(deps, { home, paneId, workerId, id, typedAt: typed.value, sessionBefore, again });
   if (!confirmed.ok) return confirmed;
   return ok({ workerId, decision: id, option, paneId, modeCheckSkipped: !isGuardOn(guards, guardIds.paneSafety) });

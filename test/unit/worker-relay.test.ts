@@ -44,6 +44,7 @@ const LAYOUT = layoutOf(HOME);
 const DENIED = `${LAYOUT.stateDir}/${files.denied}`;
 const LAST_SEEN = `${LAYOUT.heartbeatDir}/${SESSION}`;
 const NOW = Date.parse('2030-01-03T00:00:00Z');
+const IDLE_AT = NOW - 60_000;
 const AT = '2030-01-01T23:04:05.678-04:00';
 const EXPECTED_LINE = "[From Test Owner, typed by demo at the owner's explicit instruction, 2030-01-02] Decision D-1: go. Read it: factory decide read D-1";
 const { title, question } = approvalRequest();
@@ -96,7 +97,7 @@ const validRelay = async (setup: Setup = {}) => {
   const bind = paneBindArgs(PANE, WORKER);
   if (!bind.ok) throw new Error(bind.error);
   let binds = 0;
-  const deps = withFsWatch(createFakeDeps({ cwd: '/w', os: 'darwin', now: new Date(NOW - 60_000),
+  const deps = withFsWatch(createFakeDeps({ cwd: '/w', os: 'darwin', now: new Date(IDLE_AT),
     env: { PATH: '/bin', [env.stateHome]: '/state', [env.tmuxPane]: COORDINATOR_PANE, [env.session]: NODE },
     run: (call) => {
       if (call.command === 'ps') return exited(0, '10:00\n');
@@ -104,6 +105,7 @@ const validRelay = async (setup: Setup = {}) => {
       if (call.command !== 'tmux') return failure('unexpected command');
       if (call.args[0] === 'send-keys') order.push('keys');
       if (call.args[0] === 'capture-pane') order.push('screen');
+      if (call.args.includes('#{pane_synchronized}')) order.push('single input');
       const result = server.handler(call);
       if (call.args.join(' ') !== bind.value.join(' ')) return result;
       order.push('bind');
@@ -357,7 +359,9 @@ it('types one literal line for the confirmed decision and prints only its identi
   const { prefix, display } = world.config.core.owner;
   expect(hasOwnerPrefix(EXPECTED_LINE, prefix, display)).toBe(true);
   expect(world.deps.calls.filter(({ command }) => command === 'git')).toEqual([]);
-  expect(world.order.slice(0, world.order.indexOf('keys') + 1)).toEqual(['bind', 'last seen', 'screen', 'bind', 'keys']);
+  expect(world.order.slice(0, world.order.indexOf('keys') + 1)).toEqual([
+    'bind', 'last seen', 'screen', 'single input', 'bind', 'last seen', 'keys',
+  ]);
   expect(output.lines).toHaveLength(2);
   expect(output.lines[0]).toMatchObject({ level: 'ok', text: expect.stringMatching(/D-1.*go.*alpha.*%3/) });
   expect(output.json).toEqual({ schema: 'factory.worker-relay/v1', id: WORKER, decision: 'D-1', option: 'go', pane: PANE, confirmed: true });
@@ -570,7 +574,7 @@ it.each([
 ] as const)('refuses a final pane read that shows %s', async (rebind, code, message, hint) => {
   const world = await validRelay({ rebind });
   await refuses(world, code, message, hint);
-  expect(world.order).toEqual(['bind', 'last seen', 'screen', 'bind']);
+  expect(world.order).toEqual(['bind', 'last seen', 'screen', 'single input', 'bind']);
 });
 
 it('refuses tmux mode only when pane safety is on, and names the skipped check otherwise', async () => {
@@ -586,18 +590,22 @@ it('refuses tmux mode only when pane safety is on, and names the skipped check o
   expect(output.lines[2]?.text).toContain('tmux mode check');
 });
 
-it('does not confirm on a turn that came during the screen check before the keys', async () => {
+it.each([
+  ['a prompt submit', SESSION, 'UserPromptSubmit', NOW],
+  ['a later stop', SESSION, 'Stop', NOW],
+  ['a session change with the same event time', OTHER_SESSION, 'Stop', IDLE_AT],
+] as const)('refuses %s during the screen check without keys or a confirm wait', async (_name, sessionId, event, at) => {
   const world = await validRelay();
   const deps: FakeDeps = { ...world.deps, run: async (command, args, options) => {
     if (command === 'tmux' && args[0] === 'capture-pane') {
-      await world.deps.sleep(10);
-      valueOf(await writeLastSeen(world.deps, HOME, SESSION, { kind: 'event', event: 'Stop' }, WORKER));
-      await world.deps.sleep(10);
+      const eventDeps = { ...world.deps, now: () => new Date(at) };
+      valueOf(await writeLastSeen(eventDeps, HOME, sessionId, { kind: 'event', event }, WORKER));
+      if (sessionId !== SESSION) valueOf(await writeWorkerSession(world.deps, HOME, WORKER, sessionId));
     }
     return world.deps.run(command, args, options);
   } };
-  expectRefusal(await world.run(deps), 3, 'typed, not confirmed', 'factory worker summon alpha');
-  expect(sendCalls(world)).toHaveLength(1);
+  await refuses(world, 3, 'the last-seen line of the worker alpha changed', 'factory worker relay alpha --decision D-1', deps);
+  expect(world.deps.sleeps).toEqual([]);
 });
 
 it.each(['PreToolUse', 'Stop'] as const)('confirms on a later %s from the same session', async (event) => {

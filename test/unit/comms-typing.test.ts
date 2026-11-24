@@ -141,11 +141,23 @@ describe('the relay types the recorded option', () => {
     expect(relayLineOf(parts)).toEqual({ ok: true, value: line });
   });
 
-  it('types one literal line in one run after the mode and screen checks', async () => {
-    const { deps, log, sent } = setup();
-    expect((await typeRelayLine(deps, PANE, parts, AGAIN, bound)).ok).toBe(true);
+  it('types one literal line in one run and dates it after the final bind', async () => {
+    const order: string[] = [];
+    const { deps, log, sent } = setup(undefined, (handler) => (call) => {
+      const [verb = ''] = call.args;
+      order.push(verb === 'display-message' ? call.args.at(-1) ?? verb : verb);
+      return handler(call);
+    });
+    const afterBind = new Date(deps.now().getTime() + 10);
+    const rebind = () => {
+      order.push('bind');
+      deps.advance(10);
+      return bound();
+    };
+    const result = await typeRelayLine({ ...deps, now: () => { order.push('clock'); return deps.now(); } }, PANE, parts, AGAIN, rebind);
+    expect(result).toEqual({ ok: true, value: afterBind });
+    expect(order).toEqual(['#{pane_in_mode}', 'capture-pane', '#{pane_synchronized}', 'bind', 'clock', 'send-keys']);
     expect(log.typed()).toEqual([KEY_CLEAR, text(line), KEY_ENTER]);
-    expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message', 'capture-pane', 'display-message', 'send-keys']);
     expect(sent()[0]?.args).toEqual([
       'send-keys', '-t', PANE, 'C-u', ';',
       'send-keys', '-t', PANE, '-l', '--', line, ';',

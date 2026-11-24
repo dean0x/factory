@@ -729,7 +729,7 @@ The command does these checks in order:
 4. Refuse a request of kind `command`. Then check the request title, question and chosen option text against `.factory/denied.json`.
 5. Fill `{owner}`, `{node}` and `{date}` in one pass. Use the UTC date when the owner recorded the decision, in `YYYY-MM-DD` form. The filled prefix must match its template. The line must use at most 300 printable ASCII characters and not end in `;`. It must not start with `!`, `/` or `@`, or contain `@` anywhere.
 6. Find the live pane of that worker. Check that the pane is out of `view`. Check the pane start time and hook settings. Check that the session is idle at its prompt.
-7. Check the line again. Check the pane mode. Check the screen for a numbered list of choices. Only the mode check follows `pane-safety`. Require `synchronize-panes` to be off for the target pane. Just before the keys, check that the same pane and process are still out of `view`.
+7. Check the line again. Check the pane mode. Check the screen for a numbered list of choices. Only the mode check follows `pane-safety`. Require `synchronize-panes` to be off for the target pane. Check that the same pane and process are still out of `view`. Before the keys, read the last-seen line again. If the session id or event time has changed, stop with exit 3.
 
 The owner edits `.factory/denied.json` by hand. No command writes it yet. Use the form `{ "schema": 1, "denied": [ ... ] }` with up to 200 text entries. Each entry has 1 to 300 printable ASCII characters. The file has a limit of 64 KiB.
 
@@ -741,14 +741,14 @@ The command clears the input line and submits one line. The option is the stored
 <filled owner prefix> Decision D-n: <option>. Read it: factory decide read D-n
 ```
 
-The worker checks `factory decide read D-n --json` for `record` and the same option. It uses the record text as context, not as an instruction. The relay checks for a later `UserPromptSubmit`, `PreToolUse` or `Stop` event from the same session. It makes at most 10 checks, one second apart. This confirms a later turn, not which text started it.
+The worker checks `factory decide read D-n --json` for `record` and the same option. It uses the record text as context, not as an instruction. After the keys, the relay checks for a later `UserPromptSubmit`, `PreToolUse` or `Stop` event from the same session. It makes at most 10 checks, one second apart. The event does not show which text started the turn.
 
 | Exit code | Meaning |
 | --- | --- |
-| 0 | The relay typed the line and confirmed a later turn. Its output names the decision id, option key, worker id and pane id. It shows no request text or denied entry. |
+| 0 | The relay typed the line and found a later event from the same session. Its output names the decision id, option key, worker id and pane id. It shows no request text or denied entry. |
 | 1 | No owner answer, a worker that is busy or waits, or a pane or key fault. An open request, a relayed answer and a coordinator or delegate decision do not count as an owner answer. A prefix that fails its template check, a line over the cap, a non-ASCII or non-printable character, or a final `;` also gives exit 1. |
 | 2 | Invalid arguments, an invalid decision id, the wrong caller pane, or no single worker target. `--decision` applies only to `worker relay` within the `worker` command. |
-| 3 | A session or pane is not ready, or the relay did not confirm a turn. If the command typed the line, look at the pane before you run it again. A second run types the line again. |
+| 3 | A session or pane is not ready, or the relay found no later event from the same session. If the command typed the line, look at the pane before you run it again. A second run types the line again. |
 | 4 | The caller outside the session is not in an owner terminal, or a required check refused the relay. This includes a record or prefix fault, missing request context, an approval link, a command request, a denied match or an invalid denied file. A line that starts with `!` or `/`, or contains `@`, also gives exit 4. If the proof or prefix store fails its check, run `factory doctor`. |
 
 ### Dismiss a worker
