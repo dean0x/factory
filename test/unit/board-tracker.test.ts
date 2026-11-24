@@ -6,7 +6,7 @@ import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.
 import type { Deps } from '../../src/core/deps.js';
 import type { DecisionInput } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
-import { commands, commandText, files as fileNames, stateLock, values, type CommandName } from '../../src/names.js';
+import { commands, commandText, files as fileNames, flags, stateLock, values, type CommandName } from '../../src/names.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { boardRepo, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
 import { withFsWatch } from '../helpers/fake-deps.js';
@@ -18,7 +18,18 @@ const LOCK_FILE = join(LAYOUT.locksDir, `${stateLock.name}${stateLock.lock.suffi
 const DOC_PATH = 'docs/design.md';
 const HOSTED_LINE = 'Hosted boards come in FAC-M3 (provider plugin).';
 
-const START_BOARD = `${JSON.stringify({ [QUEUE]: [], items: [{ id: 'B-1', title: 'First', status: 'open', stage: 'ticket' }], tracks: [] }, null, 2)}\n`;
+const START_BOARD = `${JSON.stringify(
+  {
+    [QUEUE]: [],
+    items: [
+      { id: 'B-1', title: 'First', status: 'open', stage: 'ticket' },
+      { id: 'B-2', title: 'Next', status: 'open', stage: 'ticket' },
+    ],
+    tracks: [],
+  },
+  null,
+  2,
+)}\n`;
 
 /** A waiting file that holds one request, so a close has a request to take off. */
 const START_WAITING = `${JSON.stringify({ intro: '', groups: [], items: [{ id: 'D-1', title: 'Open', question: 'Why?', options: [{ key: 'a', text: 'Yes' }] }] }, null, 2)}\n`;
@@ -82,6 +93,7 @@ const WRITES: readonly (readonly [string, Write])[] = [
   ['item update with an epic only', (c) => c.updateItem('B-1', { epic: 'Launch' })],
   ['item move to a state', (c) => c.moveItem('B-1', { state: 'doing' })],
   ['item move to a stage', (c) => c.moveItem('B-1', { stage: 'building' })],
+  ['item rank', (c) => c.rankItem('B-2', { edge: flags.first })],
   ['item note', (c) => c.noteItem('B-1', 'Progress is steady')],
   ['item close', (c) => c.closeItem('B-1')],
   ['item close with a reason', (c) => c.closeItem('B-1', 'Work is complete')],
@@ -104,6 +116,9 @@ const BAD_WRITES: readonly (readonly [string, Write])[] = [
   ['item update', (c) => c.updateItem('nope', { title: 'Changed' })],
   ['item update with an epic', (c) => c.updateItem('B-1', { epic: 'two\nlines' })],
   ['item move', (c) => c.moveItem('nope', { state: 'unknown' })],
+  ['item rank with a bad id', (c) => c.rankItem('nope', { edge: flags.first })],
+  ['item rank after a bad id', (c) => c.rankItem('B-2', { after: 'nope' })],
+  ['item rank after itself', (c) => c.rankItem('B-2', { after: 'B-2' })],
   ['item note with a bad id', (c) => c.noteItem('nope', 'Progress is steady')],
   ['item note with a line break', (c) => c.noteItem('B-1', 'Progress\nis steady')],
   ['item note with a full commit id', (c) => c.noteItem('B-1', 'a1b2c3d4e5'.repeat(4))],
@@ -246,7 +261,7 @@ describe('a hosted tracker kind reads the local files; the local kind writes', (
     const repo = await repoWith();
     const connector = connectorOf(repo.deps, kind);
     expect(connector.kind).toBe(kind);
-    expect(valueOf(await connector.listItems({ all: true })).map((item) => item.id)).toEqual(['B-1']);
+    expect(valueOf(await connector.listItems({ all: true })).map((item) => item.id)).toEqual(['B-1', 'B-2']);
     expect(valueOf(await connector.listTracks())).toEqual([]);
     expect(valueOf(await connector.listRequests())).toEqual([
       { id: 'D-1', title: 'Open', options: ['a'], openedAt: null, group: 'now', kind: 'decision', question: 'Why?' },

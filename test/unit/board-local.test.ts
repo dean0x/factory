@@ -3,19 +3,33 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type {
   BoardConnector,
+  BoardItem,
   DecisionAskInput,
   DecisionProofWriter,
   DecisionRecordCall,
   DocLinked,
   ItemAddInput,
+  ItemPlace,
+  ItemRanked,
   LocalBoard,
   RequestDecider,
   RequestSettlement,
 } from '../../src/board/contract.js';
 import { strictRequestOf, type DecideRequest } from '../../src/board/decide.js';
-import { changeItemIn, checkMessageLine, checkNoteText, checkPatch, checkRequestClose, checkSettlement, closeRequestIn } from '../../src/board/edit.js';
+import {
+  changeItemIn,
+  checkMessageLine,
+  checkNoteText,
+  checkPatch,
+  checkRequestClose,
+  checkSameItems,
+  checkSettlement,
+  closeRequestIn,
+  rankItemIn,
+  type Edit,
+} from '../../src/board/edit.js';
 import { resolveFields, declaredFields } from '../../src/board/fields.js';
-import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readDecisionLog, readWaiting } from '../../src/board/files.js';
+import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readDecisionLog, readWaiting, type BoardDoc } from '../../src/board/files.js';
 import { boardJsonText } from '../../src/board/json.js';
 import { createLocalBoard, type LocalBoardOptions } from '../../src/board/local.js';
 import { firstStageOf, requireSettableStage, requireStage, stageShown, stagesOf, UNLISTED_MARK } from '../../src/board/stages.js';
@@ -36,6 +50,7 @@ import {
   dirs,
   env,
   files as fileNames,
+  flags,
   guardIds,
   guardValues,
   maxBoardNumber,
@@ -621,6 +636,7 @@ describe('the local connector: each write is one state commit of the local files
     ['item update', (c) => c.updateItem('B-1', { title: 'Changed' }), [fileNames.board]],
     ['item move to a state', (c) => c.moveItem('B-1', { state: 'doing' }), [fileNames.board]],
     ['item move to a stage', (c) => c.moveItem('B-1', { stage: 'building' }), [fileNames.board]],
+    ['item rank', (c) => c.rankItem('B-1', { after: 'B-2' }), [fileNames.board]],
     ['item close', (c) => c.closeItem('B-1'), [fileNames.board]],
     ['track add', (c) => c.addTrack({ id: 'core', name: 'Core', roadmap: true }), [fileNames.board]],
     ['doc link', (c) => c.linkDoc({ id: 'B-1', path: DOC_PATH }), [fileNames.board]],
@@ -628,7 +644,7 @@ describe('the local connector: each write is one state commit of the local files
   ];
 
   it.each(WRITES)('%s makes one commit that holds only the local files, and prints no tracker line', async (_name, write, staged) => {
-    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket' })]));
+    const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket' }), item('B-2')]));
     const done = await write(connectorOf(repo));
     expect(done.ok).toBe(true);
     expect(repo.commits.map((commit) => commit.staged)).toEqual([staged]);
@@ -1225,7 +1241,7 @@ describe('the local connector: the ids of a write', () => {
 
 describe('the local connector: an old queue key', () => {
   it('stops every write with exit 1 and the remedy to upgrade, and writes nothing', async () => {
-    const board = jsonOf({ queue: [], items: [item('B-1')], tracks: [] });
+    const board = jsonOf({ queue: [], items: [item('B-1'), item('B-2')], tracks: [] });
     const repo = await repoWith(board);
     const connector = connectorOf(repo);
     const stopped: CliResult<unknown>[] = [
@@ -1233,6 +1249,7 @@ describe('the local connector: an old queue key', () => {
       await connector.updateItem('B-1', { title: 'Changed' }),
       await connector.moveItem('B-1', { state: 'doing' }),
       await connector.moveItem('B-1', { stage: 'building' }),
+      await connector.rankItem('B-1', { after: 'B-2' }),
       await connector.closeItem('B-1'),
       await connector.addTrack({ id: 'core', name: 'Core', roadmap: true }),
       await connector.linkDoc({ id: 'B-1', path: DOC_PATH }),
@@ -1922,6 +1939,251 @@ describe('the local connector: a list', () => {
     expect(valueOf(await connector.listTracks()).map((track) => track.id)).toEqual(['core', 'board', 'docs']);
     expect(repo.deps.sleeps.length).toBe(slept);
     expect(repo.deps.files.get(LOCK_FILE)).toBe('1\n');
+  });
+});
+
+// The rank of an item: the pure edit of the board order, and the rank of the local connector.
+
+/** The closed state of the sample setup. */
+const CLOSED = 'done';
+
+/** Five items: the second has another state and the third is closed, so a rank from one end to the other passes both. */
+const RANK_ITEMS = [item('B-1'), item('B-2', { status: 'doing' }), item('B-3', { status: CLOSED }), item('B-4'), item('B-5')];
+
+/** A rank on the doc of a board with these items, as the connector runs it under the lock. */
+const rankOn = (
+  items: readonly Record<string, unknown>[],
+  id: string,
+  place: ItemPlace,
+  closed: string | undefined,
+): { readonly doc: BoardDoc; readonly result: CliResult<Edit<ItemRanked>> } => {
+  const doc = valueOf(parseBoard(boardWith(items), QUEUE));
+  return { doc, result: rankItemIn(doc, id, place, closed) };
+};
+
+/** The records of the new board order of a rank, from the top object that it writes. */
+const rankedRecords = (edit: Edit<ItemRanked>): readonly unknown[] => {
+  const records = edit.top?.[boardKeys.items];
+  if (!Array.isArray(records)) throw new Error('expected a new board order');
+  return records;
+};
+
+const idsOf = (records: readonly unknown[]): unknown[] => records.map((record) => (record as Readonly<Record<string, unknown>>)[boardKeys.id]);
+
+const LIST_REMEDY = 'Run "factory item list" to see the open items.';
+const openRemedy = (id: string): string => `Run "factory item move ${id} --state STATE" to open the item first.`;
+
+/** Each row breaks one property of a valid rank of the five items: the fourth item after the first item. */
+const RANK_REFUSALS: readonly (readonly [string, string, ItemPlace, string, string])[] = [
+  ['a subject that is not on the board', 'B-9', { after: 'B-1' }, `${fileNames.board} has no item "B-9"`, LIST_REMEDY],
+  ['a target that is not on the board', 'B-4', { after: 'B-9' }, `${fileNames.board} has no item "B-9"`, LIST_REMEDY],
+  ['a closed subject', 'B-3', { after: 'B-1' }, 'the item "B-3" is closed, and a rank takes only open items', openRemedy('B-3')],
+  ['a closed target', 'B-4', { after: 'B-3' }, 'the item "B-3" is closed, and a rank takes only open items', openRemedy('B-3')],
+];
+
+describe('the rank edit of the board order', () => {
+  const PLACES: readonly (readonly [string, string, ItemPlace, readonly string[]])[] = [
+    ['after an item lower in the list', 'B-1', { after: 'B-4' }, ['B-2', 'B-3', 'B-4', 'B-1', 'B-5']],
+    ['after an item higher in the list', 'B-5', { after: 'B-1' }, ['B-1', 'B-5', 'B-2', 'B-3', 'B-4']],
+    ['at the start of the list', 'B-4', { edge: flags.first }, ['B-4', 'B-1', 'B-2', 'B-3', 'B-5']],
+    ['at the end of the list', 'B-1', { edge: flags.last }, ['B-2', 'B-3', 'B-4', 'B-5', 'B-1']],
+  ];
+
+  it.each(PLACES)('puts the item %s, past an item of another state and a closed item', (_name, id, place, order) => {
+    const edit = valueOf(rankOn(RANK_ITEMS, id, place, CLOSED).result);
+    expect(edit.value).toEqual({ id, place, changed: true });
+    expect(idsOf(rankedRecords(edit))).toEqual(order);
+  });
+
+  it('keeps each record as the same object with the same keys, and moves only the subject', () => {
+    const decoys = [
+      item('B-1', { status: 'doing', stage: 'building', lane: 'w1' }),
+      item('B-2', { [boardKeys.unassignedFrom]: ['w2'] }),
+      item('B-3', { status: CLOSED, stage: 'merged', lane: 'w1', [boardKeys.mergedPrHead]: 'a'.repeat(40) }),
+      item('B-4', { [boardKeys.notes]: [{ text: 'Work started', at: '2030-01-02T03:04:05.678Z' }], [boardKeys.docs]: [DOC_PATH] }),
+      item('B-5', { later_key: { kept: [1, 2] } }),
+    ];
+    const subject = item('B-6', { stage: 'ticket' });
+    const { doc, result } = rankOn([...decoys, subject], 'B-6', { after: 'B-1' }, CLOSED);
+    const edit = valueOf(result);
+    const records = rankedRecords(edit);
+    const old = doc.items.map((entry) => entry.record);
+    expect(records.map((record) => old.indexOf(record as Readonly<Record<string, unknown>>))).toEqual([0, 5, 1, 2, 3, 4]);
+    expect(records).toEqual([decoys[0], subject, ...decoys.slice(1)]);
+    expect(old).toEqual([...decoys, subject]);
+    expect(edit.top).toEqual({ ...doc.top, [boardKeys.items]: records });
+  });
+
+  it('keeps the order of the closed items of each worker', () => {
+    const items = [
+      item('B-1', { status: CLOSED, lane: 'w1' }),
+      item('B-2', { status: CLOSED, lane: 'w2' }),
+      item('B-3', { status: CLOSED, lane: 'w1' }),
+      item('B-4', { status: CLOSED, lane: 'w2' }),
+      item('B-5'),
+      item('B-6'),
+    ];
+    const closedOf = (records: readonly unknown[], lane: string): unknown[] =>
+      idsOf(records.filter((record) => {
+        const stored = record as Readonly<Record<string, unknown>>;
+        return stored['lane'] === lane && stored[boardKeys.status] === CLOSED;
+      }));
+    const records = rankedRecords(valueOf(rankOn(items, 'B-6', { edge: flags.first }, CLOSED).result));
+    expect(idsOf(records)).toEqual(['B-6', 'B-1', 'B-2', 'B-3', 'B-4', 'B-5']);
+    expect([closedOf(records, 'w1'), closedOf(records, 'w2')]).toEqual([['B-1', 'B-3'], ['B-2', 'B-4']]);
+  });
+
+  const SAME_PLACES: readonly (readonly [string, string, ItemPlace])[] = [
+    ['after the item that is before it', 'B-2', { after: 'B-1' }],
+    ['at the start, where it is', 'B-1', { edge: flags.first }],
+    ['at the end, where it is', 'B-5', { edge: flags.last }],
+  ];
+
+  it.each(SAME_PLACES)('gives no new board order for a rank %s', (_name, id, place) => {
+    expect(valueOf(rankOn(RANK_ITEMS, id, place, CLOSED).result)).toEqual({ top: null, value: { id, place, changed: false } });
+  });
+
+  it('counts a move past closed items only as a change', () => {
+    const items = [item('B-1'), item('B-2', { status: CLOSED }), item('B-3', { status: CLOSED })];
+    const edit = valueOf(rankOn(items, 'B-1', { edge: flags.last }, CLOSED).result);
+    expect(edit.value.changed).toBe(true);
+    expect(idsOf(rankedRecords(edit))).toEqual(['B-2', 'B-3', 'B-1']);
+  });
+
+  it('takes the valid rank that each refusal below breaks', () => {
+    expect(idsOf(rankedRecords(valueOf(rankOn(RANK_ITEMS, 'B-4', { after: 'B-1' }, CLOSED).result)))).toEqual(['B-1', 'B-4', 'B-2', 'B-3', 'B-5']);
+  });
+
+  it.each(RANK_REFUSALS)('refuses %s with exit 2, a message and a remedy, and gives no new board order', (_name, id, place, message, hint) => {
+    expect(rankOn(RANK_ITEMS, id, place, CLOSED).result).toEqual({ ok: false, error: { kind: 'usage', message, hint } });
+  });
+
+  it('takes a done item as an open item when the setup has no closed state', () => {
+    const items = [item('B-1', { status: CLOSED }), item('B-2', { status: CLOSED })];
+    expect(exitOf(rankOn(items, 'B-1', { after: 'B-2' }, CLOSED).result)).toBe(2);
+    const edit = valueOf(rankOn(items, 'B-1', { after: 'B-2' }, undefined).result);
+    expect(edit.value.changed).toBe(true);
+    expect(idsOf(rankedRecords(edit))).toEqual(['B-2', 'B-1']);
+  });
+
+  describe('the check that a new order keeps the same items', () => {
+    type Three = readonly [BoardItem, BoardItem, BoardItem];
+    const threeItems = (): Three => {
+      const [one, two, three] = valueOf(parseBoard(boardWith([item('B-1'), item('B-2'), item('B-3')]), QUEUE)).items;
+      if (one === undefined || two === undefined || three === undefined) throw new Error('expected three items');
+      return [one, two, three];
+    };
+    const MISMATCH = `the new order of the items in ${fileNames.board} does not keep the same items, so the rank writes nothing`;
+
+    it('passes a new order of the same item objects', () => {
+      const [one, two, three] = threeItems();
+      expect(checkSameItems([one, two, three], [three, one, two])).toEqual({ ok: true, value: undefined });
+    });
+
+    /** Each row breaks one property of the valid new order: the last item first. */
+    const BROKEN: readonly (readonly [string, (items: Three) => readonly BoardItem[]])[] = [
+      ['one item fewer', ([one, , three]) => [three, one]],
+      ['one item more', ([one, two, three]) => [three, one, two, two]],
+      ['an item twice in place of another', ([one, , three]) => [three, one, one]],
+      ['an id that is not on the old list', ([one, two, three]) => [three, one, { ...two, id: 'B-9' }]],
+      ['a record that is a new object with the same id and keys', ([one, two, three]) => [three, one, { ...two, record: { ...two.record } }]],
+    ];
+
+    it.each(BROKEN)('refuses a new order with %s with exit 1, and names the board file', (_name, broken) => {
+      const items = threeItems();
+      const result = checkSameItems(items, broken(items));
+      expect(exitOf(result)).toBe(1);
+      expect(result).toEqual({ ok: false, error: { kind: 'failure', message: MISMATCH } });
+    });
+  });
+});
+
+describe('the local connector: item rank', () => {
+  const RANK_BOARD = boardWith(RANK_ITEMS);
+
+  it('takes the valid rank that each refusal below breaks, with one commit of the board file', async () => {
+    const repo = await repoWith(RANK_BOARD);
+    expect(valueOf(await connectorOf(repo).rankItem('B-4', { after: 'B-1' }))).toEqual({ id: 'B-4', place: { after: 'B-1' }, changed: true });
+    expect(repo.commits).toEqual([{ message: 'chore: rank item B-4', staged: [fileNames.board] }]);
+    expect(valueOf(boardAfter(repo)).items.map((entry) => entry.id)).toEqual(['B-1', 'B-4', 'B-2', 'B-3', 'B-5']);
+  });
+
+  /** Each row breaks one property of the valid rank: the fourth item after the first item. */
+  const BAD_INPUT: readonly (readonly [string, string, ItemPlace, CliError])[] = [
+    ['an id that is not an item id', 'b-4', { after: 'B-1' }, { kind: 'usage', message: '"b-4" is not an item id; an item id looks like B-12' }],
+    ['a target id that is not an item id', 'B-4', { after: 'b-1' }, { kind: 'usage', message: '"b-1" is not an item id; an item id looks like B-12' }],
+    ['an empty target id', 'B-4', { after: '' }, { kind: 'usage', message: '"" is not an item id; an item id looks like B-12' }],
+    ['the same id as the item and the target', 'B-4', { after: 'B-4' }, {
+      kind: 'usage',
+      message: 'the item "B-4" can not go after itself',
+      hint: 'Give the id of another item to --after, or use --first or --last.',
+    }],
+  ];
+
+  it.each(BAD_INPUT)('refuses %s with exit 2 before the lock: no file call, no git and no commit', async (_name, id, place, refusal) => {
+    const repo = await repoWith(RANK_BOARD);
+    const touched: string[] = [];
+    const deps = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
+    const error = errorOf(await connectorOf({ ...repo, deps }).rankItem(id, place));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error).toEqual(refusal);
+    expect(touched).toEqual([]);
+    expect(repo.gitCommands()).toEqual([]);
+    expectUntouched(repo, RANK_BOARD);
+  });
+
+  it.each(RANK_REFUSALS)('refuses %s under the lock with exit 2 and a remedy, and writes nothing', async (_name, id, place, message, hint) => {
+    const repo = await repoWith(RANK_BOARD);
+    expect(errorOf(await connectorOf(repo).rankItem(id, place))).toEqual({ kind: 'usage', message, hint });
+    expectUntouched(repo, RANK_BOARD);
+  });
+
+  it('ranks an item after a done item when the setup has no closed state, with one commit', async () => {
+    const board = boardWith([item('B-1', { status: CLOSED }), item('B-2'), item('B-3')]);
+    const repo = await repoWith(board);
+    expect(exitOf(await connectorOf(repo).rankItem('B-3', { after: 'B-1' }))).toBe(2);
+    expectUntouched(repo, board);
+    const { closed: _closed, ...config } = sampleBoard();
+    expect(valueOf(await connectorOf(repo, { config }).rankItem('B-3', { after: 'B-1' })).changed).toBe(true);
+    expect(repo.commits).toHaveLength(1);
+    expect(valueOf(boardAfter(repo)).items.map((entry) => entry.id)).toEqual(['B-1', 'B-3', 'B-2']);
+  });
+
+  it('reads the board file only while it holds the state lock', async () => {
+    const repo = await repoWith(RANK_BOARD);
+    const reads: { path: string; locked: boolean }[] = [];
+    const deps = withFsWatch(repo.deps, (method, path) => {
+      if (method.startsWith('read') && path === BOARD_PATH) reads.push({ path, locked: repo.deps.files.has(LOCK_FILE) });
+    });
+    expect(valueOf(await connectorOf({ ...repo, deps }).rankItem('B-4', { after: 'B-1' })).changed).toBe(true);
+    expect(reads).toEqual([{ path: BOARD_PATH, locked: true }]);
+  });
+
+  it('makes no commit for a rank to the place that the item has, and none for a second run of a rank', async () => {
+    const repo = await repoWith(RANK_BOARD);
+    const connector = connectorOf(repo);
+    expect(valueOf(await connector.rankItem('B-2', { after: 'B-1' })).changed).toBe(false);
+    expectUntouched(repo, RANK_BOARD);
+    expect(valueOf(await connector.rankItem('B-4', { after: 'B-1' })).changed).toBe(true);
+    const ranked = repo.textOf(fileNames.board);
+    expect(valueOf(await connector.rankItem('B-4', { after: 'B-1' })).changed).toBe(false);
+    expect(repo.commits).toHaveLength(1);
+    expect(repo.textOf(fileNames.board)).toBe(ranked);
+  });
+
+  it('counts a move past closed items only as a change, with one commit, and keeps the list of open items', async () => {
+    const repo = await repoWith(boardWith([item('B-1'), item('B-2', { status: CLOSED }), item('B-3', { status: CLOSED })]));
+    const connector = connectorOf(repo);
+    expect(valueOf(await connector.rankItem('B-1', { edge: flags.last }))).toEqual({ id: 'B-1', place: { edge: flags.last }, changed: true });
+    expect(repo.commits).toEqual([{ message: 'chore: rank item B-1', staged: [fileNames.board] }]);
+    expect(valueOf(await connector.listItems({ all: true })).map((entry) => entry.id)).toEqual(['B-2', 'B-3', 'B-1']);
+    expect(valueOf(await connector.listItems({ all: false })).map((entry) => entry.id)).toEqual(['B-1']);
+  });
+
+  it('commits only the board file, with a subject that names the item id and no title', async () => {
+    const repo = await repoWith(boardWith([item('B-1', { title: 'Ship the parser' }), item('B-2', { title: 'Write the guide' })]));
+    valueOf(await connectorOf(repo).rankItem('B-2', { edge: flags.first }));
+    expect(repo.commits).toEqual([{ message: 'chore: rank item B-2', staged: [fileNames.board] }]);
   });
 });
 
