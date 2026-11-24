@@ -304,6 +304,8 @@ export const files = {
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',
+  /** The list of phrases that a worker relay must not match. The owner edits this file in the state folder. */
+  denied: 'denied.json',
   gitignore: '.gitignore',
   ordersKeep: '.gitkeep',
   profileReadme: 'README-format.md',
@@ -846,6 +848,9 @@ export const relayWords = {
   pointer: (id: string, option: string): string =>
     `Decision ${id}: ${option}. Read it: ${commandText(`${commands.decide} ${decideWords.read}`)} ${id}`,
 } as const;
+
+/** Bounds of the denied list that worker relay reads. */
+export const deniedList = { maxEntries: 200, maxChars: 300, maxBytes: 65536 } as const;
 
 /** Fixed verdict reasons. Request text cannot supply a verdict or claim owner proof. */
 export const decideProofReasons: Readonly<Record<(typeof decideProofKinds)[number], string>> = {
