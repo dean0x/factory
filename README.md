@@ -58,6 +58,7 @@ See [the mod guide](plugins/factory-board/README.md) for the options and update 
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy`, `waits` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory worker mark ID parked\|on-hold\|none` | Set the hold word of a worker, `parked` or `on-hold`, or clear it with `none`. It writes only the hold file of the worker. See "List the workers". |
 | `factory worker reset ID --clear` or `--compact` | Type `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and check that it happened. See "Give work to a worker". |
+| `factory worker relay ID --decision D-n` | Type a pointer to a recorded owner decision into the pane of an idle worker. See [Relay an owner decision to a worker](#relay-an-owner-decision-to-a-worker). |
 | `factory worker watch [ID]... [--ready ID]... [--since TIME]` | Check the workers every 30 seconds, at most 2,880 times (24 hours). It exits at the first report: a finish of a worker, a pane that ended, a dialog that waits, a worker that looks stalled, or a worker of `--ready` that is ready after a block. It writes only its run marker, and only a run in the coordinator pane takes it. See "Give work to a worker". |
 | `factory self reset` | Queue a `/compact` for the coordinator itself, after it wrote its resume notes. See "Give work to a worker". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
@@ -289,7 +290,7 @@ With `false`, Claude Code keeps the full context after a long wait. The first tu
 
 ### Guards
 
-A guard groups checks and role rules that keep one thing safe. The software recipe has 33 guards: 30 settable, 3 fixed and 29 with the mark `H`. The registry has 177 rows that always apply. `factory guard list` shows the effective value and its source. The mark `H` means that harm to the machine, data or accounts is possible with the guard off.
+A guard groups checks and role rules that keep one thing safe. The software recipe has 33 guards: 30 settable, 3 fixed and 29 with the mark `H`. The core registry has 241 rows. With the software recipe, 181 rows always apply. `factory guard list` shows the effective value and its source. The mark `H` means that harm to the machine, data or accounts is possible with the guard off.
 
 The local key `guards` accepts `on` or `off`. The shared key `shared_guards` accepts `on` only. A shared `on` keeps that guard on. A missing guard key means `on`, not the default that `init` writes for a new node. A repeat `init` and `upgrade` keep existing guard values. A local `off` takes effect only with a matching guard record from `init` or `factory guard set`. It also needs a whole config that loads and an entry of the factory list with the node id of that config. The record names the real factory folder with its exact letter case. If the same node has only a match in different letter case, every guard stays on, and the launch and `upgrade` stop. Run `factory upgrade` in a terminal window, outside a session, to write the record again with the exact letter case. It writes only when the stored path is a folder and not a link, and its real path is the factory folder. When the write fails, the stop names the cause. Else run `factory guard confirm` and `factory guard set` to record the prefix and the guard values again.
 
@@ -319,7 +320,7 @@ With `owner-go` off, the safety block, the work rules and the role text do not r
 
 With `pane-safety` off, `worker reset` does not stop for a pane in the view window, work that is not pushed, missing resume notes or a busy session. `self reset` does not stop for missing hook events, a missing or unusable last-seen line or missing resume notes. A typed line can go into a pane in a mode of tmux. Both resets still refuse to type if the session reports a dialog or the pane shows a numbered list of choices. A stop can end the session of the pane that runs the command. `shutdown`, `reboot` and `restart` do not check the case of each worker before the first stop. A pane that a summon put in the view window closes, and the board does not go back into the slot. `worker resume` starts a new conversation also while a pane of the worker runs. The coordinator text does not have the rule about an idle worker before a reset.
 
-Some parts of `pane-safety` have no off value. These parts choose the target pane: the mark, the start command and the process of a pane, and the second read of the pane right before the keys or the signal. Factory acts only on a tmux session that belongs to its own factory folder. A stop still sends only TERM, and it still needs a known case of the session. These parts bound the text and the mode: only fixed lines of printable text go into a pane, and a mode answer that tmux never gives stops the line. A resume of a session that the pointer of another worker or a live pane of the worker holds still stops, because that is a second resume of one session.
+Some parts of `pane-safety` have no off value. These parts choose the target pane: the mark, the start command and the process of a pane, and the second read of the pane right before the keys or the signal. Factory acts only on a tmux session that belongs to its own factory folder. A stop still sends only TERM, and it still needs a known case of the session. A mode answer that tmux never gives stops the line. Only fixed reset lines and checked decision relay lines go into a pane. For `worker relay`, only the mode check follows `pane-safety`. A resume of a session that the pointer of another worker or a live pane of the worker holds still stops, because that is a second resume of one session.
 
 With `permission-mode` off, a settings file that skips the permission prompts does not stop `doctor`, `start` or the launch of a worker, and the safety block does not have the permission mode rule. Every launch still passes the auto permission mode, and the config accepts no other mode, because these parts build the launch command and bound the config. A settings file that the scan can not read still stops it, because the scan cannot check that file.
 
@@ -689,7 +690,7 @@ The review desk page only reads. A page answer is a board event: it shows and wa
 
 Run `factory decide read <D-n> [--json] [--home DIR]` to check one request on the local board. The read works in any session. It takes no lock and changes no files.
 
-The first text line gives the verdict. Each verdict includes the node id and the real path of the factory folder. With `--json`, the command prints `factory.decide-read/v1`. The `title`, `question` and `decision` keys hold display text, not the verdict. The command escapes hidden characters in these values.
+The first text line gives the verdict. Each verdict includes the node id and the real path of the factory folder. With `--json`, the command prints `factory.decide-read/v1`. The `title`, `question`, `decision` and `option_text` keys hold display text with escapes for hidden characters. `request_kind` holds the kind of the request. `option_text` and `request_kind` are `null` when not available or when the verdict is not `record`. None of these keys gives the verdict.
 
 The exit code of `factory decide read` grants no approval.
 
@@ -711,6 +712,44 @@ The command uses these exit codes:
 | `error` | The command could not read or check the request or its record. A bad stored link also gives this verdict. |
 
 The output is not proof and grants no approval. Only a match in the owner store proves the answer.
+
+### Relay an owner decision to a worker
+
+```sh
+factory worker relay ID --decision D-1
+```
+
+Inside a factory session, run the command in the coordinator pane. Outside a factory session, run it in your own terminal window, outside Claude Code. The caller rule is always on. It guards against a mistake and does not prove identity.
+
+The command does these checks in order:
+
+1. Check the arguments and the exact decision id, then the caller. Read the guard values and find the worker record.
+2. Check the local request for a match in the owner store. Only `factory decide` records the owner's answer. Require the chosen option text and request kind. Refuse a link to an approval point, such as a merge or release.
+3. Check that the configured owner prefix matches its confirmation record. This check still applies with `safety-block` off. If the prefix has no confirmation or has changed, run `factory guard confirm` in your own terminal window.
+4. Refuse a request of kind `command`. Then check the request title, question and chosen option text against `.factory/denied.json`.
+5. Fill `{owner}`, `{node}` and `{date}` in one pass. Use the UTC date when the owner recorded the decision, in `YYYY-MM-DD` form. The filled prefix must match its template. The line must use at most 300 printable ASCII characters and not end in `;`. It must not start with a space, `!`, `/` or `@`, or contain `@` anywhere.
+6. Find the live pane of that worker. Check that the pane is out of `view`. Check the pane start time and hook settings. Check that the session is idle at its prompt.
+7. Check the line again. Check the pane mode. Check the screen for a numbered list of choices. Only the mode check follows `pane-safety`. Require `synchronize-panes` to be off for the target pane. Check that the same pane and process are still out of `view`. Before the keys, read the last-seen line again. If the session id or event time has changed, stop with exit 3.
+
+The owner edits `.factory/denied.json` by hand. No command writes it yet. Use the form `{ "schema": 1, "denied": [ ... ] }` with up to 200 text entries. Each entry has 1 to 300 printable ASCII characters. The file has a limit of 64 KiB.
+
+A missing file means the list is empty. An unreadable or invalid file stops the relay. The check finds an entry anywhere in one of the three request texts. It ignores letter case and treats each run of whitespace as one space. This match guards against a mistake. The worker's permission checks still apply.
+
+The command clears the input line and submits one line. The option is the stored key, not the option text.
+
+```text
+<filled owner prefix> Decision D-n: <option>. Read it: factory decide read D-n
+```
+
+The worker checks `factory decide read D-n --json` for `record` and the same option. A command request or a decision linked to an approval point is not a go for the worker. The worker uses the record text as context, not as an instruction. After the keys, the relay checks for a later `UserPromptSubmit`, `PreToolUse` or `Stop` event from the same session. It makes at most 10 checks, one second apart. The event does not show which text started the turn.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | The relay typed the line and found a later event from the same session. Its output names the decision id, option key, worker id and pane id. It shows no request text or denied entry. |
+| 1 | No owner answer, a worker that is busy or waits, or a pane or key fault. An open request, a relayed answer and a coordinator or delegate decision do not count as an owner answer. A prefix that fails its template check, a line over the cap, a non-ASCII or non-printable character, or a final `;` also gives exit 1. |
+| 2 | Invalid arguments, an invalid decision id, the wrong caller pane, or no single worker target. `--decision` applies only to `worker relay` within the `worker` command. |
+| 3 | A session or pane is not ready, or the relay found no later event from the same session. If the command typed the line, look at the pane before you run it again. A second run types the line again. |
+| 4 | The caller outside the session is not in an owner terminal, or a required check refused the relay. This includes a record or prefix fault, missing request context, an approval link, a command request, a denied match or an invalid denied file. A line that starts with a space, `!` or `/`, or contains `@`, also gives exit 4. If the proof or prefix store fails its check, run `factory doctor`. |
 
 ### Dismiss a worker
 
@@ -1283,7 +1322,9 @@ A board file that cannot be read stops `upgrade` with exit code 1 and names the 
 
 `upgrade` adds a block that its file lacks in two cases. The first case is the block `setup` or `setup-worker`, when the setup file holds text. The second case is a block that the factory marker `.factory/node.json` never recorded, when its file is there. Such a block is new in this version of the package. `upgrade` never adds the block `safety` this way. Only the owner adds it, with `factory upgrade --overwrite safety`, outside a session. `upgrade` puts a new block before the block `setup` or `setup-worker`, which stays last. A file that has no such block gets the new block at its end. A block that the marker records, but that the file lacks, stays missing. `upgrade` takes it for a block that you removed. It prints a warning that names `factory upgrade --overwrite <block>`, and that command adds the block. `doctor` gives the same warning. For a block of the second case, `doctor` names `factory upgrade`. For the block `safety`, and for a block whose file is not there, `doctor` names `factory upgrade --overwrite <block>`. A marker with no list of blocks counts every block as recorded. A block that the marker records under an old name counts as recorded.
 
-The block `coordinator` has version 10. The block `manager` has version 4. Both tell the role to use `--closed --ask-owner` once after a denied closed free. The block `worker` has version 5. The block `work-rules` has version 1. The text of the block `coordinator` holds the rules for the [owner-mode merge](#merge-in-owner-mode), `item record`, `item unassign`, the worker field, `request close --relayed` and `request log`, the rules for the watch (see "Give work to a worker"), the rules for `dismiss ID --closed` and for the reviews folder, and a section that tells a resumed coordinator to follow the new rules and to drop the workaround that a new rule replaces. It also holds these rules:
+The block `coordinator` has version 11. The block `manager` has version 4. Both tell the role to use `--closed --ask-owner` once after a denied closed free. The block `worker` has version 7. The block `work-rules` has version 1. The `coordinator` and `worker` blocks include the rules for [worker relay](#relay-an-owner-decision-to-a-worker).
+
+The text of the block `coordinator` holds the rules for the [owner-mode merge](#merge-in-owner-mode), `item record`, `item unassign`, the worker field, `request close --relayed` and `request log`, the rules for the watch (see "Give work to a worker"), the rules for `dismiss ID --closed` and for the reviews folder, and a section that tells a resumed coordinator to follow the new rules and to drop the workaround that a new rule replaces. It also holds these rules:
 
 - For an item merged before the upgrade, add a linked request with the merged head and get an answer.
 - The coordinator pins each check and each merge to the head SHA. Before it tells the owner a result, it checks the result on the primary source at the exact head SHA of the change. After a push, it runs `factory pr watch PR --head SHA` as a background task (see "Watch a pull request"), and exit code 0 is no approval. It merges only at the full head SHA that it checked, with CI green at that SHA.

@@ -1,17 +1,17 @@
-import { failure, notReady, type CliResult } from '../cli/errors.js';
+import { z } from 'zod';
+import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { allOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
-import { capturePaneArgs, chainedArgs, isPaneId, paneModeArgs, parsePaneMode, type TmuxArgs } from '../launch/tmux.js';
+import { capturePaneArgs, chainedArgs, isPaneId, paneModeArgs, paneSyncArgs, parsePaneMode, type TmuxArgs } from '../launch/tmux.js';
 import { tmuxCall, tmuxStep } from '../launch/tmux-run.js';
-import { guardIds, typing } from '../names.js';
+import { boardIds, boardLimits, commandLines, commands, commandText, guardIds, keys, relayWords, typing } from '../names.js';
+import { fillOwnerPrefix, hasOwnerPrefix } from '../safety/owner-prefix.js';
 
 /**
- * The tmux input verb. This module is the one place in the source that holds an input verb, and a unit test keeps the verbs out
- * of every other module. A caller passes one of the lines `typing.lines`, and the module types no other text: a line that is not
- * one of them is refused before any tmux call. `lineProblem` is a second check on the line, so a change of the fixed lines can
- * never allow a line with a control sign, a new line or a final semicolon.
+ * Only this module holds the tmux input verb. It types fixed lines and lines built from parts of a recorded owner decision.
+ * Both entries check the line before any tmux call. No entry accepts an arbitrary line.
  */
 const SEND_KEYS = 'send-keys';
 
@@ -19,6 +19,30 @@ const SEND_KEYS = 'send-keys';
 export type TypedLine = (typeof typing.lines)[keyof typeof typing.lines];
 
 const FIXED_LINES: readonly string[] = Object.values(typing.lines);
+
+declare const relayLineBrand: unique symbol;
+type RelayLine = string & { readonly [relayLineBrand]: true };
+
+interface RelayParts {
+  readonly template: string;
+  readonly display: string;
+  readonly node: string;
+  readonly at: string;
+  readonly id: string;
+  readonly option: string;
+}
+
+const recordTime = z.iso.datetime({ offset: true });
+const checkRecord = `Run "${commandText(commands.doctor)}" to check the decision record.`;
+const checkPrefix = `Check ${keys.root.owner}.${keys.owner.display} and ${keys.root.owner}.${keys.owner.prefix} in the local config. Run "${commandText(commands.doctor)}" to check the config.`;
+
+const utcDateOf = (at: string): string | null => {
+  if (!recordTime.safeParse(at).success) return null;
+  const time = Date.parse(at);
+  if (!Number.isFinite(time)) return null;
+  const iso = new Date(time).toISOString();
+  return iso[10] === 'T' ? iso.slice(0, 10) : null;
+};
 
 /** The signs from space to tilde: the printable ASCII signs, with no control sign and no new line. */
 const PRINTABLE = /^[ -~]+$/;
@@ -34,6 +58,25 @@ const lineProblem = (line: string): string | null => {
   return null;
 };
 
+/** Build the relay line before any read of the pane. Only the stored option key goes in the pointer. */
+export const relayLineOf = ({ template, display, node, at, id, option }: RelayParts): CliResult<RelayLine> => {
+  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', relayWords.useDecisionId());
+  if (!boardLimits.tokenPattern.test(option)) return safetyRefusal('the recorded option key is invalid', checkRecord);
+  const date = utcDateOf(at);
+  if (date === null) return safetyRefusal('the recorded decision time is invalid', checkRecord);
+
+  const prefix = fillOwnerPrefix(template, { owner: display, node, date });
+  if (!hasOwnerPrefix(prefix, template, display)) return failure('the filled relay prefix does not match the template', checkPrefix);
+  const line = `${prefix} ${relayWords.pointer(id, option)}`;
+  const problem = lineProblem(line);
+  if (problem !== null) return failure(`the relay line is refused: it ${problem}`, checkPrefix);
+  if (line.startsWith(' ') || line.startsWith('!') || line.startsWith('/') || line.startsWith('@')) {
+    return safetyRefusal('the relay line must not start with a space, !, / or @', checkPrefix);
+  }
+  if (line.includes('@')) return safetyRefusal('the relay line must not contain @', checkPrefix);
+  return ok(line as RelayLine);
+};
+
 /** One call of the input verb for one pane. The target is the pane id, and the words are key names or the text. */
 const sendWords = (pane: string, ...words: readonly string[]): readonly string[] => [SEND_KEYS, '-t', pane, ...words];
 
@@ -41,7 +84,7 @@ const sendWords = (pane: string, ...words: readonly string[]): readonly string[]
 const clearArgs = (pane: string): TmuxArgs => chainedArgs([sendWords(pane, typing.keys.clearLine)]);
 
 /** Clear the input line, type the text as it is, end the line. One tmux run, so no other input comes between the three calls. */
-const typeArgs = (pane: string, line: string): TmuxArgs =>
+const typeArgs = (pane: string, line: TypedLine | RelayLine): TmuxArgs =>
   chainedArgs([
     sendWords(pane, typing.keys.clearLine),
     sendWords(pane, '-l', '--', line),
@@ -119,7 +162,7 @@ const requireNoMode = async (deps: Deps, pane: string, thenAgain: string, guards
 };
 
 /**
- * One capture of the screen, the last read before the keys: a screen that shows a list of choices is exit 3, because a dialog may
+ * One capture of the screen before the keys: a screen that shows a list of choices is exit 3, because a dialog may
  * take the keys. A failed capture is exit 1 (also for a pane that does not exist).
  */
 const requireNoChoiceList = async (deps: Deps, pane: string, thenAgain: string): Promise<CliResult<void>> => {
@@ -138,7 +181,7 @@ const requireNoChoiceList = async (deps: Deps, pane: string, thenAgain: string):
 /**
  * Types one of the fixed lines into a pane and ends it with Enter. `thenAgain` is the clause that ends each remedy of an exit 3,
  * and it names the command that the caller runs again. The checks run in this order, and a refusal types nothing:
- * the line (one of `typing.lines`, then printable ASCII, at most `typing.maxChars` signs, no final semicolon) and the pane id, which
+ * the line (printable ASCII, at most `typing.maxChars` signs, no final semicolon, one of `typing.lines`) and the pane id, which
  * are exit 1; one read of the mode of the pane, which is exit 1 when it fails and exit 3 for a pane in a mode of tmux, because the
  * keys would not reach the session; one capture of the screen, which is the last read before the keys, and it is exit 1 when it
  * fails (also for a pane that does not exist); a screen that shows a list of choices, which is exit 3, because a dialog may take the
@@ -153,18 +196,60 @@ export const typeLine = async (
   thenAgain: string,
   guards: GuardValues = allOn,
 ): Promise<CliResult<void>> => {
-  if (!FIXED_LINES.includes(line)) return failure('the line to type is refused: it is not one of the fixed lines');
   const problem = lineProblem(line);
   if (problem !== null) return failure(`the line to type is refused: it ${problem}`);
-  if (!isPaneId(pane)) return failure('the target of the typed line is not a pane id');
-  const noMode = await requireNoMode(deps, pane, thenAgain, guards);
-  if (!noMode.ok) return noMode;
-  const noDialog = await requireNoChoiceList(deps, pane, thenAgain);
-  if (!noDialog.ok) return noDialog;
+  if (!FIXED_LINES.includes(line)) return failure('the line to type is refused: it is not one of the fixed lines');
+  const ready = await requireTypedPane(deps, pane, thenAgain, guards);
+  return ready.ok ? sendCheckedLine(deps, pane, line) : ready;
+};
 
+/** Relay keys must go to one pane. An absent flag or an unreadable flag gives no such assurance. */
+const requireSingleInput = async (deps: Deps, pane: string): Promise<CliResult<void>> => {
+  const args = paneSyncArgs(pane);
+  if (!args.ok) return failure(args.error);
+  const read = await tmuxCall(deps, args.value);
+  return read.ok && read.value.exitCode === 0 && read.value.stdout.trim() === '0'
+    ? ok(undefined)
+    : safetyRefusal(
+        `cannot confirm single-pane input for pane ${pane}`,
+        `Check that synchronize-panes is off for pane ${pane}. Then retry with "${commandText(commandLines.workerRelay)}".`,
+      );
+};
+
+/** Check the line and screen, bind the target once more, then submit. Date the submit, not its checks. */
+export const typeRelayLine = async (
+  deps: Deps,
+  pane: string,
+  parts: RelayParts,
+  thenAgain: string,
+  rebind: () => Promise<CliResult<unknown>>,
+  guards: GuardValues = allOn,
+): Promise<CliResult<Date>> => {
+  const line = relayLineOf(parts);
+  if (!line.ok) return line;
+  const ready = await requireTypedPane(deps, pane, thenAgain, guards);
+  if (!ready.ok) return ready;
+  const single = await requireSingleInput(deps, pane);
+  if (!single.ok) return single;
+  const bound = await rebind();
+  if (!bound.ok) return bound;
+  const typedAt = deps.now();
+  const typed = await sendCheckedLine(deps, pane, line.value, `tmux ${SEND_KEYS} failed for pane ${pane}`);
+  return typed.ok ? ok(typedAt) : typed;
+};
+
+const requireTypedPane = async (deps: Deps, pane: string, thenAgain: string, guards: GuardValues): Promise<CliResult<void>> => {
+  if (!isPaneId(pane)) return failure('the target of the typed line is not a pane id');
+  const mode = await requireNoMode(deps, pane, thenAgain, guards);
+  return mode.ok ? requireNoChoiceList(deps, pane, thenAgain) : mode;
+};
+
+/** Keep the tmux detail for a fixed line. A relay fault must not repeat the submitted text. */
+const sendCheckedLine = async (deps: Deps, pane: string, line: TypedLine | RelayLine, fixedFault?: string): Promise<CliResult<void>> => {
   const typed = await tmuxStep(deps, typeArgs(pane, line));
   if (typed.ok) return ok(undefined);
   const cleaned = await tmuxCall(deps, clearArgs(pane));
-  if (cleaned.ok && cleaned.value.exitCode === 0) return typed;
-  return failure(`${typed.error.message}; the input line of pane ${pane} may still hold text`);
+  const fault = fixedFault === undefined ? typed : failure(fixedFault);
+  if (cleaned.ok && cleaned.value.exitCode === 0) return fault;
+  return failure(`${fault.error.message}; the input line of pane ${pane} may still hold text`);
 };

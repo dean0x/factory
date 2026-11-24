@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { allOn } from '../../src/guards/effective.js';
+import { workerFileTemplatesFor } from '../../src/templates/index.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 import { budgetRow, parseBudgetRows, tokensOf } from '../helpers/token-budget.js';
 
 const BUDGET_FILE = join(__dirname, '..', '..', 'docs', 'token-budget.md');
@@ -42,11 +45,17 @@ describe('parseBudgetRows', () => {
   });
 });
 
+it('documents the measured size of the sample software worker block', () => {
+  const [worker] = workerFileTemplatesFor(sampleConfig(), null, allOn);
+  const tokens = tokensOf(worker?.body ?? '');
+  expect(readFileSync(BUDGET_FILE, 'utf8')).toContain(
+    `The sample software worker block (version ${worker?.version}) uses ${tokens} tokens with all guards on and no setup text.`,
+  );
+});
+
 describe('the token budget of the built jobs', () => {
   /**
-   * The jobs that are built: the merge check and merge, the status round, the restart of all workers, the worker creation,
-   * the session reset, the CI watch, the worker watch, the resource check and the self reset. The table has no measure
-   * for typed owner input or for the move of an outside session.
+   * The jobs with a measured size, which include typed owner input. The table has no measure for the move of an outside session.
    */
   const BUILT_JOBS = [
     [1, 'factory check'],
@@ -54,6 +63,7 @@ describe('the token budget of the built jobs', () => {
     [3, 'factory reboot'],
     [4, 'factory worker new'],
     [7, 'factory worker reset'],
+    [12, 'factory worker relay'],
     [13, 'factory pr watch'],
     [14, 'factory worker watch'],
     [16, 'factory machine'],
@@ -61,7 +71,6 @@ describe('the token budget of the built jobs', () => {
   ] as const;
 
   it.each([
-    [12, 'factory worker relay', 'FAC-M5'],
     [15, 'factory worker adopt', 'FAC-M7'],
   ])('the job %i (%s) is built in %s and has no measured size yet', (job, command, milestone) => {
     const line = readFileSync(BUDGET_FILE, 'utf8')

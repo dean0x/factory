@@ -819,6 +819,7 @@ describe('the rows of the registry', () => {
         'answered-no-reclose',
         'settle-relay-rules',
         'linked-relay-scope',
+        'worker-relay-owner-go',
         'item-record-approval',
         'owner-row-under-lock',
         'decision-record-escape',
@@ -998,8 +999,39 @@ describe('the rows of the registry', () => {
     });
   });
 
+  it('lists the checks of an owner decision relay in an always-on row', () => {
+    expect(software.rows.find((row) => row.id === 'worker-relay-owner-go')).toMatchObject({
+      guard: guardIds.ownerGo, kind: guardKinds.code, harm: true, alwaysOn: true, applies: commandLines.workerRelay,
+      sites: [
+        ...['relayWorker', 'requireOwnerRecord', 'requireRelayPrefix', 'requireNotCommandKind', 'requireNoDenial']
+          .map((symbol) => ({ path: 'src/workers/relay.ts', symbol })),
+        { path: 'src/workers/denied.ts', symbol: 'readDeniedList' },
+        { path: 'src/comms/typing.ts', symbol: 'relayLineOf' },
+        { path: 'src/workers/panes.ts', symbol: 'requireNodeCaller' },
+        { path: 'src/workers/reset.ts', symbol: 'requireIdleSession' },
+      ],
+    });
+  });
+
+  it.each(['pane-binding', 'typed-line-form', 'typed-line', 'reset-dialog'])('lists relay in the scope of %s', (id) => {
+    expect(software.rows.find((row) => row.id === id)?.applies).toContain(commandLines.workerRelay);
+  });
+
+  it('keeps the single-pane input check in the always-on pane rule', () => {
+    const row = software.rows.find(({ id }) => id === 'pane-binding');
+    expect(row?.alwaysOn).toBe(true);
+    expect(row?.sites).toContainEqual({ path: 'src/comms/typing.ts', symbol: 'requireSingleInput' });
+  });
+
+  it('lists the relay line builder and the relay key call under the fixed line form rule', () => {
+    expect(software.rows.find((row) => row.id === 'typed-line-form')?.sites).toEqual(expect.arrayContaining([
+      { path: 'src/comms/typing.ts', symbol: 'relayLineOf' },
+      { path: 'src/comms/typing.ts', symbol: 'typeRelayLine' },
+    ]));
+  });
+
   it('pins the split between core rows and recipe rows', () => {
-    expect(guardRowsFor(publishRecipe)).toHaveLength(240);
+    expect(guardRowsFor(publishRecipe)).toHaveLength(241);
     expect(softwareRecipe.guardRows).toHaveLength(108);
   });
 
@@ -1016,7 +1048,7 @@ describe('the rows of the registry', () => {
   });
 
   it('pins the rows that are always on: rows of the data form, the safe write, the config parse, the home and a new folder, and their texts', () => {
-    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(180);
+    expect(software.rows.filter((row) => row.alwaysOn)).toHaveLength(181);
     const pinned = Object.fromEntries(
       software.guards
         .map((guard) => [guard.id, rowsOf(guard).filter((row) => row.alwaysOn).map((row) => row.id)] as const)
@@ -1066,7 +1098,7 @@ describe('the rows of the registry', () => {
       ],
       'owner-go': [
         'inbox-task-file-header', 'decide-prompt', 'decision-proof', 'decision-one-answer', 'answered-row-not-proof', 'answered-no-reclose',
-        'settle-relay-rules', 'linked-relay-scope', 'owner-row-under-lock', 'decision-record-escape', 'approval-store-place',
+        'settle-relay-rules', 'linked-relay-scope', 'worker-relay-owner-go', 'owner-row-under-lock', 'decision-record-escape', 'approval-store-place',
         'profile-owner-only-wait-text', 'profile-no-invented-decision-text', 'glossary-owner-approves-text', 'stage-not-approval-glossary-text',
         'prefix-relay-only-text', 'outside-text-no-authority-text', 'peer-text-data-text', 'inbox-file-text',
         'answered-row-not-proof-text', 'settle-relay-text',

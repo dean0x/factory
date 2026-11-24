@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
 import { localBoardOf } from '../../src/commands/board-open.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
-import { commands, decideProofReasons, files, program, relayedMarker, schemaIds } from '../../src/names.js';
+import { commands, decideProofReasons, files, program, relayedMarker, relayWords, schemaIds } from '../../src/names.js';
 import { installGuard } from '../../src/state/guard.js';
 import { boardNode, type BoardNodeOptions } from '../helpers/board-node.js';
 import { LOG_PATH } from '../helpers/board-repo.js';
@@ -16,7 +16,10 @@ type Row = Readonly<Record<string, unknown>>;
 const ID = 'D-1';
 const AT = '2030-01-02T03:04:05.678Z';
 const STORE = join('/state', program, files.ownerDecisions);
-const REQUEST = { id: ID, title: 'Pick a plan', question: 'Which plan?', options: [{ key: 'a', text: 'Plan A' }] };
+const OPTION_TEXT = 'Use "Plan A" from docs\\plan';
+const REQUEST = {
+  id: ID, title: 'Pick a plan', question: 'Which plan?', options: [{ key: 'a', text: OPTION_TEXT }], kind: 'decision',
+};
 const canonicalOf = (request: Row): string => {
   const text = canonicalRequestText(request);
   if (!text.ok) throw new Error(text.error);
@@ -50,7 +53,10 @@ const docOf = (out: string): unknown => out === '' ? null : JSON.parse(out);
 
 const expectNoProof = (result: Awaited<ReturnType<typeof run>>, kind: Exclude<keyof typeof decideProofReasons, 'record'>): void => {
   expect(result.code).toBe(1);
-  expect(docOf(result.out)).toMatchObject({ proof: kind, reason: expect.stringContaining('no owner proof'), option: null, id: ID, node: 'demo', root: HOME });
+  expect(docOf(result.out)).toMatchObject({
+    proof: kind, reason: expect.stringContaining('no owner proof'), option: null, option_text: null,
+    request_kind: null, id: ID, node: 'demo', root: HOME,
+  });
 };
 
 describe('decide read', () => {
@@ -62,8 +68,31 @@ describe('decide read', () => {
     expect(docOf(result.out)).toEqual({
       schema: schemaIds.decideRead, proof: 'record', id: ID, node: 'demo', root: HOME, option: 'a', at: AT,
       point: null, board_item: null, ref: null, head: null, decider: null, reason: decideProofReasons.record,
-      title: REQUEST.title, question: REQUEST.question, decision: null,
+      title: REQUEST.title, question: REQUEST.question, decision: null, option_text: OPTION_TEXT, request_kind: REQUEST.kind,
     });
+  });
+
+  it('prints the option text and request kind on separate text lines', async () => {
+    const repo = await nodeOf([REQUEST]);
+    storeOf(repo, RECORD);
+    const result = await run(repo, [ID]);
+    expect(result.code).toBe(0);
+    expect(result.out.split('\n')).toEqual(expect.arrayContaining([
+      `Option text: ${OPTION_TEXT}`,
+      'Decision kind: decision',
+    ]));
+  });
+
+  it('keeps the record verdict when the chosen key has no display context', async () => {
+    const repo = await nodeOf([REQUEST]);
+    storeOf(repo, { ...RECORD, option: 'b' });
+    const result = await run(repo);
+    expect(result.code).toBe(0);
+    expect(docOf(result.out)).toMatchObject({ proof: 'record', option: 'b', option_text: null, request_kind: null });
+  });
+
+  it('points to the decision read by id and option key', () => {
+    expect(relayWords.pointer(ID, RECORD.option)).toBe('Decision D-1: a. Read it: factory decide read D-1');
   });
 
   it('reads the store once in a non-owner session without a lock, write or prompt', async () => {

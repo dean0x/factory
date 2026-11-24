@@ -295,6 +295,11 @@ describe('the input commands in the source', () => {
     expect(inTyping.map((hit) => hit.word)).toEqual(['send-keys']);
   });
 
+  it('keeps the relay line type name in the typing module only', () => {
+    const hits = sources.filter(({ source }) => /\bRelayLine\b/.test(source));
+    expect(hits.map(({ file }) => file)).toEqual([TYPING]);
+  });
+
   it('allows only the respawn builder to name the command and gives it no force or environment flags', () => {
     const forms = new Set(formsOf('respawn-pane'));
     const hits = sources.flatMap(({ file, source }) =>

@@ -157,7 +157,8 @@ const ownerGoRows: readonly GuardRow[] = [
   fixedTextRow({
     id: 'prefix-relay-only-text',
     guard: guardIds.ownerGo,
-    name: `The ${coordinator} types the prefix only to relay a decision that the ${owner} made, and never invents consent`,
+    name: `The ${coordinator} uses ${commandLines.workerRelay} for a recorded ${owner} decision and types the prefix by hand only where the relay command can not serve. ` +
+      `The ${coordinator} relays only decisions that the ${owner} made and never invents consent`,
     applies: `Role text of the ${coordinator} and the safety block`,
     harm: true,
     sites: [...at(COORDINATOR_FILE, 'coordinatorLines'), ...at(SAFETY_FILE, 'safetyLines')],

@@ -155,17 +155,20 @@ interface Expected {
   readonly afterWords: string;
   /** When set, the line must belong to another session than this one: the pointer of the worker names a new session. */
   readonly newSessionOf?: string;
+  /** When set, the line must belong to this session. */
+  readonly sameSessionAs?: string;
 }
 
 /**
  * The hook event that confirms what the caller expects, or the reason it does not confirm. The last-seen line must belong to
- * the worker, hold one of the expected events, have a time after the given time, and for `newSessionOf` name another session.
+ * the worker, satisfy any session requirement, hold one of the expected events, and have a time after the given time.
  */
 const confirmEvent = async (deps: Deps, home: string, workerId: string, expected: Expected): Promise<Result<HookEvent, string>> => {
   const seen = await readOwnLastSeen(deps, home, workerId);
   if (!seen.ok) return err(`the last-seen line can not be read: ${seen.error.message}`);
   if (seen.value.state === 'unknown') return err(seen.value.reason);
   const { line } = seen.value;
+  if (expected.sameSessionAs !== undefined && line[keys.sessionId] !== expected.sameSessionAs) return err('another session');
   const event = line[keys.event];
   if (event === null || !expected.events.includes(event)) {
     return err(`the last event is ${event ?? 'none'}, not ${expected.events.join(' or ')}`);
@@ -221,20 +224,23 @@ export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): 
   return sawSessionStart ? ok({ lineConfirmed: false }) : notConfirmed(request, reason);
 };
 
-/** What the confirm of a reset needs to know. */
-export interface ResetConfirmRequest {
+/** What the confirm of a typed line needs to know. */
+interface TypedLineConfirmRequest {
   /** The node home, the root of the config repo: an absolute path. */
   readonly home: string;
   /** The pane that took the typed line. */
   readonly paneId: string;
   readonly workerId: string;
-  readonly kind: ResetKind;
   /** The time before the line was typed. A hook event counts only when it is after this time. */
   readonly typedAt: Date;
   /** The id of the session that the pointer of the worker named before the line was typed. */
   readonly sessionBefore: string;
   /** The command that a person runs again, without the program name. */
   readonly again: string;
+}
+
+export interface ResetConfirmRequest extends TypedLineConfirmRequest {
+  readonly kind: ResetKind;
 }
 
 /** The ending of the message for a pane that does not run the launch of the worker any more. */
@@ -292,4 +298,41 @@ export const confirmReset = async (deps: Deps, request: ResetConfirmRequest): Pr
     reason = seen.error;
   }
   return resetNotConfirmed(request, reason);
+};
+
+interface RelayConfirmRequest extends TypedLineConfirmRequest {
+  readonly id: string;
+}
+
+const RELAY_EVENTS: readonly HookEvent[] = ['UserPromptSubmit', 'PreToolUse', 'Stop'];
+const RELAY_ENDINGS: Readonly<Record<Exclude<PaneLife, 'running'>, string>> = {
+  ended: 'ended after the relay line was typed',
+  gone: 'is gone after the relay line was typed',
+  other: ENDINGS.other,
+};
+
+/** After the keys, check for a later event from the same session. The event does not prove which text started the turn. */
+export const confirmRelay = async (deps: Deps, request: RelayConfirmRequest): Promise<CliResult<void>> => {
+  const { home, paneId, workerId, id, typedAt, sessionBefore, again } = request;
+  const expected: Expected = { events: RELAY_EVENTS, after: typedAt, afterWords: 'the typed line', sameSessionAs: sessionBefore };
+  const look = `Run "${commandFor(commandLines.workerSummon, workerId)}" to look at the pane ${paneId}.`;
+  let reason = '';
+  for (let check = 1; check <= resetConfirm.attempts; check += 1) {
+    await deps.sleep(resetConfirm.intervalMs);
+    const life = await readPaneLife(deps, { home, paneId, workerId });
+    if (!life.ok) return failure(life.error.message, look);
+    if (life.value !== 'running') {
+      return failure(
+        `the pane ${paneId} of the ${roles.worker} ${workerId} ${RELAY_ENDINGS[life.value]}`,
+        `Run "${commandFor(commandLines.workerResume, workerId)}" to start the ${roles.worker} again.`,
+      );
+    }
+    const seen = await confirmEvent(deps, home, workerId, expected);
+    if (seen.ok) return ok(undefined);
+    reason = seen.error;
+  }
+  return notReady(
+    `decision ${id} typed, not confirmed: no later event from the same session within ${RESET_SECONDS} seconds (${reason})`,
+    `${look} Do this before you run "${commandText(again)}" again. A second run types the ${roles.owner} line again.`,
+  );
 };

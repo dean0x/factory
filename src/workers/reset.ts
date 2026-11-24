@@ -27,7 +27,7 @@ import {
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { confirmReset } from './confirm.js';
 import { fetchClone, planDismiss, unpushedReasons } from './dismiss.js';
-import { promptStateOf, readOwnLastSeen } from './last-seen.js';
+import { promptStateOf, readOwnLastSeen, type LastSeen } from './last-seen.js';
 import { requireBoundPane, requireCoordinatorCaller, type BoundPane } from './panes.js';
 import { requireRecord, type WorkerRecord } from './registry.js';
 import {
@@ -101,12 +101,15 @@ export const parseReset = (input: ResetWords): CliResult<{ readonly workerId: st
   return ok({ workerId, kind });
 };
 
-export interface ResetRequest {
+export interface WorkerTarget {
   /** The node home, the root of the config repo: an absolute path. */
   readonly home: string;
   readonly config: FactoryConfig;
-  /** The id of the worker: a slug, from `parseReset`. */
+  /** The id of the worker. */
   readonly workerId: string;
+}
+
+export interface ResetRequest extends WorkerTarget {
   readonly kind: ResetKind;
 }
 
@@ -125,8 +128,8 @@ export interface ResetOutcome {
 const runAgain = (again: string): string => `run "${commandText(again)}" again.`;
 
 /** The one live pane of the worker. No live pane (none, or only an ended one) is exit 3, and two live panes are exit 2. */
-const requireLivePane = async (deps: Deps, request: ResetRequest, again: string): Promise<CliResult<BoundPane>> => {
-  const { home, config, workerId } = request;
+export const requireLivePane = async (deps: Deps, target: WorkerTarget, again: string): Promise<CliResult<BoundPane>> => {
+  const { home, config, workerId } = target;
   const panes = await readWorkerPanes(deps, { home, session: config.core.node.id, workerId, again });
   if (!panes.ok) return panes;
   const single = requireOneLivePane(workerId, panes.value.live, again);
@@ -145,7 +148,7 @@ const requireLivePane = async (deps: Deps, request: ResetRequest, again: string)
  * A pane that a summon shows in the view window is refused: the person looks at it, and a typed line could meet a typed answer.
  * `checked` is false while pane safety is off, and then the pane passes.
  */
-const requireOutOfView = (pane: BoundPane, workerId: string, again: string, checked: boolean): CliResult<void> =>
+export const requireOutOfView = (pane: BoundPane, { workerId }: WorkerTarget, again: string, checked: boolean): CliResult<void> =>
   checked && pane.inView
     ? notReady(
         `the pane ${pane.paneId} of the ${roles.worker} ${workerId} is in the window ${tmuxNames.windowView}: a summon shows it there`,
@@ -154,9 +157,9 @@ const requireOutOfView = (pane: BoundPane, workerId: string, again: string, chec
     : ok(undefined);
 
 /** The checks of the process of the pane and of the settings of the work copy. The value is the start of the pane process. */
-const requireFreshSession = async (
+export const requireFreshSession = async (
   deps: Deps,
-  home: string,
+  { home }: WorkerTarget,
   record: WorkerRecord,
   pane: BoundPane,
   again: string,
@@ -212,15 +215,15 @@ const requireResumeNotes = async (deps: Deps, home: string, workerId: string, ag
   return notes.ok ? ok(notes.value.ageMs) : notes;
 };
 
-/** The pane read again right before the keys: it must be bound to the worker, still alive, out of the view window, and the same process. */
-const requireSamePane = async (
+/** Bind the pane again. It must be alive and have the same process. If `checked`, it must be out of the view window. */
+export const requireSamePane = async (
   deps: Deps,
-  request: ResetRequest,
+  target: WorkerTarget,
   pane: BoundPane,
   again: string,
   checked: boolean,
 ): Promise<CliResult<BoundPane>> => {
-  const { home, workerId } = request;
+  const { home, workerId } = target;
   const bound = await requireBoundPane(deps, { home, paneId: pane.paneId, workerId, again });
   if (!bound.ok) return bound;
   const now = bound.value;
@@ -230,7 +233,7 @@ const requireSamePane = async (
       `Run "${commandText(lineFor(commandLines.workerResume, workerId))}" to start the ${roles.worker} again. Then ${runAgain(again)}`,
     );
   }
-  const visible = requireOutOfView(now, workerId, again, checked);
+  const visible = requireOutOfView(now, target, again, checked);
   if (!visible.ok) return visible;
   if (now.pid !== pane.pid) {
     return notReady(
@@ -244,18 +247,18 @@ const requireSamePane = async (
 /**
  * The last-seen line of the worker, read after the bind. The line must belong to the worker and hold an event. The session must wait
  * at its prompt: a session that works or waits at a dialog is exit 1. The line must be later than the start of the pane process, so a
- * line of an earlier process of a pid that tmux used again never passes. The value is the id of the session of the line. `checked`
- * is false while pane safety is off: then the line must still belong to the worker and must not report a dialog.
+ * line of an earlier process of a pid that tmux used again never passes. Return the last-seen line. While pane safety is off,
+ * only the owner of the line and the absence of a dialog are required.
  */
-const requireIdleSession = async (
+export const requireIdleSession = async (
   deps: Deps,
-  request: ResetRequest,
+  target: WorkerTarget,
   paneId: string,
   start: number,
   again: string,
   checked: boolean,
-): Promise<CliResult<string>> => {
-  const { home, workerId } = request;
+): Promise<CliResult<LastSeen>> => {
+  const { home, workerId } = target;
   const seen = await readOwnLastSeen(deps, home, workerId);
   if (!seen.ok) return seen;
   const wait = `Wait until the session reports, or look at the pane ${paneId} in tmux. Then ${runAgain(again)}`;
@@ -264,7 +267,7 @@ const requireIdleSession = async (
   }
   const { line } = seen.value;
   const state = promptStateOf(line);
-  if (!checked && state !== 'waits') return ok(line[lastSeen.keys.sessionId]);
+  if (!checked && state !== 'waits') return ok(line);
   switch (state) {
     case null: {
       const reason = line[lastSeen.keys.event] === null ? 'holds no event' : 'has a session start with no known source';
@@ -282,7 +285,7 @@ const requireIdleSession = async (
       );
     case 'prompt': {
       const later = requireLineAfterStart(line[lastSeen.keys.eventAt] ?? '', start, again);
-      return later.ok ? ok(line[lastSeen.keys.sessionId]) : later;
+      return later.ok ? ok(line) : later;
     }
     default: {
       const unreachable: never = state;
@@ -312,9 +315,9 @@ const checkWorker = async (deps: Deps, request: ResetRequest, again: string, gua
   if (!name.ok) return failure(name.error);
   const live = await requireLivePane(deps, request, again);
   if (!live.ok) return live;
-  const placed = requireOutOfView(live.value, workerId, again, checked);
+  const placed = requireOutOfView(live.value, request, again, checked);
   if (!placed.ok) return placed;
-  const start = await requireFreshSession(deps, home, record.value, live.value, again);
+  const start = await requireFreshSession(deps, request, record.value, live.value, again);
   if (!start.ok) return start;
   const roleTextChecked = await requireRoleText(deps, { home, config, guards, retry: commandText(again) });
   if (!roleTextChecked.ok) return roleTextChecked;
@@ -324,9 +327,9 @@ const checkWorker = async (deps: Deps, request: ResetRequest, again: string, gua
   if (!resumeAgeMs.ok) return resumeAgeMs;
   const pane = await requireSamePane(deps, request, live.value, again, checked);
   if (!pane.ok) return pane;
-  const sessionId = await requireIdleSession(deps, request, pane.value.paneId, start.value, again, checked);
-  if (!sessionId.ok) return sessionId;
-  return ok({ pane: pane.value, sessionId: sessionId.value, resumeAgeMs: resumeAgeMs.value, name: name.value });
+  const session = await requireIdleSession(deps, request, pane.value.paneId, start.value, again, checked);
+  if (!session.ok) return session;
+  return ok({ pane: pane.value, sessionId: session.value[lastSeen.keys.sessionId], resumeAgeMs: resumeAgeMs.value, name: name.value });
 };
 
 /**

@@ -444,6 +444,50 @@ describe('request proof', () => {
   const rules = { points: [], parseRef: (text: string) => ok(text), parseHead: (text: string) => ok(text) };
   const record = { node: 'node', root: '/root', id: 'D-3', option: 'b', at: '2030-01-02T03:04:05.678Z' };
 
+  const boundRequest = entry({ kind: 'command' });
+  const boundText = canonicalOf(boundRequest);
+  const stored = ok({ record: { ...record, hash: requestHashOf(boundText) } });
+  const openDocs = ok({ waiting: waitingOf(boundRequest), log: logOf() });
+  const answeredDocsOf = (request: string) => ok({
+    waiting: waitingOf(), log: logOf({ item: 'D-3: Pick', by: 'owner', request }),
+  });
+
+  it.each([['open', openDocs], ['answered', answeredDocsOf(boundText)]] as const)(
+    'gives the chosen option text and stored kind of a %s request', (_state, docs) => {
+      expect(proofOf('D-3', docs, stored, rules)).toMatchObject({
+        kind: 'record', option: 'b', optionText: 'Use Postgres.', requestKind: 'command',
+      });
+    },
+  );
+
+  it.each([['open', openDocs], ['answered', answeredDocsOf(boundText)]] as const)(
+    'keeps proof but gives no display context if the %s request has no chosen key', (_state, docs) => {
+      const unmatched = ok({ record: { ...stored.value.record, option: 'c' } });
+      expect(proofOf('D-3', docs, unmatched, rules)).toMatchObject({
+        kind: 'record', option: 'c', optionText: null, requestKind: null,
+      });
+    },
+  );
+
+  it.each([
+    ['option text', { options: [{ key: 'a', text: 'Use SQLite.', rec: true }, { key: 'b' }] }],
+    ['request kind', { kind: 'unknown' }],
+  ] as const)('keeps proof but gives no display context if the answered %s is invalid', (_field, change) => {
+    const request = canonicalOf({ ...boundRequest, ...change });
+    const matching = ok({ record: { ...record, hash: requestHashOf(request) } });
+    expect(proofOf('D-3', answeredDocsOf(request), matching, rules)).toMatchObject({
+      kind: 'record', option: 'b', optionText: null, requestKind: null,
+    });
+  });
+
+  it('does not infer a kind for an older request with no kind', () => {
+    const request = canonicalOf(entry());
+    const matching = ok({ record: { ...record, hash: requestHashOf(request) } });
+    expect(proofOf('D-3', answeredDocsOf(request), matching, rules)).toMatchObject({
+      kind: 'record', optionText: 'Use Postgres.', requestKind: null,
+    });
+  });
+
   it('rejects a malformed hash wrapper even when its hash matches the store', () => {
     const request = '{}';
     const stored = ok({ record: { ...record, hash: requestHashOf(request) } });

@@ -122,6 +122,12 @@ export const paneModeArgs = (pane: string): Result<TmuxArgs, string> => {
   return target.ok ? ok(call('display-message', '-p', '-t', target.value, '#{pane_in_mode}')) : target;
 };
 
+/** Read the effective input synchronization flag of this pane, including an inherited window setting. */
+export const paneSyncArgs = (pane: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  return target.ok ? ok(call('display-message', '-p', '-t', target.value, '#{pane_synchronized}')) : target;
+};
+
 /** What the answer of the mode read says: no mode, a mode, an answer that tmux never gives, or no answer at all (no such pane). */
 export type PaneMode = 'none' | 'active' | 'unknown' | 'absent';
 

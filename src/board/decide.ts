@@ -307,7 +307,13 @@ interface ProofContext {
 }
 
 export type RequestProof = ProofContext & (
-  | { readonly kind: typeof decideProof.record; readonly option: string; readonly at: string }
+  | {
+      readonly kind: typeof decideProof.record;
+      readonly option: string;
+      readonly at: string;
+      readonly optionText: string | null;
+      readonly requestKind: RequestKind | null;
+    }
   | { readonly kind: typeof decideProof.relayed; readonly option: null; readonly settled: boolean }
   | { readonly kind: Exclude<(typeof decideProofKinds)[number], typeof decideProof.record | typeof decideProof.relayed>; readonly option: null }
 );
@@ -368,7 +374,13 @@ export const proofOf = (
   const record = stored.value.record;
   if (record === null) return { ...context, kind: state.kind === 'open' ? decideProof.open : decideProof.none, option: null };
   if (requestText === null || record.hash !== requestHashOf(requestText)) return { ...context, kind: decideProof.mismatch, option: null };
-  return { ...context, kind: decideProof.record, option: record.option, at: record.at };
+  const options = answered === undefined ? ok(open.value?.options ?? []) : optionsOf(id, answered[decisionKeys.options]);
+  const kind = answered === undefined ? ok(open.value?.kind ?? null) : kindOf(id, answered);
+  const optionText = options.ok && kind.ok ? options.value.find((option) => option.key === record.option)?.text ?? null : null;
+  return {
+    ...context, kind: decideProof.record, option: record.option, at: record.at,
+    optionText, requestKind: optionText !== null && kind.ok ? kind.value : null,
+  };
 };
 
 interface LinkedApproval {

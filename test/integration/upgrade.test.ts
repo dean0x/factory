@@ -446,7 +446,7 @@ describe('factory upgrade (built binary)', () => {
   });
 
   it.each([
-    [1, 'coordinator', 9, 10],
+    [1, 'coordinator', 10, 11],
     [2, 'manager', 3, 4],
   ])(
     'on layer %i it writes the block %s of version %i again as version %i, and leaves the worker and safety labels as they are',
@@ -474,7 +474,7 @@ describe('factory upgrade (built binary)', () => {
       expect(upgraded.stdout).toContain(`block ${name}: version ${older} to ${current}`);
       expect(await box.read(claudePath)).toContain(`<!-- factory:begin ${name} v${current} sha256=`);
       const state = JSON.parse(await box.read(nodePath)) as { blocks: Record<string, number> };
-      expect(state.blocks).toMatchObject({ [name]: current, safety: 2, worker: 5 });
+      expect(state.blocks).toMatchObject({ [name]: current, safety: 2, worker: 7 });
       expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
     },
   );
@@ -861,7 +861,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(names).toContain('orders');
     expect(await readdir(join(state, 'roles'))).toEqual(['worker.md']);
     const node = JSON.parse(await box.read(join(state, 'node.json'))) as Record<string, unknown>;
-    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 10, safety: 2, worker: 5 } });
+    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 11, safety: 2, worker: 7 } });
 
     const changes = await box.git(state, ['diff', '--name-status', '-M', 'HEAD~1', 'HEAD']);
     expect(changes.stdout).toContain('protocol.md');
@@ -949,7 +949,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     // A node from before the setup folder has no setup text, so only the worker block is the same.
     const workerBlockOf = (text: string): string => text.slice(0, text.indexOf('<!-- factory:end worker -->'));
     const upgradedWorker = workerBlockOf(await box.read(join(state, 'roles', 'worker.md')));
-    expect(upgradedWorker).toContain('<!-- factory:begin worker v5 sha256=');
+    expect(upgradedWorker).toContain('<!-- factory:begin worker v7 sha256=');
     expect(upgradedWorker).toContain('`factory lock run -- <command>`');
     expect(upgradedWorker).not.toContain('wait in a loop');
     expect(upgradedWorker).toBe(workerBlockOf(await box.read(join(fresh, 'roles', 'worker.md'))));

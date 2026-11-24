@@ -121,6 +121,7 @@ export const workerCommands = {
   resume: 'resume',
   summon: 'summon',
   reset: 'reset',
+  relay: 'relay',
   watch: 'watch',
   mark: 'mark',
 } as const;
@@ -175,6 +176,7 @@ export const commandLines = {
   workerResume: `${commands.worker} ${workerCommands.resume}`,
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
   workerReset: `${commands.worker} ${workerCommands.reset}`,
+  workerRelay: `${commands.worker} ${workerCommands.relay}`,
   workerWatch: `${commands.worker} ${workerCommands.watch}`,
   workerMark: `${commands.worker} ${workerCommands.mark}`,
   itemAdd: `${commands.item} ${itemCommands.add}`,
@@ -304,6 +306,8 @@ export const files = {
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',
+  /** The list of phrases that a worker relay must not match. The owner edits this file in the state folder. */
+  denied: 'denied.json',
   gitignore: '.gitignore',
   ordersKeep: '.gitkeep',
   profileReadme: 'README-format.md',
@@ -839,8 +843,30 @@ export const decideProofKinds = Object.freeze(Object.values(decideProof));
 export const decideReadLabels = {
   id: 'Id', node: 'Node', folder: 'Factory folder', option: 'Option', at: 'At', point: 'Point', item: 'Board item',
   ref: 'Reference', head: 'Head', decider: 'Decider', title: 'Title', question: 'Question', decision: 'Decision',
-  relayedText: 'Relayed text (not proof)',
+  relayedText: 'Relayed text (not proof)', optionText: 'Option text', requestKind: 'Decision kind',
 } as const;
+
+export const relayWords = {
+  pointer: (id: string, option: string): string =>
+    `Decision ${id}: ${option}. Read it: ${commandText(`${commands.decide} ${decideWords.read}`)} ${id}`,
+  recordFirst: () => `Use a decision that the ${roles.owner} records with "${commandText(commands.decide)}".`,
+  checkRecord: () => `Run "${commandText(commands.doctor)}" to check the decision record.`,
+  useDecisionId: () => `Use an id of the form D-1 with "${commandText(commandLines.workerRelay)}".`,
+  missingContext: `the decision record lacks the option text or ${requestWords.kind}`,
+  linked: 'the decision is linked to an approval point',
+  approvalFlow: 'An approval point needs its own approval flow. Use the flow for that point.',
+  missingPrefix: `the ${roles.owner} prefix has no confirmation record`,
+  differentPrefix: `the ${roles.owner} prefix differs from its record`,
+  confirmPrefix: () => `Run "${commandText(commandLines.guardConfirm)}" to confirm the ${roles.owner} prefix.`,
+  commandKind: `the decision is a command ${requestWords.request}`,
+  ownerCommand: (id: string): string =>
+    `Review the decision with "${commandText(`${commands.decide} ${decideWords.read}`)} ${id}". Run any approved command in your own terminal.`,
+  denied: (entry: number): string => `the decision matches denied entry ${entry}`,
+  checkDenied: `Check ${dirs.state}/${files.denied} before you relay the decision.`,
+} as const;
+
+/** Bounds of the denied list that worker relay reads. */
+export const deniedList = { maxEntries: 200, maxChars: 300, maxBytes: 65536 } as const;
 
 /** Fixed verdict reasons. Request text cannot supply a verdict or claim owner proof. */
 export const decideProofReasons: Readonly<Record<(typeof decideProofKinds)[number], string>> = {
@@ -2439,6 +2465,7 @@ export const schemaIds = {
   workerResume: `${program}.worker-resume/v1`,
   workerSummon: `${program}.worker-summon/v1`,
   workerReset: `${program}.worker-reset/v1`,
+  workerRelay: `${program}.worker-relay/v1`,
   workerWatch: `${program}.worker-watch/v1`,
   workerMark: `${program}.worker-mark/v1`,
   selfReset: `${program}.self-reset/v1`,
