@@ -448,6 +448,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
       `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerReset)} ID ${flagText(flags.clear)}|${flagText(flags.compact)} [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerRelay)} ID ${flagText(flags.decision)} D-n [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.ready)} ID]... [${flagText(flags.since)} TIME] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerMark)} ID ${[...Object.values(workerHold.words), workerHold.none].join('|')} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),

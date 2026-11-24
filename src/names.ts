@@ -121,6 +121,7 @@ export const workerCommands = {
   resume: 'resume',
   summon: 'summon',
   reset: 'reset',
+  relay: 'relay',
   watch: 'watch',
   mark: 'mark',
 } as const;
@@ -175,6 +176,7 @@ export const commandLines = {
   workerResume: `${commands.worker} ${workerCommands.resume}`,
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
   workerReset: `${commands.worker} ${workerCommands.reset}`,
+  workerRelay: `${commands.worker} ${workerCommands.relay}`,
   workerWatch: `${commands.worker} ${workerCommands.watch}`,
   workerMark: `${commands.worker} ${workerCommands.mark}`,
   itemAdd: `${commands.item} ${itemCommands.add}`,
@@ -847,6 +849,18 @@ export const decideReadLabels = {
 export const relayWords = {
   pointer: (id: string, option: string): string =>
     `Decision ${id}: ${option}. Read it: ${commandText(`${commands.decide} ${decideWords.read}`)} ${id}`,
+  recordFirst: () => `Use a decision that the ${roles.owner} records with "${commandText(commands.decide)}".`,
+  checkRecord: () => `Run "${commandText(commands.doctor)}" to check the decision record.`,
+  missingContext: 'the decision record lacks the option text or request kind',
+  linked: 'the decision is linked to an approval point',
+  approvalFlow: 'An approval point needs its own approval flow. Use the flow for that point.',
+  missingPrefix: `the ${roles.owner} prefix has no confirmation record`,
+  differentPrefix: `the ${roles.owner} prefix differs from its record`,
+  confirmPrefix: () => `Run "${commandText(commandLines.guardConfirm)}" to confirm the ${roles.owner} prefix.`,
+  commandKind: 'the decision is a command request',
+  ownerCommand: `Run the command yourself in your own terminal only if you approve it.`,
+  denied: (entry: number): string => `the decision matches denied entry ${entry}`,
+  checkDenied: `Check ${dirs.state}/${files.denied} before you relay the decision.`,
 } as const;
 
 /** Bounds of the denied list that worker relay reads. */
@@ -2449,6 +2463,7 @@ export const schemaIds = {
   workerResume: `${program}.worker-resume/v1`,
   workerSummon: `${program}.worker-summon/v1`,
   workerReset: `${program}.worker-reset/v1`,
+  workerRelay: `${program}.worker-relay/v1`,
   workerWatch: `${program}.worker-watch/v1`,
   workerMark: `${program}.worker-mark/v1`,
   selfReset: `${program}.self-reset/v1`,
