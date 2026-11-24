@@ -63,6 +63,8 @@ export const expectLaunchRule = (argv: readonly string[], proxy: string): void =
  * `trust-question-<marker>` in the folder prints a folder trust question and never runs the hook, as a session that waits on the
  * answer of the owner. An exact continue argument on a resume makes the fake send the prompt and stop hooks in order.
  * The file `refresh-events` records each of those calls. The file `proxy-<marker>` comes before any other launch file.
+ * A file `relay-input-<marker>` gives the session id for a launch that reads terminal input. Each line goes to `typed-<marker>`
+ * and starts a turn. The terminal erases the draft on Control-U.
  */
 const fakeClaude = (dir: string): string =>
   [
@@ -86,15 +88,29 @@ const fakeClaude = (dir: string): string =>
     '  if [ "$arg" = "$continue_text" ]; then continue=yes; fi',
     '  prev="$arg"',
     'done',
+    'session=$resume',
     'hook() {',
     '  if [ "$1" = SessionStart ]; then',
-    '    printf \'{"session_id":"%s","hook_event_name":"SessionStart","source":"resume"}\' "$resume" | "$node" "$factory" hook SessionStart',
+    '    printf \'{"session_id":"%s","hook_event_name":"SessionStart","source":"%s"}\' "$session" "$2" | "$node" "$factory" hook SessionStart',
     '  else',
-    '    printf \'{"session_id":"%s","hook_event_name":"%s"}\' "$resume" "$1" | "$node" "$factory" hook "$1"',
+    '    printf \'{"session_id":"%s","hook_event_name":"%s"}\' "$session" "$1" | "$node" "$factory" hook "$1"',
     '  fi',
     '}',
+    'relay_input="$dir/relay-input-$FACTORY_SESSION"',
+    'if [ -f "$relay_input" ]; then',
+    '  IFS= read -r session < "$relay_input" || exit 1',
+    "  stty icanon icrnl kill '^U' || exit 1",
+    '  hook SessionStart startup || exit 1',
+    '  echo launched >> "$dir/launches-$FACTORY_SESSION"',
+    '  for turn in 1 2 3; do',
+    '    IFS= read -r line || exit 0',
+    '    printf \'%s\\n\' "$line" >> "$dir/typed-$FACTORY_SESSION"',
+    '    hook UserPromptSubmit || exit 1',
+    '  done',
+    '  exec sleep 300',
+    'fi',
     'if [ -n "$resume" ]; then',
-    '  hook SessionStart',
+    '  hook SessionStart resume',
     '  if [ "$continue" = yes ]; then',
     '    for event in UserPromptSubmit Stop; do',
     '      hook "$event" || exit 1',
