@@ -224,20 +224,23 @@ export const confirmLaunch = async (deps: Deps, request: LaunchConfirmRequest): 
   return sawSessionStart ? ok({ lineConfirmed: false }) : notConfirmed(request, reason);
 };
 
-/** What the confirm of a reset needs to know. */
-export interface ResetConfirmRequest {
+/** What the confirm of a typed line needs to know. */
+interface TypedLineConfirmRequest {
   /** The node home, the root of the config repo: an absolute path. */
   readonly home: string;
   /** The pane that took the typed line. */
   readonly paneId: string;
   readonly workerId: string;
-  readonly kind: ResetKind;
   /** The time before the line was typed. A hook event counts only when it is after this time. */
   readonly typedAt: Date;
   /** The id of the session that the pointer of the worker named before the line was typed. */
   readonly sessionBefore: string;
   /** The command that a person runs again, without the program name. */
   readonly again: string;
+}
+
+export interface ResetConfirmRequest extends TypedLineConfirmRequest {
+  readonly kind: ResetKind;
 }
 
 /** The ending of the message for a pane that does not run the launch of the worker any more. */
@@ -297,7 +300,7 @@ export const confirmReset = async (deps: Deps, request: ResetConfirmRequest): Pr
   return resetNotConfirmed(request, reason);
 };
 
-interface RelayConfirmRequest extends Omit<ResetConfirmRequest, 'kind'> {
+interface RelayConfirmRequest extends TypedLineConfirmRequest {
   readonly id: string;
 }
 
@@ -330,6 +333,6 @@ export const confirmRelay = async (deps: Deps, request: RelayConfirmRequest): Pr
   }
   return notReady(
     `decision ${id} typed, not confirmed: no later turn from the same session within ${RESET_SECONDS} seconds (${reason})`,
-    `${look} Do this before you run "${commandText(again)}" again. A second run types the owner line again.`,
+    `${look} Do this before you run "${commandText(again)}" again. A second run types the ${roles.owner} line again.`,
   );
 };

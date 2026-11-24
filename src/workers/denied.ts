@@ -4,13 +4,13 @@ import { safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
-import { deniedList, dirs, files } from '../names.js';
+import { commandLines, commandText, deniedList, dirs, files } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
 
 const deniedEntry = z.string().min(1).max(deniedList.maxChars).refine((entry) => !/[^ -~]/.test(entry));
 const deniedSchema = z.strictObject({ schema: z.literal(1), denied: z.array(deniedEntry).max(deniedList.maxEntries) });
-const remedy = `Check ${dirs.state}/${files.denied}. Use a plain file with the required format.`;
+const remedy = `Check ${dirs.state}/${files.denied}. Use a plain file with the required format. Then retry with "${commandText(commandLines.workerRelay)}".`;
 
 /** Read the optional list. Only an absent file means no entries without a valid list. */
 export const readDeniedList = async (deps: Deps, home: string): Promise<CliResult<readonly string[]>> => {

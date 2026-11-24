@@ -6,7 +6,7 @@ import { allOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
 import { capturePaneArgs, chainedArgs, isPaneId, paneModeArgs, paneSyncArgs, parsePaneMode, type TmuxArgs } from '../launch/tmux.js';
 import { tmuxCall, tmuxStep } from '../launch/tmux-run.js';
-import { boardIds, boardLimits, commands, commandText, guardIds, keys, relayWords, typing } from '../names.js';
+import { boardIds, boardLimits, commandLines, commands, commandText, guardIds, keys, relayWords, typing } from '../names.js';
 import { fillOwnerPrefix, hasOwnerPrefix } from '../safety/owner-prefix.js';
 
 /**
@@ -34,7 +34,7 @@ interface RelayParts {
 
 const recordTime = z.iso.datetime({ offset: true });
 const checkRecord = `Run "${commandText(commands.doctor)}" to check the decision record.`;
-const checkPrefix = `Check ${keys.root.owner}.${keys.owner.display} and ${keys.root.owner}.${keys.owner.prefix} in the local config.`;
+const checkPrefix = `Check ${keys.root.owner}.${keys.owner.display} and ${keys.root.owner}.${keys.owner.prefix} in the local config. Run "${commandText(commands.doctor)}" to check the config.`;
 
 const utcDateOf = (at: string): string | null => {
   if (!recordTime.safeParse(at).success) return null;
@@ -60,7 +60,7 @@ const lineProblem = (line: string): string | null => {
 
 /** Build the relay line before any read of the pane. Only the stored option key goes in the pointer. */
 export const relayLineOf = ({ template, display, node, at, id, option }: RelayParts): CliResult<RelayLine> => {
-  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', 'Use an id of the form D-1.');
+  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', relayWords.useDecisionId());
   if (!boardLimits.tokenPattern.test(option)) return safetyRefusal('the recorded option key is invalid', checkRecord);
   const date = utcDateOf(at);
   if (date === null) return safetyRefusal('the recorded decision time is invalid', checkRecord);
@@ -210,7 +210,10 @@ const requireSingleInput = async (deps: Deps, pane: string): Promise<CliResult<v
   const read = await tmuxCall(deps, args.value);
   return read.ok && read.value.exitCode === 0 && read.value.stdout.trim() === '0'
     ? ok(undefined)
-    : safetyRefusal(`cannot confirm single-pane input for pane ${pane}`, `Check that synchronize-panes is off for pane ${pane}. Then try again.`);
+    : safetyRefusal(
+        `cannot confirm single-pane input for pane ${pane}`,
+        `Check that synchronize-panes is off for pane ${pane}. Then retry with "${commandText(commandLines.workerRelay)}".`,
+      );
 };
 
 /** Check the line and screen, bind the target once more, then submit. Date the submit, not its checks. */

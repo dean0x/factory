@@ -843,7 +843,7 @@ export const decideProofKinds = Object.freeze(Object.values(decideProof));
 export const decideReadLabels = {
   id: 'Id', node: 'Node', folder: 'Factory folder', option: 'Option', at: 'At', point: 'Point', item: 'Board item',
   ref: 'Reference', head: 'Head', decider: 'Decider', title: 'Title', question: 'Question', decision: 'Decision',
-  relayedText: 'Relayed text (not proof)', optionText: 'Option text', requestKind: 'Request kind',
+  relayedText: 'Relayed text (not proof)', optionText: 'Option text', requestKind: 'Decision kind',
 } as const;
 
 export const relayWords = {
@@ -851,14 +851,16 @@ export const relayWords = {
     `Decision ${id}: ${option}. Read it: ${commandText(`${commands.decide} ${decideWords.read}`)} ${id}`,
   recordFirst: () => `Use a decision that the ${roles.owner} records with "${commandText(commands.decide)}".`,
   checkRecord: () => `Run "${commandText(commands.doctor)}" to check the decision record.`,
-  missingContext: 'the decision record lacks the option text or request kind',
+  useDecisionId: () => `Use an id of the form D-1 with "${commandText(commandLines.workerRelay)}".`,
+  missingContext: `the decision record lacks the option text or ${requestWords.kind}`,
   linked: 'the decision is linked to an approval point',
   approvalFlow: 'An approval point needs its own approval flow. Use the flow for that point.',
   missingPrefix: `the ${roles.owner} prefix has no confirmation record`,
   differentPrefix: `the ${roles.owner} prefix differs from its record`,
   confirmPrefix: () => `Run "${commandText(commandLines.guardConfirm)}" to confirm the ${roles.owner} prefix.`,
-  commandKind: 'the decision is a command request',
-  ownerCommand: `Run the command yourself in your own terminal only if you approve it.`,
+  commandKind: `the decision is a command ${requestWords.request}`,
+  ownerCommand: (id: string): string =>
+    `Review the decision with "${commandText(`${commands.decide} ${decideWords.read}`)} ${id}". Run any approved command in your own terminal.`,
   denied: (entry: number): string => `the decision matches denied entry ${entry}`,
   checkDenied: `Check ${dirs.state}/${files.denied} before you relay the decision.`,
 } as const;

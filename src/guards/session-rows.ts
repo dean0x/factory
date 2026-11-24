@@ -357,7 +357,7 @@ const ownerGoRows: readonly GuardRow[] = [
     guard: guardIds.ownerGo,
     name: `A relay needs the ${coordinator} pane inside a session or an ${owner} terminal outside a session. ` +
       `It needs a recorded ${owner} decision with no approval link, a confirmed ${owner} prefix and an idle session at its prompt. ` +
-      'It refuses command requests, denied entries and lines with an invalid form.',
+      `It refuses command ${requestWords.requests}, denied entries and lines with an invalid form.`,
     applies: commandLines.workerRelay,
     harm: true,
     sites: [
@@ -485,7 +485,7 @@ const paneSafetyRows: readonly GuardRow[] = [
   alwaysOnRow({
     id: 'typed-line-form',
     guard: guardIds.paneSafety,
-    name: 'Only fixed lines, or the relay line of a recorded owner decision, of printable text go into a pane',
+    name: `Only fixed lines, or the relay line of a recorded ${owner} decision, of printable text go into a pane`,
     applies: `${commandLines.workerReset}, ${commandLines.selfReset} and ${commandLines.workerRelay}`,
     harm: true,
     sites: at('src/comms/typing.ts', 'typeLine', 'lineProblem', 'typeRelayLine', 'relayLineOf'),

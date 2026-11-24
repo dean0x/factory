@@ -11,7 +11,7 @@ const FILE = `${STATE}/denied.json`;
 const VALID = { schema: 1, denied: ['first decoy', 'second decoy', 'Denied   Phrase', 'phrase'] };
 const TEXT = JSON.stringify(VALID);
 const FULL = TEXT.padEnd(65536, ' ');
-const REMEDY = 'Check .factory/denied.json. Use a plain file with the required format.';
+const REMEDY = 'Check .factory/denied.json. Use a plain file with the required format. Then retry with "factory worker relay".';
 
 const setup = (options?: FakeOptions): FakeDeps => {
   const deps = createFakeDeps(options);

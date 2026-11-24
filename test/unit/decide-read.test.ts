@@ -79,7 +79,7 @@ describe('decide read', () => {
     expect(result.code).toBe(0);
     expect(result.out.split('\n')).toEqual(expect.arrayContaining([
       `Option text: ${OPTION_TEXT}`,
-      'Request kind: decision',
+      'Decision kind: decision',
     ]));
   });
 

@@ -1,6 +1,4 @@
 import { sha256Hex } from '../blocks/managed.js';
-import type { LocalBoard, RequestKind } from '../board/contract.js';
-import type { RequestProof } from '../board/decide.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput } from '../cli/output.js';
 import { prefixStoreFault } from '../commands/launch-checks.js';
@@ -49,11 +47,23 @@ export interface RelayOutcome {
   readonly modeCheckSkipped: boolean;
 }
 
-type ReadDecision = LocalBoard['decisionRead'];
-type OwnerRecord = Extract<RequestProof, { kind: typeof decideProof.record }> & {
-  readonly optionText: string;
-  readonly requestKind: RequestKind;
-};
+type RequestKind = (typeof requestKinds)[keyof typeof requestKinds];
+
+interface RecordedProof {
+  readonly kind: typeof decideProof.record;
+  readonly at: string;
+  readonly option: string;
+  readonly optionText: string | null;
+  readonly requestKind: RequestKind | null;
+  readonly link: object | null;
+  readonly title: string | null;
+  readonly question: string | null;
+}
+
+/** The local decision reader supplies the proof. The relay needs only its kind and the record fields it checks. */
+type RelayProof = RecordedProof | { readonly kind: Exclude<keyof typeof decideProof, typeof decideProof.record> };
+type ReadDecision = (id: string) => Promise<CliResult<{ readonly proof: RelayProof }>>;
+type OwnerRecord = RecordedProof & { readonly optionText: string; readonly requestKind: RequestKind };
 
 const requireOwnerRecord = async (readDecision: ReadDecision, id: string): Promise<CliResult<OwnerRecord>> => {
   const read = await readDecision(id);
@@ -91,8 +101,8 @@ const requireRelayPrefix = async (deps: Deps, { home, config }: WorkerTarget): P
   return ok(prefix);
 };
 
-const requireNotCommandKind = (kind: OwnerRecord['requestKind']): CliResult<void> =>
-  kind === requestKinds.command ? safetyRefusal(relayWords.commandKind, relayWords.ownerCommand) : ok(undefined);
+const requireNotCommandKind = (kind: OwnerRecord['requestKind'], id: string): CliResult<void> =>
+  kind === requestKinds.command ? safetyRefusal(relayWords.commandKind, relayWords.ownerCommand(id)) : ok(undefined);
 
 const requireNoDenial = async (deps: Deps, home: string, record: OwnerRecord): Promise<CliResult<void>> => {
   const list = await readDeniedList(deps, home);
@@ -114,7 +124,7 @@ const checkRelayPane = async (deps: Deps, target: WorkerTarget, record: WorkerRe
 
 export const checkRelayIds = (workerId: string, id: string): CliResult<void> => {
   if (!isSlug(workerId)) return usageError(`the ${roles.worker} id is not a slug`, `Use an id from "${commandText(commandLines.workerList)}".`);
-  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', 'Use an id of the form D-1.');
+  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', relayWords.useDecisionId());
   return ok(undefined);
 };
 
@@ -133,7 +143,7 @@ export const relayWorker = async (deps: Deps, request: RelayRequest, readDecisio
   if (!record.ok) return record;
   const prefix = await requireRelayPrefix(deps, request);
   if (!prefix.ok) return prefix;
-  const kind = requireNotCommandKind(record.value.requestKind);
+  const kind = requireNotCommandKind(record.value.requestKind, id);
   if (!kind.ok) return kind;
   const denied = await requireNoDenial(deps, home, record.value);
   if (!denied.ok) return denied;

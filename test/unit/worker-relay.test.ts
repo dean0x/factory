@@ -280,7 +280,7 @@ describe.each(FOLDER_ORIGINS)('worker relay in %s', (_title, origin) => {
     refusal('no state place before the prefix check', 4, 'name no folder', 'Set XDG_STATE_HOME or HOME', {
       change: ({ deps }) => ({ ...deps, env: { ...deps.env, [env.stateHome]: undefined, [env.userHome]: undefined } }),
     }),
-    refusal('a command request', 4, 'is a command request', 'Run the command yourself', {
+    refusal('a command request', 4, 'is a command request', 'factory decide read D-1', {
       change: ({ deps }) => seedAnswer(deps, { ...REQUEST, kind: 'command' }),
     }),
     ...(['title', 'question', 'optionText'] as const).map((key) => refusal(`a denied match in ${key}`, 4, 'matches denied entry 3', '.factory/denied.json', {
@@ -440,7 +440,7 @@ it.each([false, true])('refuses a command request even when a denied match is %s
   const world = await validRelay();
   world.proof({ ...RECORD, requestKind: 'command' });
   if (denied) world.deps.seed(DENIED, JSON.stringify({ schema: 1, denied: [question] }));
-  await refuses(world, 4, 'is a command request', 'Run the command yourself');
+  await refuses(world, 4, 'is a command request', 'factory decide read D-1');
 });
 
 it('passes through a denied list fault', async () => {

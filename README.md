@@ -724,10 +724,10 @@ Inside a factory session, run the command in the coordinator pane. Outside a fac
 The command does these checks in order:
 
 1. Check the arguments and the exact decision id, then the caller. Read the guard values and find the worker record.
-2. Check the local request for a match in the owner store. Only `factory decide` writes the owner record. Require the chosen option text and request kind. Refuse a link to an approval point, such as a merge or release.
+2. Check the local request for a match in the owner store. Only `factory decide` records the owner's answer. Require the chosen option text and request kind. Refuse a link to an approval point, such as a merge or release.
 3. Check that the configured owner prefix matches its confirmation record. This check still applies with `safety-block` off. If the prefix has no confirmation or has changed, run `factory guard confirm` in your own terminal window.
 4. Refuse a request of kind `command`. Then check the request title, question and chosen option text against `.factory/denied.json`.
-5. Fill `{owner}`, `{node}` and `{date}` in one pass. Use the UTC date of the owner record in `YYYY-MM-DD` form. The filled prefix must match its template. The line must use at most 300 printable ASCII characters and not end in `;`. It must not start with `!`, `/` or `@`, or contain `@` anywhere.
+5. Fill `{owner}`, `{node}` and `{date}` in one pass. Use the UTC date when the owner recorded the decision, in `YYYY-MM-DD` form. The filled prefix must match its template. The line must use at most 300 printable ASCII characters and not end in `;`. It must not start with `!`, `/` or `@`, or contain `@` anywhere.
 6. Find the live pane of that worker. Check that the pane is out of `view`. Check the pane start time and hook settings. Check that the session is idle at its prompt.
 7. Check the line again. Check the pane mode. Check the screen for a numbered list of choices. Only the mode check follows `pane-safety`. Require `synchronize-panes` to be off for the target pane. Just before the keys, check that the same pane and process are still out of `view`.
 
