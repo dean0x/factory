@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardConnector, DecisionAskInput, FieldValues, ItemPlace } from '../../src/board/contract.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { commandLines, commandText, flagText, flags } from '../../src/names.js';
+import { commandLines, commands, commandText, flagText, flags } from '../../src/names.js';
 
 /**
  * The board contract covers item add, update, move, rank, note, close and list. It also covers track add and list, decision ask,
@@ -203,7 +203,7 @@ export const describeBoardContract = (name: string, setup: () => Promise<Contrac
         ]);
       });
 
-      const LIST_REMEDY = commandText(commandLines.itemList);
+      const LIST_REMEDY = `${commandText(commands.board)} ${flagText(flags.json)}`;
       const openRemedy = (id: string): string => `${commandText(commandLines.itemMove)} ${id} ${flagText(flags.state)}`;
 
       /** Each row breaks one property of a valid rank: the fourth item after the first item. */

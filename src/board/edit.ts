@@ -14,6 +14,7 @@ import {
   boardLimits,
   boardTextLimits,
   commandLines,
+  commands,
   commandText,
   decisionKeys,
   decisionLogKeys,
@@ -615,8 +616,11 @@ export const moveItemIn = (doc: BoardDoc, id: string, move: CheckedMove, at: str
   return ok({ top: withItem(doc, id, withKeys(found.value.record, entries).record), value: moved });
 };
 
-/** The remedy of a rank that names an item that is not on the board: the list of the open items shows each id that a rank takes. */
-const RANK_LIST_REMEDY = `Run "${commandText(commandLines.itemList)}" to see the open items.`;
+/**
+ * The remedy of a rank that names an item that is not on the board. The JSON of the board view lists the id of each open item, also
+ * of an item with no track. The text of `item list` shows only the stage counts of a track that has more than one item.
+ */
+const RANK_LIST_REMEDY = `Run "${commandText(commands.board)} ${flagText(flags.json)}" to see the ids of the open items.`;
 
 /** An open item of the board, else a usage error (exit 2). A setup with no closed state has no closed item. */
 const openItemAt = (doc: BoardDoc, id: string, closed: string | undefined): CliResult<BoardItem> => {

@@ -1970,7 +1970,7 @@ const rankedRecords = (edit: Edit<ItemRanked>): readonly unknown[] => {
 
 const idsOf = (records: readonly unknown[]): unknown[] => records.map((record) => (record as Readonly<Record<string, unknown>>)[boardKeys.id]);
 
-const LIST_REMEDY = 'Run "factory item list" to see the open items.';
+const LIST_REMEDY = 'Run "factory board --json" to see the ids of the open items.';
 const openRemedy = (id: string): string => `Run "factory item move ${id} --state STATE" to open the item first.`;
 
 /** Each row breaks one property of a valid rank of the five items: the fourth item after the first item. */
@@ -2157,6 +2157,19 @@ describe('the local connector: item rank', () => {
     });
     expect(valueOf(await connectorOf({ ...repo, deps }).rankItem('B-4', { after: 'B-1' })).changed).toBe(true);
     expect(reads).toEqual([{ path: BOARD_PATH, locked: true }]);
+  });
+
+  it('waits for the lock of another writer, then stops with exit 1 and the lock path, and writes nothing', async () => {
+    const repo = await repoWith(RANK_BOARD);
+    repo.deps.seed(LOCK_FILE, '1\n');
+    const slept = repo.deps.sleeps.length;
+    const error = errorOf(await connectorOf(repo).rankItem('B-4', { after: 'B-1' }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(LOCK_FILE);
+    expect(repo.deps.sleeps.length).toBeGreaterThan(slept);
+    expect(repo.commits).toEqual([]);
+    expect(repo.textOf(fileNames.board)).toBe(RANK_BOARD);
+    expect(repo.deps.files.get(LOCK_FILE)).toBe('1\n');
   });
 
   it('makes no commit for a rank to the place that the item has, and none for a second run of a rank', async () => {
