@@ -290,7 +290,7 @@ With `false`, Claude Code keeps the full context after a long wait. The first tu
 
 ### Guards
 
-A guard groups checks and role rules that keep one thing safe. The software recipe has 33 guards: 30 settable, 3 fixed and 29 with the mark `H`. The core registry has 241 rows. Of these, 181 always apply. `factory guard list` shows the effective value and its source. The mark `H` means that harm to the machine, data or accounts is possible with the guard off.
+A guard groups checks and role rules that keep one thing safe. The software recipe has 33 guards: 30 settable, 3 fixed and 29 with the mark `H`. The core registry has 241 rows. With the software recipe, 181 rows always apply. `factory guard list` shows the effective value and its source. The mark `H` means that harm to the machine, data or accounts is possible with the guard off.
 
 The local key `guards` accepts `on` or `off`. The shared key `shared_guards` accepts `on` only. A shared `on` keeps that guard on. A missing guard key means `on`, not the default that `init` writes for a new node. A repeat `init` and `upgrade` keep existing guard values. A local `off` takes effect only with a matching guard record from `init` or `factory guard set`. It also needs a whole config that loads and an entry of the factory list with the node id of that config. The record names the real factory folder with its exact letter case. If the same node has only a match in different letter case, every guard stays on, and the launch and `upgrade` stop. Run `factory upgrade` in a terminal window, outside a session, to write the record again with the exact letter case. It writes only when the stored path is a folder and not a link, and its real path is the factory folder. When the write fails, the stop names the cause. Else run `factory guard confirm` and `factory guard set` to record the prefix and the guard values again.
 
@@ -728,8 +728,8 @@ The command does these checks in order:
 3. Check that the configured owner prefix matches its confirmation record. This check still applies with `safety-block` off. If the prefix has no confirmation or has changed, run `factory guard confirm` in your own terminal window.
 4. Refuse a request of kind `command`. Then check the request title, question and chosen option text against `.factory/denied.json`.
 5. Fill `{owner}`, `{node}` and `{date}` in one pass. Use the UTC date of the owner record in `YYYY-MM-DD` form. The filled prefix must match its template. The line must use at most 300 printable ASCII characters and not end in `;`. It must not start with `!`, `/` or `@`, or contain `@` anywhere.
-6. Find the live pane of that worker. Check that the pane is out of `view`. Check the pane start time and hook settings. Check that the session is idle at its prompt. Check that it is still the same pane.
-7. Check the line again. Check the pane mode. Check the screen for a numbered list of choices. Only the mode check follows `pane-safety`.
+6. Find the live pane of that worker. Check that the pane is out of `view`. Check the pane start time and hook settings. Check that the session is idle at its prompt.
+7. Check the line again. Check the pane mode. Check the screen for a numbered list of choices. Only the mode check follows `pane-safety`. Require `synchronize-panes` to be off for the target pane. Just before the keys, check that the same pane and process are still out of `view`.
 
 The owner edits `.factory/denied.json` by hand. No command writes it yet. Use the form `{ "schema": 1, "denied": [ ... ] }` with up to 200 text entries. Each entry has 1 to 300 printable ASCII characters. The file has a limit of 64 KiB.
 

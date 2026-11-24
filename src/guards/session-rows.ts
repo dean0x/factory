@@ -470,13 +470,14 @@ const paneSafetyRows: readonly GuardRow[] = [
   alwaysOnRow({
     id: 'pane-binding',
     guard: guardIds.paneSafety,
-    name: `A pane counts as a pane of a ${worker} only with its mark, its launch command and a second read; the ${coordinator} pane and the board pane never count`,
+    name: `A pane counts as a pane of a ${worker} only with its mark, its launch command and a second read; the ${coordinator} pane and the board pane never count. A relay also needs single-pane input`,
     applies: `Stop, reset, summon, resume, ${commands.dismiss} and ${commandLines.workerRelay}`,
     harm: true,
     sites: [
       ...at('src/workers/panes.ts', 'requireBoundPane'),
       ...at('src/workers/binding.ts', 'startsWorker', 'startsCoordinator'),
       ...at('src/launch/tmux.ts', 'parsePaneBind'),
+      ...at('src/comms/typing.ts', 'requireSingleInput'),
       ...at('src/workers/reset.ts', 'requireLivePane', 'requireSamePane'),
       ...at('src/commands/self.ts', 'requireSamePane'),
     ],

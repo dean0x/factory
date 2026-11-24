@@ -1017,6 +1017,12 @@ describe('the rows of the registry', () => {
     expect(software.rows.find((row) => row.id === id)?.applies).toContain(commandLines.workerRelay);
   });
 
+  it('keeps the single-pane input check in the always-on pane rule', () => {
+    const row = software.rows.find(({ id }) => id === 'pane-binding');
+    expect(row?.alwaysOn).toBe(true);
+    expect(row?.sites).toContainEqual({ path: 'src/comms/typing.ts', symbol: 'requireSingleInput' });
+  });
+
   it('lists the relay line builder and the relay key call under the fixed line form rule', () => {
     expect(software.rows.find((row) => row.id === 'typed-line-form')?.sites).toEqual(expect.arrayContaining([
       { path: 'src/comms/typing.ts', symbol: 'relayLineOf' },

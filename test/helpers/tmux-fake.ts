@@ -74,6 +74,8 @@ export interface TmuxFixture {
    * prints `1` for the format `pane_in_mode`, and every other pane prints `0`. Default: none.
    */
   readonly panesInMode?: readonly string[];
+  /** Pane ids for which tmux shares input with other panes. */
+  readonly synchronizedPanes?: readonly string[];
   /** Panes that have ended and print an empty `pane_pid`, by pane id. */
   readonly deadPanesWithoutPid?: readonly string[];
 }
@@ -502,6 +504,8 @@ export const tmuxHandler = (
         return activeIn(pane.session, pane.window) === pane ? '1' : '0';
       case 'pane_in_mode':
         return modeScreens.has(pane.id) ? '1' : '0';
+      case 'pane_synchronized':
+        return fixture.synchronizedPanes?.includes(pane.id) ? '1' : '0';
       case 'pane_current_path':
         return pane.cwd ?? '';
       case 'pane_index':

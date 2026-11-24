@@ -736,6 +736,7 @@ describe('the reset, watch and self commands in the command line', () => {
   it.each([
     ['no decision', ['alpha'], 'needs --decision D-n'],
     ['no worker id', ['--decision', 'D-1'], 'takes one argument'],
+    ['an invalid worker id', ['not a slug', '--decision', 'D-1'], 'worker id is not a slug'],
     ['two worker ids', ['alpha', 'beta', '--decision', 'D-1'], 'takes one argument'],
     ['a noncanonical decision id', ['alpha', '--decision', 'd-1'], 'needs a canonical decision id'],
   ])('exits 2 for worker relay with %s before any file read or program call', async (_name, words, message) => {

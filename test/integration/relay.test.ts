@@ -56,10 +56,23 @@ describe.skipIf(!hasTmux)('factory worker relay (built binary, separate tmux ser
     expect(read.code, read.stderr).toBe(0);
     const { at } = recordProof.parse(JSON.parse(read.stdout));
     const date = at.slice(0, 10);
+    // Use an idle event after startup, outside the whole-second resolution of the process age.
+    const idle = await lab.event('alpha', 'Stop');
+    expect(idle.code, idle.stderr).toBe(0);
 
     const alpha = await lab.livePaneOf('alpha');
     expect(alpha).toBeDefined();
-    const draft = await lab.tmux(['-S', tmuxSocketOf(lab.box.root), 'send-keys', '-t', alpha?.pane ?? '', '-l', '--', 'Draft']);
+    const socket = ['-S', tmuxSocketOf(lab.box.root)];
+    const sync = [...socket, 'set-window-option', '-t', alpha?.pane ?? '', 'synchronize-panes'];
+    expect((await lab.tmux([...sync, 'on'])).code).toBe(0);
+    const shared = await lab.factory('worker', relayArgs, caller);
+    expect(shared.code, shared.stderr).toBe(4);
+    expect(shared.stderr).toContain('synchronize-panes');
+    for (const id of ['alpha', 'beta'] as const) {
+      await expect(readFile(typed(id), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect((await lab.tmux([...sync, 'off'])).code).toBe(0);
+    const draft = await lab.tmux([...socket, 'send-keys', '-t', alpha?.pane ?? '', '-l', '--', 'Draft']);
     expect(draft.code, draft.stderr).toBe(0);
 
     const relayed = await lab.factory('worker', relayArgs, caller);

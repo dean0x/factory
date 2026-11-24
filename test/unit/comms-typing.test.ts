@@ -28,7 +28,7 @@ const setup = (screen: string | undefined = undefined, wrap: Wrap = (handler) =>
   return { deps, log, sent };
 };
 
-const errorOf = (result: CliResult<void>): CliError => {
+const errorOf = (result: CliResult<unknown>): CliError => {
   if (result.ok) throw new Error('expected a refusal, but the line was typed');
   return result.error;
 };
@@ -134,6 +134,7 @@ describe('the relay types the recorded option', () => {
     at: '2030-01-02T23:10:00-02:00', id: 'D-3', option: 'go.a-1',
   };
   const line = '[Ada at demo on 2030-01-03] Decision D-3: go.a-1. Read it: factory decide read D-3';
+  const bound = async () => ({ ok: true, value: undefined }) as const;
   const off = { [guardIds.paneSafety]: guardValues.off };
 
   it('builds the exact pointer line with the UTC date of the recorded time', () => {
@@ -142,9 +143,9 @@ describe('the relay types the recorded option', () => {
 
   it('types one literal line in one run after the mode and screen checks', async () => {
     const { deps, log, sent } = setup();
-    expect((await typeRelayLine(deps, PANE, parts, AGAIN)).ok).toBe(true);
+    expect((await typeRelayLine(deps, PANE, parts, AGAIN, bound)).ok).toBe(true);
     expect(log.typed()).toEqual([KEY_CLEAR, text(line), KEY_ENTER]);
-    expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message', 'capture-pane', 'send-keys']);
+    expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message', 'capture-pane', 'display-message', 'send-keys']);
     expect(sent()[0]?.args).toEqual([
       'send-keys', '-t', PANE, 'C-u', ';',
       'send-keys', '-t', PANE, '-l', '--', line, ';',
@@ -172,7 +173,7 @@ describe('the relay types the recorded option', () => {
     [{ at: '2030-02-30T00:00:00Z' }, 4, 'time', 'factory doctor'],
   ] as const)('refuses relay parts %j with exit %i before any pane call', async (change, code, reason, remedy) => {
     const { deps } = setup();
-    const error = errorOf(await typeRelayLine(deps, PANE, { ...parts, ...change }, AGAIN, off));
+    const error = errorOf(await typeRelayLine(deps, PANE, { ...parts, ...change }, AGAIN, bound, off));
     expect(exitCodeOf[error.kind]).toBe(code);
     expect(error.message).toContain(reason);
     expect(error.hint).toContain(remedy);
@@ -181,31 +182,44 @@ describe('the relay types the recorded option', () => {
 
   it('refuses a target that is not a pane id before any tmux call', async () => {
     const { deps } = setup();
-    const error = errorOf(await typeRelayLine(deps, 'demo', parts, AGAIN));
+    const error = errorOf(await typeRelayLine(deps, 'demo', parts, AGAIN, bound));
     expect(error).toMatchObject({ kind: 'failure', message: 'the target of the typed line is not a pane id' });
     expect(deps.calls).toEqual([]);
   });
 
   it('refuses the pane mode before it reads the screen while pane safety is on', async () => {
     const { deps } = setup(undefined, undefined, true);
-    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN));
+    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN, bound));
     expect(error).toMatchObject({ kind: 'not-ready', message: expect.stringContaining('mode of tmux'), hint: expect.stringContaining(AGAIN) });
     expect(deps.calls.map((call) => call.args[0])).toEqual(['display-message']);
   });
 
   it('checks for a choice list even when pane safety lets the mode pass', async () => {
     const { deps, sent } = setup('Do you want to proceed?\n❯ 1. Yes\n  2. No\n', undefined, true);
-    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN, off));
+    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN, bound, off));
     expect(error).toMatchObject({ kind: 'not-ready', message: expect.stringContaining('numbered list of choices'), hint: expect.stringContaining(AGAIN) });
+    expect(sent()).toEqual([]);
+  });
+
+  it.each([
+    ['on', exited(0, '1\n')], ['absent', exited(0, '')], ['unknown', exited(0, 'unknown')],
+    ['failed', exited(1, '0\n')], ['unavailable', failure('cannot read the flag')],
+  ] as const)('sends no keys with pane safety off when the single-pane check is %s', async (_case, result) => {
+    const { deps, sent } = setup(undefined, (handler) => (call) =>
+      call.args.includes('#{pane_synchronized}') ? result : handler(call),
+    );
+    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN, bound, off));
+    expect(error).toMatchObject({ kind: 'safety', message: expect.stringContaining('single-pane input'), hint: expect.stringContaining('synchronize-panes is off') });
     expect(sent()).toEqual([]);
   });
 
   it('clears the input line once if the relay key run fails', async () => {
     const { deps, log, sent } = setup(undefined, (handler) => (call) =>
-      call.args.includes(line) ? exited(1, '', 'no space\n') : handler(call),
+      call.args.includes(line) ? exited(1, '', `cannot type: ${line}`) : handler(call),
     );
-    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN));
+    const error = errorOf(await typeRelayLine(deps, PANE, parts, AGAIN, bound));
     expect(error).toMatchObject({ kind: 'failure', message: expect.stringContaining('send-keys') });
+    expect(error.message).not.toContain(parts.display);
     expect(sent()).toHaveLength(2);
     expect(log.typed()).toEqual([KEY_CLEAR]);
   });

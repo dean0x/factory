@@ -14,12 +14,19 @@ const remedy = `Check ${dirs.state}/${files.denied}. Use a plain file with the r
 
 /** Read the optional list. Only an absent file means no entries without a valid list. */
 export const readDeniedList = async (deps: Deps, home: string): Promise<CliResult<readonly string[]>> => {
-  const path = join(layoutOf(home).stateDir, files.denied);
+  const { stateDir } = layoutOf(home);
+  const path = join(stateDir, files.denied);
   const linked = await requireNoLinks(deps, home, [path], remedy);
   if (!linked.ok) return safetyRefusal('the denied list path cannot be used', remedy);
 
   const opened = await deps.fs.openChecked(path, { uid: deps.uid, maxBytes: deniedList.maxBytes, decode: 'fatal' });
-  if (opened.ok && opened.value.state === 'absent') return ok([]);
+  if (opened.ok && opened.value.state === 'absent') {
+    // The checked open also reports absence when a parent is not a directory.
+    const parent = await deps.fs.lstat(stateDir);
+    return parent.ok && (parent.value === 'dir' || parent.value === null)
+      ? ok([])
+      : safetyRefusal('the denied list path cannot be used', remedy);
+  }
   if (!opened.ok || opened.value.state !== 'opened' || opened.value.text === null) {
     return safetyRefusal('the denied list cannot be read', remedy);
   }

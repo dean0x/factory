@@ -5,6 +5,7 @@ import { failure, safetyRefusal, usageError, type CliResult } from '../cli/error
 import type { CommandOutput } from '../cli/output.js';
 import { prefixStoreFault } from '../commands/launch-checks.js';
 import { relayLineOf, typeRelayLine } from '../comms/typing.js';
+import { isSlug } from '../config/primitives.js';
 import type { Deps } from '../core/deps.js';
 import { guardReadOf } from '../core/guard-source.js';
 import { ok } from '../core/result.js';
@@ -32,8 +33,8 @@ import {
  *  7. Refuse a command request (exit 4).
  *  8. Check the denied list (exit 4).
  *  9. Build and check the line before any worker pane read (exit 1 or 4).
- * 10. Check the live bound pane, view, fresh session, idle prompt and same pane in that order (exit 1 to 4).
- * 11. Take the time, check the line again, check mode and choices, and type the keys (exit 1 or 3 for pane and key faults).
+ * 10. Check the live bound pane, view, fresh session and idle prompt (exit 1 to 4).
+ * 11. Check the line, mode, choices and single-pane input. Bind the same pane, take the time and type the keys (exit 1, 3 or 4).
  * 12. Confirm a later turn from the same session (exit 1 or 3).
  */
 export interface RelayRequest extends WorkerTarget {
@@ -108,14 +109,19 @@ const checkRelayPane = async (deps: Deps, target: WorkerTarget, record: WorkerRe
   const start = await requireFreshSession(deps, target, record, live.value, again);
   if (!start.ok) return start;
   const session = await requireIdleSession(deps, target, live.value.paneId, start.value, again, true);
-  if (!session.ok) return session;
-  const pane = await requireSamePane(deps, target, live.value, again, true);
-  return pane.ok ? ok({ paneId: pane.value.paneId, sessionBefore: session.value }) : pane;
+  return session.ok ? ok({ pane: live.value, sessionBefore: session.value }) : session;
+};
+
+export const checkRelayIds = (workerId: string, id: string): CliResult<void> => {
+  if (!isSlug(workerId)) return usageError(`the ${roles.worker} id is not a slug`, `Use an id from "${commandText(commandLines.workerList)}".`);
+  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', 'Use an id of the form D-1.');
+  return ok(undefined);
 };
 
 export const relayWorker = async (deps: Deps, request: RelayRequest, readDecision: ReadDecision): Promise<CliResult<RelayOutcome>> => {
   const { home, config, workerId, id } = request;
-  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', 'Use an id of the form D-1.');
+  const words = checkRelayIds(workerId, id);
+  if (!words.ok) return words;
   const tail = `${flagText(flags.decision)} ${id}`;
   const again = `${commandLines.workerRelay} ${workerId} ${tail}`;
   const caller = await requireNodeCaller(deps, home, config, again);
@@ -137,11 +143,12 @@ export const relayWorker = async (deps: Deps, request: RelayRequest, readDecisio
   if (!line.ok) return line;
   const checked = await checkRelayPane(deps, request, worker.value, again);
   if (!checked.ok) return checked;
-  const { paneId, sessionBefore } = checked.value;
-  const typedAt = deps.now();
-  const typed = await typeRelayLine(deps, paneId, parts, `Then run "${commandText(again)}" again.`, guards);
+  const { pane, sessionBefore } = checked.value;
+  const { paneId } = pane;
+  const rebind = () => requireSamePane(deps, request, pane, again, true);
+  const typed = await typeRelayLine(deps, paneId, parts, `Then run "${commandText(again)}" again.`, rebind, guards);
   if (!typed.ok) return typed;
-  const confirmed = await confirmRelay(deps, { home, paneId, workerId, id, typedAt, sessionBefore, again });
+  const confirmed = await confirmRelay(deps, { home, paneId, workerId, id, typedAt: typed.value, sessionBefore, again });
   if (!confirmed.ok) return confirmed;
   return ok({ workerId, decision: id, option, paneId, modeCheckSkipped: !isGuardOn(guards, guardIds.paneSafety) });
 };

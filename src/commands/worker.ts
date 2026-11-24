@@ -23,7 +23,6 @@ import { requireNoLinks } from '../core/root-paths.js';
 import { writeInFolder } from '../core/safe-write.js';
 import { shellWord } from '../core/shell-word.js';
 import {
-  boardIds,
   commandLines,
   commands,
   commandText,
@@ -57,7 +56,7 @@ import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import type { BoundPane } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, requireRecord, workCopyOf, writeWorkerRecord } from '../workers/registry.js';
-import { relayOutput, relayWorker } from '../workers/relay.js';
+import { checkRelayIds, relayOutput, relayWorker } from '../workers/relay.js';
 import { parseReset, resetOutput, resetWorker } from '../workers/reset.js';
 import { requireRoleText } from '../workers/role-text.js';
 import { readWorkerPanes, summonWorker } from '../workers/slot.js';
@@ -730,7 +729,8 @@ const runRelay = async (
     return needsUsage(`${workerCommands.relay} takes one argument: the id of the ${roles.worker}`);
   }
   if (id === undefined) return needsUsage(`${workerCommands.relay} needs ${flagText(flags.decision)} D-n`);
-  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', 'Use an id of the form D-1.');
+  const words = checkRelayIds(workerId, id);
+  if (!words.ok) return words;
   const located = await locateNode(deps, options, registry);
   if (!located.ok) return located;
   const home = located.value;

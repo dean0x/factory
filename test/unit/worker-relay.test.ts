@@ -103,6 +103,7 @@ const validRelay = async (setup: Setup = {}) => {
       if (call.command === 'git') return git.handler(call);
       if (call.command !== 'tmux') return failure('unexpected command');
       if (call.args[0] === 'send-keys') order.push('keys');
+      if (call.args[0] === 'capture-pane') order.push('screen');
       const result = server.handler(call);
       if (call.args.join(' ') !== bind.value.join(' ')) return result;
       order.push('bind');
@@ -314,6 +315,9 @@ describe.each(FOLDER_ORIGINS)('worker relay in %s', (_title, origin) => {
     ] as const).map(([event, message, remedy]) => refusal(event, 1, message, remedy, {
       change: async ({ deps }) => { valueOf(await writeLastSeen(deps, HOME, SESSION, { kind: 'event', event }, WORKER)); },
     })),
+    refusal('a pane with synchronized input', 4, 'single-pane input', 'synchronize-panes is off', {
+      setup: { tmux: { synchronizedPanes: [PANE] } }, change: ({ deps }) => withOff(deps, guardIds.paneSafety),
+    }),
     refusal('a pane process change', 3, 'process of the pane %3 changed', 'Look at the pane %3 in tmux', { setup: { rebind: { field: 1, value: '4778' } } }),
     refusal('a pane end during the checks', 3, 'ended while the checks ran', 'factory worker resume alpha', { setup: { rebind: { field: 2, value: '1' } } }),
     refusal('a pane in tmux mode', 3, 'is in a mode of tmux', 'Press q', { setup: { tmux: { panesInMode: [PANE] } } }),
@@ -353,7 +357,7 @@ it('types one literal line for the confirmed decision and prints only its identi
   const { prefix, display } = world.config.core.owner;
   expect(hasOwnerPrefix(EXPECTED_LINE, prefix, display)).toBe(true);
   expect(world.deps.calls.filter(({ command }) => command === 'git')).toEqual([]);
-  expect(world.order.slice(0, world.order.indexOf('keys') + 1)).toEqual(['bind', 'last seen', 'bind', 'keys']);
+  expect(world.order.slice(0, world.order.indexOf('keys') + 1)).toEqual(['bind', 'last seen', 'screen', 'bind', 'keys']);
   expect(output.lines).toHaveLength(2);
   expect(output.lines[0]).toMatchObject({ level: 'ok', text: expect.stringMatching(/D-1.*go.*alpha.*%3/) });
   expect(output.json).toEqual({ schema: 'factory.worker-relay/v1', id: WORKER, decision: 'D-1', option: 'go', pane: PANE, confirmed: true });
@@ -546,10 +550,11 @@ it.each([
   expect(world.tmux.commands().every((line) => !line.startsWith('list-panes') && !line.includes(PANE))).toBe(true);
 });
 
-it('refuses a missing last-seen line before the final bind', async () => {
+it.each([false, true])('refuses a missing last-seen line before the final bind with pane safety off: %s', async (off) => {
   const world = await validRelay();
   world.deps.files.delete(LAST_SEEN);
-  await refuses(world, 3, 'cannot use the last-seen line', 'Wait until the session reports');
+  const using = off ? withOff(world.deps, guardIds.paneSafety) : world.deps;
+  await refuses(world, 3, 'cannot use the last-seen line', 'Wait until the session reports', using);
   expect(world.order.filter((event) => event === 'bind')).toHaveLength(1);
 });
 
@@ -565,7 +570,7 @@ it.each([
 ] as const)('refuses a final pane read that shows %s', async (rebind, code, message, hint) => {
   const world = await validRelay({ rebind });
   await refuses(world, code, message, hint);
-  expect(world.order).toEqual(['bind', 'last seen', 'bind']);
+  expect(world.order).toEqual(['bind', 'last seen', 'screen', 'bind']);
 });
 
 it('refuses tmux mode only when pane safety is on, and names the skipped check otherwise', async () => {
@@ -579,6 +584,20 @@ it('refuses tmux mode only when pane safety is on, and names the skipped check o
   expect(output.lines).toHaveLength(3);
   expect(output.lines[2]?.text).toContain('pane-safety is off');
   expect(output.lines[2]?.text).toContain('tmux mode check');
+});
+
+it('does not confirm on a turn that came during the screen check before the keys', async () => {
+  const world = await validRelay();
+  const deps: FakeDeps = { ...world.deps, run: async (command, args, options) => {
+    if (command === 'tmux' && args[0] === 'capture-pane') {
+      await world.deps.sleep(10);
+      valueOf(await writeLastSeen(world.deps, HOME, SESSION, { kind: 'event', event: 'Stop' }, WORKER));
+      await world.deps.sleep(10);
+    }
+    return world.deps.run(command, args, options);
+  } };
+  expectRefusal(await world.run(deps), 3, 'typed, not confirmed', 'factory worker summon alpha');
+  expect(sendCalls(world)).toHaveLength(1);
 });
 
 it.each(['PreToolUse', 'Stop'] as const)('confirms on a later %s from the same session', async (event) => {

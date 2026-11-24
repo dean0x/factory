@@ -32,6 +32,13 @@ describe('the denied list reader', () => {
     expect(await readDeniedList(deps, HOME)).toEqual(ok([]));
   });
 
+  it('refuses an absent list below a path that is not a folder', async () => {
+    const deps = setup();
+    deps.files.delete(FILE);
+    deps.seed(STATE, 'not a folder');
+    expect(await readDeniedList(deps, HOME)).toEqual(refused('the denied list path cannot be used'));
+  });
+
   it('accepts an empty denied array', async () => {
     const deps = setup();
     deps.seed(FILE, JSON.stringify({ ...VALID, denied: [] }));

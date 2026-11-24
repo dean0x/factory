@@ -4,7 +4,7 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { allOn, isGuardOn } from '../guards/effective.js';
 import type { GuardValues } from '../guards/types.js';
-import { capturePaneArgs, chainedArgs, isPaneId, paneModeArgs, parsePaneMode, type TmuxArgs } from '../launch/tmux.js';
+import { capturePaneArgs, chainedArgs, isPaneId, paneModeArgs, paneSyncArgs, parsePaneMode, type TmuxArgs } from '../launch/tmux.js';
 import { tmuxCall, tmuxStep } from '../launch/tmux-run.js';
 import { boardIds, boardLimits, commands, commandText, guardIds, keys, relayWords, typing } from '../names.js';
 import { fillOwnerPrefix, hasOwnerPrefix } from '../safety/owner-prefix.js';
@@ -162,7 +162,7 @@ const requireNoMode = async (deps: Deps, pane: string, thenAgain: string, guards
 };
 
 /**
- * One capture of the screen, the last read before the keys: a screen that shows a list of choices is exit 3, because a dialog may
+ * One capture of the screen before the keys: a screen that shows a list of choices is exit 3, because a dialog may
  * take the keys. A failed capture is exit 1 (also for a pane that does not exist).
  */
 const requireNoChoiceList = async (deps: Deps, pane: string, thenAgain: string): Promise<CliResult<void>> => {
@@ -199,37 +199,54 @@ export const typeLine = async (
   if (!FIXED_LINES.includes(line)) return failure('the line to type is refused: it is not one of the fixed lines');
   const problem = lineProblem(line);
   if (problem !== null) return failure(`the line to type is refused: it ${problem}`);
-  return typeCheckedLine(deps, pane, line, thenAgain, guards);
+  const ready = await requireTypedPane(deps, pane, thenAgain, guards);
+  return ready.ok ? sendCheckedLine(deps, pane, line) : ready;
 };
 
-/** Build and check the relay line again at the point of use. */
+/** Relay keys must go to one pane. An absent flag or an unreadable flag gives no such assurance. */
+const requireSingleInput = async (deps: Deps, pane: string): Promise<CliResult<void>> => {
+  const args = paneSyncArgs(pane);
+  if (!args.ok) return failure(args.error);
+  const read = await tmuxCall(deps, args.value);
+  return read.ok && read.value.exitCode === 0 && read.value.stdout.trim() === '0'
+    ? ok(undefined)
+    : safetyRefusal(`cannot confirm single-pane input for pane ${pane}`, `Check that synchronize-panes is off for pane ${pane}. Then try again.`);
+};
+
+/** Check the line and screen, bind the target once more, then submit. Date the submit, not its checks. */
 export const typeRelayLine = async (
   deps: Deps,
   pane: string,
   parts: RelayParts,
   thenAgain: string,
+  rebind: () => Promise<CliResult<unknown>>,
   guards: GuardValues = allOn,
-): Promise<CliResult<void>> => {
+): Promise<CliResult<Date>> => {
   const line = relayLineOf(parts);
-  return line.ok ? typeCheckedLine(deps, pane, line.value, thenAgain, guards) : line;
+  if (!line.ok) return line;
+  const ready = await requireTypedPane(deps, pane, thenAgain, guards);
+  if (!ready.ok) return ready;
+  const single = await requireSingleInput(deps, pane);
+  if (!single.ok) return single;
+  const bound = await rebind();
+  if (!bound.ok) return bound;
+  const typedAt = deps.now();
+  const typed = await sendCheckedLine(deps, pane, line.value, `tmux ${SEND_KEYS} failed for pane ${pane}`);
+  return typed.ok ? ok(typedAt) : typed;
 };
 
-const typeCheckedLine = async (
-  deps: Deps,
-  pane: string,
-  line: TypedLine | RelayLine,
-  thenAgain: string,
-  guards: GuardValues,
-): Promise<CliResult<void>> => {
+const requireTypedPane = async (deps: Deps, pane: string, thenAgain: string, guards: GuardValues): Promise<CliResult<void>> => {
   if (!isPaneId(pane)) return failure('the target of the typed line is not a pane id');
-  const noMode = await requireNoMode(deps, pane, thenAgain, guards);
-  if (!noMode.ok) return noMode;
-  const noDialog = await requireNoChoiceList(deps, pane, thenAgain);
-  if (!noDialog.ok) return noDialog;
+  const mode = await requireNoMode(deps, pane, thenAgain, guards);
+  return mode.ok ? requireNoChoiceList(deps, pane, thenAgain) : mode;
+};
 
+/** Keep the tmux detail for a fixed line. A relay fault must not repeat the submitted text. */
+const sendCheckedLine = async (deps: Deps, pane: string, line: TypedLine | RelayLine, fixedFault?: string): Promise<CliResult<void>> => {
   const typed = await tmuxStep(deps, typeArgs(pane, line));
   if (typed.ok) return ok(undefined);
   const cleaned = await tmuxCall(deps, clearArgs(pane));
-  if (cleaned.ok && cleaned.value.exitCode === 0) return typed;
-  return failure(`${typed.error.message}; the input line of pane ${pane} may still hold text`);
+  const fault = fixedFault === undefined ? typed : failure(fixedFault);
+  if (cleaned.ok && cleaned.value.exitCode === 0) return fault;
+  return failure(`${fault.error.message}; the input line of pane ${pane} may still hold text`);
 };
