@@ -86,6 +86,7 @@ describe('the typing builder makes one tmux run', () => {
   );
 
   it.each([
+    ['a leading control sign', `\u0001${typing.lines.clear}`, 'not a printable ASCII sign'],
     ['a new line', '/clear\n'],
     ['a new line in the middle', '/clear\n/compact'],
     ['a carriage return', '/clear\r'],
@@ -97,11 +98,11 @@ describe('the typing builder makes one tmux run', () => {
     ['a final semicolon', '/clear;'],
     ['a final semicolon after a space', '/clear ;'],
     ['no text', ''],
-  ])('refuses a line with %s, with exit 1 and no tmux call', async (_what, line) => {
+  ])('refuses a line with %s, with exit 1 and no tmux call', async (_what, line, reason = 'refused') => {
     const { deps } = setup();
     const error = errorOf(await typeLine(deps, PANE, notFixed(line), AGAIN));
     expect(exitCodeOf[error.kind]).toBe(1);
-    expect(error.message).toContain('refused');
+    expect(error.message).toContain(reason);
     expect(deps.calls).toEqual([]);
   });
 
@@ -109,6 +110,7 @@ describe('the typing builder makes one tmux run', () => {
     ['300 signs', 'a'.repeat(typing.maxChars)],
     ['a semicolon inside the text', 'a;b'],
     ['a leading hyphen', '-x'],
+    ['a leading space', ` ${typing.lines.clear}`],
     ['spaces', '/compact  keep the plan'],
     ['text that starts like a fixed line', '/clear now'],
     ['a fixed line in other case', '/CLEAR'],
@@ -175,6 +177,11 @@ describe('the relay types the recorded option', () => {
     [{ template: 'x'.repeat(typing.maxChars - line.length + 1) + parts.template }, 1, 'more than 300 signs', 'owner.prefix'],
     [{ display: 'Adé' }, 1, 'not a printable ASCII sign', 'owner.display'],
     [{ display: 'Ada\n' }, 1, 'not a printable ASCII sign', 'owner.display'],
+    [{ template: ' ' + parts.template }, 4, 'must not start with a space', 'owner.prefix'],
+    [{ template: '\t' + parts.template }, 1, 'not a printable ASCII sign', 'owner.prefix'],
+    [{ template: '\u001b' + parts.template }, 1, 'not a printable ASCII sign', 'owner.prefix'],
+    [{ template: '\u007f' + parts.template }, 1, 'not a printable ASCII sign', 'owner.prefix'],
+    [{ template: '\u0001' + parts.template }, 1, 'not a printable ASCII sign', 'owner.prefix'],
     [{ template: '!' + parts.template }, 4, 'must not start', 'owner.prefix'],
     [{ template: '/' + parts.template }, 4, 'must not start', 'owner.prefix'],
     [{ template: '@' + parts.template }, 4, 'must not start', 'owner.prefix'],
@@ -185,7 +192,9 @@ describe('the relay types the recorded option', () => {
     [{ at: '2030-02-30T00:00:00Z' }, 4, 'time', 'factory doctor'],
   ] as const)('refuses relay parts %j with exit %i before any pane call', async (change, code, reason, remedy) => {
     const { deps } = setup();
-    const error = errorOf(await typeRelayLine(deps, PANE, { ...parts, ...change }, AGAIN, bound, off));
+    const result = await typeRelayLine(deps, PANE, { ...parts, ...change }, AGAIN, bound, off);
+    expect(result.ok).toBe(false);
+    const error = errorOf(result);
     expect(exitCodeOf[error.kind]).toBe(code);
     expect(error.message).toContain(reason);
     expect(error.hint).toContain(remedy);

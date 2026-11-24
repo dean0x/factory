@@ -70,8 +70,8 @@ export const relayLineOf = ({ template, display, node, at, id, option }: RelayPa
   const line = `${prefix} ${relayWords.pointer(id, option)}`;
   const problem = lineProblem(line);
   if (problem !== null) return failure(`the relay line is refused: it ${problem}`, checkPrefix);
-  if (line.startsWith('!') || line.startsWith('/') || line.startsWith('@')) {
-    return safetyRefusal('the relay line must not start with !, / or @', checkPrefix);
+  if (line.startsWith(' ') || line.startsWith('!') || line.startsWith('/') || line.startsWith('@')) {
+    return safetyRefusal('the relay line must not start with a space, !, / or @', checkPrefix);
   }
   if (line.includes('@')) return safetyRefusal('the relay line must not contain @', checkPrefix);
   return ok(line as RelayLine);
@@ -181,7 +181,7 @@ const requireNoChoiceList = async (deps: Deps, pane: string, thenAgain: string):
 /**
  * Types one of the fixed lines into a pane and ends it with Enter. `thenAgain` is the clause that ends each remedy of an exit 3,
  * and it names the command that the caller runs again. The checks run in this order, and a refusal types nothing:
- * the line (one of `typing.lines`, then printable ASCII, at most `typing.maxChars` signs, no final semicolon) and the pane id, which
+ * the line (printable ASCII, at most `typing.maxChars` signs, no final semicolon, one of `typing.lines`) and the pane id, which
  * are exit 1; one read of the mode of the pane, which is exit 1 when it fails and exit 3 for a pane in a mode of tmux, because the
  * keys would not reach the session; one capture of the screen, which is the last read before the keys, and it is exit 1 when it
  * fails (also for a pane that does not exist); a screen that shows a list of choices, which is exit 3, because a dialog may take the
@@ -196,9 +196,9 @@ export const typeLine = async (
   thenAgain: string,
   guards: GuardValues = allOn,
 ): Promise<CliResult<void>> => {
-  if (!FIXED_LINES.includes(line)) return failure('the line to type is refused: it is not one of the fixed lines');
   const problem = lineProblem(line);
   if (problem !== null) return failure(`the line to type is refused: it ${problem}`);
+  if (!FIXED_LINES.includes(line)) return failure('the line to type is refused: it is not one of the fixed lines');
   const ready = await requireTypedPane(deps, pane, thenAgain, guards);
   return ready.ok ? sendCheckedLine(deps, pane, line) : ready;
 };

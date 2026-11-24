@@ -727,7 +727,7 @@ The command does these checks in order:
 2. Check the local request for a match in the owner store. Only `factory decide` records the owner's answer. Require the chosen option text and request kind. Refuse a link to an approval point, such as a merge or release.
 3. Check that the configured owner prefix matches its confirmation record. This check still applies with `safety-block` off. If the prefix has no confirmation or has changed, run `factory guard confirm` in your own terminal window.
 4. Refuse a request of kind `command`. Then check the request title, question and chosen option text against `.factory/denied.json`.
-5. Fill `{owner}`, `{node}` and `{date}` in one pass. Use the UTC date when the owner recorded the decision, in `YYYY-MM-DD` form. The filled prefix must match its template. The line must use at most 300 printable ASCII characters and not end in `;`. It must not start with `!`, `/` or `@`, or contain `@` anywhere.
+5. Fill `{owner}`, `{node}` and `{date}` in one pass. Use the UTC date when the owner recorded the decision, in `YYYY-MM-DD` form. The filled prefix must match its template. The line must use at most 300 printable ASCII characters and not end in `;`. It must not start with a space, `!`, `/` or `@`, or contain `@` anywhere.
 6. Find the live pane of that worker. Check that the pane is out of `view`. Check the pane start time and hook settings. Check that the session is idle at its prompt.
 7. Check the line again. Check the pane mode. Check the screen for a numbered list of choices. Only the mode check follows `pane-safety`. Require `synchronize-panes` to be off for the target pane. Check that the same pane and process are still out of `view`. Before the keys, read the last-seen line again. If the session id or event time has changed, stop with exit 3.
 
@@ -749,7 +749,7 @@ The worker checks `factory decide read D-n --json` for `record` and the same opt
 | 1 | No owner answer, a worker that is busy or waits, or a pane or key fault. An open request, a relayed answer and a coordinator or delegate decision do not count as an owner answer. A prefix that fails its template check, a line over the cap, a non-ASCII or non-printable character, or a final `;` also gives exit 1. |
 | 2 | Invalid arguments, an invalid decision id, the wrong caller pane, or no single worker target. `--decision` applies only to `worker relay` within the `worker` command. |
 | 3 | A session or pane is not ready, or the relay found no later event from the same session. If the command typed the line, look at the pane before you run it again. A second run types the line again. |
-| 4 | The caller outside the session is not in an owner terminal, or a required check refused the relay. This includes a record or prefix fault, missing request context, an approval link, a command request, a denied match or an invalid denied file. A line that starts with `!` or `/`, or contains `@`, also gives exit 4. If the proof or prefix store fails its check, run `factory doctor`. |
+| 4 | The caller outside the session is not in an owner terminal, or a required check refused the relay. This includes a record or prefix fault, missing request context, an approval link, a command request, a denied match or an invalid denied file. A line that starts with a space, `!` or `/`, or contains `@`, also gives exit 4. If the proof or prefix store fails its check, run `factory doctor`. |
 
 ### Dismiss a worker
 
