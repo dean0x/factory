@@ -51,6 +51,8 @@ import type {
   ItemMoved,
   ItemNote,
   ItemPatch,
+  ItemPlace,
+  ItemRanked,
   QueueRowInput,
   QueueRowSet,
   RequestClosed,
@@ -234,6 +236,22 @@ export const checkMove = (setup: BoardSetup, move: ItemMove, guards: GuardValues
   return states.includes(move.state)
     ? ok({ key: boardKeys.status, value: move.state })
     : usageError(`unknown state ${shown(move.state)}; the states are: ${states.join(', ')}`);
+};
+
+/**
+ * The input check of a rank, before the lock: a target id has the form of an item id, and an item does not go after itself. The
+ * check of the subject id is the caller's. No guard setting covers these checks.
+ */
+export const checkRankPlace = (id: string, place: ItemPlace): CliResult<ItemPlace> => {
+  if (!('after' in place)) return ok(place);
+  const target = checkItemId(place.after);
+  if (!target.ok) return target;
+  return place.after === id
+    ? usageError(
+        `the item ${shown(id)} can not go after itself`,
+        `Give the id of another item to ${flagText(flags.after)}, or use ${flagText(flags.first)} or ${flagText(flags.last)}.`,
+      )
+    : ok(place);
 };
 
 /** The closed state of the setup. */
@@ -475,9 +493,9 @@ export const checkQueueRow = (setup: BoardSetup, input: QueueRowInput): CliResul
 
 // The edits of a file that was read under the lock.
 
-const itemAt = (doc: BoardDoc, id: string): CliResult<BoardItem> => {
+const itemAt = (doc: BoardDoc, id: string, remedy?: string): CliResult<BoardItem> => {
   const found = doc.items.find((candidate) => candidate.id === id);
-  return found === undefined ? usageError(`${files.board} has no item ${shown(id)}`) : ok(found);
+  return found === undefined ? usageError(`${files.board} has no item ${shown(id)}`, remedy) : ok(found);
 };
 
 /** A track id of the board, else a usage error (exit 2) that lists the track ids. */
@@ -595,6 +613,65 @@ export const moveItemIn = (doc: BoardDoc, id: string, move: CheckedMove, at: str
   const entries: (readonly [string, unknown])[] = [[move.key, move.value]];
   if (move.key === boardKeys.stage) entries.push([boardKeys.stageAt, at]);
   return ok({ top: withItem(doc, id, withKeys(found.value.record, entries).record), value: moved });
+};
+
+/** The remedy of a rank that names an item that is not on the board: the list of the open items shows each id that a rank takes. */
+const RANK_LIST_REMEDY = `Run "${commandText(commandLines.itemList)}" to see the open items.`;
+
+/** An open item of the board, else a usage error (exit 2). A setup with no closed state has no closed item. */
+const openItemAt = (doc: BoardDoc, id: string, closed: string | undefined): CliResult<BoardItem> => {
+  const found = itemAt(doc, id, RANK_LIST_REMEDY);
+  if (!found.ok || closed === undefined || found.value.status !== closed) return found;
+  return usageError(
+    `the item ${shown(id)} is closed, and a rank takes only open items`,
+    `Run "${commandText(commandLines.itemMove)} ${found.value.id} ${flagText(flags.state)} STATE" to open the item first.`,
+  );
+};
+
+/** The index in `others`, the list without the subject, where the subject goes. An `after` target must be an open item. */
+const rankIndexIn = (doc: BoardDoc, others: readonly BoardItem[], place: ItemPlace, closed: string | undefined): CliResult<number> => {
+  if (!('after' in place)) return ok(place.edge === flags.first ? 0 : others.length);
+  const target = openItemAt(doc, place.after, closed);
+  if (!target.ok) return target;
+  const index = others.indexOf(target.value);
+  // `checkRankPlace` refuses a target that is the subject, so the target is among the others. Fail closed if it is not.
+  return index < 0 ? failure(`the item ${shown(place.after)} is not among the other items of ${files.board}`) : ok(index + 1);
+};
+
+/**
+ * The check of a new board order: the same number of items, the same ids, and each record of the new list is the same object as a
+ * record of the old list, so no record is rebuilt, changed, lost or doubled. A mismatch is a failure (exit 1), and nothing is
+ * written. No guard setting covers this check.
+ */
+export const checkSameItems = (before: readonly BoardItem[], after: readonly BoardItem[]): CliResult<void> => {
+  const records = new Set(before.map((item) => item.record));
+  const ids = new Set(before.map((item) => item.id));
+  const kept =
+    after.length === before.length &&
+    new Set(after.map((item) => item.record)).size === records.size &&
+    new Set(after.map((item) => item.id)).size === ids.size &&
+    after.every((item) => records.has(item.record) && ids.has(item.id));
+  return kept ? ok(undefined) : failure(`the new order of the items in ${files.board} does not keep the same items, so the rank writes nothing`);
+};
+
+/**
+ * Move one open item to a new place in the board order. The subject comes out of the list first. `after` then puts it directly
+ * after the target in the list without the subject, the first edge puts it at the start of the whole list, and the last edge at
+ * its end: `[S, T, C]` with S after T gives `[T, S, C]`. The new list holds the same `BoardItem` objects, so no record is rebuilt
+ * and no key is set. The checks run on the doc that was read under the lock, in this order: the subject is on the board, the
+ * subject is open, the target is on the board, the target is open. A rank that changes no index gives no top object.
+ */
+export const rankItemIn = (doc: BoardDoc, id: string, place: ItemPlace, closed: string | undefined): CliResult<Edit<ItemRanked>> => {
+  const subject = openItemAt(doc, id, closed);
+  if (!subject.ok) return subject;
+  const others = doc.items.filter((item) => item !== subject.value);
+  const at = rankIndexIn(doc, others, place, closed);
+  if (!at.ok) return at;
+  const next = [...others.slice(0, at.value), subject.value, ...others.slice(at.value)];
+  const same = checkSameItems(doc.items, next);
+  if (!same.ok) return same;
+  const changed = next.some((item, index) => item !== doc.items[index]);
+  return ok({ top: changed ? withItems(doc, next.map((item) => item.record)) : null, value: { id, place, changed } });
 };
 
 const noteCommand = (id: string): string => `${commandText(commandLines.itemNote)} ${id} TEXT`;

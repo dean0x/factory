@@ -1,5 +1,5 @@
 import type { CliResult } from '../cli/errors.js';
-import type { requestDeciders, requestGroups, requestKinds } from '../names.js';
+import type { flags, requestDeciders, requestGroups, requestKinds } from '../names.js';
 import type { ApprovalMode, CheckedRecord } from '../recipes/entry.js';
 import type { ApprovalProofResult, DecideRequest, RequestProof } from './decide.js';
 
@@ -70,6 +70,20 @@ export interface ItemMoved {
   readonly from: string | null;
   readonly to: string;
   /** False when the item had the value already: the board stays as it is. */
+  readonly changed: boolean;
+}
+
+/**
+ * The new place of an item in the board order: directly after another open item of the board, or at one end of the whole list.
+ * Exactly one of the two.
+ */
+export type ItemPlace = { readonly after: string } | { readonly edge: typeof flags.first | typeof flags.last };
+
+/** What a rank did: the id, the place that it asked for, and whether the board order changed. */
+export interface ItemRanked {
+  readonly id: string;
+  readonly place: ItemPlace;
+  /** False when the item had the place already: the board stays as it is. */
   readonly changed: boolean;
 }
 
@@ -278,6 +292,11 @@ export interface BoardConnector {
   updateItem(id: string, patch: ItemPatch): Promise<CliResult<BoardItem>>;
   moveItem(id: string, move: ItemMove): Promise<CliResult<ItemMoved>>;
   /**
+   * Move one open item to a new place in the board order. Only that item moves: every other item keeps its order and every record
+   * stays as it is. A rank is not a decision, so it records no decider.
+   */
+  rankItem(id: string, place: ItemPlace): Promise<CliResult<ItemRanked>>;
+  /**
    * Append a note to an open or closed item.
    * With any guard value, the caller must refuse input that contains the configured owner prefix in the original, untrimmed text.
    */
@@ -287,6 +306,7 @@ export interface BoardConnector {
    * With any guard value, the caller must refuse a reason that contains the configured owner prefix in the original, untrimmed text.
    */
   closeItem(id: string, reason?: string): Promise<CliResult<BoardItem>>;
+  /** The items in board order: the order of `items` in board.json. */
   listItems(query: ItemQuery): Promise<CliResult<readonly BoardItem[]>>;
   addTrack(input: TrackAddInput): Promise<CliResult<BoardTrack>>;
   listTracks(): Promise<CliResult<readonly BoardTrack[]>>;

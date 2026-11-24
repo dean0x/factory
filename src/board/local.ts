@@ -44,6 +44,7 @@ import type {
   ItemMoved,
   ItemNote,
   ItemNoted,
+  ItemRanked,
   ItemUnassigned,
   LocalBoard,
   QueueRowSet,
@@ -71,6 +72,7 @@ import {
   checkNoteText,
   checkPatch,
   checkQueueRow,
+  checkRankPlace,
   checkRecorded,
   checkRequestId,
   checkRequestClose,
@@ -83,6 +85,7 @@ import {
   logDecisionIn,
   moveItemIn,
   noteItemIn,
+  rankItemIn,
   recordCheckedIn,
   recordMessage,
   requireTrack,
@@ -133,6 +136,7 @@ const commitMessages = {
   addItem: 'chore: add an item to the board',
   updateItem: (id: string): string => `chore: change item ${id}`,
   moveItem: (id: string): string => `chore: move item ${id}`,
+  rankItem: (id: string): string => `chore: rank item ${id}`,
   noteItem: (id: string, text: string): string => `chore: note item ${id}: ${text}`,
   closeItem: (id: string, reason?: string): string => `chore: close item ${id}${reason === undefined ? '' : `: ${reason}`}`,
   linkDoc: (id: string): string => `chore: link a file to item ${id}`,
@@ -658,6 +662,21 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         message: commitMessages.moveItem(id),
         edit: (doc) => moveItemIn(doc, id, checked.value, deps.now().toISOString()),
         resultOf: (_doc, moved) => ok(moved),
+      });
+    },
+
+    // A rank has no caller rule, as `updateItem` has none: it is not a decision, so it records no decider.
+    async rankItem(id, place) {
+      const local = await requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkItemId(id);
+      if (!valid.ok) return valid;
+      const checked = checkRankPlace(id, place);
+      if (!checked.ok) return checked;
+      return boardWrite<ItemRanked, ItemRanked>({
+        message: commitMessages.rankItem(id),
+        edit: (doc) => rankItemIn(doc, id, checked.value, setup.config?.closed),
+        resultOf: (_doc, ranked) => ok(ranked),
       });
     },
 

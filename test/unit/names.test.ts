@@ -131,11 +131,11 @@ const flat = (...groups: readonly Record<string, unknown>[]): string[] =>
 
 /**
  * Flags that are plain words too, which the source uses for other things: `text` is the level of a line of output, `title`
- * and `stage` are keys of an item, `file` is the kind of an entry in a folder, and `closed` is a state of an item and of a pane. A
- * literal that equals one of them is no breach. A literal that holds the flag with its two dashes (`--text`) still is one: the check
- * of the flags below has no such exemption.
+ * and `stage` are keys of an item, `file` is the kind of an entry in a folder, `closed` is a state of an item and of a pane, and
+ * `after` is also a side of a file change. A literal that equals one of them is no breach. A literal that holds the flag with its two
+ * dashes (`--text`) still is one: the check of the flags below has no such exemption.
  */
-const PLAIN_WORD_FLAGS: ReadonlySet<string> = new Set([flags.text, flags.title, flags.stage, flags.file, flags.closed]);
+const PLAIN_WORD_FLAGS: ReadonlySet<string> = new Set([flags.text, flags.title, flags.stage, flags.file, flags.closed, flags.after]);
 
 /** Subcommands that are plain words too: `tree` is also the kind of an entry in a git tree. A literal that equals one of them is no breach. */
 const PLAIN_WORD_SUBCOMMANDS: ReadonlySet<string> = new Set([nodeCommands.tree]);
