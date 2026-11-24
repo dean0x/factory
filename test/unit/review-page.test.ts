@@ -22,7 +22,10 @@ const DOC = 'docs/plan.md';
 interface StoredItem {
   readonly id: string;
   readonly title: string;
+  readonly status?: string;
   readonly stage?: string;
+  /** An owner field of the sample setup. The board stores an owner field as a key of the item. */
+  readonly priority?: string;
   readonly epic?: string;
   readonly stages?: readonly string[];
   readonly docs?: readonly string[];
@@ -124,6 +127,76 @@ describe('the card of an item, from the text of board.json alone', () => {
     const repo = await boardNode({ board: boardText([itemRecord('B-1', { title: TITLE, docs: [DOC, ...failing] })]) });
     await mustRun(repo, ['item', 'move', 'B-1', '--stage', 'review']);
     expect(cardOf(itemsOf(repo)[0] as StoredItem).docs).toEqual([DOC]);
+  });
+});
+
+/** The key of a stored item that a view groups its columns by. */
+type ColumnKey = 'status' | 'stage' | 'priority';
+
+/** The columns of a view for one key: each value, with the ids of its items in the order of the `items` list. A view does not sort. */
+const columnsOf = (items: readonly StoredItem[], key: ColumnKey): Readonly<Record<string, readonly string[]>> =>
+  items.reduce<Readonly<Record<string, readonly string[]>>>((columns, item) => {
+    const value = item[key] ?? '(none)';
+    return { ...columns, [value]: [...(columns[value] ?? []), item.id] };
+  }, {});
+
+/** The state, stage and priority columns of the board file, read from its text alone. */
+const columnsNow = (repo: BoardRepo) => {
+  const items = itemsOf(repo);
+  return { state: columnsOf(items, 'status'), stage: columnsOf(items, 'stage'), priority: columnsOf(items, 'priority') };
+};
+
+/** Four open items in the add order B-1 to B-4: B-1 and B-3 have priority P1 and stage building, B-2 and B-4 have P0 and the first stage. */
+const factoryWithColumns = async (): Promise<BoardRepo> => {
+  const repo = await boardNode();
+  for (const priority of ['P1', 'P0', 'P1', 'P0']) await mustRun(repo, ['item', 'add', '--title', TITLE, '--field', `priority=${priority}`]);
+  await mustRun(repo, ['item', 'move', 'B-1', '--stage', 'building']);
+  await mustRun(repo, ['item', 'move', 'B-3', '--stage', 'building']);
+  return repo;
+};
+
+describe('the columns of an outside review page that reads board.json', () => {
+  it('shows each state, stage and priority column in the board order, before and after item rank', async () => {
+    const repo = await factoryWithColumns();
+    expect(columnsNow(repo)).toEqual({
+      state: { open: ['B-1', 'B-2', 'B-3', 'B-4'] },
+      stage: { building: ['B-1', 'B-3'], ticket: ['B-2', 'B-4'] },
+      priority: { P1: ['B-1', 'B-3'], P0: ['B-2', 'B-4'] },
+    });
+
+    await mustRun(repo, ['item', 'rank', 'B-3', '--first']);
+    expect(columnsNow(repo)).toEqual({
+      state: { open: ['B-3', 'B-1', 'B-2', 'B-4'] },
+      stage: { building: ['B-3', 'B-1'], ticket: ['B-2', 'B-4'] },
+      priority: { P1: ['B-3', 'B-1'], P0: ['B-2', 'B-4'] },
+    });
+
+    await mustRun(repo, ['item', 'rank', 'B-4', '--after', 'B-3']);
+    expect(columnsNow(repo)).toEqual({
+      state: { open: ['B-3', 'B-4', 'B-1', 'B-2'] },
+      stage: { building: ['B-3', 'B-1'], ticket: ['B-4', 'B-2'] },
+      priority: { P1: ['B-3', 'B-1'], P0: ['B-4', 'B-2'] },
+    });
+
+    await mustRun(repo, ['item', 'rank', 'B-3', '--last']);
+    expect(columnsNow(repo)).toEqual({
+      state: { open: ['B-4', 'B-1', 'B-2', 'B-3'] },
+      stage: { building: ['B-1', 'B-3'], ticket: ['B-4', 'B-2'] },
+      priority: { P1: ['B-1', 'B-3'], P0: ['B-4', 'B-2'] },
+    });
+  });
+
+  it('keeps the board order in each column after item move --state, not the order of the moves', async () => {
+    const repo = await factoryWithColumns();
+    await mustRun(repo, ['item', 'rank', 'B-4', '--first']);
+    await mustRun(repo, ['item', 'move', 'B-3', '--state', 'doing']);
+    await mustRun(repo, ['item', 'move', 'B-4', '--state', 'doing']);
+    expect(itemsOf(repo).map((item) => item.id)).toEqual(['B-4', 'B-1', 'B-2', 'B-3']);
+    expect(columnsNow(repo)).toEqual({
+      state: { doing: ['B-4', 'B-3'], open: ['B-1', 'B-2'] },
+      stage: { building: ['B-1', 'B-3'], ticket: ['B-4', 'B-2'] },
+      priority: { P1: ['B-1', 'B-3'], P0: ['B-4', 'B-2'] },
+    });
   });
 });
 

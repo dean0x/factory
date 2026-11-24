@@ -1,4 +1,15 @@
-import type { BoardConnector, BoardItem, DocLinked, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery } from '../board/contract.js';
+import type {
+  BoardConnector,
+  BoardItem,
+  DocLinked,
+  ItemAddInput,
+  ItemMove,
+  ItemMoved,
+  ItemPatch,
+  ItemPlace,
+  ItemQuery,
+  ItemRanked,
+} from '../board/contract.js';
 import { checkItemId, checkNoteText, docPathIssue } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
 import { followBoard } from '../board/follow.js';
@@ -59,6 +70,12 @@ export interface ItemOptions {
   readonly project: string | undefined;
   /** The reason to close the item. Only `close` takes it. */
   readonly reason?: string | undefined;
+  /** The id of the item that the ranked item goes directly after. Only `rank` takes it. An empty value counts as given. */
+  readonly after?: string | undefined;
+  /** Put the ranked item at the start of the board order. Only `rank` takes it. */
+  readonly first?: boolean | undefined;
+  /** Put the ranked item at the end of the board order. Only `rank` takes it. */
+  readonly last?: boolean | undefined;
   readonly json: boolean;
 }
 
@@ -73,7 +90,8 @@ type Action =
   | ({ readonly kind: typeof itemCommands.record } & RecordWorkInput)
   | { readonly kind: typeof itemCommands.unassign; readonly id: string }
   | { readonly kind: typeof itemCommands.doc; readonly id: string; readonly path: string }
-  | { readonly kind: typeof itemCommands.note; readonly id: string; readonly text: string };
+  | { readonly kind: typeof itemCommands.note; readonly id: string; readonly text: string }
+  | { readonly kind: typeof itemCommands.rank; readonly id: string; readonly place: ItemPlace };
 
 const SUBCOMMANDS = Object.values(itemCommands).join(', ');
 
@@ -88,6 +106,7 @@ const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
   [itemCommands.unassign]: [],
   [itemCommands.doc]: [],
   [itemCommands.note]: [],
+  [itemCommands.rank]: [flags.after, flags.first, flags.last],
 };
 
 const needsUsage = usageFor(commands.item);
@@ -108,6 +127,9 @@ const refuseStrayFlags = (subcommand: Subcommand, options: ItemOptions): CliResu
     [flags.ref, options.ref !== undefined],
     [flags.project, options.project !== undefined],
     [flags.reason, options.reason !== undefined],
+    [flags.after, options.after !== undefined],
+    [flags.first, options.first === true],
+    [flags.last, options.last === true],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.item} ${subcommand}`)}`);
@@ -137,6 +159,23 @@ const noteArguments = (args: readonly string[]): CliResult<{ readonly id: string
   return id !== undefined && text !== undefined && rest.length === 0
     ? ok({ id, text })
     : needsUsage(`${itemCommands.note} takes two arguments: the id of an item and the text of the note in quotes`);
+};
+
+const PLACE_FLAGS = `${flagText(flags.after)}, ${flagText(flags.first)} and ${flagText(flags.last)}`;
+
+/**
+ * The one place of a rank. This checks only how many place flags are given: an empty after value counts as given. The connector
+ * checks the id of the target after the check of the tracker kind, so a hosted kind refuses the rank first.
+ */
+const placeOf = (options: ItemOptions): CliResult<ItemPlace> => {
+  const given: readonly ItemPlace[] = [
+    ...(options.after === undefined ? [] : [{ after: options.after }]),
+    ...(options.first === true ? [{ edge: flags.first }] : []),
+    ...(options.last === true ? [{ edge: flags.last }] : []),
+  ];
+  const [place, ...more] = given;
+  if (place === undefined) return needsUsage(`${itemCommands.rank} needs one of ${PLACE_FLAGS}`);
+  return more.length === 0 ? ok(place) : needsUsage(`${itemCommands.rank} takes one of ${PLACE_FLAGS}, not more than one`);
 };
 
 /** Check the words and the flags. A usage error (exit 2) from here comes before the node is found and before any lock. */
@@ -220,6 +259,12 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
       const given = noteArguments(args);
       return given.ok ? ok({ kind: subcommand, ...given.value }) : given;
     }
+    case itemCommands.rank: {
+      const id = idArgument(subcommand, args);
+      if (!id.ok) return id;
+      const place = placeOf(options);
+      return place.ok ? ok({ kind: subcommand, id: id.value, place: place.value }) : place;
+    }
     default: {
       const unreachable: never = subcommand;
       return unreachable;
@@ -291,6 +336,18 @@ const moveAnswer = (config: FactoryConfig, move: ItemMove, moved: ItemMoved): Co
     ? `${displayLine(moved.id)} ${part}: ${show(moved.from)} -> ${show(moved.to)}`
     : `${displayLine(moved.id)} ${part}: ${show(moved.to)} (no change)`;
   return answer(line, { schema: schemaIds.item, action: itemCommands.move, id: moved.id, part, from: moved.from, to: moved.to, changed: moved.changed });
+};
+
+/**
+ * The one line of a rank: the id and the place that it asked for. A rank to the place that the item has says that nothing changed.
+ * The JSON holds only ids, the place and the change mark: `after` is the target id, or null for an edge.
+ */
+const rankAnswer = (ranked: ItemRanked): CommandOutput => {
+  const after = 'after' in ranked.place ? ranked.place.after : null;
+  const place = 'after' in ranked.place ? flags.after : ranked.place.edge;
+  const where = after === null ? place : `${place} ${displayLine(after)}`;
+  const line = `${displayLine(ranked.id)} ${itemCommands.rank}: ${where}${ranked.changed ? '' : ' (no change)'}`;
+  return answer(line, { schema: schemaIds.item, action: itemCommands.rank, id: ranked.id, after, place, changed: ranked.changed });
 };
 
 /** The list: the whole board by track, or the items of one track. It reads the local files and takes no lock. */
@@ -425,6 +482,10 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       const { item, note } = noted.value;
       return ok(answer(`Noted ${displayLine(item.id)}: ${titleText(item)}`, { ...itemJson(action.kind, item, await guards()), note }));
     }
+    case itemCommands.rank: {
+      const ranked = await connector.rankItem(action.id, action.place);
+      return ranked.ok ? ok(rankAnswer(ranked.value)) : ranked;
+    }
     default: {
       const unreachable: never = action;
       return unreachable;
@@ -433,11 +494,12 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
 };
 
 /**
- * `item`: add, update, move, close and list the items of the board. Add a note, link a file, record a passed check of the recipe,
- * or take a worker off an item. A close with a reason adds the reason as a note. The command checks its words and flags first
- * (exit 2). Then it finds the node and uses the connector. A write makes one state commit. For a hosted tracker kind, the board
- * edit guard can refuse the write. `list` reads the local files with no lock and has no JSON output. With the follow flag, `list`
- * draws the list again at each change of the board until its reader goes (`followBoard`).
+ * `item`: add, update, move, rank, close and list the items of the board. Add a note, link a file, record a passed check of the
+ * recipe, or take a worker off an item. A close with a reason adds the reason as a note. `rank` moves an open item to a new place in
+ * the board order: the order of the items in the board file, one list for each board. The command checks its words and flags first
+ * (exit 2). Then it finds the node and uses the connector. A write makes one state commit, and a rank with no change makes none. For
+ * a hosted tracker kind, the board edit guard can refuse the write. `list` reads the local files with no lock and has no JSON
+ * output. With the follow flag, `list` draws the list again at each change of the board until its reader goes (`followBoard`).
  */
 export const runItem = async (deps: Deps, options: ItemOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);

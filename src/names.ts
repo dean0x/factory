@@ -141,6 +141,8 @@ export const itemCommands = {
   /** `doc ID PATH` links a file of the factory folder to an item. */
   doc: 'doc',
   note: 'note',
+  /** `rank ID --after ID|--first|--last` moves an open item to a new place in the board order. */
+  rank: 'rank',
 } as const;
 
 /** The subcommands of `track`. The command has no remove subcommand. */
@@ -188,6 +190,7 @@ export const commandLines = {
   itemRecord: `${commands.item} ${itemCommands.record}`,
   itemUnassign: `${commands.item} ${itemCommands.unassign}`,
   itemDoc: `${commands.item} ${itemCommands.doc}`,
+  itemRank: `${commands.item} ${itemCommands.rank}`,
   trackAdd: `${commands.track} ${trackCommands.add}`,
   trackList: `${commands.track} ${trackCommands.list}`,
   requestAdd: `${commands.request} ${requestCommands.add}`,
@@ -255,6 +258,9 @@ export const flags = {
   note: 'note',
   reason: 'reason',
   position: 'position',
+  after: 'after',
+  first: 'first',
+  last: 'last',
   priority: 'priority',
   epic: 'epic',
   releaseGroup: 'release-group',

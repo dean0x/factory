@@ -146,6 +146,9 @@ describe.each(FOLDER_ORIGINS)('item add in %s with the guard of git safety', (_f
 });
 
 describe('item: each write is one state commit of the local files', () => {
+  /** Two items, so that a rank has a target. */
+  const BOARD = boardText([itemRecord('B-1', { stage: 'ticket' }), itemRecord('B-2', { stage: 'ticket' })], TRACKS);
+
   const WRITES: readonly (readonly [string, Partial<ItemOptions>])[] = [
     ['add', { words: ['add'], title: 'New', fields: ['priority=P1'] }],
     ['update', { words: ['update', 'B-1'], title: 'Changed' }],
@@ -154,10 +157,11 @@ describe('item: each write is one state commit of the local files', () => {
     ['close', { words: ['close', 'B-1'] }],
     ['close with a reason', { words: ['close', 'B-1'], reason: 'Work is complete' }],
     ['note', { words: ['note', 'B-1', 'Work started'] }],
+    ['rank', { words: ['rank', 'B-1'], after: 'B-2' }],
   ];
 
   it.each(WRITES)('item %s makes one commit that holds only the board file', async (_name, overrides) => {
-    const repo = await boardNode({ board: START });
+    const repo = await boardNode({ board: BOARD });
     expect((await run(repo, overrides)).ok).toBe(true);
     expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
   });
@@ -344,7 +348,7 @@ describe('item add and update with a track', () => {
 describe('item: the words and the flags are checked before the node is read (exit 2)', () => {
   const BAD: readonly (readonly [string, Partial<ItemOptions>, string])[] = [
     ['no subcommand', { words: [] }, 'needs a subcommand'],
-    ['an unknown subcommand', { words: ['remove', 'B-1'] }, 'add, update, move, close, list, record, unassign, doc, note'],
+    ['an unknown subcommand', { words: ['remove', 'B-1'] }, 'add, update, move, close, list, record, unassign, doc, note, rank'],
     ['add with no title', { words: ['add'] }, '--title'],
     ['add with an id', { words: ['add', 'B-9'], title: 'New' }, 'takes no argument'],
     ['update with no id', { words: ['update'], title: 'x' }, 'the id of an item'],
@@ -379,6 +383,19 @@ describe('item: the words and the flags are checked before the node is read (exi
     ['note with no argument', { words: ['note'] }, 'note takes two arguments: the id of an item and the text of the note in quotes'],
     ['note with no text', { words: ['note', 'B-1'] }, 'note takes two arguments'],
     ['note with a third argument', { words: ['note', 'B-1', 'Work started', 'again'] }, 'note takes two arguments'],
+    ['rank with no id', { words: ['rank'], first: true }, 'rank takes one argument: the id of an item'],
+    ['rank with a second word', { words: ['rank', 'B-1', 'B-2'], first: true }, 'rank takes one argument: the id of an item'],
+    ['rank with no place', { words: ['rank', 'B-1'] }, 'rank needs one of --after, --first and --last'],
+    ['rank first and last', { words: ['rank', 'B-1'], first: true, last: true }, 'rank takes one of --after, --first and --last, not more than one'],
+    ['rank after an item and first', { words: ['rank', 'B-1'], after: 'B-2', first: true }, 'rank takes one of --after, --first and --last, not more than one'],
+    ['rank after an item and last', { words: ['rank', 'B-1'], after: 'B-2', last: true }, 'rank takes one of --after, --first and --last, not more than one'],
+    ['rank with all three places', { words: ['rank', 'B-1'], after: 'B-2', first: true, last: true }, 'not more than one'],
+    ['rank with an empty after value and first', { words: ['rank', 'B-1'], after: '', first: true }, 'not more than one'],
+    ['rank with the state flag', { words: ['rank', 'B-1'], first: true, state: 'doing' }, '--state is not for factory item rank'],
+    ['rank with the stage flag', { words: ['rank', 'B-1'], first: true, stage: 'building' }, '--stage is not for factory item rank'],
+    ['rank with the title flag', { words: ['rank', 'B-1'], first: true, title: 'x' }, '--title is not for factory item rank'],
+    ['rank with the flag to follow', { words: ['rank', 'B-1'], first: true, follow: true }, '--follow is not for factory item rank'],
+    ['move with an empty after value', { words: ['move', 'B-1'], stage: 'building', after: '' }, '--after is not for factory item move'],
   ];
   const NO_REASON: readonly (readonly [string, Partial<ItemOptions>])[] = [
     ['add', { words: ['add'], title: 'New' }],
@@ -389,6 +406,13 @@ describe('item: the words and the flags are checked before the node is read (exi
     ['unassign', { words: ['unassign', 'B-1'] }],
     ['doc', { words: ['doc', 'B-1', 'docs/design.md'] }],
     ['note', { words: ['note', 'B-1', 'Work started'] }],
+    ['rank', { words: ['rank', 'B-1'], first: true }],
+  ];
+  /** The place flags of rank. No other subcommand takes them. */
+  const PLACE_FLAGS: readonly (readonly [string, Partial<ItemOptions>])[] = [
+    ['--after', { after: 'B-2' }],
+    ['--first', { first: true }],
+    ['--last', { last: true }],
   ];
   const NO_NOTE_FLAG: readonly (readonly [string, Partial<ItemOptions>])[] = [
     ['--title', { title: 'New' }],
@@ -402,11 +426,16 @@ describe('item: the words and the flags are checked before the node is read (exi
     ['--follow', { follow: true }],
     ['--ref', { ref: '12' }],
     ['--project', { project: 'web' }],
+    ...PLACE_FLAGS,
   ];
 
   const WRONG_FLAGS = [
     ...NO_REASON.map(([name, options]) => [`${name} with a reason`, { ...options, reason: 'Work stopped' }, `--reason is not for factory item ${name}`] as const),
     ...NO_NOTE_FLAG.map(([flag, options]) => [`note with ${flag}`, { ...options, words: ['note', 'B-1', 'Work started'] }, `${flag} is not for factory item note`] as const),
+    ...PLACE_FLAGS.flatMap(([flag, options]) => [
+      [`move with ${flag}`, { ...options, words: ['move', 'B-1'], stage: 'building' }, `${flag} is not for factory item move`] as const,
+      [`update with ${flag}`, { ...options, words: ['update', 'B-1'], title: 'x' }, `${flag} is not for factory item update`] as const,
+    ]),
   ];
 
   it.each([...BAD, ...WRONG_FLAGS])('%s exits 2 and touches no file', async (_name, overrides, message) => {
@@ -419,6 +448,118 @@ describe('item: the words and the flags are checked before the node is read (exi
     expect(error.hint).toContain(commandText(commands.item));
     expect(touched).toEqual([]);
     expectUntouched(repo, START);
+  });
+});
+
+describe('item rank: the order of the items on the board', () => {
+  const BOARD = boardText(
+    [itemRecord('B-1', { track: 'core', stage: 'ticket' }), itemRecord('B-2', { track: 'core', stage: 'ticket' }), itemRecord('B-3', { track: 'core', stage: 'ticket' })],
+    TRACKS,
+  );
+
+  /** The ids of the items of the board file, in the stored order. */
+  const orderOf = (repo: BoardRepo): unknown[] =>
+    (JSON.parse(repo.textOf(fileNames.board) ?? '{}') as { items: Record<string, unknown>[] }).items.map((item) => item['id']);
+
+  /** The ids in the rows of the list of one track, in the order shown. */
+  const trackRowsOf = async (repo: BoardRepo): Promise<string[]> =>
+    (await textOf(repo, { words: ['list'], track: 'core' }))
+      .split('\n')
+      .map((line) => line.trim().split(/ {2,}/)[0] ?? '')
+      .filter((cell) => /^B-\d+$/.test(cell));
+
+  const ANSWERS: readonly (readonly [string, Partial<ItemOptions>, string, Readonly<Record<string, unknown>>, readonly string[]])[] = [
+    ['after an item lower in the list', { words: ['rank', 'B-1'], after: 'B-2' }, 'B-1 rank: after B-2', { id: 'B-1', after: 'B-2', place: 'after', changed: true }, ['B-2', 'B-1', 'B-3']],
+    ['after an item higher in the list', { words: ['rank', 'B-3'], after: 'B-1' }, 'B-3 rank: after B-1', { id: 'B-3', after: 'B-1', place: 'after', changed: true }, ['B-1', 'B-3', 'B-2']],
+    ['first', { words: ['rank', 'B-3'], first: true }, 'B-3 rank: first', { id: 'B-3', after: null, place: 'first', changed: true }, ['B-3', 'B-1', 'B-2']],
+    ['last', { words: ['rank', 'B-1'], last: true }, 'B-1 rank: last', { id: 'B-1', after: null, place: 'last', changed: true }, ['B-2', 'B-3', 'B-1']],
+    ['after the item before it', { words: ['rank', 'B-2'], after: 'B-1' }, 'B-2 rank: after B-1 (no change)', { id: 'B-2', after: 'B-1', place: 'after', changed: false }, ['B-1', 'B-2', 'B-3']],
+    ['first for the first item', { words: ['rank', 'B-1'], first: true }, 'B-1 rank: first (no change)', { id: 'B-1', after: null, place: 'first', changed: false }, ['B-1', 'B-2', 'B-3']],
+    ['last for the last item', { words: ['rank', 'B-3'], last: true }, 'B-3 rank: last (no change)', { id: 'B-3', after: null, place: 'last', changed: false }, ['B-1', 'B-2', 'B-3']],
+  ];
+
+  it.each(ANSWERS)('rank %s prints one line and the JSON answer, and stores that order', async (_name, overrides, line, json, order) => {
+    const repo = await boardNode({ board: BOARD });
+    const output = valueOf(await run(repo, overrides));
+    expect(plainText(output).trimEnd().split('\n')).toEqual([line]);
+    expect(output.json).toEqual({ schema: 'factory.item/v1', action: 'rank', ...json });
+    expect(orderOf(repo)).toEqual(order);
+    expect(repo.commits).toHaveLength(json['changed'] === true ? 1 : 0);
+  });
+
+  it('gives the keys of the JSON answer in a fixed order, and only ids, the place and the change mark', async () => {
+    const repo = await boardNode({ board: BOARD });
+    const output = valueOf(await run(repo, { words: ['rank', 'B-1'], after: 'B-3', json: true }));
+    expect(Object.keys(output.json)).toEqual(['schema', 'action', 'id', 'after', 'place', 'changed']);
+  });
+
+  it('makes no commit for a rank to the place that the item has, and none for a second run of the same rank', async () => {
+    const repo = await boardNode({ board: BOARD });
+    expect((await textOf(repo, { words: ['rank', 'B-3'], after: 'B-2' })).trimEnd()).toBe('B-3 rank: after B-2 (no change)');
+    expectUntouched(repo, BOARD);
+    expect((await textOf(repo, { words: ['rank', 'B-1'], last: true })).trimEnd()).toBe('B-1 rank: last');
+    const ranked = repo.textOf(fileNames.board);
+    expect((await textOf(repo, { words: ['rank', 'B-1'], last: true })).trimEnd()).toBe('B-1 rank: last (no change)');
+    expect(repo.commits).toHaveLength(1);
+    expect(repo.textOf(fileNames.board)).toBe(ranked);
+  });
+
+  it('lists the items of a track in the new order after a rank', async () => {
+    const repo = await boardNode({ board: BOARD });
+    expect(await trackRowsOf(repo)).toEqual(['B-1', 'B-2', 'B-3']);
+    valueOf(await run(repo, { words: ['rank', 'B-3'], after: 'B-1' }));
+    expect(await trackRowsOf(repo)).toEqual(['B-1', 'B-3', 'B-2']);
+  });
+
+  /** The valid rank that each refusal below breaks in one property. */
+  const VALID: Partial<ItemOptions> = { words: ['rank', 'B-1'], after: 'B-2' };
+
+  const REFUSED: readonly (readonly [string, Partial<ItemOptions>, CliError])[] = [
+    ['an id that is not an item id', { words: ['rank', 'b-1'] }, { kind: 'usage', message: '"b-1" is not an item id; an item id looks like B-12' }],
+    ['a target id that is not an item id', { after: 'b-2' }, { kind: 'usage', message: '"b-2" is not an item id; an item id looks like B-12' }],
+    ['an empty target id', { after: '' }, { kind: 'usage', message: '"" is not an item id; an item id looks like B-12' }],
+    [
+      'the same id as the item and the target',
+      { after: 'B-1' },
+      { kind: 'usage', message: 'the item "B-1" can not go after itself', hint: 'Give the id of another item to --after, or use --first or --last.' },
+    ],
+  ];
+
+  it('takes the valid rank that each refusal below breaks, with one commit of the board file', async () => {
+    const repo = await boardNode({ board: BOARD });
+    expect((await textOf(repo, VALID)).trimEnd()).toBe('B-1 rank: after B-2');
+    expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.board]]);
+  });
+
+  it.each(REFUSED)('refuses %s with exit 2, takes no lock and makes no commit', async (_name, change, error) => {
+    const repo = await boardNode({ board: BOARD });
+    const touched: string[] = [];
+    const result = await runItem(withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)), { ...BASE, ...VALID, ...change }, recipes);
+    expect(result).toEqual({ ok: false, error });
+    expect(touched.filter((path) => path.includes(LOCKS))).toEqual([]);
+    expectUntouched(repo, BOARD);
+  });
+
+  it.each([
+    [['B-3', '--after', 'B-1'], ['B-1', 'B-3', 'B-2']],
+    [['B-3', '--first'], ['B-3', 'B-1', 'B-2']],
+    [['B-1', '--last'], ['B-2', 'B-3', 'B-1']],
+  ] as const)('takes the place flag from the command line: rank %j', async (words, order) => {
+    const repo = await boardNode({ board: BOARD });
+    const sink = captureSink();
+    expect(await runCli(['item', 'rank', ...words, '--home', HOME], repo.deps, sink), sink.errors.join('')).toBe(0);
+    expect(orderOf(repo)).toEqual(order);
+  });
+
+  it('counts an empty after value on the command line as given: alone it fails the id check, and with another place it is one place too many', async () => {
+    const repo = await boardNode({ board: BOARD });
+    const alone = captureSink();
+    expect(await runCli(['item', 'rank', 'B-1', '--after=', '--home', HOME], repo.deps, alone)).toBe(2);
+    expect(alone.errors.join('')).toContain('"" is not an item id');
+    const both = captureSink();
+    expect(await runCli(['item', 'rank', 'B-1', '--after=', '--first', '--home', HOME], repo.deps, both)).toBe(2);
+    expect(both.errors.join('')).toContain('rank takes one of --after, --first and --last, not more than one');
+    expectUntouched(repo, BOARD);
   });
 });
 
@@ -774,6 +915,18 @@ describe('item with a hosted tracker kind', () => {
       } });
       expectUntouched(repo, START);
     });
+  });
+
+  it.each([
+    ['a valid rank', { words: ['rank', 'B-1'], last: true }],
+    ['a rank with an id that is not an item id', { words: ['rank', 'b-1'], last: true }],
+    ['a rank after an id that is not an item id', { words: ['rank', 'B-1'], after: 'b-2' }],
+  ] as const)('refuses %s with exit 4 before any check of the ids, and writes nothing', async (_name, overrides) => {
+    const repo = await boardNode({ board: START, config: hosted() });
+    const error = errorOf(await run(repo, overrides));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('FAC-M3 (provider plugin)');
+    expectUntouched(repo, START);
   });
 
   it('lists the local board with a hosted kind, and exits 0', async () => {

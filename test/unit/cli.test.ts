@@ -1007,6 +1007,18 @@ describe('the item and track commands in the command line', () => {
     expect(result.out).toMatch(/--text TEXT\s+With add and update: the text of the item\./);
   });
 
+  it('shows how to rank an item, and the three place flags, in the help of item', async () => {
+    const result = await run(['item', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory item rank ID --after ID|--first|--last [--home DIR]');
+    expect(result.out).toContain('Add, change, move, rank, close and list the items of the board');
+    expect(result.out).toMatch(
+      /--after ID\s+With rank: put the item directly after this item in the board order\. The order is one list for each board\. The target can be an open item of any state\.\n/,
+    );
+    expect(result.out).toMatch(/--first\s+With rank: put the item at the start of the board order\.\n/);
+    expect(result.out).toMatch(/--last\s+With rank: put the item at the end of the board order\.\n/);
+  });
+
   it.each([
     [['note', 'B-1', '--', '-Work started'], 'Noted B-1: Item B-1\n', '-Work started'],
     [['close', 'B-1', '--reason=-Work stopped'], 'Closed B-1: Item B-1\n', '-Work stopped'],

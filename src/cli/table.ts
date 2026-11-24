@@ -154,7 +154,7 @@ const recordHelpOf = (registry: RecipeRegistry): { readonly summary: string; rea
   const records = checks.map(({ check }) => check.summary);
   const own = checks.map(({ id, check }) => `In the ${id} ${roles.recipe}: ${check.refHelp}`);
   return {
-    summary: `Add, change, move, close and list the items of the board, link a file to an item, add a note to an item, ${records.length === 0 ? '' : `${records.join(', ')}, `}and ${unassign}.`,
+    summary: `Add, change, move, rank, close and list the items of the board, link a file to an item, add a note to an item, ${records.length === 0 ? '' : `${records.join(', ')}, `}and ${unassign}.`,
     ref:
       `With ${itemCommands.record}: the reference that the check of the ${roles.recipe} reads. ` +
       (own.length === 0 ? `No ${roles.recipe} of this package has a check.` : own.join(' ')),
@@ -623,6 +623,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
       `${commandText(commandLines.itemUnassign)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemDoc)} ID PATH [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemNote)} ID TEXT [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemRank)} ID ${flagText(flags.after)} ID|${flagText(flags.first)}|${flagText(flags.last)} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -688,6 +689,21 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           `With ${itemCommands.move}: set the stage of the item. The ${roles.recipe} lists the stages. The item keeps its state. ` +
           'A stage that only a flow sets is refused.',
       },
+      [flags.after]: {
+        type: 'string',
+        placeholder: 'ID',
+        description:
+          `With ${itemCommands.rank}: put the item directly after this item in the board order. ` +
+          'The order is one list for each board. The target can be an open item of any state.',
+      },
+      [flags.first]: {
+        type: 'boolean',
+        description: `With ${itemCommands.rank}: put the item at the start of the board order.`,
+      },
+      [flags.last]: {
+        type: 'boolean',
+        description: `With ${itemCommands.rank}: put the item at the end of the board order.`,
+      },
       [flags.all]: {
         type: 'boolean',
         description: `With ${itemCommands.list}: show the closed items too.`,
@@ -715,6 +731,9 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           ref: given.string(flags.ref),
           project: given.string(flags.project),
           reason: given.string(flags.reason),
+          after: given.string(flags.after),
+          first: given.bool(flags.first),
+          last: given.bool(flags.last),
           json: given.bool(flags.json),
         },
         registry,

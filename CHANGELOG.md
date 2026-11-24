@@ -2,6 +2,7 @@
 
 ## 0.2.0 (not released)
 
+- Add `factory item rank ID --after ID|--first|--last`. It changes the place of an open item in the order of `items` in `board.json`, which is one list for each board. Every other write keeps the place of an item, and `item add` puts a new item last. `--json` prints `action`, `id`, `after`, `place` and `changed`.
 - Add `factory worker relay ID --decision D-n`. It types a pointer to a recorded owner decision into an idle worker and checks for a later turn. `factory decide read --json` adds `option_text` and `request_kind`.
 - `factory version` prints the full commit SHA of the build on line 2. Line 1 is still the version. `--json` adds `commit` and `modified`. A build outside a git work tree prints `commit unknown`.
 - Add `factory board`: one text view of requests, workers, open items, the queue and machine facts. `--width` sets the text width. `--json` prints `factory.board/v1`, with section faults and a cap of 500 open items.

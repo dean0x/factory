@@ -96,6 +96,7 @@ describe('the board commands with the delete guard off', () => {
     'exits 4 for item, track, request context and doc writes and queue set, writes nothing, and the lists still work',
     async () => {
       await mustRun(['item', 'add', '--title', 'First']);
+      await mustRun(['item', 'add', '--title', 'Second']);
       await mustRun(['track', 'add', 'core', '--name', 'Core']);
       await mustRun(['request', 'add', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Yes']);
       await mustRun(['queue', 'set', 'Docs', '--item', 'B-1']);
@@ -108,10 +109,11 @@ describe('the board commands with the delete guard off', () => {
       const run = vi.spyOn(box, 'run');
 
       const writes: readonly (readonly string[])[] = [
-        ['item', 'add', '--title', 'Second'],
+        ['item', 'add', '--title', 'Third'],
         ['item', 'update', 'B-1', '--title', 'Changed'],
         ['item', 'update', 'B-1', '--epic', 'Launch'],
         ['item', 'move', 'B-1', '--state', 'doing'],
+        ['item', 'rank', 'B-2', '--first'],
         ['item', 'close', 'B-1'],
         ['item', 'doc', 'B-1', DOC],
         ['track', 'add', 'docs', '--name', 'Docs'],
@@ -239,6 +241,30 @@ describe('the board commands that run at the same time', () => {
       expect(await filesOfLastCommits(PARALLEL.length)).toEqual(PARALLEL.map(() => files.board));
       const board = JSON.parse(await textOf(files.board)) as { items: { status: string }[] };
       expect(board.items.map((item) => item.status)).toEqual(PARALLEL.map(() => 'doing'));
+    },
+    CASE_MS,
+  );
+
+  it(
+    'keeps all five ids for five item rank calls that run at the same time, and makes one commit of the board file only for each change',
+    async () => {
+      const ids = PARALLEL.map((number) => `B-${number}`);
+      for (const number of PARALLEL) await mustRun(['item', 'add', '--title', `Item ${number}`]);
+      const before = await commitCount();
+      const results = await Promise.all(ids.map((id) => rerunOnLockWait(() => factory(['item', 'rank', id, '--first']))));
+      for (const [at, result] of results.entries()) {
+        expect(result.code, `rank ${ids[at]}: ${result.stderr}`).toBe(0);
+        expect(result.stdout).toMatch(new RegExp(`^${ids[at]} rank: first( \\(no change\\))?\\n$`));
+      }
+      const changedIds = ids.filter((_, at) => !(results[at]?.stdout ?? '').endsWith('(no change)\n'));
+      // Only the rank of B-1 can find its item in place, and only when it runs first: each later rank moves an item that is not first.
+      expect(changedIds.length).toBeGreaterThanOrEqual(PARALLEL.length - 1);
+      expect(await commitCount()).toBe(before + changedIds.length);
+      expect(await filesOfLastCommits(changedIds.length)).toEqual(changedIds.map(() => files.board));
+      const subjects = (await stateGit(['log', '-n', String(changedIds.length), '--format=%s'])).stdout.trim().split('\n');
+      expect([...subjects].sort()).toEqual(changedIds.map((id) => `chore: rank item ${id}`).sort());
+      const board = JSON.parse(await textOf(files.board)) as { items: { id: string }[] };
+      expect(board.items.map((item) => item.id).sort()).toEqual(ids);
     },
     CASE_MS,
   );
