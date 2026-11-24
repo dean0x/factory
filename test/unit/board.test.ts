@@ -158,6 +158,19 @@ describe('board', () => {
     expect(result.json).toHaveProperty('items.499.id', 'B-501');
   });
 
+  it('gives the open items in the order of the items list of board.json, not in id order', async () => {
+    const deps = await boardFixture();
+    deps.seed(boardPath, boardText([
+      itemRecord('B-3', { status: 'doing' }),
+      itemRecord('B-4', { status: 'done' }),
+      itemRecord('B-1'),
+      itemRecord('B-2', { status: 'blocked' }),
+    ]));
+    const result = await boardCommand(deps, ['board', '--json']);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({ items: [{ id: 'B-3' }, { id: 'B-1' }, { id: 'B-2' }], itemsMore: 0 });
+  });
+
   it.each(['duplicate id', 'invalid UTF-8', 'link'])('does not expose items from a board with a %s', async (fault) => {
     const deps = await boardFixture();
     if (fault === 'duplicate id') deps.seed(boardPath, boardText([itemRecord('B-1'), itemRecord('B-1')]));
