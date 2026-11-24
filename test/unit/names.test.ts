@@ -1722,7 +1722,11 @@ describe('the names of the board records', () => {
   });
 
   it('lists the item subcommands in the order shown to the user', () => {
-    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign', 'doc', 'note']);
+    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign', 'doc', 'note', 'rank']);
+  });
+
+  it('gives the rank subcommand of item a command line', () => {
+    expect(commandLines.itemRank).toBe('item rank');
   });
 
   it('gives the doc subcommand of item a command line', () => {
