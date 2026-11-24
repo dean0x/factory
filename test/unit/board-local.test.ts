@@ -2058,6 +2058,13 @@ describe('the rank edit of the board order', () => {
     expect(rankOn(RANK_ITEMS, id, place, CLOSED).result).toEqual({ ok: false, error: { kind: 'usage', message, hint } });
   });
 
+  // The connector refuses a target that is the subject before the edit runs, so only a direct call of the edit reaches this check.
+  it('fails closed with exit 1 for a target that is the subject, and gives no new board order', () => {
+    const result = rankOn(RANK_ITEMS, 'B-4', { after: 'B-4' }, CLOSED).result;
+    expect(result).toEqual({ ok: false, error: { kind: 'failure', message: `the item "B-4" is not among the other items of ${fileNames.board}` } });
+    expect(exitOf(result)).toBe(1);
+  });
+
   it('takes a done item as an open item when the setup has no closed state', () => {
     const items = [item('B-1', { status: CLOSED }), item('B-2', { status: CLOSED })];
     expect(exitOf(rankOn(items, 'B-1', { after: 'B-2' }, CLOSED).result)).toBe(2);
