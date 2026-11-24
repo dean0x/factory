@@ -714,6 +714,40 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(result.out).toMatch(/--compact\s+With reset: compact the session of the worker/);
   });
 
+  it('shows the worker relay usage and its decision flag in worker help', async () => {
+    const result = await run(['worker', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory worker relay ID --decision D-n [--home DIR]');
+    expect(result.out).toMatch(/--decision D-n\s+With relay: relay a recorded decision of the owner/);
+  });
+
+  it.each([
+    ['new', 'alpha', '--project', 'web'], ['list'], ['stop', 'alpha'], ['resume', 'alpha'], ['summon', 'alpha'],
+    ['reset', 'alpha', '--clear'], ['watch'], ['mark', 'alpha', 'none'],
+  ])('exits 2 for worker %s with --decision and runs no program', async (...words) => {
+    const { deps } = made();
+    const result = await runOn(deps, ['worker', ...words, '--decision', 'D-1', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--decision belongs to relay only');
+    expect(result.err).toContain('factory worker --help');
+    expect(deps.calls).toEqual([]);
+  });
+
+  it.each([
+    ['no decision', ['alpha'], 'needs --decision D-n'],
+    ['no worker id', ['--decision', 'D-1'], 'takes one argument'],
+    ['two worker ids', ['alpha', 'beta', '--decision', 'D-1'], 'takes one argument'],
+    ['a noncanonical decision id', ['alpha', '--decision', 'd-1'], 'needs a canonical decision id'],
+  ])('exits 2 for worker relay with %s before any file read or program call', async (_name, words, message) => {
+    const fsCalls: string[] = [];
+    const deps = withFsWatch(made().deps, (method) => fsCalls.push(method));
+    const result = await runOn(deps, ['worker', 'relay', ...words, '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain(message);
+    expect(fsCalls).toEqual([]);
+    expect(deps.calls).toEqual([]);
+  });
+
   it('shows the assignment flag in the usage of worker new and in the flag list of worker', async () => {
     const result = await run(['worker', '--help']);
     expect(result.code).toBe(0);

@@ -440,7 +440,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
   },
   {
     name: commands.worker,
-    summary: `Make, run, reset, watch and mark the ${roles.worker}s of the ${roles.node}.`,
+    summary: `Make, run, reset, watch and mark the ${roles.worker}s of the ${roles.node}. Relay recorded decisions to them.`,
     usage: [
       `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.assignment)} FILE] [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
       `${commandText(commandLines.workerList)} [${flagText(flags.home)} DIR]`,
@@ -509,6 +509,11 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           `With ${workerCommands.reset}: compact the session of the ${roles.worker} (types ${typing.lines.compact} in its pane). ` +
           `The session continues with a short summary.`,
       },
+      [flags.decision]: {
+        type: 'string',
+        placeholder: 'D-n',
+        description: `With ${workerCommands.relay}: relay a recorded decision of the ${roles.owner}.`,
+      },
     },
     run: (given, deps) =>
       runWorker(
@@ -524,6 +529,7 @@ const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
           assignment: given.string(flags.assignment),
           ready: given.strings(flags.ready),
           since: given.string(flags.since),
+          decision: given.string(flags.decision),
         },
         registry,
       ),

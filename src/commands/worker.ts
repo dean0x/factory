@@ -23,6 +23,7 @@ import { requireNoLinks } from '../core/root-paths.js';
 import { writeInFolder } from '../core/safe-write.js';
 import { shellWord } from '../core/shell-word.js';
 import {
+  boardIds,
   commandLines,
   commands,
   commandText,
@@ -56,11 +57,13 @@ import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import type { BoundPane } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, requireRecord, workCopyOf, writeWorkerRecord } from '../workers/registry.js';
+import { relayOutput, relayWorker } from '../workers/relay.js';
 import { parseReset, resetOutput, resetWorker } from '../workers/reset.js';
 import { requireRoleText } from '../workers/role-text.js';
 import { readWorkerPanes, summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { watchOutput, watchWorkers } from '../workers/watch.js';
+import { localBoardOf } from './board-open.js';
 import { prepareLaunch } from './launch-checks.js';
 import { runWorkerList } from './worker-list.js';
 
@@ -78,6 +81,8 @@ export interface WorkerOptions {
   readonly clear?: boolean;
   /** True when the person gave the compact flag. Only a reset reads it. Absent: false. */
   readonly compact?: boolean;
+  /** The exact id of a recorded decision. Only `relay` reads it. */
+  readonly decision?: string | undefined;
   /** The path of the assignment file of a new worker. Only `new` reads it. Absent: the worker has no assignment. */
   readonly assignment?: string | undefined;
   /** The ids of `--ready`: workers that the watch waits for after a block. Only `watch` reads them. Absent: none. */
@@ -712,6 +717,31 @@ const runReset = async (
   return reset.ok ? ok(resetOutput(reset.value)) : reset;
 };
 
+/** Check the relay words before any read. Use the local board of the target node for the decision proof. */
+const runRelay = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const [workerId] = args;
+  const id = options.decision;
+  if (args.length !== 1 || workerId === undefined) {
+    return needsUsage(`${workerCommands.relay} takes one argument: the id of the ${roles.worker}`);
+  }
+  if (id === undefined) return needsUsage(`${workerCommands.relay} needs ${flagText(flags.decision)} D-n`);
+  if (!boardIds.canonicalRequest.test(id)) return usageError('the relay needs a canonical decision id', 'Use an id of the form D-1.');
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const config = loaded.value;
+  const connector = localBoardOf(deps, home, config, commands.worker);
+  const relayed = await relayWorker(deps, { home, config, workerId, id }, (decision) => connector.decisionRead(decision));
+  return relayed.ok ? ok(relayOutput(relayed.value)) : relayed;
+};
+
 /**
  * The time of `--since`: an ISO time in UTC, the form that the watch prints at the end of its lines. Absent: none. Any other text is
  * exit 2, so the time that the watch starts from is a time that the program wrote or a person typed in full.
@@ -801,6 +831,9 @@ const requireNoResetFlags = (options: WorkerOptions): CliResult<void> => {
 const requireNoAssignment = (options: WorkerOptions): CliResult<void> =>
   options.assignment === undefined ? ok(undefined) : needsUsage(`${flagText(flags.assignment)} belongs to ${workerCommands.new} only`);
 
+const requireNoDecision = (options: WorkerOptions): CliResult<void> =>
+  options.decision === undefined ? ok(undefined) : needsUsage(`${flagText(flags.decision)} belongs to ${workerCommands.relay} only`);
+
 /** The flags `--ready` and `--since` belong to `watch`. Another subcommand refuses them (exit 2), so no flag is taken and then ignored. */
 const requireNoWatchFlags = (options: WorkerOptions): CliResult<void> => {
   const given = [...((options.ready ?? []).length === 0 ? [] : [flags.ready]), ...(options.since === undefined ? [] : [flags.since])];
@@ -814,7 +847,9 @@ const requireOwnFlags = (subcommand: string, options: WorkerOptions): CliResult<
   if (!stray.ok) return stray;
   const watchFlags = subcommand === workerCommands.watch ? ok(undefined) : requireNoWatchFlags(options);
   if (!watchFlags.ok) return watchFlags;
-  return subcommand === workerCommands.new ? ok(undefined) : requireNoAssignment(options);
+  const assignment = subcommand === workerCommands.new ? ok(undefined) : requireNoAssignment(options);
+  if (!assignment.ok) return assignment;
+  return subcommand === workerCommands.relay ? ok(undefined) : requireNoDecision(options);
 };
 
 const isSubcommand = (word: string | undefined): word is string => Object.values<string>(workerCommands).includes(word ?? '');
@@ -843,6 +878,8 @@ export const runWorker = async (
       return runSummon(deps, options, args, registry);
     case workerCommands.reset:
       return runReset(deps, options, args, registry);
+    case workerCommands.relay:
+      return runRelay(deps, options, args, registry);
     case workerCommands.watch:
       return runWatch(deps, options, args, registry);
     case workerCommands.mark:
