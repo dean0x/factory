@@ -71,15 +71,20 @@ export const toolProblems = async (deps: Deps, readVersion: boolean): Promise<re
   return problems;
 };
 
+/** A fault in the prefix store is exit 4 with the doctor remedy, for every guard value. */
+export const prefixStoreFault = (guards: GuardReadState): CliResult<void> => {
+  if (guards.fault === null) return ok(undefined);
+  const hint = `Run "${commandText(commands.doctor)}" to check the guard store.`;
+  return safetyRefusal(guards.fault, guards.remedy === null ? hint : `${hint} ${guards.remedy}`);
+};
+
 /**
  * A launch uses only the prefix whose exact text the owner confirmed. A store fault stops every launch: with a fault every guard is
  * on. While the guard of the safety block is off, a prefix that differs from its record is no stop.
  */
 export const requireConfirmedPrefix = (config: FactoryConfig, guards: GuardReadState): CliResult<void> => {
-  if (guards.fault !== null) {
-    const hint = `Run "${commandText(commands.doctor)}" to check the guard store.`;
-    return safetyRefusal(guards.fault, guards.remedy === null ? hint : `${hint} ${guards.remedy}`);
-  }
+  const store = prefixStoreFault(guards);
+  if (!store.ok) return store;
   const checked = isGuardOn(guards.values, guardIds.safetyBlock);
   if (checked && guards.prefix !== null && guards.prefix.hash !== sha256Hex(config.core.owner.prefix)) {
     return safetyRefusal(`the ${roles.owner} prefix differs from its record`, `Run "${commandText(commandLines.guardConfirm)}" to confirm the ${roles.owner} prefix.`);
